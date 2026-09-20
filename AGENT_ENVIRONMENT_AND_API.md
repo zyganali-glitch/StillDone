@@ -8,13 +8,18 @@ Minimal reproducible Python engineering baseline frozen with deterministic locki
 
 ## Chosen language & tooling baseline
 
-- **Primary Runtime**: Python `>=3.11` (actively validated on CPython `3.13.5` on Windows and Linux CI).
-- **Package & Dependency Manager**: `uv` (v0.11.28+), using standard PEP 621 `pyproject.toml` and deterministic cross-platform `uv.lock`.
-- **Formatting & Linting**: `ruff` (`ruff format --check .`, `ruff check .`).
-- **Static Type Checking**: `mypy` (`mypy src tests`, configured with `strict = true`).
-- **Test Runner**: `pytest` (`pytest`).
+- **Selected StillDone Runtime Target**: CPython `3.13`. Python 3.13 (`PYTHON_3_13`) is the official, recommended direct-code runtime for Amazon Bedrock AgentCore on Amazon Linux 2023, supported through June 30, 2029 (runtime updates blocked August 31, 2029).
+- **Package Ecosystem Compatibility Floor**: Python `>=3.11` in `pyproject.toml`. Retained strictly as a permissive lower bound for packaging and static tool resolution; Python 3.11 is **not** the deployment target (its AgentCore runtime updates were blocked on August 31, 2026).
+- **Observed Validation Runtimes**:
+  - Local Windows development: CPython `3.13.5` (Windows x86_64 host installation).
+  - Linux CI: CPython `3.13.15` (the current official Python 3.13 maintenance release from python.org, installed via `uv python install 3.13.15` on Ubuntu runners).
+  - `.python-version`: `3.13` (specifies the Python 3.13 series across environments).
+- **Package & Dependency Manager**: `uv` pinned to exact version `0.11.28` (local host and CI), using standard PEP 621 `pyproject.toml` and deterministic cross-platform `uv.lock`.
+- **Formatting & Linting**: `ruff` (`0.16.8`) (`ruff format --check .`, `ruff check .`).
+- **Static Type Checking**: `mypy` (`2.3.1`) (`mypy src tests`, configured with `strict = true`).
+- **Test Runner**: `pytest` (`9.1.1`) (`pytest`).
 - **Cross-Platform Aggregate Validator**: `python scripts/validate.py`.
-- **Continuous Integration**: `.github/workflows/ci.yml` (free Ubuntu runner with `astral-sh/setup-uv` and `uv sync --frozen`).
+- **Continuous Integration**: `.github/workflows/ci.yml` using immutable action SHAs (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`, `astral-sh/setup-uv@1327173e35a09b4074213d2f9540b61585802119 # v5` with `version: "0.11.28"`), running `uv python install 3.13.15` and `uv sync --frozen`.
 
 ## Canonical validation commands
 
@@ -31,12 +36,16 @@ All commands return non-zero on failure, require zero network access after initi
 
 ## Decisive toolchain selection rationale
 
-1. **MCP Streamable HTTP**: Supported natively by official `mcp` Python SDK (requires Python >= 3.10) with ASGI/Starlette/FastMCP integration.
-2. **AWS Bedrock & AgentCore**: AWS first-party `boto3` SDK and AgentCore serverless runtime have first-class Python support and reference implementations.
-3. **Strands Agents SDK**: `strands-agents` was released by AWS primarily as a Python package (requires Python >= 3.10) with deep Bedrock and MCP integrations.
-4. **Google APIs**: `google-api-python-client` and `google-auth` provide mature, battle-tested Calendar and Tasks integration.
+1. **MCP Streamable HTTP**: Supported natively by the official `mcp` Python SDK (requires Python >= 3.10) with ASGI/Starlette/FastMCP integration for single-endpoint bidirectional communication.
+2. **AWS Bedrock & AgentCore Runtime**: AWS first-party `boto3` SDK and Amazon Bedrock AgentCore Runtime natively support Python 3.13 (`PYTHON_3_13`, AL2023 base). Python 3.11 reached deprecation on June 30, 2026 and its runtime updates were blocked on August 31, 2026, making Python 3.13 the required modern target.
+3. **Strands Agents SDK**: While AWS Strands Agents provides official SDKs for both Python (`strands-agents`) and TypeScript (`@strands-agents/sdk`), Python was selected for StillDone because of:
+   - Direct compatibility with AgentCore direct-code Python 3.13 deployment;
+   - Comprehensive first-party `boto3` Bedrock integration and agent tool patterns;
+   - Official first-party Python SDKs for Google Calendar and Google Tasks (`google-api-python-client`, `google-auth`);
+   - Single-language backend simplicity for the mission compiler, predicate engine, and MCP server without cross-process serialization boundaries.
+4. **Google APIs**: `google-api-python-client` and `google-auth` provide mature, battle-tested Calendar and Tasks integration for headless/desktop OAuth and REST mutations.
 5. **Open-Meteo**: Simple standard HTTP JSON retrieval via `httpx` or standard library.
-6. **Structured Typing**: Pydantic v2 offers unmatched schema validation, JSON Schema emission for LLM tool use, and immutable contract support.
+6. **Structured Typing**: Pydantic v2 offers robust schema validation, JSON Schema emission for LLM tool use, and immutable contract models.
 7. **Cross-Platform Reproducibility**: `uv` provides universal cross-platform lockfiles (`uv.lock`) without native build hurdles on Windows or Linux.
 
 ## Dependencies policy & status
