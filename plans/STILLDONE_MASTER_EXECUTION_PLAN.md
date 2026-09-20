@@ -100,7 +100,7 @@ Acceptance:
 - zero implementation code imported.
 
 ### P-00.04 — Select minimal language/tooling baseline and deterministic validation commands
-Status: PENDING
+Status: DONE
 
 Acceptance:
 - language/runtime choice justified against MCP + AWS SDK support;

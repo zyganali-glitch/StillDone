@@ -73,17 +73,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-00.03 — Freeze donor pins, licenses, and concept-only provenance boundaries`
+`P-00.04 — Select minimal language/tooling baseline and deterministic validation commands`
 
 Status:
 `DONE (awaiting independent QA PASS)`
 
 ## Last independently VERIFIED baseline SHA
 
-`0529a9e40065b92167a2e43fa7ac66d484c839fe`
+`87a5f5a8c093c520105e1e91a95b1cb7240d3d92`
 
-## Next task after independent P-00.03 PASS
+## Next exact task
 
-`P-00.04 — Select minimal language/tooling baseline and deterministic validation commands`
+`P-00.05 — Close bootstrap with documentation consolidation and focused P-Ω audit`
 
-Do not execute P-00.04 before independent QA closes P-00.03.
+Do not execute P-00.05 before independent QA closes P-00.04.
