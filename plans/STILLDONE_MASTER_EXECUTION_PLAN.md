@@ -111,7 +111,7 @@ Acceptance:
 - no fake AWS/Google adapter.
 
 ### P-00.05 — Close bootstrap with documentation consolidation and focused P-Ω audit
-Status: PENDING
+Status: DONE
 
 Acceptance:
 - README/Plan/HANDOFF critical truth aligned;

@@ -13,6 +13,7 @@ Minimal reproducible Python engineering baseline frozen with deterministic locki
 - **Observed Validation Runtimes**:
   - Local Windows development: CPython `3.13.5` (Windows x86_64 host installation).
   - Linux CI: CPython `3.13.14` (installed via `uv python install 3.13` with pinned `uv 0.11.28` on Ubuntu runners).
+  - Note on upstream maintenance releases: Official python.org lists Python 3.13.15 as the latest 3.13 maintenance release (released August 2026). In CI, pinned `uv 0.11.28` installs CPython 3.13.14 from its release-time standalone downloads index. This historical observation does not alter the upstream release status.
   - `.python-version`: `3.13` (specifies the Python 3.13 series across environments).
 - **Package & Dependency Manager**: `uv` pinned to exact version `0.11.28` (local host and CI), using standard PEP 621 `pyproject.toml` and deterministic cross-platform `uv.lock`.
 - **Formatting & Linting**: `ruff` (`0.16.8`) (`ruff format --check .`, `ruff check .`).

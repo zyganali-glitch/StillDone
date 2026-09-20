@@ -20,6 +20,14 @@ Official sources:
 - Request Deadline: Wednesday, October 21, 2026 at 12:00 PM PT
 - Credit Terms: https://aws.amazon.com/awscredits/
 
+### Operator Credit Request Status (as of 2026-09-20)
+
+- **Submission**: Successfully submitted on 2026-09-20 via official Google Form (`https://forms.gle/GaHFxSbBQNG9Kti6A`).
+- **Confirmation**: Google Form displayed confirmation message "Yanıtınız kaydedildi."
+- **Processing Window**: Official form states credit processing may take up to 5 business days.
+- **Current Operational Truth**: Processing is pending. Credit availability is NOT yet observed or proven in an AWS account.
+- **Binding Policy**: Do NOT submit another credit request. Do NOT enable pay-as-you-go, credit card billing, paid quotas, or auto-fallback. Personal-spend exposure remains `$0.00`.
+
 Official rules explicit warning:
 > “Additional charges incurred by the Entrant for the use of AWS products are the responsibility of the Entrant. Entrants are encouraged to monitor their usage of services so as to not incur additional charges.”
 

@@ -73,17 +73,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-00.04 — Select minimal language/tooling baseline and deterministic validation commands`
+`P-00.05 — Close bootstrap with documentation consolidation and focused P-Ω audit`
 
 Status:
 `DONE (awaiting independent QA PASS)`
 
 ## Last independently VERIFIED baseline SHA
 
-`87a5f5a8c093c520105e1e91a95b1cb7240d3d92`
+`35852ad93c0cea5a9c5b358eacf49826b1b46162`
 
-## Next exact task
+## Next exact task after independent P-00.05 PASS
 
-`P-00.05 — Close bootstrap with documentation consolidation and focused P-Ω audit`
+`P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality`
 
-Do not execute P-00.05 before independent QA closes P-00.04.
+Do not execute P-01.01 before independent QA closes P-00.05 and the P-00 phase.
