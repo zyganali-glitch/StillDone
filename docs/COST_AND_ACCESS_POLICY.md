@@ -26,6 +26,7 @@ Official sources:
 - **Confirmation**: Google Form displayed confirmation message "Yanıtınız kaydedildi."
 - **Processing Window**: Official form states credit processing may take up to 5 business days.
 - **Current Operational Truth**: Processing is pending. Credit availability is NOT yet observed or proven in an AWS account.
+- **P-01.01 Observation Outcome**: Verified on 2026-09-20. No authenticated AWS session or credentials configured in environment. Credit presence remains `NOT_OBSERVABLE`. Spend decision is `BLOCKED_ZERO_SPEND`. Next live task P-01.02 remains blocked until credit arrival is verified in the AWS console.
 - **Binding Policy**: Do NOT submit another credit request. Do NOT enable pay-as-you-go, credit card billing, paid quotas, or auto-fallback. Personal-spend exposure remains `$0.00`.
 
 Official rules explicit warning:
@@ -37,12 +38,13 @@ This does NOT mean:
 - post-credit usage cannot bill;
 - credits necessarily last through judging.
 
-P-01 must verify:
-- actual account credit balance;
-- expiry;
-- billing behavior;
-- service availability;
-- practical kill switch / budget strategy.
+P-01 verification status:
+- actual account credit balance: `NOT_OBSERVABLE` (pending disbursement);
+- expiry: `NOT_OBSERVABLE`;
+- billing behavior: AWS Budgets updates asynchronously every 8–12 hours, not a hard real-time cap;
+- service availability: candidate region `us-east-1` selected; Bedrock control plane blocked without credentials;
+- safety decision: `BLOCKED_ZERO_SPEND`;
+- practical kill switch / budget strategy: documented in `docs/P01_LIVE_FEASIBILITY.md`.
 
 ## AWS AgentCore
 

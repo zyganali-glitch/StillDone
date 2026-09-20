@@ -131,14 +131,15 @@ Goal:
 prove real required technologies before broad implementation.
 
 ### P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality
-Status: PENDING
+Status: BLOCKED
 
 Acceptance:
-- actual account/credit state observed;
-- credit expiry/amount recorded;
-- personal-spend risk documented;
-- safe budget/kill strategy defined;
-- no paid fallback enabled silently.
+- actual account/credit state observed: NOT_OBSERVABLE (promotional credit pending in 5-day window; no credentials configured);
+- credit expiry/amount recorded: NOT_OBSERVABLE;
+- personal-spend risk documented: Zero Personal Spend Law ($0.00) enforced; AWS Budgets confirmed asynchronous (8–12 hr delay);
+- safe budget/kill strategy defined: documented in `docs/P01_LIVE_FEASIBILITY.md`;
+- no paid fallback enabled silently: guaranteed by decision `BLOCKED_ZERO_SPEND`.
+- Note: P-01.02 remains PENDING and MUST NOT execute until credit arrival and account observation are confirmed.
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
 Status: PENDING
