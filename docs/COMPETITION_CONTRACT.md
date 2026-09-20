@@ -224,7 +224,7 @@ In case of a tie between two or more submissions:
 ## 11. AWS Promotional Credits & Zero-Personal-Spend Boundary
 
 - **Credit Offer**: $150 in AWS Promotional Credits.
-- **Form URL**: https://forms.gle/5hyhr1u6x3fuV2aW7
+- **Form URL**: https://forms.gle/GaHFxSbBQNG9Kti6A
 - **Request Deadline**: Wednesday, October 21, 2026 at 12:00 pm PT.
 - **Availability**: "While supplies last" for registered participants.
 - **Binding Rule on Costs**:

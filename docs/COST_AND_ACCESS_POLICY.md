@@ -16,7 +16,7 @@ The hackathon official rules and resources pages state that registered participa
 Official sources:
 - Resources: https://amazonappdev2026.devpost.com/resources
 - Official Rules: https://amazonappdev2026.devpost.com/rules
-- Credit Request Form: https://forms.gle/5hyhr1u6x3fuV2aW7
+- Credit Request Form: https://forms.gle/GaHFxSbBQNG9Kti6A
 - Request Deadline: Wednesday, October 21, 2026 at 12:00 PM PT
 - Credit Terms: https://aws.amazon.com/awscredits/
 
