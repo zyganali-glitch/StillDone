@@ -19,7 +19,7 @@ Minimal reproducible Python engineering baseline frozen with deterministic locki
 - **Static Type Checking**: `mypy` (`2.3.1`) (`mypy src tests`, configured with `strict = true`).
 - **Test Runner**: `pytest` (`9.1.1`) (`pytest`).
 - **Cross-Platform Aggregate Validator**: `python scripts/validate.py`.
-- **Continuous Integration**: `.github/workflows/ci.yml` using immutable action SHAs (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`, `astral-sh/setup-uv@1327173e35a09b4074213d2f9540b61585802119 # v5` with `version: "0.11.28"`), running `uv python install 3.13.15` and `uv sync --frozen`.
+- **Continuous Integration**: `.github/workflows/ci.yml` using immutable action SHAs (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`, `astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2` with `version: "0.11.28"`), running `uv python install 3.13.15` and `uv sync --frozen`.
 
 ## Canonical validation commands
 
