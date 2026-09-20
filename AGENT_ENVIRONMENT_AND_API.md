@@ -12,14 +12,14 @@ Minimal reproducible Python engineering baseline frozen with deterministic locki
 - **Package Ecosystem Compatibility Floor**: Python `>=3.11` in `pyproject.toml`. Retained strictly as a permissive lower bound for packaging and static tool resolution; Python 3.11 is **not** the deployment target (its AgentCore runtime updates were blocked on August 31, 2026).
 - **Observed Validation Runtimes**:
   - Local Windows development: CPython `3.13.5` (Windows x86_64 host installation).
-  - Linux CI: CPython `3.13.15` (the current official Python 3.13 maintenance release from python.org, installed via `uv python install 3.13.15` on Ubuntu runners).
+  - Linux CI: CPython `3.13.14` (installed via `uv python install 3.13` with pinned `uv 0.11.28` on Ubuntu runners).
   - `.python-version`: `3.13` (specifies the Python 3.13 series across environments).
 - **Package & Dependency Manager**: `uv` pinned to exact version `0.11.28` (local host and CI), using standard PEP 621 `pyproject.toml` and deterministic cross-platform `uv.lock`.
 - **Formatting & Linting**: `ruff` (`0.16.8`) (`ruff format --check .`, `ruff check .`).
 - **Static Type Checking**: `mypy` (`2.3.1`) (`mypy src tests`, configured with `strict = true`).
 - **Test Runner**: `pytest` (`9.1.1`) (`pytest`).
 - **Cross-Platform Aggregate Validator**: `python scripts/validate.py`.
-- **Continuous Integration**: `.github/workflows/ci.yml` using immutable action SHAs (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`, `astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2` with `version: "0.11.28"`), running `uv python install 3.13.15` and `uv sync --frozen`.
+- **Continuous Integration**: `.github/workflows/ci.yml` using immutable action SHAs (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`, `astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2` with `version: "0.11.28"`), running `uv python install 3.13` and `uv sync --frozen`.
 
 ## Canonical validation commands
 
