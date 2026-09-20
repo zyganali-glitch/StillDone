@@ -80,7 +80,7 @@ Acceptance:
 - HANDOFF points to P-00.02.
 
 ### P-00.02 — Re-verify competition rules, eligibility, submission contract, prizes, and judging criteria against current official sources
-Status: PENDING
+Status: DONE
 
 Acceptance:
 - current Devpost rules re-opened;

@@ -11,10 +11,17 @@ Target:
 
 ## Competition AWS credits
 
-The hackathon resources page currently states that participants can request `$150` in AWS credits while building.
+The hackathon official rules and resources pages state that registered participants can request `$150` in AWS Promotional Credits while building, while supplies last.
 
-Official source:
-https://amazonappdev2026.devpost.com/resources
+Official sources:
+- Resources: https://amazonappdev2026.devpost.com/resources
+- Official Rules: https://amazonappdev2026.devpost.com/rules
+- Credit Request Form: https://forms.gle/5hyhr1u6x3fuV2aW7
+- Request Deadline: Wednesday, October 21, 2026 at 12:00 PM PT
+- Credit Terms: https://aws.amazon.com/awscredits/
+
+Official rules explicit warning:
+> “Additional charges incurred by the Entrant for the use of AWS products are the responsibility of the Entrant. Entrants are encouraged to monitor their usage of services so as to not incur additional charges.”
 
 This does NOT mean:
 - all AWS services are free;

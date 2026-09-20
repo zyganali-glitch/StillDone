@@ -73,17 +73,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-00.01 — Bootstrap canonical StillDone repository from the frozen starter pack`
+`P-00.02 — Re-verify competition rules, eligibility, submission contract, prizes, and judging criteria against current official sources`
 
 Status:
 `DONE (awaiting independent QA PASS)`
 
 ## Last independently VERIFIED baseline SHA
 
-`NONE — remote bootstrap completed; awaiting independent QA verification`
+`15f6b1019bbe1c8d0c749f853166f17faac3f21f`
 
-## Next task after independent P-00.01 PASS
+## Next task after independent P-00.02 PASS
 
-`P-00.02 — Re-verify competition rules, eligibility, submission contract, prizes, and judging criteria against current official sources`
+`P-00.03 — Freeze donor pins, licenses, and concept-only provenance boundaries`
 
-Do not execute P-00.02 before independent QA closes P-00.01.
+Do not execute P-00.03 before independent QA closes P-00.02.
