@@ -69,7 +69,7 @@ Every donor was independently inspected on its canonical remote on `2026-09-20` 
 - **Default Branch**: `main`
 - **Immutable Commit SHA**: `7b349f0e005ccb416034df318baae67f43a1099d`
 - **Root License**: `LICENSE` — **Proprietary / All Rights Reserved** (Copyright (c) 2026 Mehmet Aydogan). Explicitly declares: *"No open-source license is granted for the ChangeMesh source code. No permission is granted to copy, modify, distribute, sublicense, or commercially use ChangeMesh source code..."*
-- **Legal & Reuse Consequence**: **Strictly CONCEPT_ONLY.** Zero code reuse is legally or architecturally permissible.
+- **Legal & Reuse Consequence**: **Strictly CONCEPT_ONLY.** Under StillDone P-00.03 policy, ChangeMesh remains CONCEPT_ONLY and no source-code reuse is authorized. The ChangeMesh LICENSE grants no open-source reuse permission; any source reuse would require explicit written permission from the copyright holder or another independently applicable grant.
 - **Relevant Concepts**:
   - Saga / distributed workflow execution across heterogeneous services;
   - Mutation idempotency keys and deduplication semantics;
@@ -149,9 +149,9 @@ Every donor was independently inspected on its canonical remote on `2026-09-20` 
   - Canonical remote truth as single authority over agent reports;
   - Zero Personal Spend Law ($0.00 personal spend discipline);
   - Bounded single-task execution discipline.
-- **Allowed StillDone Target Concept**: StillDone engineering governance and remote verification discipline (AGENTS.md §§ 1, 3, 12, 16).
+- **Allowed StillDone Target Concept**: StillDone engineering governance and remote verification discipline (AGENTS.md §§ 1, 3, 12, 16; governance concepts independently clean-room adapted without code reuse).
 - **Forbidden Terminology / Scope Leakage**: `BASE / CANDIDATE / COUNTERFACTUAL` triad vocabulary, causal mutation testing framework, delta gate breaking terminology.
-- **Reuse Class**: `CONCEPT_ONLY / CLEAN_ROOM_GOVERNANCE_ADAPTATION`
+- **Reuse Class**: `CONCEPT_ONLY`
 - **Source Code Imported**: `NO`
 
 ---
