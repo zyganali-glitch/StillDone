@@ -91,7 +91,7 @@ Acceptance:
 - no stale competition claim.
 
 ### P-00.03 — Freeze donor pins, licenses, and concept-only provenance boundaries
-Status: PENDING
+Status: DONE
 
 Acceptance:
 - every donor immutable SHA or explicit source limitation;

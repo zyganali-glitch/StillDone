@@ -73,17 +73,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-00.02 — Re-verify competition rules, eligibility, submission contract, prizes, and judging criteria against current official sources`
+`P-00.03 — Freeze donor pins, licenses, and concept-only provenance boundaries`
 
 Status:
 `DONE (awaiting independent QA PASS)`
 
 ## Last independently VERIFIED baseline SHA
 
-`15f6b1019bbe1c8d0c749f853166f17faac3f21f`
+`0529a9e40065b92167a2e43fa7ac66d484c839fe`
 
-## Next task after independent P-00.02 PASS
+## Next task after independent P-00.03 PASS
 
-`P-00.03 — Freeze donor pins, licenses, and concept-only provenance boundaries`
+`P-00.04 — Select minimal language/tooling baseline and deterministic validation commands`
 
-Do not execute P-00.03 before independent QA closes P-00.02.
+Do not execute P-00.04 before independent QA closes P-00.03.
