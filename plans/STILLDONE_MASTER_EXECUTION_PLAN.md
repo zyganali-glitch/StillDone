@@ -131,14 +131,15 @@ Goal:
 prove real required technologies before broad implementation.
 
 ### P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality
-Status: DONE
+Status: DONE (awaiting independent QA PASS)
 
 Acceptance:
-- actual account/credit state observed: YES (Paid account plan; Basic support plan; $0.00 unexpected usage observed at checkpoint);
-- credit expiry/amount recorded: $150.00 granted / $150.00 remaining / $0.00 used; expiry 2028-09-01 recorded from Billing credit detail (overview/email may show 2028-08-31); separate $100 AWS Free Tier signup credit noted ($250 total remaining);
+- actual account/credit state observed: YES (Paid account plan; Basic support plan; credit usage at checkpoint: $0.00 observed; current account charges: NOT_OBSERVED / UNKNOWN in P-01.01 evidence);
+- credit expiry/amount recorded: $150.00 granted / $150.00 remaining / $0.00 used; Billing detail expiration: 2028-09-01; hackathon email wording: 2028-08-31; discrepancy: OBSERVED; cause: UNKNOWN / NOT_ESTABLISHED (conservative boundary applies); separate $100 AWS Free Tier signup credit noted ($250 total remaining);
 - credit coverage observed: live Billing "Applicable products" list explicitly includes Amazon Bedrock and AgentCore services;
 - personal-spend risk documented: Zero Personal Spend Law ($0.00) enforced; credits offset bills but do not hard-cap spend; AWS Budgets confirmed asynchronous alerting (8–12 hr delay);
 - safe budget/kill strategy defined: decision SAFE_TO_ATTEMPT_NEXT_LIVE_TASK strictly bounds next live work to one single P-01.02 test inference; documented in `docs/P01_LIVE_FEASIBILITY.md`;
+- mutations recorded: reconciliation executor AWS mutations: NONE; cloud resource mutations: NONE; Bedrock inference: NONE; prior operator account/billing actions (creation, Paid plan, credit redemption) recorded only as current state;
 - no paid fallback enabled silently: guaranteed by policy;
 - Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
 

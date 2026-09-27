@@ -24,11 +24,11 @@ Official sources:
 
 - **Redemption & Status**: The official `$150.00` Hackathon Promotional Credit (`Amazon Devices Global Hackathon - Teams A4`, type: Promotion) is successfully redeemed and **Active** in the operator's AWS account.
 - **Balance & Usage**: `$150.00` granted, `$150.00` remaining, `$0.00` used at observation checkpoint (`2026-09-27`).
-- **Expiration Date**: `2028-09-01` observed in Billing credit detail view (overview/email may display `2028-08-31` due to boundary wording).
+- **Expiration Date**: Billing detail expiration: `2028-09-01`. Hackathon email wording: `2028-08-31`. Discrepancy: `OBSERVED`. Cause: `UNKNOWN / NOT_ESTABLISHED`. For operational safety, future automation must not assume the later date when a one-day discrepancy exists; where expiry matters for execution, the conservative boundary (`2028-08-31`) applies unless current AWS Billing/API truth is freshly re-observed.
 - **Applicable Products Coverage**: Directly inspected in the live AWS Billing "Applicable products" list. Explicitly confirmed to cover `Amazon Bedrock Service`, `AmazonBedrockFoundationModels`, `Amazon Bedrock`, `Amazon Bedrock Managed Knowledge Base`, and `Amazon Bedrock AgentCore`.
 - **Separate AWS Signup Credit**: A separate `AWS Free Tier` signup credit of `$100.00` (Active, expires `2027-09-27`, `$0.00` used) was also observed. Total account remaining credit is `$250.00`. The hackathon promotion remains the canonical credit basis for StillDone.
 - **Account Plan & Support**: Paid account plan explicitly chosen by the operator to permit promotional-credit redemption, with Basic (free) support plan.
-- **Current Account Charges**: `$0.00` unexpected charges at observation checkpoint.
+- **Current Account Charges**: `NOT_OBSERVED / UNKNOWN` in P-01.01 evidence (Bills / current account charges were not separately inspected; credit usage at checkpoint observed at `$0.00`; credit usage is not equivalent to account charges).
 - **P-01.01 Observation Outcome**: Verified on `2026-09-27`. Spend decision updated from `BLOCKED_ZERO_SPEND` to `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`. This authorizes ONLY a single, tightly bounded P-01.02 Bedrock test inference after independent P-01.01 QA PASS.
 - **Binding Policy**: No automatic paid fallback. Credits are a payment offset, NOT a hard spending cap. If credits exhaust or unexpected charges appear, execution halts immediately. Personal-spend exposure remains strictly `$0.00`.
 
@@ -43,7 +43,8 @@ This does NOT mean:
 
 P-01 verification status:
 - actual account credit balance: `$150.00` remaining (`$0.00` used) on hackathon credit;
-- expiry: `2028-09-01` recorded from Billing credit details;
+- expiry: Billing detail `2028-09-01` vs hackathon email `2028-08-31` (discrepancy OBSERVED, cause UNKNOWN / NOT_ESTABLISHED; conservative boundary applies);
+- account charges vs credit usage: credit usage at checkpoint is `$0.00` observed; current account charges are NOT_OBSERVED / UNKNOWN in P-01.01 evidence;
 - billing behavior: AWS credits automatically apply to eligible services until exhausted or expired. AWS Budgets updates asynchronously every 8–12 hours, not a hard real-time cap;
 - service availability: candidate region `us-east-1` confirmed for Bedrock runtime and AgentCore;
 - safety decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK` (strictly bounded to 1 feasibility inference in P-01.02);

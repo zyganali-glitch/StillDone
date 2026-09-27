@@ -31,13 +31,13 @@ Operator-observed live AWS account reality reconciled on `2026-09-27`:
 |---|---|---|
 | **Authenticated Account Observable** | **YES** | Independently operator-observed via AWS Management Console sign-in. |
 | **Account / Billing Mode** | **Paid account plan** | Explicitly approved and selected by operator to permit hackathon promotional-credit redemption. Support plan: Basic (free). |
-| **Current Unexpected Charges** | **$0.00** | Sanitized observed fact: $0.00 usage/charges observed at inspection checkpoint. |
+| **Current Account Charges** | **NOT_OBSERVED / UNKNOWN** | Bills / current account charges were not separately observed or presented in P-01.01 evidence (credit usage of $0.00 is not equivalent to account charges of $0.00). Credit usage at checkpoint: $0.00 observed. |
 | **Hackathon Promotional Credit** | **PRESENT / ACTIVE** | Name displayed: `Amazon Devices Global Hackathon - Teams A4`. Type: `Promotion`. Status: `Active`. Granted: `$150.00`. Remaining: `$150.00`. Used: `$0.00`. Start date: `2026-09-01`. |
-| **Credit Expiration Date** | **2028-09-01** | Directly observed in AWS Billing credit detail view. (Note: Overview or email communications may display `2028-08-31` due to timezone or billing boundary wording; directly observed Billing detail value is preserved). |
+| **Credit Expiration Date** | **Discrepancy OBSERVED** | Billing detail expiration: `2028-09-01`. Hackathon email wording: `2028-08-31`. Discrepancy: `OBSERVED`. Cause: `UNKNOWN / NOT_ESTABLISHED`. For operational safety, future automation must not assume the later date when a one-day discrepancy exists; where expiry matters for execution, use the conservative boundary (`2028-08-31`) unless current AWS Billing/API truth is freshly re-observed. |
 | **Separate AWS Signup Credit** | **PRESENT / ACTIVE** | Name displayed: `AWS Free Tier`. Status: `Active`. Granted: `$100.00`. Remaining: `$100.00`. Used: `$0.00`. Expiry: `2027-09-27`. Total observed remaining credit across both credits: `$250.00`. |
 | **Account-Specific Credit Coverage** | **OBSERVED** | Operator opened the hackathon credit's live AWS Billing "Applicable products" list. Visibly confirmed coverage includes: `Amazon Bedrock Service`, `AmazonBedrockFoundationModels`, `Amazon Bedrock`, `Amazon Bedrock Managed Knowledge Base`, and `Amazon Bedrock AgentCore`. |
 | **Account History Correction** | **RECONCILED** | Earlier sign-in blocker was based on the assumption that an existing AWS account already existed. Subsequent signup flow successfully created a new AWS account with the intended email, establishing that the prior state was a Builder ID / no usable AWS account situation rather than an inaccessible existing AWS account. The support case opened during that assumption is not active feasibility evidence and is no longer a blocker. |
-| **Live Mutations Performed** | **NONE** | Zero cloud resources created, modified, or deleted. |
+| **Reconciliation Executor AWS Mutations** | **NONE** | Reconciliation executor AWS mutations: NONE. Cloud resource mutations: NONE. Bedrock inference: NONE. (Prior operator-authorized account/billing actions: AWS account creation, Paid plan selection, Basic support selection, and promotional-credit redemption occurred outside the executor reconciliation run and are recorded only as observed current state; these operator actions are not classified as product/runtime integration proof). |
 | **Bedrock Inference Performed** | **NONE** | Zero Bedrock inference calls executed. |
 | **Bedrock Control-Plane Visibility** | **READY_FOR_BOUNDED_DISCOVERY** | Bedrock foundation-model access is enabled by default in commercial regions per current official documentation. Programmatic read discovery will take place strictly within task P-01.02 under bounded conditions. |
 
@@ -64,7 +64,7 @@ Operator-observed live AWS account reality reconciled on `2026-09-27`:
 1. Target personal spend is strictly **`$0.00`** (AGENTS.md § 12).
 2. The official `$150.00` Hackathon Promotional Credit is confirmed Active and redeemed in the AWS account, with `$150.00` remaining and `$0.00` used at checkpoint.
 3. Live "Applicable products" list in AWS Billing explicitly covers Amazon Bedrock and Amazon Bedrock AgentCore.
-4. Current unexpected account charges are `$0.00` at checkpoint.
+4. Credit usage at checkpoint is observed at `$0.00`. (Separate Bills / current-account-charges evidence was NOT_OBSERVED / UNKNOWN in P-01.01 evidence, but the active $150.00 hackathon credit, explicit Bedrock inclusion in applicable products, $150.00 credit remaining, bounded one-call contract, no paid fallback, and explicit operator authorization for Paid plan provide the bounded safety basis).
 5. The prior blocker (`BLOCKED_ZERO_SPEND` due to unobserved credit disbursement) is resolved by direct operator observation.
 
 **Strict Scope of `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`**:
