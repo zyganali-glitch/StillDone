@@ -131,7 +131,7 @@ Goal:
 prove real required technologies before broad implementation.
 
 ### P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality
-Status: DONE (awaiting independent QA PASS)
+Status: DONE — independent QA PASS (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`)
 
 Acceptance:
 - actual account/credit state observed: YES (Paid account plan; Basic support plan; credit usage at checkpoint: $0.00 observed; current account charges: NOT_OBSERVED / UNKNOWN in P-01.01 evidence);
@@ -141,7 +141,8 @@ Acceptance:
 - safe budget/kill strategy defined: decision SAFE_TO_ATTEMPT_NEXT_LIVE_TASK strictly bounds next live work to one single P-01.02 test inference; documented in `docs/P01_LIVE_FEASIBILITY.md`;
 - mutations recorded: reconciliation executor AWS mutations: NONE; cloud resource mutations: NONE; Bedrock inference: NONE; prior operator account/billing actions (creation, Paid plan, credit redemption) recorded only as current state;
 - no paid fallback enabled silently: guaranteed by policy;
-- Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
+- note: P-01.01 independent QA PASS was awarded (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`). Task P-01.02 subsequently executed under bounded QA authorization; P-01.02 is now BLOCKED / NOT ACCEPTED (current blocker is authorizationStatus = NOT_AUTHORIZED; external state = AWS_SUPPORT_PENDING; third inference is NOT AUTHORIZED).
+
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
 Status: BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED

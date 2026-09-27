@@ -4,7 +4,7 @@
 **Task**: P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality  
 **Observation Timestamp**: `2026-09-27T09:50:00+03:00`  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **RECONCILED / SAFE_TO_ATTEMPT_NEXT_LIVE_TASK** (Awaiting Independent QA PASS)
+**Status**: **P-01.01: CLOSED / INDEPENDENT QA PASS** (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`) | **Current P-01.02: BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING**
 
 ---
 
@@ -39,7 +39,7 @@ Operator-observed live AWS account reality reconciled on `2026-09-27`:
 | **Account History Correction** | **RECONCILED** | Earlier sign-in blocker was based on the assumption that an existing AWS account already existed. Subsequent signup flow successfully created a new AWS account with the intended email, establishing that the prior state was a Builder ID / no usable AWS account situation rather than an inaccessible existing AWS account. The support case opened during that assumption is not active feasibility evidence and is no longer a blocker. |
 | **Reconciliation Executor AWS Mutations** | **NONE** | Reconciliation executor AWS mutations: NONE. Cloud resource mutations: NONE. Bedrock inference: NONE. (Prior operator-authorized account/billing actions: AWS account creation, Paid plan selection, Basic support selection, and promotional-credit redemption occurred outside the executor reconciliation run and are recorded only as observed current state; these operator actions are not classified as product/runtime integration proof). |
 | **Bedrock Inference Performed** | **NONE** | Zero Bedrock inference calls executed. |
-| **Bedrock Control-Plane Visibility** | **READY_FOR_BOUNDED_DISCOVERY** | Bedrock foundation-model access is enabled by default in commercial regions per current official documentation. Programmatic read discovery will take place strictly within task P-01.02 under bounded conditions. |
+| **Bedrock Control-Plane Visibility** | **DISCOVERY_COMPLETED_IN_P01_02** | Bedrock foundation-model access is enabled by default in commercial regions per current official documentation. (Historical: Programmatic read discovery subsequently executed during P-01.02, confirming active Amazon foundation models in `us-east-1`). |
 
 ---
 
@@ -52,24 +52,30 @@ Operator-observed live AWS account reality reconciled on `2026-09-27`:
     3. Factual basis only: Region selection is based solely on documented service and runtime support. Region selection has no bearing on promotional credit redemption.
 - **Alternative Regions Evaluated**:
   - `us-west-2` (Oregon): Secondary candidate supported by Bedrock runtime and AgentCore; available for cross-region fallback if necessary.
-- **Model ID Decision**: **UNFROZEN** in P-01.01. Model selection will occur during P-01.02 based on live Bedrock catalog discovery. The first feasibility call should prefer an Amazon-provider text model (e.g. Amazon Titan or Amazon Nova family) to avoid third-party Marketplace/EULA/FTU onboarding friction.
+- **Model ID Decision**: **HISTORICAL P-01.01 BASELINE (RESOLVED IN P-01.02)**. (Historical: Model selection subsequently occurred during P-01.02 based on live Bedrock catalog discovery, selecting Amazon-provider text model `amazon.nova-micro-v1:0`).
 
 ---
 
 ## 4. Zero-Personal-Spend Safety Decision
 
-### Decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`
+### Decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK` (HISTORICAL P-01.01 DECISION — AUTHORITY CONSUMED)
 
-**Deterministic Rationale**:
+**Deterministic Rationale (Historical P-01.01 Baseline)**:
 1. Target personal spend is strictly **`$0.00`** (AGENTS.md § 12).
-2. The official `$150.00` Hackathon Promotional Credit is confirmed Active and redeemed in the AWS account, with `$150.00` remaining and `$0.00` used at checkpoint.
+2. The official `$150.00` Hackathon Promotional Credit was confirmed Active and redeemed in the AWS account, with `$150.00` remaining and `$0.00` used at checkpoint.
 3. Live "Applicable products" list in AWS Billing explicitly covers Amazon Bedrock and Amazon Bedrock AgentCore.
-4. Credit usage at checkpoint is observed at `$0.00`. (Separate Bills / current-account-charges evidence was NOT_OBSERVED / UNKNOWN in P-01.01 evidence, but the active $150.00 hackathon credit, explicit Bedrock inclusion in applicable products, $150.00 credit remaining, bounded one-call contract, no paid fallback, and explicit operator authorization for Paid plan provide the bounded safety basis).
-5. The prior blocker (`BLOCKED_ZERO_SPEND` due to unobserved credit disbursement) is resolved by direct operator observation.
+4. Credit usage at checkpoint was observed at `$0.00`. (Separate Bills / current-account-charges evidence was NOT_OBSERVED / UNKNOWN in P-01.01 evidence, but the active $150.00 hackathon credit, explicit Bedrock inclusion in applicable products, $150.00 credit remaining, bounded one-call contract, no paid fallback, and explicit operator authorization for Paid plan provide the bounded safety basis).
+5. The prior blocker (`BLOCKED_ZERO_SPEND` due to unobserved credit disbursement) was resolved by direct operator observation.
 
-**Strict Scope of `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`**:
-- This decision means **ONLY**: One independently authorized, tightly bounded P-01.02 Bedrock feasibility inference may be attempted after independent P-01.01 QA PASS.
-- It does **NOT** mean:
+**Historical Scope & Consumed Authority**:
+- This historical decision authorized **ONLY**: The initial tightly bounded P-01.02 Bedrock feasibility inference following independent P-01.01 QA PASS.
+- **Authority Status: FULLY CONSUMED**:
+  - That initial single-attempt authorization, along with a subsequent QA-authorized second cycle, has been fully consumed.
+  - Two bounded inference attempts occurred; both returned errors (`AccessDeniedException` then `ValidationException: Operation not allowed`).
+  - Read-only diagnostic check confirmed `authorizationStatus = NOT_AUTHORIZED`.
+  - Authenticated AWS Support case is `OPEN / AWS_RESPONSE_PENDING`.
+  - **Zero inference authority exists currently**; third inference remains strictly **`NOT AUTHORIZED`**; external state is **`AWS_SUPPORT_PENDING`**.
+- It never meant:
   - unlimited AWS usage;
   - unlimited spend;
   - permission to exhaust credits;
@@ -82,9 +88,9 @@ Operator-observed live AWS account reality reconciled on `2026-09-27`:
 
 ---
 
-## 5. Future P-01.02 Safety Contract
+## 5. Historical P-01.02 Safety Contract (Initial Invariant Baseline — Authority Consumed)
 
-Documented requirements and constraints for future task P-01.02 (do NOT execute during P-01.01):
+Documented initial requirements and constraints defined during P-01.01 for subsequent task P-01.02 (Historical record; all initial single-attempt execution authorizations are now CONSUMED):
 
 1. **Pre-Invocation Credit Verification**:
    - Re-check that the hackathon promotional credit remains Active and non-zero immediately prior to invocation where practical.
