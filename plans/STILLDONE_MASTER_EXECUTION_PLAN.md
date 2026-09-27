@@ -144,7 +144,7 @@ Acceptance:
 - Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: BLOCKED / NOT ACCEPTED (Cycle 1: Account verification hold; Cycle 2: ValidationException Operation not allowed)
+Status: BLOCKED / NOT ACCEPTED — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED
 
 Acceptance:
 - current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across both cycles);
@@ -157,7 +157,7 @@ Acceptance:
 - timing/cost metadata: requests rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task remains BLOCKED awaiting investigation of model access / validation error. Both single-attempt authorizations consumed. Any future execution cycle of P-01.02 requires fresh independent QA authorization. P-01.03 remains strictly LOCKED.
+- note: Task remains BLOCKED / NOT ACCEPTED (root cause UNKNOWN / NOT_ESTABLISHED). The Cycle 1 verification message was not repeated in Cycle 2, but whether account verification is fully complete is NOT_ESTABLISHED. Both single-attempt authorizations consumed (lifetime attempts = 2). Next safe action is independent read-only diagnosis of the account-specific Bedrock blocker, under a separately authorized QA diagnostic cycle. No inference is authorized by this repair. Any future execution cycle of P-01.02 requires fresh independent QA authorization after diagnosis. P-01.03 remains PENDING / LOCKED.
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
 Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)

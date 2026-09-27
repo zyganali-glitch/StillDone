@@ -3,7 +3,7 @@
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
 **Task**: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **BLOCKED / NOT ACCEPTED** (Cycle 1: Account Verification Hold; Cycle 2: ValidationException / Operation Not Allowed)  
+**Status**: **BLOCKED / NOT ACCEPTED** — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed)  
 **Provenance**: `LIVE_AWS`
 
 ---
@@ -149,9 +149,27 @@ aws bedrock-runtime converse \
 - **Sanitized Error Message**:
   > `An error occurred (ValidationException) when calling the Converse operation: Operation not allowed`
 - **Observation Analysis**:
-  - The previous Cycle 1 error (`AccessDeniedException: Your account is currently being verified`) is **no longer present**, confirming the initial new-account verification hold has cleared.
-  - However, AWS Bedrock returned `ValidationException: Operation not allowed` on the direct invocation of `amazon.nova-micro-v1:0`.
-  - In Bedrock, `Operation not allowed` typically indicates that model access has not been granted/requested in the Amazon Bedrock Console (Bedrock -> Model access), or requires an Amazon Bedrock inference profile ARN rather than a raw foundation model ID for cross-region invocation.
+  - Cycle 1 explicitly reported an account-verification hold (`AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.`).
+  - Cycle 2, executed more than two hours later, returned a different error: `ValidationException: Operation not allowed`.
+  - The Cycle 1 verification message was NOT repeated in Cycle 2.
+  - Whether AWS account verification is fully complete is `NOT_ESTABLISHED` from this error transition alone; do not claim verification hold cleared unless independently observed through an authoritative account-verification surface.
+  - Current official AWS documentation checked by independent QA:
+    1. Main Bedrock model-access documentation currently states access to Amazon Bedrock foundation models is enabled by default with appropriate permissions in commercial AWS Regions.
+    2. Current Nova Micro model documentation explicitly supports:
+       - model ID: `amazon.nova-micro-v1:0`
+       - endpoint: `bedrock-runtime`
+       - in-region use in: `us-east-1`
+    3. Current regional compatibility documentation marks Nova Micro In-Region support in `us-east-1`.
+    4. While general current Bedrock documentation says model access is enabled by default and Nova Micro direct in-region model ID is documented for `us-east-1`, some AWS Nova getting-started material may still discuss requesting model access; this documentation inconsistency must NOT be converted into proof of this account's actual blocker.
+  - Therefore, the observed live failure does NOT establish:
+    - missing Model Access enablement;
+    - inference-profile requirement;
+    - IAM denial;
+    - quota zero;
+    - account verification completion or incompletion;
+    - any other specific root cause.
+  - **Canonical Root Cause**: `UNKNOWN / NOT_ESTABLISHED`.
+  - **Observed Live Failure**: `ValidationException: Operation not allowed`.
 - **Usage & Token Metadata**:
   - `inputTokens`: `NOT_RETURNED / NOT_AVAILABLE`
   - `outputTokens`: `NOT_RETURNED / NOT_AVAILABLE`
@@ -182,10 +200,10 @@ aws bedrock-runtime converse \
 | **Cycle 1** | `2026-09-27T11:05:34+03:00` | `AccessDeniedException` | `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
 | **Cycle 2** | `2026-09-27T13:19:20+03:00` | `ValidationException` | `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
 
-- **Cumulative P-01.02 Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt).
-- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED`**.
-- **Task P-01.03 Status**: **`NOT STARTED`** (Strictly locked; must not start before P-01.02 achieves live model response and independent QA PASS).
+- **Cumulative P-01.02 Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt; lifetime P-01.02 inference attempts = 2).
+- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED`**.
+- **Task P-01.03 Status**: **`NOT STARTED / LOCKED`** (Strictly locked; must not start before P-01.02 achieves live model response and independent QA PASS).
 - **Next Safe Action**:
-  Independent QA evaluation and authorization required before any future bounded execution cycle. Operator/QA investigation is required on why AWS Bedrock returned `ValidationException: Operation not allowed` for `amazon.nova-micro-v1:0` (e.g. checking Bedrock Console -> Model Access for Amazon Nova models, or inspecting inference profile requirements).
-- **Retry Authority**:
-  A subsequent execution cycle of P-01.02 is NOT automatically authorized. It requires fresh independent QA authorization after investigating the model access prerequisite.
+  Independent read-only diagnosis of the account-specific Bedrock blocker, under a separately authorized QA diagnostic cycle.
+  No inference is authorized by this repair.
+  A future inference cycle requires fresh independent QA authorization after diagnosis.
