@@ -30,18 +30,18 @@ Do not invent entries.
 
 ### F-20260927-01 — AWS Account & Identity Onboarding Ambiguity
 
-- Date/time: 2026-09-27T08:00:00Z
-- Exact task: P-01.01 — AWS account, billing alerts, and Bedrock model-access verification
-- Tool/API/SDK: AWS Management Console, IAM Identity Center / IAM Users
-- Version/region/account mode: us-east-1 / Newly created AWS Free Tier account with hackathon credit
-- Attempt: Initial account setup and identity provisioning for programmatic development access
-- Expected: Single clear standard path documented for individual hackathon developer programmatic access combining credit application, billing alert configuration, and IAM/SSO credentials
-- Actual: Significant friction between modern recommended IAM Identity Center (SSO) workflow and legacy IAM User access keys; confusing console prompts regarding root user security vs developer user creation; unclear guidance on whether promotional credits apply immediately to Bedrock inference
+- Date/time: 2026-09-27 — exact event time not preserved in canonical evidence
+- Exact task: P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality
+- Tool/API/SDK: AWS account signup / AWS Management Console / Builder ID context
+- Version/region/account mode: us-east-1 / Paid account plan; Basic support
+- Attempt: Initial AWS account setup and sign-in verification for hackathon development
+- Expected: Seamless sign-in and clear distinction between AWS Builder ID credentials and an active, usable AWS account
+- Actual: Initial sign-in blocker was based on the assumption that an existing usable AWS account already existed; sign-in and account-state confusion occurred because AWS Builder ID was separate from an AWS account. Subsequent official AWS signup successfully created the usable AWS account with a Paid account plan (explicitly authorized by the operator to enable promotional-credit redemption) and Basic support plan. Hackathon promotional credit was later redeemed and observed Active. The earlier sign-in assumption was corrected. No IAM User or access-key provisioning was part of this canonical evidence.
 - Severity: `MEDIUM`
-- Workaround: Configured minimal IAM User with scoped least-privilege permissions, MFA, and zero-spend budget alerts before testing credentials
+- Workaround: Clarified account state, completed official AWS account signup, selected Paid account plan with Basic support, and redeemed hackathon promotional credit
 - Evidence: `docs/P01_LIVE_FEASIBILITY.md`
-- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? Docs friction / UX onboarding complexity
-- Actionable suggestion: Provide a unified "AI Hackathon Developer Quickstart" in AWS documentation that gives clear step-by-step guidance for credit-funded individual builder accounts to safely create programmatic Bedrock credentials without navigating enterprise SSO setup
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? account-state/onboarding ambiguity
+- Actionable suggestion: Clarify distinction between AWS Builder ID and full AWS account in developer hackathon documentation to avoid sign-in/account-state confusion for new builders
 - Would we build with it again? `CONDITIONAL`
 - Secrets/PII check: `CLEAN`
 
@@ -49,18 +49,18 @@ Do not invent entries.
 
 ### F-20260927-02 — New Account Verification Hold Blocked Initial Bedrock Inference
 
-- Date/time: 2026-09-27T11:42:00Z
+- Date/time: 2026-09-27T11:05:34+03:00
 - Exact task: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-- Tool/API/SDK: AWS SDK for Python (`boto3 1.42.59`), Bedrock Runtime API (`converse`)
-- Version/region/account mode: Python 3.13 / us-east-1 / Amazon Nova Micro (`us.amazon.nova-micro-v1:0`)
+- Tool/API/SDK: AWS CLI (`aws-cli/2.37.4 Python/3.14.6 Windows/10 exe/AMD64`), Bedrock Runtime (`aws bedrock-runtime converse`), authenticated via `aws login --profile stilldone-p01 --remote`
+- Version/region/account mode: us-east-1 / model: `amazon.nova-micro-v1:0` / Paid account plan; Basic support
 - Attempt: Attempt 1 (Cycle 1 inference execution)
-- Expected: Successful Converse API response or standard quota/access denial error
-- Actual: Runtime raised `AccessDeniedException` with explicit error message stating the AWS account was currently undergoing verification and Bedrock access would be available once verification completed
+- Expected: Successful Converse API response or standard model invocation error
+- Actual: Runtime raised `AccessDeniedException` with explicit AWS message stating the account was currently being verified ("Your account is currently being verified. Verification normally takes less than 2 hours. Until your account is verified, you may not have access to this operation..."). Zero usage/token metadata returned. Zero retries performed.
 - Severity: `BLOCKER`
-- Workaround: Paused inference execution, waited for account verification lifecycle to complete, and had operator confirm account status
-- Evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` Cycle 1 log
-- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? Platform policy / account verification lifecycle
-- Actionable suggestion: Surface account verification hold state prominently in the AWS Management Console Bedrock dashboard and Model Access page rather than allowing access to appear configured while runtime calls fail with runtime verification exceptions
+- Workaround: Stopped immediately; preserved the failure; zero retries; waited beyond the AWS-stated verification interval (> 2 hours); later allowed a fresh independently authorized cycle
+- Evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` Part I (Cycle 1)
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? account verification lifecycle / platform policy
+- Actionable suggestion: Surface account verification hold state prominently in the AWS Management Console Bedrock dashboard rather than allowing access to appear configured while runtime calls fail with runtime verification exceptions
 - Would we build with it again? `CONDITIONAL`
 - Secrets/PII check: `CLEAN`
 
@@ -68,17 +68,17 @@ Do not invent entries.
 
 ### F-20260927-03 — Bedrock Model Authorization Blocked Despite Available Entitlements
 
-- Date/time: 2026-09-27T16:15:00Z
+- Date/time: Cycle 2: `2026-09-27T13:19:20+03:00`; Read-only diagnostic: `2026-09-27T20:58:05+03:00`
 - Exact task: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-- Tool/API/SDK: AWS SDK for Python (`boto3 1.42.59`), Bedrock Control Plane (`GetFoundationModelAvailability`), Bedrock Runtime (`converse`)
-- Version/region/account mode: Python 3.13 / us-east-1 / Amazon Nova Micro (`us.amazon.nova-micro-v1:0`)
-- Attempt: Attempt 2 (Cycle 2 inference execution) and subsequent read-only diagnostic
-- Expected: Converse API execution succeeds after account verification hold cleared, or returns actionable guidance if additional authorization is required
-- Actual: Converse API raised `ValidationException: Operation not allowed`. Read-only diagnostic revealed `authorizationStatus = NOT_AUTHORIZED` despite `agreementAvailability.status = AVAILABLE`, `entitlementAvailability = AVAILABLE`, and `regionAvailability = AVAILABLE`. Underlying root cause is unknown/not established via APIs. Support escalation required.
+- Tool/API/SDK: AWS CLI (`aws bedrock-runtime converse`, `aws bedrock get-foundation-model-availability`), authenticated via `aws login --profile stilldone-p01 --remote`
+- Version/region/account mode: us-east-1 / model: `amazon.nova-micro-v1:0` / Paid account plan; Basic support
+- Attempt: Attempt 2 (Cycle 2 inference execution) and subsequent read-only diagnostic cycle
+- Expected: Converse API execution succeeds, or returns actionable guidance if additional authorization is required
+- Actual: Cycle 2 operation (`aws bedrock-runtime converse`) with model `amazon.nova-micro-v1:0` raised `ValidationException: Operation not allowed`. Subsequent read-only diagnostic (`aws bedrock get-foundation-model-availability`) revealed `authorizationStatus = NOT_AUTHORIZED` with `agreementStatus = AVAILABLE`, `agreementError = null`, `entitlementAvailability = AVAILABLE`, and `regionAvailability = AVAILABLE`. Underlying causal root cause is unknown and not established via APIs.
 - Severity: `BLOCKER`
-- Workaround: Strictly halted runtime inference attempts (lifetime attempts capped at 2); opened AWS Support case; transitioned task state to `BLOCKED / NOT ACCEPTED` (`AWS_SUPPORT_PENDING`); locked downstream P-01.03
-- Evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`, `docs/P01_LIVE_FEASIBILITY.md`
-- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? Unknown / platform entitlement synchronization delay or account-specific service restriction
-- Actionable suggestion: Improve `ValidationException: Operation not allowed` error messaging to specify the exact missing prerequisite (e.g. pending agreement signature, service quota block, or support approval) rather than generic validation failure
+- Workaround: Strictly halted runtime inference attempts (lifetime attempts capped at 2; zero inference attempts in diagnostic cycle); opened authenticated AWS Support case; transitioned task state to `BLOCKED / NOT ACCEPTED` (`AWS_SUPPORT_PENDING`); locked downstream P-01.03. AWS Support escalation is the current resolution path.
+- Evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` Parts II, III, IV; `docs/P01_LIVE_FEASIBILITY.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? UNKNOWN / NOT_ESTABLISHED
+- Actionable suggestion: Improve `ValidationException: Operation not allowed` error messaging to specify the exact missing prerequisite rather than generic validation failure
 - Would we build with it again? `CONDITIONAL`
 - Secrets/PII check: `CLEAN`

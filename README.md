@@ -107,10 +107,10 @@ See:
 
 Foundation and live feasibility status:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
-- **P-01.01 (AWS Account, Budget & Access Setup)**: Passed. AWS account, billing alerts, and Bedrock model availability checks established.
-- **P-01.02 (Minimal Bedrock Model Inference)**: `BLOCKED / NOT ACCEPTED`. Two bounded real AWS inference attempts were executed (Cycle 1 failed with `AccessDeniedException` during account verification hold; Cycle 2 failed with `ValidationException: Operation not allowed`). Account-specific read-only diagnostic confirmed `authorizationStatus = NOT_AUTHORIZED` while agreements/entitlements/region are `AVAILABLE`. Underlying root cause is `UNKNOWN / NOT_ESTABLISHED`. An official AWS Support case is open (`AWS_SUPPORT_PENDING`).
+- **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed. AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled. Live Bedrock model discovery and account-specific availability diagnosis occurred later under P-01.02.
+- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `BLOCKED / NOT ACCEPTED`. Two bounded real AWS inference attempts were executed (Cycle 1 failed with `AccessDeniedException` during account verification hold; Cycle 2 failed with `ValidationException: Operation not allowed`). Account-specific read-only diagnostic confirmed `authorizationStatus = NOT_AUTHORIZED` while agreements/entitlements/region are `AVAILABLE`. Underlying root cause is `UNKNOWN / NOT_ESTABLISHED`. An official AWS Support case is open (`AWS_SUPPORT_PENDING`).
 - **Discipline constraints**: A third inference attempt is strictly `NOT AUTHORIZED` (lifetime attempts capped at 2). Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED`.
-- **Product code**: Remains intentionally minimal / zero until live technology gates pass or authorized under Master Plan external-blocker parallelization rules.
+- **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
