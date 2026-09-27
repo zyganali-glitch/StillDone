@@ -144,20 +144,23 @@ Acceptance:
 - Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: BLOCKED / NOT ACCEPTED — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED
+Status: BLOCKED / NOT ACCEPTED — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED
 
 Acceptance:
 - current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across both cycles);
 - pre-call pricing and cost bounded: YES (official Bedrock pricing verified; gross request upper bound <= $0.000006, well below $0.01 limit);
-- real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt (Cumulative attempts = 2);
+- real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt (Cumulative inference attempts = 2);
+- read-only diagnostic executed: Cycle 3 (Diagnostic) = 0 inference attempts; `get-foundation-model-availability` returned `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE);
 - live results observed:
   - Cycle 1: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
   - Cycle 2: `ValidationException` (`Operation not allowed`);
+  - Diagnostic Cycle: `get-foundation-model-availability` -> `authorizationStatus = NOT_AUTHORIZED`;
 - zero-retry law enforced: 0 retries within each cycle, no second model, no second region, no fallback provider, no fixture fallback;
 - timing/cost metadata: requests rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task remains BLOCKED / NOT ACCEPTED (root cause UNKNOWN / NOT_ESTABLISHED). The Cycle 1 verification message was not repeated in Cycle 2, but whether account verification is fully complete is NOT_ESTABLISHED. Both single-attempt authorizations consumed (lifetime attempts = 2). Next safe action is independent read-only diagnosis of the account-specific Bedrock blocker, under a separately authorized QA diagnostic cycle. No inference is authorized by this repair. Any future execution cycle of P-01.02 requires fresh independent QA authorization after diagnosis. P-01.03 remains PENDING / LOCKED.
+- note: Task remains BLOCKED / NOT ACCEPTED (account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED). Lifetime inference attempts = 2. A third inference attempt is NOT AUTHORIZED. Next safe action is independent QA evaluation and resolution of account-specific Bedrock authorization. P-01.03 remains PENDING / LOCKED.
+
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
 Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)

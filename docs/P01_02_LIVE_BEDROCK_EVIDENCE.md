@@ -3,7 +3,7 @@
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
 **Task**: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **BLOCKED / NOT ACCEPTED** — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed)  
+**Status**: **BLOCKED / NOT ACCEPTED** — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED)  
 **Provenance**: `LIVE_AWS`
 
 ---
@@ -193,17 +193,68 @@ aws bedrock-runtime converse \
 
 ---
 
+# Part III — Read-Only Account-Specific Diagnostic Cycle
+
+**Observation Timestamp**: `2026-09-27T20:58:05+03:00`  
+**Diagnostic Authorization Boundary**: Independent QA explicitly authorized ONE read-only diagnostic cycle to determine account-specific Bedrock availability/authorization state using current official AWS read-only APIs.  
+**Inference Authorization**: **ZERO MODEL INFERENCE** (Strictly unauthorized; inference attempts in this cycle = 0; lifetime P-01.02 inference attempts = 2).  
+**Authentication Mechanism**: Official short-lived console-credential login flow (`aws login --profile stilldone-p01 --remote`). Short-lived credentials immediately cleaned up via `aws logout --profile stilldone-p01`. Zero static keys created. Zero sensitive identity data recorded.  
+**Exact Read-Only API Operation**: `aws bedrock get-foundation-model-availability`  
+**Region**: `us-east-1`  
+**Model ID Checked**: `amazon.nova-micro-v1:0`  
+
+### 1. Diagnostic Command Executed
+```bash
+aws bedrock get-foundation-model-availability \
+  --region us-east-1 \
+  --profile stilldone-p01 \
+  --model-id amazon.nova-micro-v1:0 \
+  --query "{modelId:modelId,authorizationStatus:authorizationStatus,agreementStatus:agreementAvailability.status,agreementError:agreementAvailability.errorMessage,entitlementAvailability:entitlementAvailability,regionAvailability:regionAvailability}" \
+  --output json
+```
+
+### 2. Sanitized Exact Returned Availability Fields
+```json
+{
+    "modelId": "amazon.nova-micro-v1",
+    "authorizationStatus": "NOT_AUTHORIZED",
+    "agreementStatus": "AVAILABLE",
+    "agreementError": null,
+    "entitlementAvailability": "AVAILABLE",
+    "regionAvailability": "AVAILABLE"
+}
+```
+
+### 3. Deterministic Diagnostic Classification & Analysis
+- **Observed Blocker Dimension**: `BEDROCK_MODEL_AUTHORIZATION_NOT_AUTHORIZED` (`authorizationStatus = "NOT_AUTHORIZED"`).
+- **Secondary Availability Dimensions**:
+  - `agreementStatus`: `AVAILABLE`
+  - `agreementError`: `null`
+  - `entitlementAvailability`: `AVAILABLE`
+  - `regionAvailability`: `AVAILABLE`
+- **Underlying Root Cause**: `UNKNOWN / NOT_ESTABLISHED`.
+  - While AWS Bedrock explicitly reports `authorizationStatus = "NOT_AUTHORIZED"` for this account and model in `us-east-1`, the underlying causal reason (such as whether an account verification hold remains active, or explicit Model Access agreement/request is required, or other account restriction) is not directly provided by the API response.
+  - Per governance, this observed blocker dimension must NOT be speculatively attributed to unproven causes.
+- **Optional Second-Model Check**: `NOT_RUN` (Nova Micro diagnostic result established a clear, unambiguous blocker dimension: `authorizationStatus = NOT_AUTHORIZED`; per instructions, no second check was required or run).
+- **AWS Mutations**: `NONE` (0 resources created, 0 modified, 0 deleted).
+- **Inference Calls in This Cycle**: `0` (Strictly zero inference).
+- **Lifetime P-01.02 Inference Attempts**: `2` (Cycle 1: 1, Cycle 2: 1).
+- **Session Cleanup**: `aws logout --profile stilldone-p01` executed immediately; cached credentials deleted.
+
+---
+
 ## 7. Cumulative Lifecycle Summary & Next Safe Action
 
-| Cycle | Timestamp | Error Class | Observed Error Message | Task State |
+| Cycle | Timestamp | API / Error Class | Observed Result / Error Message | Task State |
 |---|---|---|---|---|
 | **Cycle 1** | `2026-09-27T11:05:34+03:00` | `AccessDeniedException` | `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
 | **Cycle 2** | `2026-09-27T13:19:20+03:00` | `ValidationException` | `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
+| **Diagnostic Cycle** | `2026-09-27T20:58:05+03:00` | `get-foundation-model-availability` (Read-only) | `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE) | `BLOCKED / NOT ACCEPTED` |
 
-- **Cumulative P-01.02 Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt; lifetime P-01.02 inference attempts = 2).
-- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — ValidationException: Operation not allowed; root cause UNKNOWN / NOT_ESTABLISHED`**.
+- **Cumulative P-01.02 Inference Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt, Diagnostic Cycle: 0 attempts; lifetime P-01.02 inference attempts = 2).
+- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
 - **Task P-01.03 Status**: **`NOT STARTED / LOCKED`** (Strictly locked; must not start before P-01.02 achieves live model response and independent QA PASS).
 - **Next Safe Action**:
-  Independent read-only diagnosis of the account-specific Bedrock blocker, under a separately authorized QA diagnostic cycle.
-  No inference is authorized by this repair.
-  A future inference cycle requires fresh independent QA authorization after diagnosis.
+  Independent QA evaluation and resolution of account-specific Bedrock authorization (`authorizationStatus = NOT_AUTHORIZED`).
+  Third inference attempt is NOT AUTHORIZED without fresh independent QA authorization.
+
