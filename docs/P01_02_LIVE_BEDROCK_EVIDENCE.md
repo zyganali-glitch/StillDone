@@ -3,7 +3,7 @@
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
 **Task**: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **BLOCKED / NOT ACCEPTED** — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED)  
+**Status**: **BLOCKED / NOT ACCEPTED** — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED; Support: OPEN / AWS RESPONSE PENDING)  
 **Provenance**: `LIVE_AWS`
 
 ---
@@ -243,6 +243,42 @@ aws bedrock get-foundation-model-availability \
 
 ---
 
+# Part IV — Authenticated AWS Support Blocker Escalation
+
+**Date**: `2026-09-27`  
+**External Resolution State**: `AWS_SUPPORT_PENDING`  
+**Support Case Status**: `OPEN — AWS RESPONSE PENDING`  
+**Case Subject**: `Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED`  
+
+### 1. Context & Operator-Submitted Facts
+On `2026-09-27`, the operator successfully opened a formal support case through the authenticated AWS Support Center (`/support/home`).
+The case submission included the following sanitized technical facts:
+- Account participates in the official Amazon Devices Global Hackathon;
+- Active AWS Paid Plan account with verified promotional AWS credits;
+- Bedrock control-plane discovery functions as expected (`list-foundation-models` discovers active models in `us-east-1`);
+- Live read-only `get-foundation-model-availability` check for `amazon.nova-micro-v1:0` returns:
+  - `authorizationStatus`: `NOT_AUTHORIZED`
+  - `agreementStatus`: `AVAILABLE`
+  - `entitlementAvailability`: `AVAILABLE`
+  - `regionAvailability`: `AVAILABLE`
+- Live Bedrock Runtime `converse` invocation fails with:
+  - `ValidationException: Operation not allowed`
+- Request submitted to AWS Support to review the account-level Bedrock authorization / security restriction and clarify any required verification or remediation actions.
+
+### 2. Official AWS Troubleshooting Classification vs Account Truth Boundary
+- **Official AWS Troubleshooting Classification**:
+  In official AWS documentation and troubleshooting guidance, `Operation not allowed` on foundation model operations is categorized within an account security restriction class for which direct AWS Support contact is recommended.
+- **This Account's Underlying Causal Root Cause**:
+  Remains strictly **`UNKNOWN / NOT_ESTABLISHED`** pending authoritative AWS Support response.
+- **Strict Non-Claims**:
+  - AWS has not yet confirmed the specific underlying root cause for this account;
+  - AWS has not yet confirmed an explicit security restriction on this specific account;
+  - No assumption is made that authorization will be automatically restored;
+  - No response SLA beyond standard AWS Support queuing is assumed;
+  - Zero sensitive identifiers (Account ID, Support Case ID, root email, credit ID, payment details, phone, address, credentials, or screenshots) are committed.
+
+---
+
 ## 7. Cumulative Lifecycle Summary & Next Safe Action
 
 | Cycle | Timestamp | API / Error Class | Observed Result / Error Message | Task State |
@@ -250,11 +286,14 @@ aws bedrock get-foundation-model-availability \
 | **Cycle 1** | `2026-09-27T11:05:34+03:00` | `AccessDeniedException` | `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
 | **Cycle 2** | `2026-09-27T13:19:20+03:00` | `ValidationException` | `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
 | **Diagnostic Cycle** | `2026-09-27T20:58:05+03:00` | `get-foundation-model-availability` (Read-only) | `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE) | `BLOCKED / NOT ACCEPTED` |
+| **Support Escalation** | `2026-09-27` | Authenticated AWS Support Case | Case OPEN: `Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED` | `AWS_SUPPORT_PENDING` |
 
-- **Cumulative P-01.02 Inference Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt, Diagnostic Cycle: 0 attempts; lifetime P-01.02 inference attempts = 2).
-- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
+- **Cumulative P-01.02 Inference Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt, Diagnostic Cycle: 0 attempts, Support Escalation: 0 attempts; lifetime P-01.02 inference attempts = 2).
+- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
+- **External Resolution State**: **`AWS_SUPPORT_PENDING`** (Support case OPEN / AWS response pending).
 - **Task P-01.03 Status**: **`NOT STARTED / LOCKED`** (Strictly locked; must not start before P-01.02 achieves live model response and independent QA PASS).
 - **Next Safe Action**:
-  Independent QA evaluation and resolution of account-specific Bedrock authorization (`authorizationStatus = NOT_AUTHORIZED`).
-  Third inference attempt is NOT AUTHORIZED without fresh independent QA authorization.
+  Wait for authoritative AWS Support response.
+  Third inference attempt is strictly **NOT AUTHORIZED** without fresh independent QA authorization.
+
 

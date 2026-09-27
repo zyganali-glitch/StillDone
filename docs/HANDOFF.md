@@ -76,7 +76,7 @@ Preferred AWS target:
 `P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
 
 Status:
-`BLOCKED / NOT ACCEPTED — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED`
+`BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED`
 
 ## Last independently VERIFIED baseline SHA
 
@@ -84,10 +84,11 @@ Status:
 
 ## Next safe action
 
-Independent QA evaluation and resolution of account-specific Bedrock authorization (`authorizationStatus = NOT_AUTHORIZED`).
+Wait for authoritative AWS Support response.
 
-No inference was executed during the diagnostic cycle (diagnostic inference attempts = 0; lifetime inference attempts = 2).
+No inference was executed during the diagnostic cycle or support escalation (lifetime inference attempts = 2).
 
-A future inference cycle requires fresh independent QA authorization after the authorization blocker is resolved.
+Third inference remains strictly NOT AUTHORIZED.
 
 Task P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`) remains PENDING / LOCKED and MUST NOT start before P-01.02 achieves real live execution and independent QA PASS.
+

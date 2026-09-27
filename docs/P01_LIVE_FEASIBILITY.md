@@ -111,8 +111,10 @@ Documented requirements and constraints for future task P-01.02 (do NOT execute 
 > - **Cycle 1 (`2026-09-27T11:05:34+03:00`)**: Single real Bedrock Converse call failed with `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.` (Account verification hold).
 > - **Cycle 2 (`2026-09-27T13:19:20+03:00`)**: Fresh QA-authorized single attempt executed > 2 hours later. Returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0`. The Cycle 1 verification message was not repeated in Cycle 2, but whether AWS account verification is fully complete is `NOT_ESTABLISHED` from this error transition alone. Root cause is `UNKNOWN / NOT_ESTABLISHED`.
 > - **Diagnostic Cycle (`2026-09-27T20:58:05+03:00`)**: Read-only `get-foundation-model-availability` returned `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE). Zero inference executed (attempts in cycle = 0; lifetime inference attempts = 2).
+> - **AWS Support Escalation (`2026-09-27`)**: Authenticated AWS Support case opened (`Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED`). External state is `AWS_SUPPORT_PENDING` (OPEN / AWS response pending).
 > Strictly adhering to the no-retry safety rule, zero retries were attempted (lifetime P-01.02 inference attempts = 2).
-> P-01.02 remains **`BLOCKED / NOT ACCEPTED — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
-> Next safe action: Independent QA evaluation and resolution of account-specific Bedrock authorization. Third inference attempt is NOT AUTHORIZED without fresh independent QA authorization.
+> P-01.02 remains **`BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
+> Next safe action: Wait for authoritative AWS Support response. Third inference attempt is strictly NOT AUTHORIZED without fresh independent QA authorization.
 > Task P-01.03 remains **`NOT STARTED / LOCKED`** and strictly locked.
+
 
