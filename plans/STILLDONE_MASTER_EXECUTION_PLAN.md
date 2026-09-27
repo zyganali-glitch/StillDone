@@ -144,17 +144,21 @@ Acceptance:
 - Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: PENDING
+Status: BLOCKED (Awaiting AWS new-account verification completion)
 
 Acceptance:
-- current model ID discovered from live/official reality;
-- real request/response;
-- timing/cost metadata where available;
-- provenance `LIVE_AWS`;
-- no fixture fallback.
+- current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1`);
+- pre-call pricing and cost bounded: YES (official Bedrock pricing verified; gross request upper bound <= $0.000006, well below $0.01 limit);
+- real request attempt executed: EXACTLY 1 real attempt executed via `bedrock-runtime converse`;
+- live result observed: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
+- zero-retry law enforced: 0 retries, no second model, no second region, no fallback provider, no fixture fallback;
+- timing/cost metadata: Request blocked at authorization barrier before compute; zero charges incurred;
+- provenance: `LIVE_AWS`;
+- documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
+- note: Task remains BLOCKED awaiting AWS verification; must be re-attempted under identical contract once account verification finishes; P-01.03 is strictly LOCKED.
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
-Status: PENDING
+Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)
 
 Acceptance:
 - real Strands runtime;

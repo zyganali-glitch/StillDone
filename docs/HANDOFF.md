@@ -73,17 +73,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality`
+`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
 
 Status:
-`DONE (awaiting independent QA PASS)`
+`BLOCKED (Awaiting AWS new-account verification completion; AccessDeniedException on Converse)`
 
 ## Last independently VERIFIED baseline SHA
 
-`6315d6dd9e839688a256cb88109fe87c158558b2`
+`e3d5aa79d8569ebe7e20e48300060b15ba30c187`
 
-## Next exact task after independent QA PASS
+## Next exact task
 
-`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
+`P-01.02 — Re-attempt first real Bedrock model inference after AWS account verification completes`
 
-P-01.02 MUST NOT execute before independent P-01.01 QA PASS. Execution requires strict adherence to the future P-01.02 safety contract (single minimal prompt, token bounding <= 100, live model discovery, zero personal spend preservation).
+Task P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`) is strictly locked and MUST NOT start before P-01.02 achieves real live execution and independent QA PASS.
