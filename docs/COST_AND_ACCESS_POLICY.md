@@ -1,6 +1,6 @@
 # Cost & Access Policy
 
-Snapshot date: `2026-09-20`
+Snapshot date: `2026-09-27`
 
 ## Principle
 
@@ -20,14 +20,17 @@ Official sources:
 - Request Deadline: Wednesday, October 21, 2026 at 12:00 PM PT
 - Credit Terms: https://aws.amazon.com/awscredits/
 
-### Operator Credit Request Status (as of 2026-09-20)
+### Operator Credit Status (as of 2026-09-27)
 
-- **Submission**: Successfully submitted on 2026-09-20 via official Google Form (`https://forms.gle/GaHFxSbBQNG9Kti6A`).
-- **Confirmation**: Google Form displayed confirmation message "Yanıtınız kaydedildi."
-- **Processing Window**: Official form states credit processing may take up to 5 business days.
-- **Current Operational Truth**: Processing is pending. Credit availability is NOT yet observed or proven in an AWS account.
-- **P-01.01 Observation Outcome**: Verified on 2026-09-20. No authenticated AWS session or credentials configured in environment. Credit presence remains `NOT_OBSERVABLE`. Spend decision is `BLOCKED_ZERO_SPEND`. Next live task P-01.02 remains blocked until credit arrival is verified in the AWS console.
-- **Binding Policy**: Do NOT submit another credit request. Do NOT enable pay-as-you-go, credit card billing, paid quotas, or auto-fallback. Personal-spend exposure remains `$0.00`.
+- **Redemption & Status**: The official `$150.00` Hackathon Promotional Credit (`Amazon Devices Global Hackathon - Teams A4`, type: Promotion) is successfully redeemed and **Active** in the operator's AWS account.
+- **Balance & Usage**: `$150.00` granted, `$150.00` remaining, `$0.00` used at observation checkpoint (`2026-09-27`).
+- **Expiration Date**: `2028-09-01` observed in Billing credit detail view (overview/email may display `2028-08-31` due to boundary wording).
+- **Applicable Products Coverage**: Directly inspected in the live AWS Billing "Applicable products" list. Explicitly confirmed to cover `Amazon Bedrock Service`, `AmazonBedrockFoundationModels`, `Amazon Bedrock`, `Amazon Bedrock Managed Knowledge Base`, and `Amazon Bedrock AgentCore`.
+- **Separate AWS Signup Credit**: A separate `AWS Free Tier` signup credit of `$100.00` (Active, expires `2027-09-27`, `$0.00` used) was also observed. Total account remaining credit is `$250.00`. The hackathon promotion remains the canonical credit basis for StillDone.
+- **Account Plan & Support**: Paid account plan explicitly chosen by the operator to permit promotional-credit redemption, with Basic (free) support plan.
+- **Current Account Charges**: `$0.00` unexpected charges at observation checkpoint.
+- **P-01.01 Observation Outcome**: Verified on `2026-09-27`. Spend decision updated from `BLOCKED_ZERO_SPEND` to `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`. This authorizes ONLY a single, tightly bounded P-01.02 Bedrock test inference after independent P-01.01 QA PASS.
+- **Binding Policy**: No automatic paid fallback. Credits are a payment offset, NOT a hard spending cap. If credits exhaust or unexpected charges appear, execution halts immediately. Personal-spend exposure remains strictly `$0.00`.
 
 Official rules explicit warning:
 > “Additional charges incurred by the Entrant for the use of AWS products are the responsibility of the Entrant. Entrants are encouraged to monitor their usage of services so as to not incur additional charges.”
@@ -39,11 +42,11 @@ This does NOT mean:
 - credits necessarily last through judging.
 
 P-01 verification status:
-- actual account credit balance: `NOT_OBSERVABLE` (pending disbursement);
-- expiry: `NOT_OBSERVABLE`;
-- billing behavior: AWS Budgets updates asynchronously every 8–12 hours, not a hard real-time cap;
-- service availability: candidate region `us-east-1` selected; Bedrock control plane blocked without credentials;
-- safety decision: `BLOCKED_ZERO_SPEND`;
+- actual account credit balance: `$150.00` remaining (`$0.00` used) on hackathon credit;
+- expiry: `2028-09-01` recorded from Billing credit details;
+- billing behavior: AWS credits automatically apply to eligible services until exhausted or expired. AWS Budgets updates asynchronously every 8–12 hours, not a hard real-time cap;
+- service availability: candidate region `us-east-1` confirmed for Bedrock runtime and AgentCore;
+- safety decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK` (strictly bounded to 1 feasibility inference in P-01.02);
 - practical kill switch / budget strategy: documented in `docs/P01_LIVE_FEASIBILITY.md`.
 
 ## AWS AgentCore

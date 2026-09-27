@@ -76,14 +76,14 @@ Preferred AWS target:
 `P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality`
 
 Status:
-`BLOCKED (awaiting independent QA PASS & credit disbursement)`
+`DONE (awaiting independent QA PASS)`
 
 ## Last independently VERIFIED baseline SHA
 
 `6315d6dd9e839688a256cb88109fe87c158558b2`
 
-## Next exact task after independent P-01.01 PASS & credit verification
+## Next exact task after independent QA PASS
 
 `P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
 
-Do NOT execute P-01.02 while zero-spend decision is `BLOCKED_ZERO_SPEND`. Execution requires independent confirmation of hackathon credit disbursement in the AWS Billing console.
+P-01.02 MUST NOT execute before independent P-01.01 QA PASS. Execution requires strict adherence to the future P-01.02 safety contract (single minimal prompt, token bounding <= 100, live model discovery, zero personal spend preservation).
