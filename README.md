@@ -103,21 +103,19 @@ See:
 
 ## Current status
 
-**BOOTSTRAP COMPLETE / EMPTY PRODUCT BASELINE (P-00)**
+**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 BLOCKED_EXTERNAL / AWS_SUPPORT_PENDING**
 
-The project bootstrap and governance foundation is complete:
-- Apache-2.0 open-source licensing and repository governance established (P-00.01);
-- Current competition rules, tracks, prizes, and submission criteria verified against official Devpost and Amazon sources (P-00.02);
-- All donor boundaries frozen with immutable SHAs and licenses under `CONCEPT_ONLY` reuse (P-00.03);
-- Deterministic Python 3.13 engineering baseline established with pinned `uv 0.11.28`, cross-platform `uv.lock`, strict type checking (`mypy`), linting/formatting (`ruff`), test suite (`pytest`), and verified GitHub Actions CI (P-00.04);
-- Documentation consolidated and P-00 phase-closure P-Ω audit conducted (P-00.05).
-
-**Product and runtime functionality is NOT yet implemented.**
-No real AWS Bedrock, Google Tasks/Calendar, Open-Meteo, or MCP runtime calls are claimed in this phase.
-All live technology validation begins in Phase P-01.
+Foundation and live feasibility status:
+- **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
+- **P-01.01 (AWS Account, Budget & Access Setup)**: Passed. AWS account, billing alerts, and Bedrock model availability checks established.
+- **P-01.02 (Minimal Bedrock Model Inference)**: `BLOCKED / NOT ACCEPTED`. Two bounded real AWS inference attempts were executed (Cycle 1 failed with `AccessDeniedException` during account verification hold; Cycle 2 failed with `ValidationException: Operation not allowed`). Account-specific read-only diagnostic confirmed `authorizationStatus = NOT_AUTHORIZED` while agreements/entitlements/region are `AVAILABLE`. Underlying root cause is `UNKNOWN / NOT_ESTABLISHED`. An official AWS Support case is open (`AWS_SUPPORT_PENDING`).
+- **Discipline constraints**: A third inference attempt is strictly `NOT AUTHORIZED` (lifetime attempts capped at 2). Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED`.
+- **Product code**: Remains intentionally minimal / zero until live technology gates pass or authorized under Master Plan external-blocker parallelization rules.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
 - `docs/HANDOFF.md`
-- `docs/P_OMEGA_AUDIT_REPORT.md`
+- `docs/P01_LIVE_FEASIBILITY.md`
+- `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`
+- `docs/COMPETITION_FEEDBACK_LOG.md`
 - `AGENTS.md`

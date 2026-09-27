@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **BOOTSTRAPPED**
+Current repository state: **P-01 LIVE FEASIBILITY OPEN — P-01.01 PASS; P-01.02 BLOCKED_EXTERNAL / AWS_SUPPORT_PENDING**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
