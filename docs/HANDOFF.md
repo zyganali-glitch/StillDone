@@ -76,14 +76,16 @@ Preferred AWS target:
 `P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
 
 Status:
-`BLOCKED (Awaiting AWS new-account verification completion; AccessDeniedException on Converse)`
+`BLOCKED — AWS new-account verification pending`
 
 ## Last independently VERIFIED baseline SHA
 
 `e3d5aa79d8569ebe7e20e48300060b15ba30c187`
 
-## Next exact task
+## Next safe action
 
-`P-01.02 — Re-attempt first real Bedrock model inference after AWS account verification completes`
+Wait for AWS account verification, then independent QA may authorize one new bounded execution cycle of the SAME P-01.02 task (`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`).
+
+A later second execution cycle of P-01.02 requires fresh independent QA authorization after AWS verification is expected to have completed. Within that future execution cycle: exactly one inference attempt, no retry/fallback, and the same zero-spend boundary.
 
 Task P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`) is strictly locked and MUST NOT start before P-01.02 achieves real live execution and independent QA PASS.

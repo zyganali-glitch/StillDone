@@ -152,10 +152,10 @@ Acceptance:
 - real request attempt executed: EXACTLY 1 real attempt executed via `bedrock-runtime converse`;
 - live result observed: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
 - zero-retry law enforced: 0 retries, no second model, no second region, no fallback provider, no fixture fallback;
-- timing/cost metadata: Request blocked at authorization barrier before compute; zero charges incurred;
+- timing/cost metadata: request reached real AWS Bedrock Converse authorization path and was rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN (no successful model response obtained; gross upper bound was planned at $0.00000553); personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task remains BLOCKED awaiting AWS verification; must be re-attempted under identical contract once account verification finishes; P-01.03 is strictly LOCKED.
+- note: Task remains BLOCKED awaiting AWS new-account verification completion. The single authorized attempt was consumed. A later second execution cycle of P-01.02 requires fresh independent QA authorization after AWS verification completes. P-01.03 remains strictly LOCKED.
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
 Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)

@@ -114,6 +114,17 @@ aws bedrock-runtime converse \
 - **Sanitized Error Message**:
   > `An error occurred (AccessDeniedException) when calling the Converse operation: Your account is currently being verified. Verification normally takes less than 2 hours. Until your account is verified, you may not have access to this operation. If you are still receiving this message after more than 2 hours, please let us know by writing to aws-verification[at]amazon.com. We appreciate your patience.`
 
+### Usage & Token Metadata Observation
+- **inputTokens**: `NOT_RETURNED / NOT_AVAILABLE`
+- **outputTokens**: `NOT_RETURNED / NOT_AVAILABLE`
+- **totalTokens**: `NOT_RETURNED / NOT_AVAILABLE`
+- **stopReason**: `NOT_RETURNED / NOT_AVAILABLE`
+- **Execution Truth**:
+  - The request reached the real AWS Bedrock Converse authorization path.
+  - It was rejected before a successful model response.
+  - No model-response usage metadata was returned by AWS.
+  - Zero token processing must not be inferred from the absence of usage metadata.
+
 ### Constitutional Strict Enforcement (No-Retry Law)
 Per Master Plan and task safety instructions:
 - **Zero Retries Performed**: Attempt count remains strictly **1**.
@@ -126,14 +137,20 @@ Per Master Plan and task safety instructions:
 
 ## 6. Post-Attempt Billing & Resource Delta
 
-- **Billing Propagation Status**: `POST_CALL_BILLING_PROPAGATION_PENDING` (The request was denied at the authorization barrier prior to model compute; zero charges incurred).
-- **Personal Spend Delta**: `$0.00`.
+- **Post-Call Billing/Credit Delta**: `NOT_OBSERVED / UNKNOWN`
+- **Actual Billed Request Cost**: `NOT_OBSERVED / UNKNOWN`
+- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN`
+- **Planned Successful-Call Gross Upper Bound**: `$0.00000553` (strictly preserved as pre-call calculated risk bound)
+- **Billing Observation Truth**:
+  - No successful model response was obtained.
+  - A real post-call Billing/Credits read was not performed at checkpoint; therefore, the failed authorization response must not be converted into proof of "$0 billed" without billing evidence.
 - **AWS Resource Mutations**: `NONE`. Zero cloud resources created.
 
 ---
 
-## 7. Status & Next Safe Action
+## 7. Status, Next Safe Action & Retry Authority
 
-- **P-01.02 Status**: **`BLOCKED`** (Awaiting AWS new-account verification completion).
+- **P-01.02 Status**: **`BLOCKED`** (AWS new-account verification pending).
 - **P-01.03 Status**: **`NOT STARTED`** (Strictly locked; must not start).
-- **Reconciliation Action**: Once AWS finishes new-account verification (normally `< 2 hours`), task P-01.02 may be re-attempted under the identical single-call safety contract.
+- **Next Safe Action**: Wait for AWS account verification, then independent QA may authorize one new bounded execution cycle of the SAME P-01.02 task (`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`).
+- **Retry Authority**: Retry is NOT automatically authorized. The previous execution contract allowed exactly one inference attempt and that attempt has been consumed. A later second execution cycle of P-01.02 requires fresh independent QA authorization after AWS verification is expected to have completed. Within that future execution cycle: exactly one inference attempt, no retry/fallback, and the same zero-spend boundary.
