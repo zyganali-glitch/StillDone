@@ -107,9 +107,8 @@ Documented requirements and constraints for future task P-01.02 (do NOT execute 
 ## 6. Execution Boundary & Next Step Lock
 
 > [!WARNING]
-> **P-01.02 Attempted & BLOCKED**:
-> Task `P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt` was executed with exactly one single attempt on `2026-09-27T11:05:34+03:00`.
-> Model discovery successfully identified Amazon candidate models (`amazon.nova-micro-v1:0` selected).
-> The single real Bedrock Converse call failed with `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.`
-> Strictly adhering to the no-retry safety rule, zero retries were attempted. P-01.02 is **BLOCKED** awaiting verification.
-> P-01.03 remains **NOT STARTED** and strictly locked.
+> **P-01.02 Attempted & BLOCKED / NOT ACCEPTED**:
+> - **Cycle 1 (`2026-09-27T11:05:34+03:00`)**: Single real Bedrock Converse call failed with `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.` (Account verification hold).
+> - **Cycle 2 (`2026-09-27T13:19:20+03:00`)**: Fresh QA-authorized single attempt executed > 2 hours later. The verification hold cleared, but AWS Bedrock returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0`.
+> Strictly adhering to the no-retry safety rule, zero retries were attempted. P-01.02 remains **BLOCKED / NOT ACCEPTED**.
+> Task P-01.03 remains **NOT STARTED** and strictly locked.

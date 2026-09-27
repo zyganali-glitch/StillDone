@@ -76,7 +76,7 @@ Preferred AWS target:
 `P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
 
 Status:
-`BLOCKED — AWS new-account verification pending`
+`BLOCKED — AWS Bedrock Converse returned ValidationException: Operation not allowed`
 
 ## Last independently VERIFIED baseline SHA
 
@@ -84,8 +84,8 @@ Status:
 
 ## Next safe action
 
-Wait for AWS account verification, then independent QA may authorize one new bounded execution cycle of the SAME P-01.02 task (`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`).
+Independent QA evaluation and authorization required before any future bounded execution cycle of the SAME P-01.02 task (`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`).
 
-A later second execution cycle of P-01.02 requires fresh independent QA authorization after AWS verification is expected to have completed. Within that future execution cycle: exactly one inference attempt, no retry/fallback, and the same zero-spend boundary.
+Operator/QA investigation is required on why AWS Bedrock returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0` (e.g. verifying Bedrock Console -> Model Access for Amazon Nova models or checking inference profile requirements). A later third execution cycle of P-01.02 requires fresh independent QA authorization. Within that future execution cycle: exactly one inference attempt, no retry/fallback, and the same zero-spend boundary.
 
 Task P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`) is strictly locked and MUST NOT start before P-01.02 achieves real live execution and independent QA PASS.

@@ -144,18 +144,20 @@ Acceptance:
 - Note: P-01.02 remains PENDING and MUST NOT execute until independent P-01.01 QA PASS is awarded.
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: BLOCKED (Awaiting AWS new-account verification completion)
+Status: BLOCKED / NOT ACCEPTED (Cycle 1: Account verification hold; Cycle 2: ValidationException Operation not allowed)
 
 Acceptance:
-- current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1`);
+- current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across both cycles);
 - pre-call pricing and cost bounded: YES (official Bedrock pricing verified; gross request upper bound <= $0.000006, well below $0.01 limit);
-- real request attempt executed: EXACTLY 1 real attempt executed via `bedrock-runtime converse`;
-- live result observed: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
-- zero-retry law enforced: 0 retries, no second model, no second region, no fallback provider, no fixture fallback;
-- timing/cost metadata: request reached real AWS Bedrock Converse authorization path and was rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN (no successful model response obtained; gross upper bound was planned at $0.00000553); personal-spend delta: NOT_OBSERVED / UNKNOWN;
+- real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt (Cumulative attempts = 2);
+- live results observed:
+  - Cycle 1: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
+  - Cycle 2: `ValidationException` (`Operation not allowed`);
+- zero-retry law enforced: 0 retries within each cycle, no second model, no second region, no fallback provider, no fixture fallback;
+- timing/cost metadata: requests rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task remains BLOCKED awaiting AWS new-account verification completion. The single authorized attempt was consumed. A later second execution cycle of P-01.02 requires fresh independent QA authorization after AWS verification completes. P-01.03 remains strictly LOCKED.
+- note: Task remains BLOCKED awaiting investigation of model access / validation error. Both single-attempt authorizations consumed. Any future execution cycle of P-01.02 requires fresh independent QA authorization. P-01.03 remains strictly LOCKED.
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
 Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)
