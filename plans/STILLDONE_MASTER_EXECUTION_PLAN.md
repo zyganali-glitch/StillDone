@@ -145,7 +145,7 @@ Acceptance:
 
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: DONE (awaiting independent QA PASS)
+Status: DONE — independent QA PASS (Verified SHA: `67bf97a26e3c5a1cea9cb90929cfa390c43b9995`)
 
 Acceptance:
 - current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across cycles);
@@ -164,22 +164,27 @@ Acceptance:
 - timing/cost metadata: valid usage metadata returned (inputTokens=8, outputTokens=3, totalTokens=11, stopReason=end_turn, latencyMs=7259); usage-derived estimated gross request cost $\approx \$0.00000070$ (well below $\$0.01$ limit; target personal spend remains strictly $\$0.00$); actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task is marked DONE (awaiting independent QA PASS). Lifetime inference attempts = 3. A fourth inference attempt is NOT_RUN / NOT_AUTHORIZED. Next exact task after independent QA PASS is P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`). P-01.03 remains PENDING / LOCKED until independent QA PASS is awarded.
-
-
+- note: Task closed with independent QA PASS (Verified SHA: `67bf97a26e3c5a1cea9cb90929cfa390c43b9995`).
 
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
-Status: PENDING (LOCKED — do not start before P-01.02 independent PASS)
+Status: DONE (awaiting independent QA PASS)
 
 Acceptance:
-- real Strands runtime;
-- bounded tool-free or harmless-tool run;
-- exact versions recorded;
-- deterministic event/result capture.
+- real Strands runtime: YES (`strands-agents 1.57.1`, `boto3 1.43.103`, `botocore 1.43.103`, `awscrt 0.36.0` on Python 3.13.5);
+- Bedrock provider integration: native `from strands.models.bedrock import BedrockModel` configured with `amazon.nova-micro-v1:0` in `us-east-1` via short-lived profile session;
+- bounded tool-free run: strictly tool-free (`tools=[]`, zero injected tools, zero MCP/shell/network tools, `streaming=False`, `max_tokens=32`, `temperature=0.0`);
+- exact prompt & result: prompt `"Reply only with: STRANDS_OK"` executed; model returned `"STRANDS_OK"` (`stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms, model latency=264ms, TTFB=1174ms);
+- deterministic event/result capture: structured `AgentResult.to_dict()` captured with tracking ID `c8b738aa-5acf-4422-84b5-c8d0d85edda9`;
+- zero-retry law enforced: exactly 1 invocation attempt; zero retries; no second model;
+- billing truth: usage-derived estimated gross request cost $\approx \$0.00000098$ ($\ll \$0.01$); actual billed request cost / personal-spend delta: NOT_OBSERVED / UNKNOWN; target personal spend remains strictly `$0.00`;
+- cleanup & provenance: `aws logout` executed immediately; provenance: `LIVE_AWS + REAL_STRANDS_RUNTIME`;
+- documented evidence: `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`;
+- note: Task marked DONE (awaiting independent QA PASS). Task P-01.04 remains PENDING / LOCKED until independent QA PASS is awarded.
+
 
 ### P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence
-Status: PENDING
+Status: PENDING (LOCKED — do not start before P-01.03 independent PASS)
 
 Acceptance:
 - if available/affordable: deploy harmless minimal runtime and invoke it;

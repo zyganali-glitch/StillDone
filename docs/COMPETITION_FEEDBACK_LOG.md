@@ -90,3 +90,23 @@ Do not invent entries.
 - Would we build with it again? `CONDITIONAL`
 - Secrets/PII check: `CLEAN`
 
+---
+
+### F-20260928-01 — AWS Login Credential Provider Requires awscrt Extra in Boto3
+
+- Date/time: 2026-09-28T17:04:30Z
+- Exact task: P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
+- Tool/API/SDK: Python (`3.13.5`), `strands-agents 1.57.1`, `boto3 1.43.103`, `botocore 1.43.103`
+- Version/region/account mode: us-east-1 / model: `amazon.nova-micro-v1:0` / profile: `stilldone-p01` (from `aws login`)
+- Attempt: Initial instantiation of `BedrockModel` with a `boto3.Session(profile_name="stilldone-p01")`
+- Expected: `boto3` transparently loads session credentials created by the official `aws login` CLI flow
+- Actual: `botocore` raised `botocore.exceptions.MissingDependencyException: Missing Dependency: Using the login credential provider requires an additional dependency. You will need to pip install "botocore[crt]" before proceeding.`
+- Severity: `LOW`
+- Workaround: Included `botocore[crt]` (`awscrt 0.36.0`) in the execution environment (`uv run --with strands-agents --with "botocore[crt]"`).
+- Evidence: `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? docs/SDK friction
+- Actionable suggestion: Standard AWS developer documentation for `aws login` and AWS SDKs should clearly document that consuming login-based session credentials in Python requires `botocore[crt]` / `awscrt`.
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
+

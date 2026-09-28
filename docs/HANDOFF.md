@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 DONE (AWAITING INDEPENDENT QA PASS)**
+Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,27 +73,32 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt`
+`P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model`
 
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`e3d5aa79d8569ebe7e20e48300060b15ba30c187`
+`67bf97a26e3c5a1cea9cb90929cfa390c43b9995`
 
 ## Next exact task after independent QA PASS
 
-`P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model`
+`P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`
 
 ## Next safe action
 
-Await independent QA review and formal PASS decision for P-01.02.
+Await independent QA review and formal PASS decision for P-01.03.
 
-Cycle 3 executed under QA authorization: preflight gate was verified `AUTHORIZED`, and exactly one real Bedrock Converse inference attempt succeeded with a genuine model response (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms).
-Zero retries; lifetime inference attempts = 3.
-A fourth inference attempt is strictly NOT_RUN / NOT_AUTHORIZED.
+Real Strands agent execution was proven against `amazon.nova-micro-v1:0` in `us-east-1` using ephemeral `strands-agents` (v1.57.1) with native `BedrockModel`.
+Mandatory preflight gate verified `authorizationStatus = AUTHORIZED`. Exactly one tool-free (`tools=[]`) invocation was executed with synthetic prompt `"Reply only with: STRANDS_OK"`.
+Model returned genuine response `"STRANDS_OK"`, `stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms (modelLatencyMs=264ms, TTFB=1174ms).
+Zero retries; lifetime Strands invocation attempts = 1.
+Zero AWS mutations; clean logout verified (`aws logout --profile stilldone-p01`).
+Billing truth: usage-derived estimated gross cost $\approx \$0.00000098$; actual billed cost / personal-spend delta: `NOT_OBSERVED / UNKNOWN`; personal spend target preserved at `$0.00`.
+Evidence documented in `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`.
+Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-01`: `botocore[crt]` extra needed for `aws login` credentials).
 
-Task P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`) remains PENDING / LOCKED and MUST NOT start before P-01.02 receives independent QA PASS.
+Task P-01.04 (`Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`) remains PENDING / LOCKED and MUST NOT start before P-01.03 receives independent QA PASS.
 
 

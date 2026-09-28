@@ -103,13 +103,14 @@ See:
 
 ## Current status
 
-**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 DONE (AWAITING INDEPENDENT QA PASS)**
+**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Foundation and live feasibility status:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
 - **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed. AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled. Live Bedrock model discovery and account-specific availability diagnosis occurred later under P-01.02.
-- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `DONE — awaiting independent QA PASS`. Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata (usage-derived estimated gross request cost $\approx \$0.00000070$; actual billed cost and personal-spend delta: `NOT_OBSERVED / UNKNOWN`), and zero mutations.
-- **Discipline constraints**: Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED` until P-01.02 receives independent QA PASS. A fourth inference attempt is strictly `NOT_RUN / NOT_AUTHORIZED`.
+- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: Independently passed (Verified SHA: `67bf97a26e3c5a1cea9cb90929cfa390c43b9995`). Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata, and zero mutations.
+- **P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model**: `DONE — awaiting independent QA PASS`. Minimal real Strands agent execution proven against `amazon.nova-micro-v1:0` via native `BedrockModel` with synthetic prompt `"Reply only with: STRANDS_OK"`. Model returned genuine response `"STRANDS_OK"` (`stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms). Usage-derived estimated gross request cost $\approx \$0.00000098$; actual billed cost and personal-spend delta: `NOT_OBSERVED / UNKNOWN`. Zero retries, zero AWS mutations, clean logout verified.
+- **Discipline constraints**: Downstream task `P-01.04` (AgentCore runtime path) remains `PENDING / LOCKED` until P-01.03 receives independent QA PASS.
 - **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
 
 See:
@@ -117,5 +118,6 @@ See:
 - `docs/HANDOFF.md`
 - `docs/P01_LIVE_FEASIBILITY.md`
 - `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`
+- `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`
 - `docs/COMPETITION_FEEDBACK_LOG.md`
 - `AGENTS.md`
