@@ -108,7 +108,7 @@ See:
 Foundation and live feasibility status:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
 - **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed. AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled. Live Bedrock model discovery and account-specific availability diagnosis occurred later under P-01.02.
-- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `DONE — awaiting independent QA PASS`. Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata, zero mutations, and zero personal spend.
+- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `DONE — awaiting independent QA PASS`. Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata (usage-derived estimated gross request cost $\approx \$0.00000070$; actual billed cost and personal-spend delta: `NOT_OBSERVED / UNKNOWN`), and zero mutations.
 - **Discipline constraints**: Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED` until P-01.02 receives independent QA PASS. A fourth inference attempt is strictly `NOT_RUN / NOT_AUTHORIZED`.
 - **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
 

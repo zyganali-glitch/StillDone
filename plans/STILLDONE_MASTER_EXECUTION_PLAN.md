@@ -152,16 +152,16 @@ Acceptance:
 - pre-call pricing and cost bounded: YES (official Bedrock pricing verified; gross request upper bound <= $0.000006, well below $0.01 limit);
 - real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt; Diagnostic Cycle = 0 attempts; Cycle 3 = 1 attempt (Cumulative inference attempts = 3);
 - read-only diagnostic executed: Cycle 3 preflight `get-foundation-model-availability` returned `authorizationStatus = AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE, agreementError: null);
-- support case opened and resolved: authenticated AWS Support case opened on 2026-09-27, operator provided project use case on 2026-09-28, AWS Support completed account adjustments for base Amazon Bedrock models;
+- AWS Support remediation: authenticated AWS Support case opened on 2026-09-27, operator provided project use case on 2026-09-28, AWS Support confirmed account adjustments completed by authorized service team (blocker functionally remediated; administrative case state: NOT_OBSERVED / NOT_ESTABLISHED);
 - live results observed:
   - Cycle 1: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
   - Cycle 2: `ValidationException` (`Operation not allowed`);
   - Diagnostic Cycle: `get-foundation-model-availability` -> `authorizationStatus = NOT_AUTHORIZED`;
-  - Support Resolution: AWS Support confirmed account adjustments completed;
+  - AWS Support Remediation: AWS Support confirmed account adjustments completed for base models; blocker functionally remediated;
   - Cycle 3 Preflight: `get-foundation-model-availability` -> `authorizationStatus = AUTHORIZED`;
   - Cycle 3 Inference: **SUCCESS** — `aws bedrock-runtime converse` returned genuine model response (`pong`, stopReason=`end_turn`, inputTokens=8, outputTokens=3, totalTokens=11, latency=7259ms);
 - zero-retry law enforced: exactly 1 attempt consumed in Cycle 3; zero retries; fourth attempt is strictly NOT_RUN / NOT_AUTHORIZED; no second model, no second region, no fallback provider, no fixture fallback;
-- timing/cost metadata: valid usage metadata returned (inputTokens=8, outputTokens=3, totalTokens=11, stopReason=end_turn, latencyMs=7259); actual calculated call cost $\approx \$0.00000070$ (well below $\$0.01$ limit); actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
+- timing/cost metadata: valid usage metadata returned (inputTokens=8, outputTokens=3, totalTokens=11, stopReason=end_turn, latencyMs=7259); usage-derived estimated gross request cost $\approx \$0.00000070$ (well below $\$0.01$ limit; target personal spend remains strictly $\$0.00$); actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
 - note: Task is marked DONE (awaiting independent QA PASS). Lifetime inference attempts = 3. A fourth inference attempt is NOT_RUN / NOT_AUTHORIZED. Next exact task after independent QA PASS is P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`). P-01.03 remains PENDING / LOCKED until independent QA PASS is awarded.

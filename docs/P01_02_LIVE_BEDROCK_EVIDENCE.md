@@ -3,7 +3,7 @@
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
 **Task**: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **DONE — awaiting independent QA PASS** (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED; Support: RESOLVED / REMEDIATED; Cycle 3: Genuine model response received, stopReason=end_turn, inputTokens=8, outputTokens=3, totalTokens=11)  
+**Status**: **DONE — awaiting independent QA PASS** (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED; AWS Support: Account adjustments confirmed completed / blocker functionally remediated; Cycle 3: Genuine model response received, stopReason=end_turn, inputTokens=8, outputTokens=3, totalTokens=11)  
 **Provenance**: `LIVE_AWS`
 
 ---
@@ -274,11 +274,13 @@ The case submission included the following sanitized technical facts:
   - AWS has not confirmed the specific internal underlying root cause for this account;
   - Zero sensitive identifiers (Account ID, Support Case ID, root email, credit ID, payment details, phone, address, credentials, or session tokens) are committed.
 
-### 3. Authorized Support Remediation & Resolution
+### 3. Authorized Support Remediation & Blocker Resolution
 - **2026-09-28**: AWS Support requested an English description of the project use/business case.
 - **Operator Action**: The operator provided the requested hackathon project context.
 - **AWS Support Statement**: AWS Support subsequently stated that the authorized service team completed the required account adjustments for access to base Amazon Bedrock models, noting adjustments may take up to 24 hours to propagate across systems.
-- **Case State**: `RESOLVED / REMEDIATED BY AWS SUPPORT`.
+- **Bedrock Access Blocker**: `FUNCTIONALLY REMEDIATED / RESOLVED BY CURRENT LIVE EVIDENCE`.
+- **AWS Support Remediation**: `ACCOUNT ADJUSTMENTS CONFIRMED COMPLETED`.
+- **AWS Support Case Administrative State**: `NOT_OBSERVED / NOT_ESTABLISHED`.
 - **Underlying Causal Root Cause**: Remains `NOT_ESTABLISHED`.
 
 ---
@@ -398,10 +400,10 @@ aws bedrock-runtime converse \
 - **Actual Billed Request Cost**: `NOT_OBSERVED / UNKNOWN`.
 - **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN`.
 - **Planned Successful-Call Gross Upper Bound**: `$0.00000553`.
-- **Calculated Request Cost from Observed Usage**:
+- **Usage-Derived Estimated Gross Request Cost from Observed Usage**:
   - Input: $8 \times (\$0.035 / 1,000,000) = \$0.00000028$
   - Output: $3 \times (\$0.140 / 1,000,000) = \$0.00000042$
-  - Total Calculated Request Cost: $\$0.00000070$ ($\approx 7 \times 10^{-7}$ USD, well below the $\$0.01$ threshold).
+  - Total Usage-Derived Estimated Gross Request Cost: $\approx \$0.00000070$ ($\approx 7 \times 10^{-7}$ USD, well below the $\$0.01$ threshold; target personal spend remains strictly $\$0.00$, but actual billed request cost / personal-spend delta was NOT_OBSERVED / UNKNOWN because no fresh post-call Billing console read was performed).
 
 ---
 
@@ -412,7 +414,7 @@ aws bedrock-runtime converse \
 | **Cycle 1** | `2026-09-27T11:05:34+03:00` | `bedrock-runtime converse` (Attempt 1) | `AccessDeniedException`: `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
 | **Cycle 2** | `2026-09-27T13:19:20+03:00` | `bedrock-runtime converse` (Attempt 2) | `ValidationException`: `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
 | **Diagnostic Cycle** | `2026-09-27T20:58:05+03:00` | `get-foundation-model-availability` (Read-only) | `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE) | `BLOCKED / NOT ACCEPTED` |
-| **Support Escalation** | `2026-09-27` – `2026-09-28` | Authenticated AWS Support Case | Account adjustments completed by authorized service team; case resolved | `RESOLVED` |
+| **Support Escalation** | `2026-09-27` – `2026-09-28` | Authenticated AWS Support Case | Account adjustments completed by authorized service team; blocker functionally remediated (administrative case state: NOT_OBSERVED) | `ADJUSTMENTS_COMPLETED` |
 | **Cycle 3** | `2026-09-28T19:27:16+03:00` | `bedrock-runtime converse` (Attempt 3) | **SUCCESS** (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms) | **`DONE (awaiting independent QA PASS)`** |
 
 - **Cumulative P-01.02 Inference Attempts**: `3` (Cycle 1: 1, Cycle 2: 1, Diagnostic Cycle: 0, Support Escalation: 0, Cycle 3: 1).

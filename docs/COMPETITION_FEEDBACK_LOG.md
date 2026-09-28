@@ -75,14 +75,15 @@ Do not invent entries.
 - Attempt: Attempt 2 (Cycle 2 inference execution) and subsequent read-only diagnostic cycle
 - Expected: Converse API execution succeeds, or returns actionable guidance if additional authorization is required
 - Actual: Cycle 2 operation (`aws bedrock-runtime converse`) with model `amazon.nova-micro-v1:0` raised `ValidationException: Operation not allowed`. Subsequent read-only diagnostic (`aws bedrock get-foundation-model-availability`) revealed `authorizationStatus = NOT_AUTHORIZED` with `agreementStatus = AVAILABLE`, `agreementError = null`, `entitlementAvailability = AVAILABLE`, and `regionAvailability = AVAILABLE`. Underlying causal root cause is unknown and not established via APIs.
-- Severity: `BLOCKER` (RESOLVED via AWS Support on 2026-09-28)
-- Workaround: Strictly halted runtime inference attempts (lifetime attempts capped at 2; zero inference attempts in diagnostic cycle); opened authenticated AWS Support case; transitioned task state to `BLOCKED / NOT ACCEPTED` (`AWS_SUPPORT_PENDING`); locked downstream P-01.03. AWS Support escalation was the resolution path.
+- Severity: `BLOCKER` (FUNCTIONALLY REMEDIATED via AWS Support account adjustments on 2026-09-28)
+- Workaround: Strictly halted runtime inference attempts (lifetime attempts capped at 2; zero inference attempts in diagnostic cycle); opened authenticated AWS Support case; transitioned task state to `BLOCKED / NOT ACCEPTED` (`AWS_SUPPORT_PENDING`); locked downstream P-01.03. AWS Support escalation was the remediation path.
 - Evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` Parts II, III, IV, V; `docs/P01_LIVE_FEASIBILITY.md`
 - Resolution / Outcome (2026-09-28):
   - Operator provided project context to AWS Support; AWS Support confirmed authorized service team completed account adjustments for base Amazon Bedrock models.
   - Subsequent preflight on 2026-09-28 observed `authorizationStatus = AUTHORIZED`.
   - Cycle 3 single inference attempt against `amazon.nova-micro-v1:0` in `us-east-1` succeeded with genuine model response (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11).
-  - Historical `NOT_AUTHORIZED` observation remains preserved as factual at observation time; current state is remediated and authorized.
+  - Bedrock access blocker is functionally remediated by current live evidence; AWS Support case administrative state remains `NOT_OBSERVED / NOT_ESTABLISHED`.
+  - Historical `NOT_AUTHORIZED` observation remains preserved as factual at observation time; current authorization state is confirmed `AUTHORIZED`.
   - Internal causal root cause remains `NOT_ESTABLISHED`.
 - Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? UNKNOWN / NOT_ESTABLISHED
 - Actionable suggestion: Improve `ValidationException: Operation not allowed` error messaging to specify the exact missing prerequisite rather than generic validation failure
