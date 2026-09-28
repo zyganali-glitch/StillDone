@@ -103,14 +103,15 @@ See:
 
 ## Current status
 
-**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 DONE (AWAITING INDEPENDENT QA PASS)**
+**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 DONE (AWAITING INDEPENDENT QA REVIEW)**
 
 Foundation and live feasibility status:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
 - **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed. AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled. Live Bedrock model discovery and account-specific availability diagnosis occurred later under P-01.02.
 - **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: Independently passed (Verified SHA: `67bf97a26e3c5a1cea9cb90929cfa390c43b9995`). Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata, and zero mutations.
-- **P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model**: `DONE — awaiting independent QA PASS`. Minimal real Strands agent execution proven against `amazon.nova-micro-v1:0` via native `BedrockModel` with synthetic prompt `"Reply only with: STRANDS_OK"`. Model returned genuine response `"STRANDS_OK"` (`stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms). Usage-derived estimated gross request cost $\approx \$0.00000098$; actual billed cost and personal-spend delta: `NOT_OBSERVED / UNKNOWN`. Zero retries, zero AWS mutations, clean logout verified.
-- **Discipline constraints**: Downstream task `P-01.04` (AgentCore runtime path) remains `PENDING / LOCKED` until P-01.03 receives independent QA PASS.
+- **P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model**: Independently passed (Verified SHA: `bfa46d24f20c69557f1e747500e874082f1406ed`). Minimal real Strands agent execution proven against `amazon.nova-micro-v1:0` via native `BedrockModel` with synthetic prompt `"Reply only with: STRANDS_OK"`. Model returned genuine response `"STRANDS_OK"` (`stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms).
+- **P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence**: `DONE — awaiting independent QA review`. Real Bedrock AgentCore Runtime deployed to `us-east-1` (CodeZip build, Python 3.13, platform version V1) via official `@aws/agentcore` CLI (v0.30.0). Runtime reached `READY` state. Exactly one live remote invocation executed (HTTP 200, 6720ms duration, session ID captured; returned deterministic `UNKNOWN_PROMPT` response due to Windows PowerShell JSON argument unquoting). Strictly zero models called inside runtime. Complete teardown verified: runtime, CloudFormation stack, and S3 CodeZip asset deleted. CDK bootstrap recorded as `CREATED_DURING_P01_04`.
+- **Discipline constraints**: Downstream task `P-01.05` (Google OAuth / Calendar & Tasks read-only proof) remains `PENDING / NOT_STARTED` until P-01.04 receives independent QA PASS.
 - **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
 
 See:
@@ -119,5 +120,6 @@ See:
 - `docs/P01_LIVE_FEASIBILITY.md`
 - `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`
 - `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`
+- `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`
 - `docs/COMPETITION_FEEDBACK_LOG.md`
 - `AGENTS.md`

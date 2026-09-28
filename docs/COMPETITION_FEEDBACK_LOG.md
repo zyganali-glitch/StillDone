@@ -107,6 +107,21 @@ Do not invent entries.
 - Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? docs/SDK friction
 - Actionable suggestion: Standard AWS developer documentation for `aws login` and AWS SDKs should clearly document that consuming login-based session credentials in Python requires `botocore[crt]` / `awscrt`.
 - Would we build with it again? `YES`
+### F-20260928-02 — AgentCore CLI Windows Argument Quoting & Non-Interactive Teardown Friction
+
+- Date/time: 2026-09-28T19:10:14Z
+- Exact task: P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence
+- Tool/API/SDK: Node.js `@aws/agentcore` CLI (v0.30.0) on Windows PowerShell
+- Version/region/account mode: us-east-1 / AgentCore Runtime / CodeZip / Python 3.13 / profile: `stilldone-p01`
+- Attempt: Invocation with JSON payload via `agentcore invoke --prompt '{"prompt": "PING"}'` and teardown via `agentcore remove all`
+- Expected: CLI preserves JSON quotes or parses JSON string into payload; CLI allows scripted cleanup without interactive prompt
+- Actual: On Windows PowerShell, the CLI unquoted the JSON argument and forwarded `"{prompt: PING}"` to the runtime entrypoint. Additionally, `agentcore remove all` failed by default with `Error: This command requires an interactive terminal` unless `-y` was provided, and `agentcore deploy --dry-run` failed when bootstrap was missing rather than continuing preview.
+- Severity: `LOW`
+- Workaround: Handled non-interactive teardown using `agentcore remove all -y` followed by `agentcore deploy -y -v`. For payload quoting, documented the observation factually.
+- Evidence: `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? CLI / shell argument quoting & non-interactive flag friction
+- Actionable suggestion: AgentCore CLI should accept `--payload-json <json>` directly or parse string payloads cleanly across cross-platform shells (especially Windows PowerShell), and dry-run should preview resources without enforcing interactive bootstrap prerequisites.
+- Would we build with it again? `YES`
 - Secrets/PII check: `CLEAN`
 
 

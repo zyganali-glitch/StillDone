@@ -168,7 +168,7 @@ Acceptance:
 
 
 ### P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model
-Status: DONE (awaiting independent QA PASS)
+Status: DONE — independent QA PASS (Verified SHA: `bfa46d24f20c69557f1e747500e874082f1406ed`)
 
 Acceptance:
 - real Strands runtime: YES (`strands-agents 1.57.1`, `boto3 1.43.103`, `botocore 1.43.103`, `awscrt 0.36.0` on Python 3.13.5);
@@ -180,17 +180,25 @@ Acceptance:
 - billing truth: usage-derived estimated gross request cost $\approx \$0.00000098$ ($\ll \$0.01$); actual billed request cost / personal-spend delta: NOT_OBSERVED / UNKNOWN; target personal spend remains strictly `$0.00`;
 - cleanup & provenance: `aws logout` executed immediately; provenance: `LIVE_AWS + REAL_STRANDS_RUNTIME`;
 - documented evidence: `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`;
-- note: Task marked DONE (awaiting independent QA PASS). Task P-01.04 remains PENDING / LOCKED until independent QA PASS is awarded.
+- note: Task closed with independent QA PASS (Verified SHA: `bfa46d24f20c69557f1e747500e874082f1406ed`).
 
 
 ### P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence
-Status: PENDING (LOCKED — do not start before P-01.03 independent PASS)
+Status: DONE (awaiting independent QA review)
 
 Acceptance:
-- if available/affordable: deploy harmless minimal runtime and invoke it;
-- if unavailable: exact blocker documented;
-- no architecture fiction;
-- decision influences P-01.08.
+- real AgentCore runtime deployed: YES (CloudFormation stack `AgentCore-p01agent-default`, runtime `p01agent_p01agent-or9Fbj3Agb`, status `READY` in `us-east-1`, CodeZip build, Python 3.13, platform version V1);
+- real remote invocation: YES (1 invoke executed via `agentcore invoke`, HTTP 200, duration 6720ms, session ID `d6f6360b-0ce3-48a3-99ad-1af6822f5f2c`);
+- deterministic execution: YES (custom Python entrypoint executed in remote runtime; returned deterministic validation response `UNKNOWN_PROMPT` due to Windows PowerShell JSON argument unquoting);
+- zero model invocations: strictly 0 models or LLMs invoked inside runtime;
+- zero retries: exactly 1 invocation attempt; zero retries;
+- financial safety: conservative gross cost `~$0.00168 USD` (well below authorized `$0.10` limit); actual billed cost / personal-spend delta: NOT_OBSERVED / UNKNOWN; target personal spend remains strictly `$0.00`;
+- mandatory teardown in same cycle: YES (`agentcore remove all -y` + `agentcore deploy -y -v`, runtime and CloudFormation stack deleted, S3 zip deleted, verified via read-only APIs);
+- CDK bootstrap status: `CREATED_DURING_P01_04` (shared account-level infrastructure);
+- cleanup: AWS logout verified, local scratch directory deleted;
+- evidence doc: `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`;
+- friction logged: `F-20260928-02` (CLI argument quoting and non-interactive teardown flags);
+- note: Task marked DONE (awaiting independent QA review). Task P-01.05 remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
 
 ### P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources
 Status: PENDING

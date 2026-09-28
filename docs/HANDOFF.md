@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 DONE (AWAITING INDEPENDENT QA PASS)**
+Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 DONE (AWAITING INDEPENDENT QA REVIEW)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,32 +73,32 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model`
+`P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`
 
 Status:
-`DONE — awaiting independent QA PASS`
+`DONE — awaiting independent QA review`
 
 ## Last independently VERIFIED baseline SHA
 
-`67bf97a26e3c5a1cea9cb90929cfa390c43b9995`
+`bfa46d24f20c69557f1e747500e874082f1406ed`
 
 ## Next exact task after independent QA PASS
 
-`P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`
+`P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`
 
 ## Next safe action
 
-Await independent QA review and formal PASS decision for P-01.03.
+Await independent QA review and formal decision for P-01.04.
 
-Real Strands agent execution was proven against `amazon.nova-micro-v1:0` in `us-east-1` using ephemeral `strands-agents` (v1.57.1) with native `BedrockModel`.
-Mandatory preflight gate verified `authorizationStatus = AUTHORIZED`. Exactly one tool-free (`tools=[]`) invocation was executed with synthetic prompt `"Reply only with: STRANDS_OK"`.
-Model returned genuine response `"STRANDS_OK"`, `stop_reason="end_turn"`, tokens: in=8, out=5, total=13, elapsed=1179ms (modelLatencyMs=264ms, TTFB=1174ms).
-Zero retries; lifetime Strands invocation attempts = 1.
-Zero AWS mutations; clean logout verified (`aws logout --profile stilldone-p01`).
-Billing truth: usage-derived estimated gross cost $\approx \$0.00000098$; actual billed cost / personal-spend delta: `NOT_OBSERVED / UNKNOWN`; personal spend target preserved at `$0.00`.
-Evidence documented in `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`.
-Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-01`: `botocore[crt]` extra needed for `aws login` credentials).
+Real AgentCore Runtime was deployed to `us-east-1` (CodeZip build, Python 3.13, platform version V1) via official `@aws/agentcore` CLI (v0.30.0).
+Preflight confirmed service availability. Pre-deploy cost gate passed (`~$0.00168 USD` conservative, well within authorized `$0.10` limit).
+Runtime reached `READY` (stack `AgentCore-p01agent-default`, runtime ID `p01agent_p01agent-or9Fbj3Agb`).
+Exactly one live remote invocation was executed via `agentcore invoke`. HTTP 200 returned in 6720ms with session ID `d6f6360b-0ce3-48a3-99ad-1af6822f5f2c`. Response payload returned deterministic validation string `"UNKNOWN_PROMPT"` (due to Windows PowerShell shell argument quotation unquoting `{"prompt": "PING"}` to `"{prompt: PING}"` at entrypoint).
+Strictly zero models called inside runtime. Exactly 1 invocation attempt; zero retries.
+Full teardown executed and verified in the same cycle: runtime deleted, CloudFormation stack deleted, S3 CodeZip deleted. CDK bootstrap infrastructure recorded as `CREATED_DURING_P01_04` (shared account-level). Clean AWS logout and scratch cleanup verified.
+Evidence documented in `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`.
+Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-02`).
 
-Task P-01.04 (`Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`) remains PENDING / LOCKED and MUST NOT start before P-01.03 receives independent QA PASS.
+Task P-01.05 (`Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
 
 
