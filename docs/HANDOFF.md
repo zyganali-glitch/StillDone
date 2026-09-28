@@ -92,13 +92,15 @@ Await independent QA PASS for P-01.04.
 
 Cycle 1 historically established real AgentCore service access, CodeZip serverless runtime deployment, and remote Python handler execution, but observed a Windows PowerShell inline JSON quoting defect returning `"UNKNOWN_PROMPT"`.
 The authorized repair cycle successfully proved deterministic acceptance:
-- Read-only audit reconciled shared CDK bootstrap infrastructure (`CDKToolkit`), retaining observed resource classes (`AWS::SSM::Parameter`, `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::ECR::Repository`, `AWS::KMS::Key`, `AWS::KMS::Alias`, `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`).
+- Read-only audit reconciled shared CDK bootstrap infrastructure (`CDKToolkit`), originally provisioned during P-01.04.
 - Exactly 1 repair deployment executed in ephemeral scratch outside canonical repo; reached `READY` (Python 3.14, platformVersion `V1`).
 - Exactly 1 repair remote invocation executed via official data-plane CLI (`aws bedrock-agentcore invoke-agent-runtime`) using binary payload file `fileb://payload.json` (`{"prompt":"PING"}`).
 - Returned HTTP 200 with exact deterministic response `{"result": "AGENTCORE_OK"}`.
 - Strictly zero foundation models or LLMs called inside runtime; zero external calls; zero retries.
 - Mandatory teardown executed immediately: application stack deleted, runtime deleted, S3 CodeZip asset removed, scratch directory removed, AWS logout verified.
-- Cumulative usage-derived gross cost $\approx \$0.00337\text{ USD} \ll \$0.10$ limit; actual billed cost and personal-spend delta remain `NOT_OBSERVED / UNKNOWN` ($0.00 target preserved).
+- Independent QA identified that the original bootstrap stack provisioned an active customer-managed KMS key (`AWS::KMS::Key`, `KeyManager: CUSTOMER`), incurring ongoing $1.00/month charges unless remediated.
+- Surgical cost-closure remediation executed: exactly 1 official `cdk bootstrap --no-bootstrap-customer-key` operation performed; stack updated to `UPDATE_COMPLETE` with `FileAssetsBucketKmsKeyId=AWS_MANAGED_KEY`; `AWS::KMS::Key` transitioned to `DELETE_COMPLETE` in CloudFormation and `PendingDeletion` in KMS (zero ongoing key storage charge confirmed via official pricing); remaining resource classes audited: `AWS::ECR::Repository`, `AWS::IAM::Policy`, `AWS::IAM::Role`, `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`, `AWS::SSM::Parameter`; active billable customer-managed bootstrap key strictly absent.
+- Corrected cumulative usage-derived gross cost $\approx \$0.00521\text{ USD} \ll \$0.10$ limit (including 1.143 hours active customer KMS lifetime @ $1/mo prorated); actual billed cost and personal-spend delta remain `NOT_OBSERVED / UNKNOWN` ($0.00 target preserved).
 - All resource identifiers and private paths sanitized. Evidence documented in `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`.
 - Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-02`).
 

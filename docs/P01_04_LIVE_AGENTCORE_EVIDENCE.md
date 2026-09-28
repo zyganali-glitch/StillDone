@@ -1,13 +1,13 @@
 # P-01.04 Live AgentCore Runtime Feasibility Evidence
 
-**Date & Time (UTC)**: Cycle 1: `2026-09-28T19:14:00Z` | Repair Cycle: `2026-09-28T19:35:54Z`  
+**Date & Time (UTC)**: Cycle 1: `2026-09-28T19:14:00Z` | Repair Cycle: `2026-09-28T19:35:54Z` | Cost Remediation: `2026-09-28T20:14:12Z`  
 **Governing Rule**: [AGENTS.md](../AGENTS.md) § 1–24; [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md)  
 **Task**: `P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`  
 **Status**: `DONE — awaiting independent QA PASS`  
 
 ---
 
-## 1. Official AWS AgentCore Sources
+## 1. Official AWS AgentCore & CDK/KMS Sources
 
 Facts verified against current official external sources on `2026-09-28`:
 
@@ -19,6 +19,8 @@ Facts verified against current official external sources on `2026-09-28`:
 | **AgentCore Regions** | AWS Docs: `https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html` | Officially supported in 21 regions including `us-east-1` (US East - N. Virginia). |
 | **AgentCore Pricing** | AWS Pricing: `https://aws.amazon.com/bedrock/agentcore/pricing/` | Consumption-based active-compute pricing: vCPU at `$0.0895` per active vCPU-hour; Memory at `$0.00945` per GB-hour. I/O wait time not billed. S3 standard storage `$0.023`/GB-month. |
 | **Platform Version V2** | AWS Announcement (2026-09-18) | Platform Version V2 uses serverless microVM snapshot-based execution (~1.9s cold start) and elastic memory. Available in `us-east-1`. Default remains `V1` when unspecified in CLI schema. |
+| **AWS KMS Pricing** | AWS Pricing: `https://aws.amazon.com/kms/pricing/` | `$1.00/month` per customer managed key, calculated on a pro-rated hourly basis (~`$0.001389/hr`). Zero key-storage charge for customer-managed keys scheduled for deletion (`PendingDeletion`). |
+| **AWS CDK Bootstrap Docs** | AWS Docs: `https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html` & `ref-cli-cmd-bootstrap.md` | Modern CDK bootstrapping recommends re-bootstrapping with `--no-bootstrap-customer-key` to eliminate customer-managed KMS key charges by using AWS-managed S3 encryption (`FileAssetsBucketKmsKeyId=AWS_MANAGED_KEY`). |
 
 ---
 
@@ -29,29 +31,53 @@ Facts verified against current official external sources on `2026-09-28`:
 - **Cumulative Conservative Cost Calculation**:
   - Cycle 1 Conservative Gross Usage: `~$0.00168 USD`
   - Repair Cycle Conservative Gross Usage: `~$0.00168 USD`
-  - Retained Shared Bootstrap S3 Storage (< 15 KB @ $0.023/GB-mo): `< $0.00001 USD`
-  - Cumulative Conservative Expected Gross Total: `~$0.00337 USD` (well below authorized `$0.10` limit)
+  - Retained Customer KMS Key Active Lifetime (1.143 hours active between creation at `2026-09-28T19:05:37Z` and `PendingDeletion` at `2026-09-28T20:14:12Z` @ $1.00/month prorated hourly): `~$0.00160 USD`
+  - Retained Shared Bootstrap S3 Storage (< 30 KB @ $0.023/GB-mo) + S3/KMS requests: `~$0.00025 USD`
+  - Remediation Operation: `$0.00 USD` (CloudFormation stack update and IAM operations are free; KMS deletion scheduling is free)
+  - Cumulative Conservative Expected Gross Total: `~$0.00521 USD` (strictly below authorized `$0.10` limit)
 - **Financial Decision**: **`COST_GATE = PASS`**
 
 ---
 
-## 3. Read-Only Bootstrap Reconciliation (Shared Infrastructure)
+## 3. Read-Only Bootstrap Audit, Discovery & Surgical Cost-Closure Remediation
 
-Prior to the repair cycle, the existing `CDKToolkit` CloudFormation stack was audited read-only:
+### 3.1 Initial Bootstrap Audit & QA Finding
+The `CDKToolkit` CloudFormation stack was originally provisioned during P-01.04 as retained shared infrastructure:
+- **Original Bootstrap State**: `CREATED_DURING_P01_04 / RETAINED_SHARED_INFRASTRUCTURE`
+- **QA Finding**: Independent QA review identified that the default bootstrap stack created an `AWS::KMS::Key` with `KeyManager: CUSTOMER` (`KeyState: Enabled`). Because active customer-managed KMS keys incur `$1.00/month` prorated hourly, counting only retained S3 storage was insufficient to prove the long-term `$0.10` cumulative cost boundary.
 
-- **CDK Bootstrap State**: `CREATED_DURING_P01_04 / RETAINED_SHARED_INFRASTRUCTURE`
-- **Observed Resource Classes in CDKToolkit**:
-  - `AWS::SSM::Parameter` (Bootstrap version tracking)
-  - `AWS::IAM::Role` (Deployment, lookup, and publishing execution roles)
-  - `AWS::IAM::Policy` (Role execution policies)
-  - `AWS::ECR::Repository` (Container assets repository)
-  - `AWS::KMS::Key` (Asset encryption key)
-  - `AWS::KMS::Alias` (Asset encryption key alias)
-  - `AWS::S3::Bucket` (CDK file assets staging bucket)
-  - `AWS::S3::BucketPolicy` (Bucket access policy)
-- **Runtime-Specific Task Resources after Cycle 1 Cleanup**: `0 observed active`
-- **Retained P-01.04-Created Shared Bootstrap Infrastructure**: `PRESENT`
-- **Continuing Cost Assessment**: Staging bucket contains only small CloudFormation metadata templates (< 15 KB total); continuing monthly storage cost is `~$0.00000018/month`, fully compatible with the Zero Personal Spend Law.
+### 3.2 Pre-Remediation Read-Only Safety Check
+Before modifying `CDKToolkit`, read-only inspection established safe ownership and zero dependent applications:
+- Application stack `AgentCore-p01agent-default`: **ABSENT** (`ValidationError: Stack does not exist`)
+- Active AgentCore runtimes in `us-east-1`: **0** (`agentRuntimes: []`)
+- Bootstrap file-assets S3 bucket: **0** CodeZip files (3 CloudFormation templates < 30 KB total)
+- Bootstrap container repository (ECR): **0** images
+- Active CloudFormation stacks in `us-east-1`: only `CDKToolkit` (no dependent CDK applications active)
+
+### 3.3 Exact Official AWS Remediation
+Remediation was performed in exactly ONE operation using the official AWS CDK CLI command:
+```powershell
+npx cdk bootstrap aws://[REDACTED_ACCOUNT_ID]/us-east-1 --profile stilldone-p01 --no-bootstrap-customer-key
+```
+- Remediation Attempts: Exactly `1` (zero retries)
+
+### 3.4 Post-Remediation Read-Back Verification
+Direct read-back of CloudFormation and KMS state confirmed complete remediation:
+- **Stack Status**: `UPDATE_COMPLETE`
+- **Parameter Updated**: `FileAssetsBucketKmsKeyId` = `AWS_MANAGED_KEY`
+- **KMS Resource Deletion**: CloudFormation event confirmed `AWS::KMS::Key` transitioned to `DELETE_COMPLETE`.
+- **KMS Alias Deletion**: `AWS::KMS::Alias` removed from the stack.
+- **Old Customer KMS Key State**: Read-back via KMS `DescribeKey` confirmed `KeyManager: CUSTOMER`, `KeyState: PendingDeletion`, `DeletionDate: 2026-10-28T20:14:12Z` (30-day deletion window).
+- **Billing Effect of PendingDeletion**: Confirmed via official AWS KMS pricing that customer-managed keys scheduled for deletion incur zero storage charges.
+- **Active Billable Customer KMS Key**: **STRICTLY ABSENT** (0 active CMKs in account).
+- **Remaining Bootstrap Resource Classes**:
+  - `AWS::ECR::Repository`
+  - `AWS::IAM::Policy`
+  - `AWS::IAM::Role`
+  - `AWS::S3::Bucket`
+  - `AWS::S3::BucketPolicy`
+  - `AWS::SSM::Parameter`
+- **Continuing Cost Assessment**: Bootstrap S3 staging bucket contains only small CloudFormation metadata templates (< 30 KB total); continuing monthly storage cost is `~$0.0000007/month`, fully satisfying the Zero Personal Spend Law.
 
 ---
 
@@ -181,13 +207,13 @@ Teardown was executed immediately following the repair invocation:
 | Runtime-Specific Bedrock AgentCore Runtime | **REMOVED** (0 active) |
 | Runtime-Specific IAM Execution Role & Policy | **REMOVED** (0 active) |
 | Runtime-Specific S3 CodeZip Asset | **DELETED** (0 active) |
-| Shared CDK Bootstrap Infrastructure (`CDKToolkit`) | **RETAINED** (`CREATED_DURING_P01_04`) |
+| Shared CDK Bootstrap Infrastructure (`CDKToolkit`) | **RETAINED** (`CREATED_DURING_P01_04`; remediated via `--no-bootstrap-customer-key`; 0 active customer KMS keys; old key in `PendingDeletion`) |
 
 ---
 
 ## 8. Billing Truth
 
-- **Cumulative Usage-Derived Conservative Gross Estimate**: `~$0.00337 USD` (well below `$0.10` limit).
+- **Cumulative Usage-Derived Conservative Gross Estimate**: `~$0.00521 USD` (well below authorized `$0.10` limit).
 - **Actual Billed Request / Runtime Cost**: `NOT_OBSERVED / UNKNOWN` (AWS Billing console updates asynchronously; post-call charges not immediately observed in billing dashboards).
 - **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN` (`$0.00` target preserved via promotional credits).
 
