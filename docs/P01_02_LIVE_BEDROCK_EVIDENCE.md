@@ -3,7 +3,7 @@
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
 **Task**: P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **BLOCKED / NOT ACCEPTED** — account-specific Bedrock authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED; Support: OPEN / AWS RESPONSE PENDING)  
+**Status**: **DONE — awaiting independent QA PASS** (Cycle 1: Account verification hold; Cycle 2: ValidationException: Operation not allowed; Diagnostic Cycle: authorizationStatus = NOT_AUTHORIZED; Support: RESOLVED / REMEDIATED; Cycle 3: Genuine model response received, stopReason=end_turn, inputTokens=8, outputTokens=3, totalTokens=11)  
 **Provenance**: `LIVE_AWS`
 
 ---
@@ -269,31 +269,157 @@ The case submission included the following sanitized technical facts:
 - **Official AWS Troubleshooting Classification**:
   In official AWS documentation and troubleshooting guidance, `Operation not allowed` on foundation model operations is categorized within an account security restriction class for which direct AWS Support contact is recommended.
 - **This Account's Underlying Causal Root Cause**:
-  Remains strictly **`UNKNOWN / NOT_ESTABLISHED`** pending authoritative AWS Support response.
+  Remains strictly **`NOT_ESTABLISHED`**. AWS Support stated that account adjustments were completed by its authorized service team, but did not disclose the internal causal reason.
 - **Strict Non-Claims**:
-  - AWS has not yet confirmed the specific underlying root cause for this account;
-  - AWS has not yet confirmed an explicit security restriction on this specific account;
-  - No assumption is made that authorization will be automatically restored;
-  - No response SLA beyond standard AWS Support queuing is assumed;
-  - Zero sensitive identifiers (Account ID, Support Case ID, root email, credit ID, payment details, phone, address, credentials, or screenshots) are committed.
+  - AWS has not confirmed the specific internal underlying root cause for this account;
+  - Zero sensitive identifiers (Account ID, Support Case ID, root email, credit ID, payment details, phone, address, credentials, or session tokens) are committed.
+
+### 3. Authorized Support Remediation & Resolution
+- **2026-09-28**: AWS Support requested an English description of the project use/business case.
+- **Operator Action**: The operator provided the requested hackathon project context.
+- **AWS Support Statement**: AWS Support subsequently stated that the authorized service team completed the required account adjustments for access to base Amazon Bedrock models, noting adjustments may take up to 24 hours to propagate across systems.
+- **Case State**: `RESOLVED / REMEDIATED BY AWS SUPPORT`.
+- **Underlying Causal Root Cause**: Remains `NOT_ESTABLISHED`.
+
+---
+
+# Part V — Third QA-Authorized Execution Cycle (Successful Model Inference)
+
+**Observation Timestamp**: `2026-09-28T19:27:16+03:00`  
+**Authorization Boundary**: Independent QA explicitly authorized ONE bounded preflight check and, if and only if green, EXACTLY ONE new Bedrock inference attempt (Attempt #3 lifetime).  
+**Cycle Status**: **`DONE — awaiting independent QA PASS`**  
+**Provenance**: `LIVE_AWS`
+
+### 1. Mandatory Read-Only Pre-Inference Gate
+Target Region: `us-east-1`  
+Model ID Checked: `amazon.nova-micro-v1:0`  
+Command executed:
+```bash
+aws bedrock get-foundation-model-availability \
+  --region us-east-1 \
+  --profile stilldone-p01 \
+  --model-id amazon.nova-micro-v1:0 \
+  --query "{modelId:modelId,authorizationStatus:authorizationStatus,agreementStatus:agreementAvailability.status,agreementError:agreementAvailability.errorMessage,entitlementAvailability:entitlementAvailability,regionAvailability:regionAvailability}" \
+  --output json
+```
+Exact returned availability JSON:
+```json
+{
+    "modelId": "amazon.nova-micro-v1",
+    "authorizationStatus": "AUTHORIZED",
+    "agreementStatus": "AVAILABLE",
+    "agreementError": null,
+    "entitlementAvailability": "AVAILABLE",
+    "regionAvailability": "AVAILABLE"
+}
+```
+Pre-inference gate evaluation:
+- `authorizationStatus`: `AUTHORIZED` (Gate PASSED)
+- `agreementStatus`: `AVAILABLE` (Gate PASSED)
+- `agreementError`: `null` (Gate PASSED)
+- `entitlementAvailability`: `AVAILABLE` (Gate PASSED)
+- `regionAvailability`: `AVAILABLE` (Gate PASSED)
+- Gate Decision: **ALL CONDITIONS SATISFIED — INFERENCE AUTHORIZED**.
+
+### 2. Current Official Model & Cost Check
+- **Model ID**: `amazon.nova-micro-v1:0` (Amazon Nova Micro)
+- **Direct Endpoint Support**: `bedrock-runtime` directly supported in `us-east-1`
+- **Provider**: `Amazon` (no 3P marketplace subscription required)
+- **Pricing Basis**: On-Demand pricing verified ($0.035 / 1M input tokens, $0.140 / 1M output tokens)
+- **Prompt Token Bound**: `Ping. Reply only with: pong` (~8 input tokens, bounded <= 30)
+- **Generation Bound**: `maxTokens: 32`
+- **Conservative Pre-Call Planned Gross Upper Bound**: `$0.00000553` $\le \$0.01$ (preserved)
+
+### 3. The Single Real Inference Attempt (Attempt #3 Lifetime)
+Execution parameters:
+- **API Operation**: `bedrock-runtime converse`
+- **Region**: `us-east-1`
+- **Model ID**: `amazon.nova-micro-v1:0`
+- **Prompt**: `"Ping. Reply only with: pong"`
+- **Generation Bound**: `maxTokens: 32`
+- **Tools / Guardrails / Agents / KBs / Provisioned Throughput**: None
+- **Number of Attempts in This Cycle**: **EXACTLY 1**
+- **Lifetime P-01.02 Attempts**: **3** (Cycle 1: 1, Cycle 2: 1, Cycle 3: 1)
+
+Command executed:
+```bash
+aws bedrock-runtime converse \
+  --region us-east-1 \
+  --profile stilldone-p01 \
+  --model-id "amazon.nova-micro-v1:0" \
+  --messages "file://messages.json" \
+  --inference-config "file://inference_config.json" \
+  --output json
+```
+
+### 4. Live Response & Metadata Observation
+- **Exit Status**: Success (Exit code `0`)
+- **Exact Sanitized Response Output**:
+```json
+{
+    "output": {
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "text": "pong"
+                }
+            ]
+        }
+    },
+    "stopReason": "end_turn",
+    "usage": {
+        "inputTokens": 8,
+        "outputTokens": 3,
+        "totalTokens": 11
+    },
+    "metrics": {
+        "latencyMs": 7259
+    }
+}
+```
+- **stopReason**: `"end_turn"`
+- **inputTokens**: `8`
+- **outputTokens**: `3`
+- **totalTokens**: `11`
+- **metrics.latencyMs**: `7259`
+- **Model Response Content**: `"pong"` (Exact match to requested minimal output format)
+- **Provenance**: `LIVE_AWS`
+
+### 5. Constitutional Strict Enforcement (No-Retry Law & Discipline)
+- **Zero Retries**: Exactly 1 attempt consumed in Cycle 3.
+- **Fourth Attempt**: `NOT_RUN / NOT_AUTHORIZED`.
+- **No Fallback**: No second model, no second region, no mock/fixture fallback.
+- **Session Cleanup**: `aws logout --profile stilldone-p01` executed immediately after the call; cached credentials removed.
+- **AWS Resource Mutations**: `NONE` (Zero cloud resources created, modified, or deleted).
+
+### 6. Post-Attempt Billing Truth
+- **Post-Call Billing/Credit Delta**: `NOT_OBSERVED / UNKNOWN` (Separate Billing console read was not performed during this automated CLI execution checkpoint; do not infer "$0 billed" without fresh billing evidence).
+- **Actual Billed Request Cost**: `NOT_OBSERVED / UNKNOWN`.
+- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN`.
+- **Planned Successful-Call Gross Upper Bound**: `$0.00000553`.
+- **Calculated Request Cost from Observed Usage**:
+  - Input: $8 \times (\$0.035 / 1,000,000) = \$0.00000028$
+  - Output: $3 \times (\$0.140 / 1,000,000) = \$0.00000042$
+  - Total Calculated Request Cost: $\$0.00000070$ ($\approx 7 \times 10^{-7}$ USD, well below the $\$0.01$ threshold).
 
 ---
 
 ## 7. Cumulative Lifecycle Summary & Next Safe Action
 
-| Cycle | Timestamp | API / Error Class | Observed Result / Error Message | Task State |
+| Cycle | Timestamp | API / Operation | Observed Result / Error Message | Task State |
 |---|---|---|---|---|
-| **Cycle 1** | `2026-09-27T11:05:34+03:00` | `AccessDeniedException` | `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
-| **Cycle 2** | `2026-09-27T13:19:20+03:00` | `ValidationException` | `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
+| **Cycle 1** | `2026-09-27T11:05:34+03:00` | `bedrock-runtime converse` (Attempt 1) | `AccessDeniedException`: `Your account is currently being verified. Verification normally takes less than 2 hours.` | `BLOCKED` |
+| **Cycle 2** | `2026-09-27T13:19:20+03:00` | `bedrock-runtime converse` (Attempt 2) | `ValidationException`: `Operation not allowed` | `BLOCKED / NOT ACCEPTED` |
 | **Diagnostic Cycle** | `2026-09-27T20:58:05+03:00` | `get-foundation-model-availability` (Read-only) | `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE) | `BLOCKED / NOT ACCEPTED` |
-| **Support Escalation** | `2026-09-27` | Authenticated AWS Support Case | Case OPEN: `Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED` | `AWS_SUPPORT_PENDING` |
+| **Support Escalation** | `2026-09-27` – `2026-09-28` | Authenticated AWS Support Case | Account adjustments completed by authorized service team; case resolved | `RESOLVED` |
+| **Cycle 3** | `2026-09-28T19:27:16+03:00` | `bedrock-runtime converse` (Attempt 3) | **SUCCESS** (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms) | **`DONE (awaiting independent QA PASS)`** |
 
-- **Cumulative P-01.02 Inference Attempts**: `2` (Cycle 1: 1 attempt, Cycle 2: 1 attempt, Diagnostic Cycle: 0 attempts, Support Escalation: 0 attempts; lifetime P-01.02 inference attempts = 2).
-- **Current Canonical Status**: **`BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
-- **External Resolution State**: **`AWS_SUPPORT_PENDING`** (Support case OPEN / AWS response pending).
-- **Task P-01.03 Status**: **`NOT STARTED / LOCKED`** (Strictly locked; must not start before P-01.02 achieves live model response and independent QA PASS).
-- **Next Safe Action**:
-  Wait for authoritative AWS Support response.
-  Third inference attempt is strictly **NOT AUTHORIZED** without fresh independent QA authorization.
+- **Cumulative P-01.02 Inference Attempts**: `3` (Cycle 1: 1, Cycle 2: 1, Diagnostic Cycle: 0, Support Escalation: 0, Cycle 3: 1).
+- **Current Canonical Status**: **`DONE — awaiting independent QA PASS`**.
+- **Fourth Inference Attempt**: `NOT_RUN / NOT_AUTHORIZED`.
+- **Task P-01.03 Status**: **`PENDING / LOCKED`** (Strictly locked; must not start before P-01.02 receives independent QA PASS).
+- **Next Safe Action**: Await independent QA evaluation and formal PASS decision for P-01.02.
+
 
 

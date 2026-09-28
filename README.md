@@ -103,13 +103,13 @@ See:
 
 ## Current status
 
-**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 BLOCKED_EXTERNAL / AWS_SUPPORT_PENDING**
+**P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Foundation and live feasibility status:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
 - **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed. AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled. Live Bedrock model discovery and account-specific availability diagnosis occurred later under P-01.02.
-- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `BLOCKED / NOT ACCEPTED`. Two bounded real AWS inference attempts were executed (Cycle 1 failed with `AccessDeniedException` during account verification hold; Cycle 2 failed with `ValidationException: Operation not allowed`). Account-specific read-only diagnostic confirmed `authorizationStatus = NOT_AUTHORIZED` while agreements/entitlements/region are `AVAILABLE`. Underlying root cause is `UNKNOWN / NOT_ESTABLISHED`. An official AWS Support case is open (`AWS_SUPPORT_PENDING`).
-- **Discipline constraints**: A third inference attempt is strictly `NOT AUTHORIZED` (lifetime attempts capped at 2). Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED`.
+- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: `DONE — awaiting independent QA PASS`. Following AWS Support account adjustments and verified `AUTHORIZED` preflight, the third bounded execution cycle succeeded with a genuine Amazon Nova Micro response (`pong`), valid token/stopReason metadata, zero mutations, and zero personal spend.
+- **Discipline constraints**: Downstream task `P-01.03` (Strands agent path) remains `PENDING / LOCKED` until P-01.02 receives independent QA PASS. A fourth inference attempt is strictly `NOT_RUN / NOT_AUTHORIZED`.
 - **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
 
 See:

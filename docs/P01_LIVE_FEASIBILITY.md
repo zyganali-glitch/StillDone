@@ -4,7 +4,7 @@
 **Task**: P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality  
 **Observation Timestamp**: `2026-09-27T09:50:00+03:00`  
 **Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **P-01.01: CLOSED / INDEPENDENT QA PASS** (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`) | **Current P-01.02: BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING**
+**Status**: **P-01.01: CLOSED / INDEPENDENT QA PASS** (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`) | **Current P-01.02: DONE — awaiting independent QA PASS**
 
 ---
 
@@ -112,15 +112,17 @@ Documented initial requirements and constraints defined during P-01.01 for subse
 
 ## 6. Execution Boundary & Next Step Lock
 
-> [!WARNING]
-> **P-01.02 Attempted & BLOCKED / NOT ACCEPTED**:
+> [!NOTE]
+> **P-01.02 Inference Executed & Succeeded — DONE (awaiting independent QA PASS)**:
 > - **Cycle 1 (`2026-09-27T11:05:34+03:00`)**: Single real Bedrock Converse call failed with `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.` (Account verification hold).
-> - **Cycle 2 (`2026-09-27T13:19:20+03:00`)**: Fresh QA-authorized single attempt executed > 2 hours later. Returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0`. The Cycle 1 verification message was not repeated in Cycle 2, but whether AWS account verification is fully complete is `NOT_ESTABLISHED` from this error transition alone. Root cause is `UNKNOWN / NOT_ESTABLISHED`.
+> - **Cycle 2 (`2026-09-27T13:19:20+03:00`)**: Fresh QA-authorized single attempt executed > 2 hours later. Returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0`.
 > - **Diagnostic Cycle (`2026-09-27T20:58:05+03:00`)**: Read-only `get-foundation-model-availability` returned `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE). Zero inference executed (attempts in cycle = 0; lifetime inference attempts = 2).
-> - **AWS Support Escalation (`2026-09-27`)**: Authenticated AWS Support case opened (`Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED`). External state is `AWS_SUPPORT_PENDING` (OPEN / AWS response pending).
-> Strictly adhering to the no-retry safety rule, zero retries were attempted (lifetime P-01.02 inference attempts = 2).
-> P-01.02 remains **`BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED`**.
-> Next safe action: Wait for authoritative AWS Support response. Third inference attempt is strictly NOT AUTHORIZED without fresh independent QA authorization.
-> Task P-01.03 remains **`NOT STARTED / LOCKED`** and strictly locked.
+> - **AWS Support Escalation (`2026-09-27` – `2026-09-28`)**: Authenticated AWS Support case opened. AWS Support requested project use case; operator provided it; AWS Support stated authorized service team completed account adjustments for base Amazon Bedrock models.
+> - **Cycle 3 (`2026-09-28T19:27:16+03:00`)**: Fresh read-only preflight gate confirmed `authorizationStatus = AUTHORIZED`. Single real Converse inference attempt executed against `amazon.nova-micro-v1:0` in `us-east-1` and succeeded with genuine model response (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms).
+> Strictly adhering to the no-retry safety rule, zero retries were attempted (lifetime P-01.02 inference attempts = 3).
+> P-01.02 status: **`DONE — awaiting independent QA PASS`**.
+> Fourth inference attempt is strictly **`NOT_RUN / NOT_AUTHORIZED`**.
+> Task P-01.03 remains **`PENDING / LOCKED`** and strictly locked until P-01.02 receives independent QA PASS.
+
 
 

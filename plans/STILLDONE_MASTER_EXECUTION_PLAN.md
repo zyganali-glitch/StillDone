@@ -145,24 +145,27 @@ Acceptance:
 
 
 ### P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt
-Status: BLOCKED / NOT ACCEPTED — authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED
+Status: DONE (awaiting independent QA PASS)
 
 Acceptance:
-- current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across both cycles);
+- current model ID discovered from live/official reality: YES (`amazon.nova-micro-v1:0` selected via live Bedrock `list-foundation-models` in `us-east-1` across cycles);
 - pre-call pricing and cost bounded: YES (official Bedrock pricing verified; gross request upper bound <= $0.000006, well below $0.01 limit);
-- real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt (Cumulative inference attempts = 2);
-- read-only diagnostic executed: Cycle 3 (Diagnostic) = 0 inference attempts; `get-foundation-model-availability` returned `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE);
-- support case opened: authenticated AWS Support case opened on 2026-09-27 (`Amazon Bedrock account security restriction — Operation not allowed / NOT_AUTHORIZED`); state = OPEN / AWS RESPONSE PENDING;
+- real request attempts executed: Cycle 1 = 1 attempt; Cycle 2 = 1 attempt; Diagnostic Cycle = 0 attempts; Cycle 3 = 1 attempt (Cumulative inference attempts = 3);
+- read-only diagnostic executed: Cycle 3 preflight `get-foundation-model-availability` returned `authorizationStatus = AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE, agreementError: null);
+- support case opened and resolved: authenticated AWS Support case opened on 2026-09-27, operator provided project use case on 2026-09-28, AWS Support completed account adjustments for base Amazon Bedrock models;
 - live results observed:
   - Cycle 1: `AccessDeniedException` (`Your account is currently being verified. Verification normally takes less than 2 hours.`);
   - Cycle 2: `ValidationException` (`Operation not allowed`);
   - Diagnostic Cycle: `get-foundation-model-availability` -> `authorizationStatus = NOT_AUTHORIZED`;
-  - External Resolution State: `AWS_SUPPORT_PENDING`;
-- zero-retry law enforced: 0 retries within each cycle, no second model, no second region, no fallback provider, no fixture fallback;
-- timing/cost metadata: requests rejected before model response; usage metadata (inputTokens, outputTokens, totalTokens, stopReason): NOT_RETURNED / NOT_AVAILABLE; actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
+  - Support Resolution: AWS Support confirmed account adjustments completed;
+  - Cycle 3 Preflight: `get-foundation-model-availability` -> `authorizationStatus = AUTHORIZED`;
+  - Cycle 3 Inference: **SUCCESS** — `aws bedrock-runtime converse` returned genuine model response (`pong`, stopReason=`end_turn`, inputTokens=8, outputTokens=3, totalTokens=11, latency=7259ms);
+- zero-retry law enforced: exactly 1 attempt consumed in Cycle 3; zero retries; fourth attempt is strictly NOT_RUN / NOT_AUTHORIZED; no second model, no second region, no fallback provider, no fixture fallback;
+- timing/cost metadata: valid usage metadata returned (inputTokens=8, outputTokens=3, totalTokens=11, stopReason=end_turn, latencyMs=7259); actual calculated call cost $\approx \$0.00000070$ (well below $\$0.01$ limit); actual billed request cost and post-call billing delta: NOT_OBSERVED / UNKNOWN; personal-spend delta: NOT_OBSERVED / UNKNOWN;
 - provenance: `LIVE_AWS`;
 - documented evidence: `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`;
-- note: Task remains BLOCKED / NOT ACCEPTED (authorizationStatus = NOT_AUTHORIZED; AWS_SUPPORT_PENDING; underlying cause UNKNOWN / NOT_ESTABLISHED). Lifetime inference attempts = 2. A third inference attempt is NOT AUTHORIZED. Next safe action is to wait for authoritative AWS Support response. P-01.03 remains PENDING / LOCKED.
+- note: Task is marked DONE (awaiting independent QA PASS). Lifetime inference attempts = 3. A fourth inference attempt is NOT_RUN / NOT_AUTHORIZED. Next exact task after independent QA PASS is P-01.03 (`Prove minimal real Strands agent execution against the selected Bedrock model`). P-01.03 remains PENDING / LOCKED until independent QA PASS is awarded.
+
 
 
 
