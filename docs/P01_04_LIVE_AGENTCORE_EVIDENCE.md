@@ -33,7 +33,7 @@ Facts verified against current official external sources on `2026-09-28`:
   - Repair Cycle Conservative Gross Usage: `~$0.00168 USD`
   - Retained Customer KMS Key Active Lifetime (1.143 hours active between creation at `2026-09-28T19:05:37Z` and `PendingDeletion` at `2026-09-28T20:14:12Z` @ $1.00/month prorated hourly): `~$0.00160 USD`
   - Retained Shared Bootstrap S3 Storage (< 30 KB @ $0.023/GB-mo) + S3/KMS requests: `~$0.00025 USD`
-  - Remediation Operation: `$0.00 USD` (CloudFormation stack update and IAM operations are free; KMS deletion scheduling is free)
+  - Remediation Operation: CloudFormation and IAM do not add a separate service charge for this stack operation; any request/storage dimensions are already conservatively covered by the P-01.04 gross-cost estimate. Actual billed cost remains `NOT_OBSERVED / UNKNOWN`.
   - Cumulative Conservative Expected Gross Total: `~$0.00521 USD` (strictly below authorized `$0.10` limit)
 - **Financial Decision**: **`COST_GATE = PASS`**
 
@@ -69,7 +69,7 @@ Direct read-back of CloudFormation and KMS state confirmed complete remediation:
 - **KMS Alias Deletion**: `AWS::KMS::Alias` removed from the stack.
 - **Old Customer KMS Key State**: Read-back via KMS `DescribeKey` confirmed `KeyManager: CUSTOMER`, `KeyState: PendingDeletion`, `DeletionDate: 2026-10-28T20:14:12Z` (30-day deletion window).
 - **Billing Effect of PendingDeletion**: Confirmed via official AWS KMS pricing that customer-managed keys scheduled for deletion incur zero storage charges.
-- **Active Billable Customer KMS Key**: **STRICTLY ABSENT** (0 active CMKs in account).
+- **P-01.04 Bootstrap Customer-Managed KMS Key**: **NO LONGER ACTIVE**. Post-remediation facts: `CDKToolkit` no longer contains `AWS::KMS::Key` or `AWS::KMS::Alias`; `FileAssetsBucketKmsKeyId` = `AWS_MANAGED_KEY`; the old P-01.04 bootstrap customer-managed key is `PendingDeletion`; therefore no active customer-managed bootstrap key remains attributable to P-01.04.
 - **Remaining Bootstrap Resource Classes**:
   - `AWS::ECR::Repository`
   - `AWS::IAM::Policy`
@@ -77,7 +77,7 @@ Direct read-back of CloudFormation and KMS state confirmed complete remediation:
   - `AWS::S3::Bucket`
   - `AWS::S3::BucketPolicy`
   - `AWS::SSM::Parameter`
-- **Continuing Cost Assessment**: Bootstrap S3 staging bucket contains only small CloudFormation metadata templates (< 30 KB total); continuing monthly storage cost is `~$0.0000007/month`, fully satisfying the Zero Personal Spend Law.
+- **Continuing Cost Assessment**: Bootstrap S3 staging bucket contains only small CloudFormation metadata templates (< 30 KB total); continuing monthly storage gross cost is estimated at `~$0.0000007/month`. The `$0.00` personal-spend target remains in force. Actual personal-spend delta was not observed. The retained bootstrap has only a negligible known S3 storage component; specific promotional-credit offset for that component was not established in this task.
 
 ---
 
@@ -207,7 +207,7 @@ Teardown was executed immediately following the repair invocation:
 | Runtime-Specific Bedrock AgentCore Runtime | **REMOVED** (0 active) |
 | Runtime-Specific IAM Execution Role & Policy | **REMOVED** (0 active) |
 | Runtime-Specific S3 CodeZip Asset | **DELETED** (0 active) |
-| Shared CDK Bootstrap Infrastructure (`CDKToolkit`) | **RETAINED** (`CREATED_DURING_P01_04`; remediated via `--no-bootstrap-customer-key`; 0 active customer KMS keys; old key in `PendingDeletion`) |
+| Shared CDK Bootstrap Infrastructure (`CDKToolkit`) | **RETAINED** (`CREATED_DURING_P01_04`; remediated via `--no-bootstrap-customer-key`; no active customer-managed bootstrap key attributable to P-01.04; old key in `PendingDeletion`) |
 
 ---
 
@@ -215,7 +215,7 @@ Teardown was executed immediately following the repair invocation:
 
 - **Cumulative Usage-Derived Conservative Gross Estimate**: `~$0.00521 USD` (well below authorized `$0.10` limit).
 - **Actual Billed Request / Runtime Cost**: `NOT_OBSERVED / UNKNOWN` (AWS Billing console updates asynchronously; post-call charges not immediately observed in billing dashboards).
-- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN` (`$0.00` target preserved via promotional credits).
+- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN`. The `$0.00` personal-spend target remains in force. Actual personal-spend delta was not observed. The retained bootstrap has only a negligible known S3 storage component; specific promotional-credit offset for that component was not established in this task.
 
 ---
 
