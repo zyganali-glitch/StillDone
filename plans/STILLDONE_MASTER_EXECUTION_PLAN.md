@@ -184,21 +184,22 @@ Acceptance:
 
 
 ### P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence
-Status: DONE (awaiting independent QA review)
+Status: DONE — awaiting independent QA PASS
 
 Acceptance:
-- real AgentCore runtime deployed: YES (CloudFormation stack `AgentCore-p01agent-default`, runtime `p01agent_p01agent-or9Fbj3Agb`, status `READY` in `us-east-1`, CodeZip build, Python 3.13, platform version V1);
-- real remote invocation: YES (1 invoke executed via `agentcore invoke`, HTTP 200, duration 6720ms, session ID `d6f6360b-0ce3-48a3-99ad-1af6822f5f2c`);
-- deterministic execution: YES (custom Python entrypoint executed in remote runtime; returned deterministic validation response `UNKNOWN_PROMPT` due to Windows PowerShell JSON argument unquoting);
-- zero model invocations: strictly 0 models or LLMs invoked inside runtime;
-- zero retries: exactly 1 invocation attempt; zero retries;
-- financial safety: conservative gross cost `~$0.00168 USD` (well below authorized `$0.10` limit); actual billed cost / personal-spend delta: NOT_OBSERVED / UNKNOWN; target personal spend remains strictly `$0.00`;
-- mandatory teardown in same cycle: YES (`agentcore remove all -y` + `agentcore deploy -y -v`, runtime and CloudFormation stack deleted, S3 zip deleted, verified via read-only APIs);
-- CDK bootstrap status: `CREATED_DURING_P01_04` (shared account-level infrastructure);
-- cleanup: AWS logout verified, local scratch directory deleted;
+- cycle 1 historical proof preserved: deployed serverless microVM AgentCore runtime to `us-east-1` (CodeZip, Python 3.13, platformVersion `V1`, status `READY`); executed 1 remote invocation; observed Windows PowerShell inline JSON quoting defect yielding deterministic validation string `UNKNOWN_PROMPT`; full teardown executed;
+- CDK bootstrap reconciliation: read-only audit confirmed `CDKToolkit` created during P-01.04 as retained shared account infrastructure (`AWS::SSM::Parameter`, `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::ECR::Repository`, `AWS::KMS::Key`, `AWS::KMS::Alias`, `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`); runtime-specific resources confirmed 0 active prior to repair;
+- repair cycle deployment: exactly 1 deployment executed in isolated scratch directory outside canonical repo; reached `READY` in `us-east-1` (Python 3.14, platformVersion `V1`);
+- repair cycle remote invocation: exactly 1 data-plane invocation executed via `aws bedrock-agentcore invoke-agent-runtime` using binary payload file `fileb://payload.json` (`{"prompt":"PING"}`) and fresh session ID;
+- deterministic acceptance: remote runtime executed custom Python entrypoint and returned HTTP 200 with exact deterministic response `{"result": "AGENTCORE_OK"}`;
+- zero model invocations: strictly 0 models or LLMs invoked inside runtime across cycles;
+- zero retries: exactly 1 invocation attempt in Cycle 1, exactly 1 invocation attempt in Repair Cycle; strictly zero retries;
+- financial safety: cumulative usage-derived gross cost $\approx \$0.00337\text{ USD}$ (well below authorized $\$0.10$ limit); actual billed cost / personal-spend delta: `NOT_OBSERVED / UNKNOWN` (zero personal spend preserved);
+- mandatory teardown: full teardown executed immediately (`agentcore remove all -y` + `agentcore deploy -y -v`); runtime deleted, stack deleted, S3 zip deleted, scratch directory deleted, AWS logout verified;
+- sanitization: all raw account IDs, runtime IDs, session IDs, bucket names, and local paths sanitized in public evidence;
 - evidence doc: `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`;
-- friction logged: `F-20260928-02` (CLI argument quoting and non-interactive teardown flags);
-- note: Task marked DONE (awaiting independent QA review). Task P-01.05 remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
+- friction logged: `F-20260928-02`;
+- note: Task marked DONE — awaiting independent QA PASS. Task P-01.05 remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
 
 ### P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources
 Status: PENDING

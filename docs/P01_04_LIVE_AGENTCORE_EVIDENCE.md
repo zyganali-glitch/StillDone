@@ -1,9 +1,9 @@
 # P-01.04 Live AgentCore Runtime Feasibility Evidence
 
-**Date & Time (UTC)**: `2026-09-28T19:14:00Z`  
+**Date & Time (UTC)**: Cycle 1: `2026-09-28T19:14:00Z` | Repair Cycle: `2026-09-28T19:35:54Z`  
 **Governing Rule**: [AGENTS.md](../AGENTS.md) § 1–24; [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md)  
 **Task**: `P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`  
-**Status**: `DONE — awaiting independent QA review` (Runtime deployment, READY state, remote execution, and teardown proven; single invocation executed; semantic payload mismatch noted)  
+**Status**: `DONE — awaiting independent QA PASS`  
 
 ---
 
@@ -22,152 +22,174 @@ Facts verified against current official external sources on `2026-09-28`:
 
 ---
 
-## 2. Pre-Deploy Cost Gate & $0.10 Financial Boundary
+## 2. Financial Authority & Cost Gate
 
-- **Operator Authorized Gross Ceiling**: `$0.10 USD`
+- **Operator Authorized Gross Ceiling**: `$0.10 USD` (cumulative across P-01.04)
 - **Target Personal Spend**: `$0.00 USD`
-- **Conservative Gross Cost Estimation**:
-  - Active vCPU (1 minute conservative @ $0.0895/vCPU-hr): `$0.00149 USD`
-  - Active Memory (1 GB for 1 minute @ $0.00945/GB-hr): `$0.00016 USD`
-  - S3 CodeZip storage (31.7 MB for < 1 hour @ $0.023/GB-month): `$0.000001 USD`
-  - S3 requests (PUT/GET): `$0.00001 USD`
-  - CloudWatch Logs ingestion (< 10 KB @ $0.50/GB): `$0.000005 USD`
-  - Total Conservative Expected Cost: `~$0.00168 USD` (well below $0.10 limit)
+- **Cumulative Conservative Cost Calculation**:
+  - Cycle 1 Conservative Gross Usage: `~$0.00168 USD`
+  - Repair Cycle Conservative Gross Usage: `~$0.00168 USD`
+  - Retained Shared Bootstrap S3 Storage (< 15 KB @ $0.023/GB-mo): `< $0.00001 USD`
+  - Cumulative Conservative Expected Gross Total: `~$0.00337 USD` (well below authorized `$0.10` limit)
 - **Financial Decision**: **`COST_GATE = PASS`**
 
 ---
 
-## 3. Read-Only Preflight Verification
+## 3. Read-Only Bootstrap Reconciliation (Shared Infrastructure)
 
-- Authenticated Caller: `arn:aws:iam::[REDACTED]:root` via `aws login --profile stilldone-p01 --remote`.
-- Region: `us-east-1`.
-- AgentCore Service Accessibility: `aws bedrock-agentcore-control list-agent-runtimes --region us-east-1` returned HTTP 200 with `{ "agentRuntimes": [] }`.
-- CDK Bootstrap Pre-Existing Check: `aws cloudformation describe-stacks --stack-name CDKToolkit` returned `Stack with id CDKToolkit does not exist`. CDK bootstrap was **NOT PREEXISTING**.
+Prior to the repair cycle, the existing `CDKToolkit` CloudFormation stack was audited read-only:
 
----
-
-## 4. Mandatory Dry-Run & Resource Planning
-
-Dry-run command:
-```bash
-agentcore deploy --dry-run -y
-```
-Synthesized CloudFormation template (`AgentCore-p01agent-default.template.json`) inspection:
-- `ApplicationAgentP01agentRuntimeBC9CB6FB`: `AWS::BedrockAgentCore::Runtime`
-  - CodeConfiguration: Runtime `PYTHON_3_13`, EntryPoint `["opentelemetry-instrument", "main.py"]`, S3 CodeZip asset.
-  - NetworkConfiguration: `PUBLIC`
-- `ApplicationAgentP01agentRuntimeExecutionRole5083B770`: `AWS::IAM::Role`
-- `ApplicationAgentP01agentRuntimeExecutionRoleDefaultPolicyD42759CE`: `AWS::IAM::Policy`
-- `CDKMetadata`: `AWS::CDK::Metadata`
-
-**Forbidden Resource Audit**:
-- ECR / container builds: `0` (CodeZip build used)
-- EC2 Runtime Instances: `0` (Serverless microVM used)
-- Gateways / MCP servers: `0`
-- Memory stores / vector databases: `0`
-- Browser tools / Code Interpreter / Cognito / Lambda tools: `0`
-- Foundation Models: `0`
-
-**Dry-Run Decision**: **`DRY_RUN = PASS`**
+- **CDK Bootstrap State**: `CREATED_DURING_P01_04 / RETAINED_SHARED_INFRASTRUCTURE`
+- **Observed Resource Classes in CDKToolkit**:
+  - `AWS::SSM::Parameter` (Bootstrap version tracking)
+  - `AWS::IAM::Role` (Deployment, lookup, and publishing execution roles)
+  - `AWS::IAM::Policy` (Role execution policies)
+  - `AWS::ECR::Repository` (Container assets repository)
+  - `AWS::KMS::Key` (Asset encryption key)
+  - `AWS::KMS::Alias` (Asset encryption key alias)
+  - `AWS::S3::Bucket` (CDK file assets staging bucket)
+  - `AWS::S3::BucketPolicy` (Bucket access policy)
+- **Runtime-Specific Task Resources after Cycle 1 Cleanup**: `0 observed active`
+- **Retained P-01.04-Created Shared Bootstrap Infrastructure**: `PRESENT`
+- **Continuing Cost Assessment**: Staging bucket contains only small CloudFormation metadata templates (< 15 KB total); continuing monthly storage cost is `~$0.00000018/month`, fully compatible with the Zero Personal Spend Law.
 
 ---
 
-## 5. Deployment Evidence (Single Attempt)
+## 4. Cycle 1: Historical Execution & Quoting Defect (Preserved Facts)
 
-- Deployment Command: `npx @aws/agentcore deploy -y -v`
-- Execution Timestamp: `2026-09-28T22:07:20Z` (CDK build & synthesis: ~13s; CloudFormation stack deployment: ~1m 56s)
-- Exit Code: `0` (SUCCESS)
-- Created CloudFormation Stack: `AgentCore-p01agent-default` (Status: `CREATE_COMPLETE` at 22:09:16)
-- Created AgentCore Runtime ID: `p01agent_p01agent-or9Fbj3Agb` (Status: `CREATE_COMPLETE` at 22:09:14)
-- Runtime Read-Back Verification (`aws bedrock-agentcore-control get-agent-runtime`):
+- **Execution Timestamp**: `2026-09-28T19:10:14Z`
+- **Deployment**: Stack `AgentCore-p01agent-default`, runtime `[REDACTED_RUNTIME_ID]`, status `READY` in `us-east-1` (CodeZip build, Python 3.13, platform version `V1`).
+- **Invocation Command**: `agentcore invoke --prompt '{"prompt": "PING"}' --json`
+- **Observed Result**: HTTP 200 returned in 6720ms with session ID `[REDACTED_SESSION_ID]`. Response payload returned deterministic validation string `"UNKNOWN_PROMPT"`.
+- **Root Cause**: Windows PowerShell argument evaluation unquoted `'{"prompt": "PING"}'` to `{prompt: PING}` before forwarding to the CLI.
+- **Teardown**: Complete runtime-specific resource teardown verified; runtime deleted, stack deleted, CodeZip removed.
+- **QA Finding**: Did not satisfy semantic acceptance (`AGENTCORE_OK`), requiring a bounded repair cycle.
+
+---
+
+## 5. Repair Cycle: Minimal Scratch Project & Single Deployment
+
+The minimal probe was recreated in an ephemeral scratch directory outside the canonical repository (`[REDACTED_SCRATCH_DIR]`) reusing the shared CDK bootstrap.
+
+- **Deterministic Entrypoint (`main.py`)**:
+  ```python
+  from bedrock_agentcore.runtime import BedrockAgentCoreApp
+
+  app = BedrockAgentCoreApp()
+
+
+  @app.entrypoint
+  def invoke(payload, context=None):
+      prompt = ""
+      if isinstance(payload, dict):
+          prompt = payload.get("prompt", "")
+      elif isinstance(payload, str):
+          prompt = payload
+
+      if prompt == "PING":
+          return {"result": "AGENTCORE_OK"}
+      return {"result": "UNKNOWN_PROMPT", "received": prompt}
+
+
+  if __name__ == "__main__":
+      app.run()
+  ```
+- **Deployment Command**:
+  ```powershell
+  $env:AWS_PROFILE="stilldone-p01"; $env:AWS_DEFAULT_REGION="us-east-1"; $env:AWS_REGION="us-east-1"; npx @aws/agentcore deploy -y -v
+  ```
+- **Deployment Timestamp**: `2026-09-28T19:35:19Z`
+- **Exit Code**: `0` (SUCCESS)
+- **Deployment Attempts**: Exactly `1`
+- **Read-Back Runtime Status (`aws bedrock-agentcore-control get-agent-runtime`)**:
   - `status`: **`READY`**
-  - `agentRuntimeArn`: `arn:aws:bedrock-agentcore:us-east-1:[REDACTED]:runtime/p01agent_p01agent-or9Fbj3Agb`
-  - `platformVersion`: **`V1`** (observed from live service response)
-  - `runtimeVersion`: **`PYTHON_3_13`**
+  - `agentRuntimeArn`: `arn:aws:bedrock-agentcore:us-east-1:[REDACTED_ACCOUNT_ID]:runtime/[REDACTED_RUNTIME_ID]`
+  - `platformVersion`: **`V1`**
+  - `runtimeVersion`: **`PYTHON_3_14`**
   - `networkMode`: `PUBLIC`
-  - `createdAt`: `2026-09-28T19:08:56.681690+00:00`
-  - `lastUpdatedAt`: `2026-09-28T19:09:10.873971+00:00`
 
 ---
 
-## 6. Remote Invocation Evidence (Exactly One Attempt)
+## 6. Repair Cycle: Data-Plane Invocation & Deterministic Acceptance
 
-- Invocation Command: `npx @aws/agentcore invoke --prompt '{"prompt": "PING"}' --json`
-- Timestamp: `2026-09-28T19:10:14.477Z`
-- Exit Code: `0`
-- Invocation Duration: `6720 ms` (Total process elapsed: `14711 ms`)
-- Session ID: `d6f6360b-0ce3-48a3-99ad-1af6822f5f2c`
-- Invocation Request Log:
+To prevent Windows PowerShell JSON quoting alterations, the payload was passed via a binary file using the official AWS Bedrock AgentCore data-plane CLI:
+
+- **Payload File (`payload.json`)**:
+  ```json
+  {"prompt":"PING"}
+  ```
+- **Invocation Command**:
+  ```powershell
+  aws bedrock-agentcore invoke-agent-runtime `
+    --agent-runtime-arn "arn:aws:bedrock-agentcore:us-east-1:[REDACTED_ACCOUNT_ID]:runtime/[REDACTED_RUNTIME_ID]" `
+    --runtime-session-id "[REDACTED_SESSION_ID]" `
+    --qualifier DEFAULT `
+    --content-type application/json `
+    --accept application/json `
+    --payload fileb://payload.json `
+    --profile stilldone-p01 `
+    --region us-east-1 `
+    response.json
+  ```
+- **Invocation Timestamp**: `2026-09-28T19:35:54Z`
+- **Invocation Attempts**: Exactly `1` (zero retries)
+- **API Response**:
   ```json
   {
-    "timestamp": "2026-09-28T19:10:14.484Z",
-    "agent": "p01agent",
-    "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:[REDACTED]:runtime/p01agent_p01agent-or9Fbj3Agb",
-    "region": "us-east-1",
-    "prompt": "{prompt: PING}"
+      "runtimeSessionId": "[REDACTED_SESSION_ID]",
+      "contentType": "application/json",
+      "statusCode": 200
   }
   ```
-- Invocation Response Log:
+- **Deterministic Response Payload (`response.json`)**:
   ```json
-  {
-    "timestamp": "2026-09-28T19:10:21.205Z",
-    "durationMs": 6720,
-    "success": true,
-    "response": "UNKNOWN_PROMPT"
-  }
+  {"result": "AGENTCORE_OK"}
   ```
-- **Deterministic Code Execution Analysis**:
-  - The deployed Python application code in `main.py` defined:
-    ```python
-    @app.entrypoint
-    def invoke(payload, context=None):
-        prompt = ""
-        if isinstance(payload, dict):
-            prompt = payload.get("prompt", "")
-        elif isinstance(payload, str):
-            prompt = payload
-
-        if prompt == "PING":
-            return {"result": "AGENTCORE_OK"}
-        return {"result": "UNKNOWN_PROMPT", "received": prompt}
-    ```
-  - PowerShell argument evaluation unquoted `'{"prompt": "PING"}'` to `{prompt: PING}`. The AgentCore CLI packaged this as `{"prompt": "{prompt: PING}"}`.
-  - The remote AgentCore Runtime received the payload, executed our Python handler, evaluated `prompt == "PING"` as False (received `"{prompt: PING}"`), and executed the deterministic `else` branch returning `"UNKNOWN_PROMPT"`.
-  - This proves end-to-end execution of custom Python code on the remote AWS AgentCore Runtime.
-- **Model Invocations Inside Runtime**: **`0`** (strictly zero foundation models or LLMs called).
-- **Secondary Invocation / Retries**: **`0`** (strictly zero retries per zero-retry contract).
+- **Acceptance Outcome**:
+  - HTTP 200: **`PASS`**
+  - Semantic Response `{"result": "AGENTCORE_OK"}`: **`PASS`**
+  - Foundation Model / LLM Calls inside Runtime: **`Strictly 0`**
+  - External HTTP / MCP / Google Calls: **`Strictly 0`**
 
 ---
 
-## 7. Teardown & Cleanup Evidence
+## 7. Mandatory Teardown & Residual-Resource Verification
 
-Teardown was executed immediately in the same cycle:
-1. `npx @aws/agentcore remove all -y`: Reset project configuration to empty state.
-2. `npx @aws/agentcore deploy -y -v`: Applied teardown CloudFormation changeset.
-   - Deleted `AWS::BedrockAgentCore::Runtime` (Status: `DELETE_COMPLETE`).
-   - Deleted `AWS::IAM::Role` (Status: `DELETE_COMPLETE`).
-   - Deleted `AWS::CloudFormation::Stack` `AgentCore-p01agent-default` (Status: `DELETE_COMPLETE`).
-3. Post-cleanup Verification:
-   - `aws bedrock-agentcore-control list-agent-runtimes --region us-east-1` returned `{ "agentRuntimes": [] }` (Zero runtimes active).
-   - `aws cloudformation describe-stacks --stack-name AgentCore-p01agent-default` returned `Stack with id AgentCore-p01agent-default does not exist`.
-4. S3 Asset Cleanup:
-   - Deleted task-created CodeZip asset `30d092352e61fafd363357da8e4829026d8f5ab615768a1366237e8392e6ec89.zip` from CDK bucket `cdk-hnb659fds-assets-[REDACTED]-us-east-1`.
-5. CDK Bootstrap Infrastructure Status:
-   - State: `CREATED_DURING_P01_04` (Shared account-level CDK bootstrap infrastructure; S3 bucket + IAM roles preserved per Section 16).
-6. AWS Logout:
-   - `aws logout --profile stilldone-p01` executed and verified. Cached credentials removed.
-7. Local Scratch Cleanup:
-   - Deleted entire ephemeral directory `C:\Users\MEHMET\.gemini\antigravity\scratch\scratch_agentcore_probe`.
-   - StillDone repository working tree audited: 0 uncommitted files, 0 secrets, 0 AgentCore dependencies added.
+Teardown was executed immediately following the repair invocation:
+
+1. **Teardown Deployment**:
+   - `npx @aws/agentcore remove all -y`
+   - `npx @aws/agentcore deploy -y -v`
+   - CloudFormation stack deleted `UPDATE_COMPLETE` -> `DELETE_COMPLETE`.
+2. **Read-Only Verification**:
+   - `aws bedrock-agentcore-control list-agent-runtimes --region us-east-1`: returned `{ "agentRuntimes": [] }` (**0 active runtimes**).
+   - `aws cloudformation describe-stacks --stack-name AgentCore-p01agent-default`: returned `ValidationError: Stack with id AgentCore-p01agent-default does not exist`.
+3. **S3 CodeZip Asset Cleanup**:
+   - `aws s3 rm s3://[REDACTED_BUCKET]/[REDACTED_CODEZIP].zip` executed and verified.
+   - S3 asset bucket audited: 0 zip assets remaining.
+4. **Local Scratch Deletion**:
+   - Ephemeral scratch directory `[REDACTED_SCRATCH_DIR]` removed completely from disk.
+5. **AWS Session Logout**:
+   - `aws logout --profile stilldone-p01` executed and verified.
+   - Subsequent `aws sts get-caller-identity` confirmed credentials revoked (`Error loading login session token`).
+
+### Residual Resource Truth Summary
+
+| Resource Category | State |
+|---|---|
+| Runtime-Specific Application Stack (`AgentCore-p01agent-default`) | **REMOVED** (0 active) |
+| Runtime-Specific Bedrock AgentCore Runtime | **REMOVED** (0 active) |
+| Runtime-Specific IAM Execution Role & Policy | **REMOVED** (0 active) |
+| Runtime-Specific S3 CodeZip Asset | **DELETED** (0 active) |
+| Shared CDK Bootstrap Infrastructure (`CDKToolkit`) | **RETAINED** (`CREATED_DURING_P01_04`) |
 
 ---
 
 ## 8. Billing Truth
 
-- **Usage-Derived Estimated Gross Total Cost**: `~$0.00168 USD` (well below $0.10 gross limit).
-- **Fresh Billing / Credit State**: Not separately read from AWS Billing console in this cycle.
-- **Actual Billed Request / Runtime Cost**: `NOT_OBSERVED / UNKNOWN` (AWS Billing asynchronously updates every 8–12 hours).
-- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN` ($0.00 target preserved via hackathon promotional credits).
+- **Cumulative Usage-Derived Conservative Gross Estimate**: `~$0.00337 USD` (well below `$0.10` limit).
+- **Actual Billed Request / Runtime Cost**: `NOT_OBSERVED / UNKNOWN` (AWS Billing console updates asynchronously; post-call charges not immediately observed in billing dashboards).
+- **Personal-Spend Delta**: `NOT_OBSERVED / UNKNOWN` (`$0.00` target preserved via promotional credits).
 
 ---
 
@@ -179,4 +201,4 @@ Teardown was executed immediately in the same cycle:
   - Live Open-Meteo call (P-01.06) — `NOT_RUN`
   - Live MCP Streamable HTTP proof (P-01.07) — `NOT_RUN`
   - P-02 domain model implementations — `NOT_RUN`
-- **Status Classification**: `DONE — awaiting independent QA review` (executor completed real deployment, live execution, and full teardown; semantic response `"UNKNOWN_PROMPT"` submitted for QA assessment).
+- **Status Classification**: `DONE — awaiting independent QA PASS`

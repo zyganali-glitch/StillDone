@@ -117,7 +117,7 @@ Do not invent entries.
 - Expected: CLI preserves JSON quotes or parses JSON string into payload; CLI allows scripted cleanup without interactive prompt
 - Actual: On Windows PowerShell, the CLI unquoted the JSON argument and forwarded `"{prompt: PING}"` to the runtime entrypoint. Additionally, `agentcore remove all` failed by default with `Error: This command requires an interactive terminal` unless `-y` was provided, and `agentcore deploy --dry-run` failed when bootstrap was missing rather than continuing preview.
 - Severity: `LOW`
-- Workaround: Handled non-interactive teardown using `agentcore remove all -y` followed by `agentcore deploy -y -v`. For payload quoting, documented the observation factually.
+- Workaround: Handled non-interactive teardown using `agentcore remove all -y` followed by `agentcore deploy -y -v`. For payload quoting, the authorized repair cycle bypassed CLI shell unquoting by using official AWS CLI `aws bedrock-agentcore invoke-agent-runtime --payload fileb://payload.json`, successfully proving deterministic remote acceptance (`AGENTCORE_OK`).
 - Evidence: `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`
 - Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? CLI / shell argument quoting & non-interactive flag friction
 - Actionable suggestion: AgentCore CLI should accept `--payload-json <json>` directly or parse string payloads cleanly across cross-platform shells (especially Windows PowerShell), and dry-run should preview resources without enforcing interactive bootstrap prerequisites.

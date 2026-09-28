@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 DONE (AWAITING INDEPENDENT QA REVIEW)**
+Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -76,7 +76,7 @@ Preferred AWS target:
 `P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`
 
 Status:
-`DONE — awaiting independent QA review`
+`DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
@@ -88,16 +88,19 @@ Status:
 
 ## Next safe action
 
-Await independent QA review and formal decision for P-01.04.
+Await independent QA PASS for P-01.04.
 
-Real AgentCore Runtime was deployed to `us-east-1` (CodeZip build, Python 3.13, platform version V1) via official `@aws/agentcore` CLI (v0.30.0).
-Preflight confirmed service availability. Pre-deploy cost gate passed (`~$0.00168 USD` conservative, well within authorized `$0.10` limit).
-Runtime reached `READY` (stack `AgentCore-p01agent-default`, runtime ID `p01agent_p01agent-or9Fbj3Agb`).
-Exactly one live remote invocation was executed via `agentcore invoke`. HTTP 200 returned in 6720ms with session ID `d6f6360b-0ce3-48a3-99ad-1af6822f5f2c`. Response payload returned deterministic validation string `"UNKNOWN_PROMPT"` (due to Windows PowerShell shell argument quotation unquoting `{"prompt": "PING"}` to `"{prompt: PING}"` at entrypoint).
-Strictly zero models called inside runtime. Exactly 1 invocation attempt; zero retries.
-Full teardown executed and verified in the same cycle: runtime deleted, CloudFormation stack deleted, S3 CodeZip deleted. CDK bootstrap infrastructure recorded as `CREATED_DURING_P01_04` (shared account-level). Clean AWS logout and scratch cleanup verified.
-Evidence documented in `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`.
-Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-02`).
+Cycle 1 historically established real AgentCore service access, CodeZip serverless runtime deployment, and remote Python handler execution, but observed a Windows PowerShell inline JSON quoting defect returning `"UNKNOWN_PROMPT"`.
+The authorized repair cycle successfully proved deterministic acceptance:
+- Read-only audit reconciled shared CDK bootstrap infrastructure (`CDKToolkit`), retaining observed resource classes (`AWS::SSM::Parameter`, `AWS::IAM::Role`, `AWS::IAM::Policy`, `AWS::ECR::Repository`, `AWS::KMS::Key`, `AWS::KMS::Alias`, `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`).
+- Exactly 1 repair deployment executed in ephemeral scratch outside canonical repo; reached `READY` (Python 3.14, platformVersion `V1`).
+- Exactly 1 repair remote invocation executed via official data-plane CLI (`aws bedrock-agentcore invoke-agent-runtime`) using binary payload file `fileb://payload.json` (`{"prompt":"PING"}`).
+- Returned HTTP 200 with exact deterministic response `{"result": "AGENTCORE_OK"}`.
+- Strictly zero foundation models or LLMs called inside runtime; zero external calls; zero retries.
+- Mandatory teardown executed immediately: application stack deleted, runtime deleted, S3 CodeZip asset removed, scratch directory removed, AWS logout verified.
+- Cumulative usage-derived gross cost $\approx \$0.00337\text{ USD} \ll \$0.10$ limit; actual billed cost and personal-spend delta remain `NOT_OBSERVED / UNKNOWN` ($0.00 target preserved).
+- All resource identifiers and private paths sanitized. Evidence documented in `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`.
+- Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-02`).
 
 Task P-01.05 (`Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
 
