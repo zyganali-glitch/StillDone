@@ -294,7 +294,18 @@ Acceptance:
 - focused unit tests: `tests/domain/test_desired_state.py` passing.
 
 ### P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- supported action vocabulary: finite `ActionType` covering exactly 5 required capabilities (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); arbitrary shell, HTTP, filesystem, delete, and model actions forbidden;
+- target identity: immutable `TargetIdentity` distinguishing system namespace, `ResourceKind` (`calendar_event`, `task_list`, `task`, `weather_location`), resource ID, and optional parent ID;
+- creation targeting: creation binds to parent container target without fabricating child ID;
+- parameter normalization: immutable `NormalizedParameters` with stable lexicographical key ordering, scalar JSON-like domain, strict rejection of non-finite numbers (NaN/Inf) and arbitrary objects, verbatim string preservation;
+- action contract: immutable `ActionContract` binding runtime `ActionId`, `MissionId`, `ActionType`, `TargetIdentity`, and `NormalizedParameters`;
+- execution/authority boundary: zero execution, zero authority classification, zero approval object creation;
+- immutability: all objects frozen;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_action.py` passing.
 
 ### P-02.04 — Define mission lifecycle and step evidence states
 Status: PENDING
