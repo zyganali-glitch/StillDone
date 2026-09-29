@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 PASS; P-01.05 DONE (AWAITING INDEPENDENT QA PASS)**
+Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 PASS; P-01.05 PASS; P-01.06 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,36 +73,35 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`
+`P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract`
 
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`274187c19538e9e9f5f18fe3e2f372a8465cbc91`
+`191eb2b4451be22bbe2360742a7a4c01a942ecb5`
 
 ## Next exact task after independent QA PASS
 
-`P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract`
+`P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof`
 
 ## Next safe action
 
-Await independent QA PASS for P-01.05.
+Await independent QA PASS for P-01.06.
 
-P-01.05 successfully proved live read-only Google Calendar and Tasks integration:
-- Verified official Google Developer documentation on 2026-09-29 for Calendar quotas, Tasks limits, OAuth scopes, and Desktop flow.
-- Enforced minimum scope contract: `calendar.calendarlist.readonly`, `calendar.events.readonly`, and `tasks.readonly` only.
-- Executed Desktop app OAuth authorization flow via ephemeral local loopback server (`65389`) with explicit test user configuration.
-- Located dedicated disposable secondary Calendar `StillDone Demo` (exactly 1 match; 0 events found; canonical `Leave for school` absent).
-- Located dedicated disposable Task List `StillDone Demo` (exactly 1 match; 0 tasks found).
-- Strictly zero write operations executed (`calendar_writes = 0`, `tasks_writes = 0`).
-- Strictly zero API retries (`api_retries = 0`).
-- Strictly zero billing or paid quota alterations ($0.00 personal spend).
-- In-memory filtering enforced: zero unrelated personal calendar/task names stored, zero emails or tokens committed.
-- Ephemeral tokens deleted from local scratch immediately (`ephemeral_token.json` deleted; remote OAuth grant `NOT_REVOKED`).
-- Durable evidence recorded in `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`.
+P-01.06 successfully proved live Open-Meteo weather integration:
+- Verified official Open-Meteo documentation and terms on 2026-09-29.
+- Verified free public endpoint `https://api.open-meteo.com/v1/forecast`, rate limits (10,000/day, 5,000/hr, 600/min per IP), and CC BY 4.0 data licence.
+- Strictly zero API keys, authentication headers, user accounts, or paid plans ($0.00 personal spend).
+- Selected public canonical demo location (Seattle, WA coordinates `47.6062`, `-122.3321`, timezone `America/Los_Angeles`); zero private/device geolocation sent.
+- Executed exactly 1 HTTP GET request; received HTTP 200 OK (latency 429.34ms, generation time 0.294ms).
+- Verified deterministic response: matching timezone (`America/Los_Angeles`, GMT-7), daily units, 3 forecast dates (`2026-09-28` to `2026-09-30`), weather codes, min/max temperatures, precipitation probability and sum. Zero LLM interpretation.
+- Strictly zero retries (`api_retries = 0`), zero fallback providers.
+- Mandatory display attribution recorded: `"Weather data by Open-Meteo.com — CC BY 4.0"`.
+- Prototype/evaluation feasibility distinguished from future commercial/judging deployment eligibility (to be frozen at P-01.08).
+- Durable evidence recorded in `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`.
 
-Task P-01.06 (`Execute first live Open-Meteo forecast call and record attribution/limit contract`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.05 receives independent QA PASS.
+Task P-01.07 (`Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.06 receives independent QA PASS.
 
 

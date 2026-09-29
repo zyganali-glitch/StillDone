@@ -202,7 +202,7 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified SHA: `274187c19538e9e9f5f18fe3e2f372a8465cbc91`).
 
 ### P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified SHA: `191eb2b4451be22bbe2360742a7a4c01a942ecb5`)
 
 Acceptance:
 - dedicated demo resources created or identified: YES (disposable secondary Google Calendar `StillDone Demo` and dedicated task list `StillDone Demo` created manually by operator);
@@ -212,19 +212,23 @@ Acceptance:
 - no unrelated personal data captured: YES (in-memory filtering only; zero unrelated calendar/task names stored; zero personal emails or tokens committed; resource IDs sanitized as `[REDACTED_CALENDAR_ID]` and `[REDACTED_TASKLIST_ID]`);
 - zero mutation & zero retry: 0 writes, 0 retries, 0 billing/paid quota changes, $0.00 personal spend;
 - ephemeral credentials cleanup: local `ephemeral_token.json` deleted; remote OAuth grant `NOT_REVOKED`;
+- non-blocking operational note: test-user OAuth authorizations can expire after 7 days while the Google Cloud OAuth app remains in Testing mode; final live-demo readiness must account for this;
 - provenance: `LIVE_GOOGLE_CALENDAR` and `LIVE_GOOGLE_TASKS`;
 - evidence doc: `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`;
-- note: Task marked DONE — awaiting independent QA PASS. Task P-01.06 remains PENDING / NOT_STARTED and MUST NOT start before P-01.05 receives independent QA PASS.
+- note: Task closed with independent QA PASS (Verified SHA: `191eb2b4451be22bbe2360742a7a4c01a942ecb5`).
 
 ### P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
 
 Acceptance:
-- live response;
-- configured public city/location only;
-- no API key;
-- provenance `LIVE_EXTERNAL`;
-- data attribution requirement recorded.
+- live response: YES (HTTP 200 OK from public endpoint `https://api.open-meteo.com/v1/forecast`, latency 429.34ms, generation time 0.294ms, returned timezone `America/Los_Angeles` with valid daily units and 3 forecast dates `2026-09-28` to `2026-09-30`);
+- configured public city/location only: YES (Seattle, WA coordinates `47.6062`, `-122.3321`; zero personal/device geolocation);
+- no API key: YES (strictly zero authentication, zero API keys, zero accounts or paid subscriptions; $0.00 personal spend);
+- provenance: `LIVE_EXTERNAL`;
+- data attribution requirement recorded: YES (CC BY 4.0 licence observed; display attribution contract recorded as "Weather data by Open-Meteo.com — CC BY 4.0"; prototype/evaluation feasibility distinguished from future commercial/judging deployment eligibility to be frozen at P-01.08);
+- zero mutation & zero retry: exactly 1 forecast query attempt, 0 retries, 0 fallback providers;
+- evidence doc: `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`;
+- note: Task marked DONE — awaiting independent QA PASS. Task P-01.07 remains PENDING / NOT_STARTED and MUST NOT start before P-01.06 receives independent QA PASS.
 
 ### P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof
 Status: PENDING
