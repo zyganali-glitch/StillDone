@@ -333,7 +333,7 @@ Acceptance:
 - focused unit tests: `tests/domain/test_authority.py` passing.
 
 ### P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified commit: `bc8e7c6e66667803fc6d10fef6e6460b803c3777`)
 
 Acceptance:
 - idempotency contract: runtime-owned opaque UUID-backed `IdempotencyKey`; valid UUIDs accepted, malformed strings and non-UUID types rejected; generated once per mutation lineage; retries reuse the same key;
@@ -347,7 +347,7 @@ Acceptance:
 
 
 ### P-02.07 — Define evidence provenance and live/recorded/fixture separation
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified commit: `380c63f1a46979ecef54187117ac0b843cbd5c24`)
 
 Acceptance:
 - exact six-value provenance vocabulary: `FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE` frozen strictly as defined by `AGENTS.md` and `docs/EVIDENCE_AND_STATE_CONTRACT.md`;
@@ -360,7 +360,7 @@ Acceptance:
 - focused unit tests: `tests/domain/test_provenance.py` passing.
 
 ### P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified commit: `293ec637464294a6caaca8cffcd85dd666890f61`)
 
 Acceptance:
 - serialization and lossless schema projection: test-local projection helpers prove stable lossless JSON projection across `MissionContract`, `DesiredStatePredicate`, `ActionContract`, `ApprovalGrant`, `ExecutionAttempt`, `RetryPolicy`, `ResourceBinding`, `ReconciliationRequest`, and `EvidenceOrigin`; canonical strings for IDs, exact canonical enum strings, UTC ISO timestamps, and normalized parameter sorting verified; zero generic evidence hashing or ledger serialization introduced;
@@ -368,11 +368,12 @@ Acceptance:
 - forbidden-transition tests: verified declarative lifecycle metadata (`DRAFT`/`PLANNED`/`EXECUTING`/`NEEDS_APPROVAL`/`PARTIAL`/`FAILED` -> `READY` all forbidden; `READY` entered strictly from `VERIFYING`; `READY` -> `DRIFTED` permitted; `EXECUTING` cannot bypass `VERIFYING`); zero runtime transition guards implemented;
 - static provider-purity AST inspection: AST walk across all domain Python source files proves strictly zero imports of provider SDKs (`boto3`, `botocore`, `strands`, `agentcore`, `google`, `googleapiclient`, `mcp`, `requests`, `httpx`, `urllib3`, `aiohttp`, `flask`, `fastapi`, `sqlite3`, `sqlalchemy`, `tkinter`);
 - future-leakage assertions: verified zero persistence, zero SQLite, zero `open()` file calls, zero generic evidence ledger/hashing, zero runtime transition engine, zero model/LLM invocation, and zero live/fixture fallback;
-- phase exit candidate: Phase P-02 DONE — awaiting independent QA phase closure; P-03 remains PENDING / NOT_STARTED;
-- focused unit tests: `tests/domain/test_phase_p02_contracts.py` passing.
+- recursive domain inspection: repair commit `293ec637464294a6caaca8cffcd85dd666890f61` canonicalized recursive `rglob("*.py")` inspection across `src/stilldone/domain/**/*.py` with regression protection against nested module bypasses (`test_domain_source_enumeration_includes_nested_modules`, `test_nested_module_forbidden_import_detected`);
+- focused unit tests: `tests/domain/test_phase_p02_contracts.py` passing (120 total tests in suite passing);
+- phase exit: Phase P-02 is complete and closed with independent QA PASS (Verified SHA: `293ec637464294a6caaca8cffcd85dd666890f61`). Phase P-03 is PENDING / NOT_STARTED / NOT AUTHORIZED. Next exact task: `P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs` (NOT AUTHORIZED until Phase P-02 boundary reconciliation is independently reviewed).
 
 Phase exit:
-core domain imports no AWS/Google/MCP UI SDK objects.
+core domain imports no AWS/Google/MCP UI SDK objects; Phase P-02 closed with independent QA PASS.
 
 
 ---

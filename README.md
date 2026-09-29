@@ -103,20 +103,20 @@ See:
 
 ## Current status
 
-**P-01 LIVE FEASIBILITY COMPLETED — P-01.01 through P-01.07 PASS; P-01.08 DONE (LIVE FEASIBILITY GO — AWAITING INDEPENDENT QA PASS)**
+**PHASE P-02 CLOSED — INDEPENDENT QA PASS (Verified SHA: `293ec637464294a6caaca8cffcd85dd666890f61`); PHASE P-03 PENDING / NOT_STARTED**
 
-Foundation and live feasibility status:
-- **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed (`P-00.01` through `P-00.05`).
-- **P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality**: Independently passed (`e3d5aa7`). AWS account, promotional credit coverage, billing-risk boundary, and region/service feasibility were reconciled.
-- **P-01.02 — Execute first real Bedrock model inference with a sanitized minimal prompt**: Independently passed (`67bf97a`). Following AWS Support account adjustments and verified `AUTHORIZED` preflight, real Converse inference succeeded against `amazon.nova-micro-v1:0` in `us-east-1` with genuine model response (`pong`, tokens: 11) and zero mutations.
-- **P-01.03 — Prove minimal real Strands agent execution against the selected Bedrock model**: Independently passed (`bfa46d2`). Real Strands agent execution proven against `amazon.nova-micro-v1:0` via native `BedrockModel` with prompt `"Reply only with: STRANDS_OK"`, returning genuine response `"STRANDS_OK"` (elapsed: 1179ms).
-- **P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence**: Independently passed (`274187c`). Real Bedrock AgentCore Runtime deployed to `us-east-1` (serverless microVM, CodeZip build, Python 3.14, platform version V1). Deterministic acceptance proven in repair cycle via data-plane invoke returning HTTP 200 `{"result": "AGENTCORE_OK"}`. Full teardown completed. Retained CDK bootstrap infrastructure remediated to eliminate customer KMS key charges ($0 ongoing fee).
-- **P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources**: Independently passed (`191eb2b`). Desktop OAuth flow verified with test user. Least-privilege read scopes enforced. Dedicated secondary Calendar `StillDone Demo` and Task List `StillDone Demo` discovered and read. Strictly zero writes, zero token leakage, $0.00 personal spend.
-- **P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract**: Independently passed (`0cfac5a`). Executed live Forecast API request against public demo coordinates (Seattle, WA). Received HTTP 200 with 3-day daily forecast arrays. Mandatory CC BY 4.0 display attribution contract recorded (`"Weather data by Open-Meteo.com — CC BY 4.0"`). Non-commercial evaluation tier confirmed.
-- **P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof**: Independently passed (`87232f7`). Built isolated ephemeral MCP server (`@modelcontextprotocol/sdk` v1.31.0 in direct-JSON mode on `/mcp`) exposed over public HTTPS via ephemeral Cloudflare Quick Tunnel. Real MCP client connected, negotiated protocol `2025-11-25`, and called diagnostic `echo` tool with round-trip latency of 61.26ms (< 500ms threshold). Full teardown executed. Alexa+ two-tier auth model cataloged; partner access honestly classified as `NOT_ESTABLISHED`.
-- **P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision**: `DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`. Frozen Architecture v1 with proven AWS stack (Bedrock Nova Micro, Strands, AgentCore Runtime) and explicit rejected/deferred services; frozen Google Calendar/Tasks, Open-Meteo, and remote MCP external boundaries; audited zero-personal-spend feasibility (`ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING`); broad P-Ω phase-boundary audit passed with zero defects; issued **LIVE FEASIBILITY GO**.
-- **Discipline constraints**: Phase P-01 is complete and awaiting independent QA phase closure. Phase P-02 remains locked and `NOT_STARTED` (P-02 MUST NOT START).
-- **Product code**: Product/runtime implementation remains intentionally at the minimal bootstrap skeleton; P-02 domain implementation has not started.
+Phase progression and verified milestones:
+- **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
+- **Phase P-01 (Live Access, Zero-Cost & Platform Feasibility)**: Complete and closed with independent QA PASS (`P-01.01` through `P-01.08`, verified SHA `41e4ea717b43f558d9d07a7f1775c0780819910f`). Architecture v1 frozen; all live feasibility legs proven; zero personal spend verified ($0.00).
+- **Phase P-02 (Provider-Neutral Mission & Desired-State Contracts)**: Complete and closed with independent QA PASS (`P-02.01` through `P-02.08`, verified SHA `293ec637464294a6caaca8cffcd85dd666890f61`).
+  - Provider-neutral domain contracts: `MissionContract`, `UserIntentSnapshot`, `DesiredStatePredicate`, `FreshnessContract`, `ActionContract`, `TargetIdentity`, `NormalizedParameters`, `ApprovalGrant`, `BindingHash`, `ExecutionAttempt`, `RetryPolicy`, `ResourceBinding`, `ReconciliationRequest`, and `EvidenceOrigin`.
+  - Canonical vocabularies frozen: `MissionState` (10), `StepEvidenceState` (7), `PredicateOperator` (8), `FreshnessMode` (2), `ActionType` (5), `ResourceKind` (4), `AuthorityClass` (5), `RetryStrategy` (3), `ReconciliationReason` (3), `EvidenceProvenance` (6).
+  - Hard boundary enforcement: Strictly zero external provider SDK imports (`boto3`, `google`, `mcp`, etc.), zero database/persistence implementations, zero generic evidence ledgers, zero generic content-addressed evidence ID implementations, zero runtime state-transition guard engines, zero model/LLM invocations, and zero silent live→fixture fallback.
+  - Canonical recursive domain inspection: AST purity and anti-leakage checks recursively cover `src/stilldone/domain/**/*.py` (`rglob("*.py")`) with regression proof against nested module bypasses (`test_domain_source_enumeration_includes_nested_modules`, `test_nested_module_forbidden_import_detected`).
+  - Donor truth: Zero donor source code imported (0 lines); all domain logic is clean-room reimplemented; donor concepts preserved as `CONCEPT_ONLY`.
+- **Phase P-03 (Deterministic Evidence Ledger & Fact Authority)**: `PENDING / NOT_STARTED`.
+  - Next exact task: `P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs`.
+  - **Discipline constraints**: `P-03.01` is **NOT AUTHORIZED** until this Phase P-02 boundary reconciliation / P-Ω audit receives independent QA review. Phase P-03 MUST NOT START.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
