@@ -17,9 +17,15 @@ from stilldone.domain.desired_state import (
     PredicateId,
     PredicateOperator,
 )
+from stilldone.domain.lifecycle import (
+    DECLARATIVE_MISSION_TRANSITIONS,
+    MissionState,
+    StepEvidenceState,
+)
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
 
 __all__ = [
+    "DECLARATIVE_MISSION_TRANSITIONS",
     "ActionContract",
     "ActionId",
     "ActionType",
@@ -29,11 +35,13 @@ __all__ = [
     "FreshnessMode",
     "MissionContract",
     "MissionId",
+    "MissionState",
     "NormalizedParameters",
     "NormalizedScalar",
     "PredicateId",
     "PredicateOperator",
     "ResourceKind",
+    "StepEvidenceState",
     "TargetIdentity",
     "UserIntentSnapshot",
 ]

@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization`
+`P-02.04 — Define mission lifecycle and step evidence states`
  
 Status:
 `DONE — awaiting independent QA PASS`
@@ -82,13 +82,15 @@ Status:
 
 `41e4ea717b43f558d9d07a7f1775c0780819910f`
 
-## Next exact task after P-02.03
+## Next exact task after independent QA of candidate batch P-02.01 -> P-02.04
 
-`P-02.04 — Define mission lifecycle and step evidence states`
+`P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics`
 
 ## Next safe action
 
-Execute P-02.04 within the bounded micro-task batch (P-02.01 -> P-02.04). Stop after P-02.04. P-02.05 is NOT AUTHORIZED.
+Bounded candidate batch P-02.01 -> P-02.04 is complete. Await independent QA before starting P-02.05 (authority / approval-binding security boundary).
+
+**HARD STOP. P-02.05 IS NOT AUTHORIZED.**
 
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
 - Verified complete P-01 live feasibility chain: P-01.01 through P-01.07 are all closed as independent QA PASS.

@@ -308,13 +308,21 @@ Acceptance:
 - focused unit tests: `tests/domain/test_action.py` passing.
 
 ### P-02.04 — Define mission lifecycle and step evidence states
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- mission lifecycle vocabulary: exact 10 states (`DRAFT`, `PLANNED`, `EXECUTING`, `NEEDS_APPROVAL`, `VERIFYING`, `READY`, `PARTIAL`, `FAILED`, `DRIFTED`, `CANCELLED`);
+- step evidence vocabulary: exact 7 states (`NOT_RUN`, `EXECUTED_UNVERIFIED`, `VERIFIED`, `CONTRADICTED`, `BLOCKED`, `FAILED`, `STALE`);
+- StillDone invariants enforced: `NOT_RUN` is not `PASS`; execute success alone yields at most `EXECUTED_UNVERIFIED`; `VERIFIED` requires independent read-back; `CONTRADICTED` and `BLOCKED` are distinct from `FAILED`; `STALE` captures expired freshness; `READY` is renewable; `DRIFTED` captures reality divergence;
+- boundary protection: declarative transition metadata only (`DECLARATIVE_MISSION_TRANSITIONS`); runtime transition guard engine strictly deferred to P-03.03; zero mutating/transition methods implemented;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_lifecycle.py` passing.
 
 ### P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics
-Status: PENDING
+Status: PENDING / NOT_STARTED
 
 ### P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts
-Status: PENDING
+Status: PENDING / NOT_STARTED
 
 ### P-02.07 — Define evidence provenance and live/recorded/fixture separation
 Status: PENDING
