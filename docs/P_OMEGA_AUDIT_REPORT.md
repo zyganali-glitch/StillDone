@@ -16,11 +16,11 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 |---|---|---|
 | **Canonical Remote State** | **PASS** | Remote `origin/main` verified; linear history; exact task ordering strictly preserved. Starting remote SHA `87232f7f3e8bbff7882bb52691665f100e5ee16a` independently verified. |
 | **Scope & Invariants** | **PASS** | Source tree `src/stilldone/` contains only `__init__.py`. Zero premature product/runtime code or mock services. Phase P-02 remains strictly `NOT_STARTED`. |
-| **Architecture Consistency** | **PASS** | Architecture v1 frozen in `docs/ARCHITECTURE.md`. Proven AWS stack selected (`amazon.nova-micro-v1:0`, Strands SDK, AgentCore Runtime). Rejected and deferred services explicitly cataloged. Hexagonal provider-neutral ports defined. |
+| **Architecture Consistency** | **PASS** | Architecture v1 frozen in `docs/ARCHITECTURE.md`. Proven AWS stack selected (`amazon.nova-micro-v1:0`, Strands SDK, AgentCore Runtime). Rejected and deferred services explicitly cataloged (DynamoDB deferred; provider-neutral ledger port frozen; concrete persistence deferred to P-03 as candidate direction only). Hexagonal provider-neutral ports defined. |
 | **Authority Semantics & Core Invariant** | **PASS** | `INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED` chain maintained. Execute $\neq$ verify law enforced. 5 action classes and cryptographic approval binding defined. Freshness and drift laws frozen. |
 | **Security & Privacy** | **PASS** | Zero credentials, OAuth tokens, AWS access keys, or private developer paths committed. Least-privilege read scopes proven. Dedicated disposable secondary calendar and task list (`StillDone Demo`) isolated. Public demo coordinates (Seattle, WA) used. |
 | **Evidence Provenance Truth** | **PASS** | Clear separation between execution-time live evidence (`LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `LIVE_REMOTE_MCP`) and durable repository artifacts (`RECORDED_LIVE`). No fixtures claimed as live. Alexa+ partner access honestly classified as `NOT_ESTABLISHED`. Simulated Alexa+ client surface visibly labeled. |
-| **Cost & Zero Personal Spend Policy** | **PASS** | Target personal spend is strictly `$0.00`. $150 hackathon credit verified active. Cumulative usage-derived gross cost through P-01 estimated at `~$0.00521 USD` (well below $0.10 authorized ceiling). Actual billed cost / personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`. CDK bootstrap KMS key remediated to `PendingDeletion` ($0 ongoing fee). Verdict: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING`. |
+| **Cost & Zero Personal Spend Policy** | **PASS** | Target personal spend is strictly `$0.00`. $150 hackathon credit verified active. Cumulative usage-derived gross cost through P-01 estimated at `~$0.00521 USD` (well below $0.10 authorized ceiling). Actual billed cost / personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`. CDK bootstrap KMS key remediated to `PendingDeletion` ($0 ongoing fee). Verdict: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING` (feasibility determination, not proof of $0.00 actual delta). |
 | **Donors & Licensing** | **PASS** | Apache-2.0 root license. All 9 donors pinned to immutable SHAs in `docs/DONOR_PROVENANCE.md` under `CONCEPT_ONLY`. Exactly **0 lines** of donor source code imported. Proprietary status of `ChangeMesh` respected. |
 | **Competition Contract Parity** | **PASS** | Official rules freshly re-checked on `2026-09-29` against Devpost rules. Primary: Alexa+ (self-hosted MCP >= 2025-11-25 over Streamable HTTP; or simulated experience exempt from runtime hook). Secondary: AWS Builder Mini Challenge and Open Source Mini Challenge. Four equally weighted criteria (25% each) and tie-breaking priority recorded. Demo video < 3:00 rules recorded. |
 | **Tooling, Types & CI Determinism** | **PASS** | Python 3.13 baseline; uv pinned; lockfile immutable; ruff formatting clean; ruff lint clean; mypy strict clean (0 issues); pytest passing (1 passed); validate.py clean. Zero cloud/network calls during CI/tests. |
@@ -30,6 +30,14 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 
 > [!IMPORTANT]
 > **Phase Gate Outcome**: In accordance with StillDone Constitution § 3, local execution does not constitute remote closure, and the executor does not self-award phase closure. Task P-01.08 status is **`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`**. Phase P-01 status is **`DONE — awaiting independent QA phase closure`**. Phase P-02 remains **`NOT_STARTED`** and strictly locked.
+
+### 1.1 Independent QA Candidate Review & Surgical Parity Remediation
+The initial Phase P-01.08 phase-closure candidate received independent QA verdict **`REPAIR`**, citing three documentation truth and parity discrepancies:
+1. **AWS Personal-Spend Contradiction**: Cost tables previously presented net personal spend as `$0.00 (Target Met)` for AWS operations while text disclaimed actual billed cost as `NOT_OBSERVED / UNKNOWN`. Remediated by replacing the table with a 6-column schema clearly separating conservative gross estimates, promotional credit eligibility, `UNKNOWN` actual billed costs and personal-spend deltas, and the `$0.00` target spend, with an explicit note that the verdict is an architectural feasibility determination, not proof of $0.00 actual delta.
+2. **Competition Contract Authentication Parity**: `docs/COMPETITION_CONTRACT.md` § 4.4 previously summarized authentication with single-tier PKCE wording. Remediated to mirror the full official two-tier authentication architecture cataloged in P-01.07 (Tier 1 `client_credentials` M2M for discovery; Tier 2 `authorization_code` + PKCE S256 for user account linking; PRM; RFC 8707; Amazon unsupported mechanisms; `NOT_ESTABLISHED` partner status).
+3. **Premature Future-Phase Claims**: `docs/ARCHITECTURE.md` and related docs previously implied P-03 local append-only storage was already accepted or satisfied requirements. Remediated to explicitly state that the provider-neutral ledger port is `FROZEN`, while concrete persistence is `DEFERRED / NOT_YET_IMPLEMENTED`, with local append-only SQLite/file being a candidate direction only (not yet implemented, validated, or accepted).
+
+All three defects were documentation-only truth/parity defects; the underlying P-01 live feasibility proofs (P-01.01 through P-01.07) remain fully valid and untouched. With all three defects surgically resolved, the repaired audit evaluation stands at **`PASS`**.
 
 ---
 
@@ -52,7 +60,7 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 - **Component Responsibilities**: Defined responsibilities for all 10 components (Remote MCP Server, Simulated Alexa+ Client Surface, Intake, Planner, Contract Compiler, Authority Engine, Executor, Readback Engine, Predicate/Drift Engine, Ledger Port, Receipt Surface).
 - **Service Set Classification**:
   - `SELECTED`: Amazon Bedrock (`amazon.nova-micro-v1:0` in `us-east-1`), Strands Agents SDK (native `BedrockModel`), Amazon Bedrock AgentCore Runtime (serverless CodeZip in `us-east-1`).
-  - `DEFERRED`: Amazon DynamoDB (ledger port abstraction in v1; concrete adapter deferred), Amazon Bedrock AgentCore Identity.
+  - `DEFERRED`: Amazon DynamoDB (ledger port boundary `ledger_port.py` frozen in v1; concrete persistence deferred to P-03 as candidate direction only, not yet implemented), Amazon Bedrock AgentCore Identity.
   - `REJECTED_FOR_V1`: AgentCore Gateway, AgentCore Memory, AWS Lambda, AWS Step Functions, Amazon EventBridge, Amazon SageMaker, Amazon Cognito, Amazon S3 (for application state), Provisioned Throughput, Marketplace 3P models.
 - **Result**: **PASS**
 
@@ -79,10 +87,10 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 - **Personal Spend Target**: Strictly `$0.00`.
 - **AWS Credit**: $150 Hackathon Promotional Credit active and confirmed covering Bedrock and AgentCore.
 - **Cumulative Usage-Derived Gross Cost**: Bedrock Converse (~$0.00000070) + Strands (~$0.00000098) + AgentCore & CDK bootstrap remediation (~$0.00521) = `~$0.00521 USD` (well below $0.10 authorized ceiling).
-- **Actual Billed Cost Delta / Personal Spend Delta**: Preserved honestly as `NOT_OBSERVED / UNKNOWN` (credits apply asynchronously, and bills console was not separately inspected).
+- **Actual Billed Cost Delta / Personal Spend Delta**: Preserved honestly as `NOT_OBSERVED / UNKNOWN` (credits apply asynchronously, and bills console was not separately inspected). Cost tables in `docs/COST_AND_ACCESS_POLICY.md` and `docs/P01_LIVE_FEASIBILITY.md` explicitly separate conservative gross estimate, credit eligibility, and `UNKNOWN` actual billed costs and personal spend deltas.
 - **Retained CDK Bootstrap Cost Truth**: CDK bootstrap stack was remediated via official `cdk bootstrap --no-bootstrap-customer-key`, transitioning the customer-managed KMS key to `PendingDeletion` ($0 ongoing fee). Retained S3 template storage is < 30 KB (< $0.000001/month).
 - **External Free Services**: Google Calendar/Tasks courtesy quota ($0.00); Open-Meteo free evaluation endpoint ($0.00); Cloudflare Quick Tunnel ephemeral ($0.00).
-- **Verdict**: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING`.
+- **Verdict**: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING` (explicitly disclaimed as an architectural feasibility determination, not proof that the actual personal-spend delta was $0.00).
 - **Result**: **PASS**
 
 ### 2.8 Donors & Licensing
@@ -98,6 +106,7 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
   - Primary: Alexa+ (qualifying via self-hosted MCP server >= 2025-11-25 over Streamable HTTP, or simulated Alexa+ experience exempt from runtime hook).
   - Secondary: AWS Builder Mini Challenge (Bedrock + AgentCore + Strands SDK documented in Product Feedback).
   - Secondary: Open Source Mini Challenge (new/contributed OSS repo, unmerged PR/fork allowed).
+- **Authentication Architecture Recorded**: `docs/COMPETITION_CONTRACT.md` § 4.4 synchronized to the official two-tier model cataloged in P-01.07 (Tier 1 `client_credentials` M2M discovery, Tier 2 `authorization_code` + PKCE S256 user account linking, PRM, RFC 8707, unsupported mechanisms, and `NOT_ESTABLISHED` partner status).
 - **Judging Criteria**: Four equally weighted criteria (25% each): Tech Implementation, Design, Potential Impact, Quality of the Idea. Tie-breaker hierarchy: Tech Implementation first.
 - **Submission Requirements**: Demo video < 3:00 on YouTube/Vimeo, English, public; public GitHub repo with visible OSS license; Product Feedback 5 mandatory questions + optional friction log up to 10% bonus.
 - **Result**: **PASS**

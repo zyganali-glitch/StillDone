@@ -128,7 +128,7 @@ Remote MCP Server — Streamable HTTP (MCP spec >= 2025-11-25)
 11. **Mission Ledger & Evidence Store (Provider-Neutral Port)**:
     - Immutable, append-only ledger tracking missions, actions, approvals, and evidence items.
     - Each evidence record is content-addressed via SHA-256 and records explicit provenance (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`).
-    - Core domain interacts via a provider-neutral repository port; concrete storage implementation is local append-only storage in v1, with cloud persistence deferred.
+    - Core domain interacts via a provider-neutral repository port (`ledger_port.py`), which is frozen in Architecture v1. Concrete persistence is deferred to Phase P-03 (`DEFERRED / NOT_YET_IMPLEMENTED`). A local append-only file/SQLite ledger is a candidate direction only; it is not yet implemented, validated, or accepted. P-03 exact tasks will determine and prove the concrete implementation.
 
 12. **Voice Summary & Visual Receipt Surface**:
     - Synthesizes concise voice status for Alexa+ conversational flow.
@@ -163,7 +163,7 @@ Every candidate AWS service is explicitly classified to prevent architectural cr
 | **AgentCore Gateway** | **`REJECTED_FOR_V1`** | Unnecessary architectural complexity; direct data-plane invocation via AWS SDK/CLI is fully sufficient and eliminates routing overhead and potential unmetered endpoint costs. |
 | **AgentCore Memory** | **`REJECTED_FOR_V1`** | Architecturally conflicts with StillDone's core thesis. Mission state, evidence, and verification must be owned by an immutable, deterministic ledger, not opaque probabilistic model memory. |
 | **AgentCore Identity** | **`DEFERRED`** | External API authorization (Google OAuth) is handled via direct least-privilege token management. AgentCore Identity is not required for the single-operator v1 killer demo. |
-| **Amazon DynamoDB** | **`DEFERRED`** | The mission ledger is defined as a provider-neutral PORT. Local append-only file/SQLite storage in Phase P-03 satisfies all integrity requirements with zero cloud cost. DynamoDB adapter deferred to explicit later task if cloud persistence is needed. |
+| **Amazon DynamoDB** | **`DEFERRED`** | The mission ledger boundary is frozen as a provider-neutral port (`ledger_port.py`). Concrete persistence is deferred to Phase P-03 (`DEFERRED / NOT_YET_IMPLEMENTED`). A local append-only file/SQLite ledger is a candidate direction only; it is NOT yet implemented, validated, or accepted. DynamoDB adapter deferred to an explicit later task if cloud persistence is needed. |
 | **AWS Lambda (Standard)** | **`REJECTED_FOR_V1`** | Redundant. AgentCore Runtime provides the serverless container execution environment for StillDone. |
 | **AWS Step Functions** | **`REJECTED_FOR_V1`** | State transitions and verification logic must be executed and audited deterministically by StillDone's Python domain engine, not outsourced to an external cloud workflow service. |
 | **Amazon EventBridge** | **`REJECTED_FOR_V1`** | Synchronous/reconciliation micro-task execution in v1 does not require an asynchronous pub/sub event bus; adds operational moving parts without verification benefit. |
@@ -256,7 +256,7 @@ src/stilldone/
 │   ├── mcp/
 │   │   └── server.py          <-- Real Streamable HTTP MCP server
 │   └── persistence/
-│       └── local_ledger.py    <-- Deterministic local append-only ledger (v1)
+│       └── (deferred to P-03) <-- Candidate direction: local append-only ledger (NOT yet implemented)
 │
 └── web/                       <-- User interfaces
     └── simulated_alexa/       <-- Visibly labeled simulated Alexa+ client & receipt UI

@@ -80,11 +80,24 @@ The official rules define three valid qualification routes for the Alexa+ Track:
 ### 4.4 Technical Specs for Direct Connection (Reference)
 - **Transport**: Streamable HTTP (standalone HTTP+SSE deprecated by MCP 2025-11-25).
 - **Public URL**: Remote HTTPS URL required (cloudflared tunneling acceptable in development).
-- **Authentication**: OAuth 2.1 authorization code flow with PKCE (S256).
-  - Protected Resource Metadata (PRM) document according to RFC 9728.
-  - Auth server metadata at `/.well-known/oauth-authorization-server`.
-  - `code_challenge_methods_supported` must include `S256`.
-  - 401 Unauthorized returned without `WWW-Authenticate` header.
+- **Authentication Architecture (Official Two-Tier Model)**:
+  - **Tier 1 — Service-Level Authentication**:
+    - Grant Type: `client_credentials`.
+    - Purpose: Service-to-service authentication for private/custom MCP servers (used for `initialize`, `tools/list`, and capability negotiation).
+    - Protocol Requirements: Authorization server metadata includes `client_credentials`; requests require the RFC 8707 `resource` parameter; authenticated calls use RFC 6750 Bearer tokens; no refresh tokens used for `client_credentials`.
+  - **Tier 2 — User-Level Account Linking**:
+    - Grant Type: `authorization_code` with PKCE using `S256` code challenge method.
+    - Purpose: Optional account linking when MCP tools require access to user-specific data, profiles, or external account mutations.
+    - Protocol Requirements: Protected Resource Metadata (PRM) per RFC 9728 (`/.well-known/oauth-protected-resource`), Authorization Server Metadata per RFC 8414 (`/.well-known/oauth-authorization-server`), RFC 8707 `resource` parameter, and RFC 6750 Bearer tokens.
+  - **Amazon Explicitly Listed Unsupported Mechanisms**:
+    - Dynamic Client Registration (DCR)
+    - Client ID Metadata Documents (CIMD), where applicable
+    - OpenID Connect (OIDC)
+    - Step-Up Authorization
+    - `WWW-Authenticate` handling limitations (e.g. 401 Unauthorized returned without `WWW-Authenticate` header)
+  - **Platform Availability & Partner Access Status**:
+    - Category SDK and Alexa+ MCP Add-on registration are officially available only to select partners.
+    - Operator / StillDone account status is classified strictly as **`NOT_ESTABLISHED`** (neither partner access nor console add-on registration is claimed).
 - **Latency Requirement**: Round-trip query response latency target of less than 500 ms.
 
 ---

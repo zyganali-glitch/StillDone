@@ -63,7 +63,7 @@ To protect against architecture creep and unnecessary spend, every candidate AWS
 | **AgentCore Gateway** | **`REJECTED_FOR_V1`** | Direct data-plane invocation via SDK/CLI is sufficient; Gateway introduces routing complexity and cost exposure. |
 | **AgentCore Memory** | **`REJECTED_FOR_V1`** | Directly contradicts StillDone's core thesis: deterministic immutable evidence ledger owns state, not opaque LLM memory. |
 | **AgentCore Identity** | **`DEFERRED`** | External API authorization (Google OAuth) is handled via direct token management; not needed for single-operator v1. |
-| **Amazon DynamoDB** | **`DEFERRED`** | Mission ledger boundary is frozen as an architectural PORT; local append-only storage in P-03 handles initial phases at $0.00 cost; DynamoDB adapter deferred to later explicit task. |
+| **Amazon DynamoDB** | **`DEFERRED`** | The mission ledger boundary is frozen as a provider-neutral PORT (`ledger_port.py`). Concrete persistence is deferred to Phase P-03 (`DEFERRED / NOT_YET_IMPLEMENTED`). A local append-only file/SQLite ledger is a candidate direction only; it is NOT yet implemented, validated, or accepted. DynamoDB adapter deferred to an explicit later task if cloud persistence is needed. |
 | **AWS Lambda (Standard)** | **`REJECTED_FOR_V1`** | Redundant; AgentCore Runtime provides the containerized serverless compute environment. |
 | **AWS Step Functions** | **`REJECTED_FOR_V1`** | Verification state machine and drift evaluation must be executed deterministically by StillDone's Python domain engine, not external cloud workflow services. |
 | **Amazon EventBridge** | **`REJECTED_FOR_V1`** | Asynchronous pub/sub event bus is unnecessary for bounded synchronous/reconciliation micro-task execution in v1. |
@@ -110,21 +110,21 @@ Architecture v1 interfaces with exactly four external service boundaries:
 
 StillDone's financial integrity was audited across all live operations:
 
-| Component | Incurred Cost / Usage Evidence | Promotional Credit Offset | Net Personal Spend |
-|---|---|---|---|
-| **AWS Account & Credit** | $150.00 Hackathon Promotional Credit active; $100 AWS signup credit active; account charges not separately observed. | Applicable products explicitly cover Bedrock and AgentCore. | **$0.00** |
-| **Bedrock Inference (P-01.02)** | 3 cycles; 1 Converse call on Nova Micro; 11 tokens; gross estimate: $\approx \$0.00000070$. | Covered by promotional credit. Actual billed cost UNKNOWN. | **$0.00** |
-| **Strands Execution (P-01.03)** | 1 execution; 13 tokens; gross estimate: $\approx \$0.00000098$. | Covered by promotional credit. Actual billed cost UNKNOWN. | **$0.00** |
-| **AgentCore Runtime (P-01.04)** | 2 deployments, 2 invocations, full teardown; CDK bootstrap customer KMS key active 1.143 hrs ($1.00/mo prorated) remediated to `PendingDeletion`; retained template storage < 30 KB; gross estimate: $\approx \$0.00521$. | Covered by promotional credit / gross ceiling <= $0.10. Actual billed cost UNKNOWN. | **$0.00** |
-| **Google Calendar & Tasks (P-01.05)** | 4 read calls; standard courtesy limits (1M/day Calendar, 50k/day Tasks); zero billing accounts attached; zero quota increases requested. | Standard courtesy tier. | **$0.00** |
-| **Open-Meteo API (P-01.06)** | 1 forecast query; public endpoint; zero API keys or accounts. | Free non-commercial evaluation tier. | **$0.00** |
-| **Cloudflare Tunnel (P-01.07)** | Ephemeral Quick Tunnel; zero accounts, domains, or payments; full teardown. | Free temporary service. | **$0.00** |
-| **Cumulative P-01 Total** | **Conservative usage-derived gross estimate: $\approx \$0.00521\text{ USD}$** | **Covered by active credit buffer** | **$0.00 (Target Met)** |
+| Operation / Micro-Task | Conservative Gross Usage Estimate | Promotional Credit Product Eligibility / Intended Offset | Actual Billed Cost | Actual Personal-Spend Delta | Personal Spend Target |
+|---|---|---|---|---|---|
+| **Bedrock Converse (P-01.02)** | $\approx \$0.00000070\text{ USD}$ (11 tokens) | Eligible (Bedrock Foundation Models credit) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **Strands SDK (P-01.03)** | $\approx \$0.00000098\text{ USD}$ (13 tokens) | Eligible (Bedrock Foundation Models credit) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **AgentCore Runtime & CDK (P-01.04)** | $\approx \$0.00521\text{ USD}$ (microVM + remediated KMS prorated) | Eligible (AgentCore & S3 credit; ceiling $\le \$0.10$) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **Google Calendar & Tasks (P-01.05)** | $\$0.00$ (4 read queries) | N/A (Free courtesy tier) | $\$0.00$ | $\$0.00$ | `$0.00` |
+| **Open-Meteo Forecast (P-01.06)** | $\$0.00$ (1 forecast query) | N/A (Free evaluation tier) | $\$0.00$ | $\$0.00$ | `$0.00` |
+| **Cloudflare Quick Tunnel (P-01.07)** | $\$0.00$ (ephemeral tunnel) | N/A (Free temporary service) | $\$0.00$ | $\$0.00$ | `$0.00` |
+| **Cumulative P-01 Total** | **$\approx \$0.00521\text{ USD}$ (conservative upper bound)** | **Active Credit Buffer ($150 Hackathon + $100 Signup)** | **`NOT_OBSERVED / UNKNOWN`** | **`NOT_OBSERVED / UNKNOWN`** | **`$0.00`** |
 
 ### Cost Freeze Verdict:
 $$\mathbf{ZERO\_PERSONAL\_SPEND\_PATH = CREDIBLE\_THROUGH\_JUDGING}$$
 
-*(No permanent guarantee is claimed; billing truth freshness will be re-verified before any future live cloud mutation).*
+> [!NOTE]
+> This verdict is an architectural feasibility determination, not proof that the actual personal-spend delta was $0.00. Target personal spend is strictly $0.00. No guarantee is claimed; billing truth freshness will be re-verified before enabling any live cloud mutations in future phases.
 
 ---
 
