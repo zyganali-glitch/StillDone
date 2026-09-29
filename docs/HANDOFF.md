@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY COMPLETED — P-01.01 through P-01.07 PASS; P-01.08 DONE — LIVE FEASIBILITY GO (AWAITING INDEPENDENT QA PASS & PHASE CLOSURE)**
+Current repository state: **PHASE P-01 CLOSED — INDEPENDENT QA PASS (Verified SHA: 41e4ea717b43f558d9d07a7f1775c0780819910f); PHASE P-02 IN PROGRESS (Candidate batch P-02.01 -> P-02.04)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,24 +73,22 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision`
+`P-02.01 — Define mission identity, immutable mission contract, and user-intent snapshot`
  
 Status:
-`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`
+`DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`87232f7f3e8bbff7882bb52691665f100e5ee16a`
+`41e4ea717b43f558d9d07a7f1775c0780819910f`
 
-## Next exact task after independent QA PASS & phase closure
+## Next exact task after P-02.01
 
-`P-02.01 — Define mission identity, immutable mission contract, and user-intent snapshot`
+`P-02.02 — Define desired-state predicate schema, required/optional semantics, and freshness contract`
 
 ## Next safe action
 
-Await independent QA PASS for P-01.08 and phase P-01 closure.
-
-**HARD STOP. P-02 MUST NOT START.**
+Execute P-02.02 within the bounded micro-task batch (P-02.01 -> P-02.04). Stop after P-02.04. P-02.05 is NOT AUTHORIZED.
 
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
 - Verified complete P-01 live feasibility chain: P-01.01 through P-01.07 are all closed as independent QA PASS.
