@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-01 CLOSED — INDEPENDENT QA PASS (Verified SHA: 41e4ea717b43f558d9d07a7f1775c0780819910f); PHASE P-02 IN PROGRESS (Candidate batch P-02.01 -> P-02.04)**
+Current repository state: **PHASE P-01 CLOSED — INDEPENDENT QA PASS (Verified SHA: 41e4ea717b43f558d9d07a7f1775c0780819910f); PHASE P-02 DONE — AWAITING INDEPENDENT QA PHASE CLOSURE**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,22 +73,40 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.07 — Define evidence provenance and live/recorded/fixture separation`
+`P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests`
  
 Status:
 `DONE — awaiting independent QA PASS`
+
+## Phase P-02 Status
+
+- P-02.01 — DONE — independent QA PASS
+- P-02.02 — DONE — independent QA PASS
+- P-02.03 — DONE — independent QA PASS
+- P-02.04 — DONE — independent QA PASS
+- P-02.05 — DONE — independent QA PASS
+- P-02.06 — DONE — awaiting independent QA PASS
+- P-02.07 — DONE — awaiting independent QA PASS
+- P-02.08 — DONE — awaiting independent QA PASS
+
+Phase P-02:
+`DONE — awaiting independent QA phase closure`
 
 ## Last independently VERIFIED baseline SHA
 
 `e2dd124fda1af627949835c0d438861c43cf5226`
 
-## Next exact task in authorized batch
+## Next exact task
 
-`P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests`
+`P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs`
+Status: `PENDING / NOT_STARTED`
 
 ## Next safe action
 
-Proceed to P-02.08 as authorized in the P-02.06 -> P-02.08 batch.
+Await independent QA phase closure for Phase P-02 before starting Phase P-03.
+
+**HARD STOP. P-03 IS NOT AUTHORIZED.**
+
 
 
 

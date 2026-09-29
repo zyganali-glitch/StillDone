@@ -360,11 +360,20 @@ Acceptance:
 - focused unit tests: `tests/domain/test_provenance.py` passing.
 
 ### P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests
-Status: PENDING / NOT_STARTED
+Status: DONE — awaiting independent QA PASS
 
+Acceptance:
+- serialization and lossless schema projection: test-local projection helpers prove stable lossless JSON projection across `MissionContract`, `DesiredStatePredicate`, `ActionContract`, `ApprovalGrant`, `ExecutionAttempt`, `RetryPolicy`, `ResourceBinding`, `ReconciliationRequest`, and `EvidenceOrigin`; canonical strings for IDs, exact canonical enum strings, UTC ISO timestamps, and normalized parameter sorting verified; zero generic evidence hashing or ledger serialization introduced;
+- schema stability tests: exact vocabularies and cardinalities frozen across all 10 domain enums (`MissionState` [10], `StepEvidenceState` [7], `PredicateOperator` [8], `FreshnessMode` [2], `ActionType` [5], `ResourceKind` [4], `AuthorityClass` [5], `RetryStrategy` [3], `ReconciliationReason` [3], `EvidenceProvenance` [6]); public exports in `stilldone.domain` verified;
+- forbidden-transition tests: verified declarative lifecycle metadata (`DRAFT`/`PLANNED`/`EXECUTING`/`NEEDS_APPROVAL`/`PARTIAL`/`FAILED` -> `READY` all forbidden; `READY` entered strictly from `VERIFYING`; `READY` -> `DRIFTED` permitted; `EXECUTING` cannot bypass `VERIFYING`); zero runtime transition guards implemented;
+- static provider-purity AST inspection: AST walk across all domain Python source files proves strictly zero imports of provider SDKs (`boto3`, `botocore`, `strands`, `agentcore`, `google`, `googleapiclient`, `mcp`, `requests`, `httpx`, `urllib3`, `aiohttp`, `flask`, `fastapi`, `sqlite3`, `sqlalchemy`, `tkinter`);
+- future-leakage assertions: verified zero persistence, zero SQLite, zero `open()` file calls, zero generic evidence ledger/hashing, zero runtime transition engine, zero model/LLM invocation, and zero live/fixture fallback;
+- phase exit candidate: Phase P-02 DONE — awaiting independent QA phase closure; P-03 remains PENDING / NOT_STARTED;
+- focused unit tests: `tests/domain/test_phase_p02_contracts.py` passing.
 
 Phase exit:
 core domain imports no AWS/Google/MCP UI SDK objects.
+
 
 ---
 
