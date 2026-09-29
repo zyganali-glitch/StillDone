@@ -92,13 +92,13 @@ Await independent QA PASS for P-01.07.
 
 P-01.07 successfully proved remote Streamable HTTP MCP feasibility:
 - Verified current official Amazon Alexa+ docs, MCP spec, and TypeScript SDK on 2026-09-29.
-- Recorded Streamable HTTP requirement, legacy SSE deprecation, remote HTTPS requirement, <500ms latency requirement, OAuth 2.1 with PKCE S256 requirement, Protected Resource Metadata (RFC 9728), and protocol version discrepancies across Amazon documentation (2024-11-05 vs 2025-03-26 vs 2025-11-25).
+- Recorded Streamable HTTP requirement, legacy SSE deprecation, remote HTTPS requirement, <500ms MCP server round-trip query response latency requirement, two-tier auth model (Tier 1 service-level client_credentials and Tier 2 user-level authorization_code + PKCE S256 with optional account linking), Protected Resource Metadata (RFC 9728), explicit unsupported auth mechanisms, select-partner platform availability (operator partner access NOT_ESTABLISHED), and protocol version discrepancies across Amazon documentation (2024-11-05 vs 2025-03-26 vs 2025-11-25).
 - Built minimal ephemeral server outside StillDone repo using official `@modelcontextprotocol/sdk` v1.31.0 in stateless direct-JSON mode (`enableJsonResponse: true`) on `/mcp`.
 - Zero modifications to StillDone code, dependencies (`pyproject.toml`, `uv.lock`), or tests.
 - Exposed exactly 1 diagnostic transport-only `echo` tool (`{"text": "MCP_OK"}` $\to$ `MCP_OK`); zero product tools; zero external service calls.
 - Spun up ephemeral Cloudflare Quick Tunnel (`cloudflared` v2026.9.3) with zero account, zero domain purchase, zero payment, and zero persistent resources; obtained temporary public hostname `https://omissions-lessons-nutritional-warren.trycloudflare.com`.
 - Executed single bounded protocol sequence using real MCP client SDK (`REAL_MCP_SDK_CLIENT`): connect & negotiate (339.91ms, negotiated protocol `2025-11-25`), tools/list (106.77ms, 1 tool), tools/call echo (61.26ms round-trip, semantic result `MCP_OK`), clean close.
-- Measured latency: 61.26ms round-trip (< 500ms threshold -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`).
+- Measured latency: 61.26ms round-trip (< 500ms MCP server round-trip query response latency threshold -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`).
 - Strictly zero retries, zero transport fallbacks, zero mock substitutes.
 - Executed complete teardown: client closed, tunnel killed, server killed, port 3456 released, scratch dir purged.
 - Durable evidence recorded in `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md` and friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260929-01`).

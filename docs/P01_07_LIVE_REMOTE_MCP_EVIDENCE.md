@@ -14,7 +14,7 @@ Alexa+ partner access: `NOT_ESTABLISHED`
 This document durably records the execution and findings of micro-task **P-01.07**. 
 
 In accordance with Master Plan P-01.07 and the StillDone Constitution (`AGENTS.md`):
-1. **Official Protocol & Ecosystem Validation**: Current official technical documentation from Amazon Alexa+, the Model Context Protocol (MCP) specification, and Cloudflare was examined as of `2026-09-29`. Current requirements for Streamable HTTP, remote HTTPS, latency budgets (<500ms), and OAuth 2.1 authentication were recorded. Protocol version discrepancies across Amazon documentation were cataloged without silent reconciliation.
+1. **Official Protocol & Ecosystem Validation**: Current official technical documentation from Amazon Alexa+, the Model Context Protocol (MCP) specification, and Cloudflare was examined as of `2026-09-29`. Current requirements for Streamable HTTP, remote HTTPS, MCP server round-trip query response latency (< 500ms), and the official two-tier authentication architecture (Tier 1: service-level `client_credentials`; Tier 2: user-level `authorization_code` + PKCE S256 with optional account linking) were recorded. Amazon's explicitly listed unsupported mechanisms, select-partner platform availability, and protocol version discrepancies across Amazon documentation were cataloged without silent reconciliation.
 2. **Minimal Ephemeral MCP Server**: An isolated ephemeral MCP server was constructed strictly outside the canonical StillDone repository using the current official TypeScript MCP SDK (`@modelcontextprotocol/sdk` v1.31.0). The server exposed a single diagnostic transport-only `echo` tool (`{"text": "MCP_OK"}` $\to$ `MCP_OK`) reachable via Streamable HTTP at `/mcp` in stateless direct-JSON mode (`enableJsonResponse: true`), and an independent `/health` diagnostic endpoint (`{"status": "ok"}`). Zero StillDone dependencies, source files, or tests were modified.
 3. **Ephemeral Remote HTTPS Tunnel**: A development-only Cloudflare Quick Tunnel (`cloudflared` v2026.9.3) was launched with strictly zero Cloudflare account, zero domain purchase, zero payment, and zero persistent resources, yielding a temporary public hostname on `trycloudflare.com`.
 4. **Single Bounded Remote Protocol Proof**: An official MCP SDK client (`Client` and `StreamableHTTPClientTransport`) connected over the public HTTPS tunnel URL (`https://omissions-lessons-nutritional-warren.trycloudflare.com/mcp`). Exactly one protocol sequence was executed:
@@ -23,7 +23,7 @@ In accordance with Master Plan P-01.07 and the StillDone Constitution (`AGENTS.m
    - Tool discovery (`tools/list`): completed in **106.77ms**; discovered exactly 1 diagnostic tool (`echo`).
    - Tool invocation (`tools/call`): exactly 1 invocation of `echo({"text": "MCP_OK"})` executed; returned exact semantic result `MCP_OK` in **61.26ms**.
    - Client closed cleanly. Zero retries, zero product tools, zero fallback transports, zero external service calls.
-5. **Latency Evaluation**: The single observed echo round-trip latency of `61.26ms` satisfies the Alexa+ `<500ms` responsiveness guideline (`ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`).
+5. **Latency Evaluation**: The single observed echo round-trip latency of `61.26ms` satisfies Amazon's MCP server round-trip query response latency threshold of `< 500ms` (`ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`). This single probe is recorded factually and not generalized into permanent performance or certification.
 6. **Mandatory Teardown**: The client was closed, Cloudflare tunnel terminated, local server terminated, and all scratch artifacts completely deleted.
 
 ---
@@ -42,14 +42,34 @@ Inspected official Amazon Developer resources (`2026-09-29`):
 Durably established Alexa+ technical requirements:
 - **Streamable HTTP Mandatory**: Legacy HTTP+SSE (Server-Sent Events) is deprecated for Alexa+ integration. Alexa+ requires MCP servers to support Streamable HTTP.
 - **Remote HTTPS URL Mandatory**: Servers must be reachable via a public, valid remote HTTPS URL.
-- **Latency Guideline**: Alexa+ voice/conversational interaction targets an initial response threshold of **< 500ms** to avoid noticeable dialogue latency.
-- **Access Boundary**: Category SDK and Alexa+ MCP Add-on registration are currently limited to select partners. Direct Alexa+ partner access remains **`NOT_ESTABLISHED`** for StillDone unless independently proven.
-- **Authentication Architecture (Production)**:
-  - Protocol: OAuth 2.1 authorization code grant with Proof Key for Code Exchange (PKCE) using the `S256` code challenge method.
-  - Metadata Discovery: Protected Resource Metadata (PRM) endpoint per RFC 9728 (`/.well-known/oauth-protected-resource`), and Authorization Server Metadata per RFC 8414 (`/.well-known/oauth-authorization-server`).
-  - Scoping: `resource` parameter per RFC 8707.
-  - Access Tokens: Bearer token usage per RFC 6750.
-  - Deprecated / Unsupported: Legacy OAuth 2.0 Implicit Grant, Resource Owner Password Credentials Grant, and static unauthenticated production endpoints are disallowed for customer data.
+- **Latency Requirement**: Amazon specifies that MCP server round-trip query response latency must be **< 500ms** to maintain conversational responsiveness.
+- **Platform Availability & Partner Access Boundary**:
+  - Official public platform availability: Category SDK and Alexa+ MCP Add-on registration are currently available to select partners.
+  - Operator / StillDone account status: `Alexa+ partner / add-on access: NOT_ESTABLISHED` (neither available nor unavailable is claimed without account-specific evidence).
+  - Alexa+ actual client integration remains: `NOT_RUN`.
+- **Authentication Architecture (Current Official Two-Tier Model)**:
+  - **Tier 1 — Service-Level Authentication**:
+    - Grant Type: `client_credentials`.
+    - Purpose: Service-to-service authentication for private/custom MCP servers.
+    - Scope & Usage: Used for non-user-specific operations such as `initialize`, `tools/list`, and health/capability negotiation.
+    - Protocol Requirements: Authorization server metadata includes `client_credentials`; requests require the RFC 8707 `resource` parameter; authenticated calls use RFC 6750 Bearer tokens. Service scope is strictly limited to service-level operations; no refresh tokens are used for `client_credentials`.
+  - **Tier 2 — User-Level Account Linking**:
+    - Grant Type: `authorization_code` with PKCE using the `S256` code challenge method.
+    - Purpose: Used when MCP tools require access to user-specific data, profiles, or external account mutations.
+    - Optionality: Account linking is explicitly optional when the add-on genuinely requires no user identity.
+    - Protocol Requirements: Protected Resource Metadata (PRM) per RFC 9728 (`/.well-known/oauth-protected-resource`), Authorization Server Metadata per RFC 8414 (`/.well-known/oauth-authorization-server`), RFC 8707 `resource` parameter, and RFC 6750 Bearer tokens.
+  - **Feasibility Scope for P-01.07**:
+    - Alexa+ production authentication status: `NOT_IMPLEMENTED / REQUIREMENTS_RECORDED`.
+    - Neither Tier 1 nor Tier 2 was implemented in this minimal ephemeral transport proof.
+    - `authorization_code` + PKCE is NOT presented as the entirety of the Alexa+ production authentication architecture.
+- **Amazon Explicit Unsupported Mechanisms**:
+  Based strictly on Amazon's official Alexa+ MCP documentation, the following mechanisms are explicitly unsupported:
+  - Dynamic Client Registration (DCR)
+  - Client ID Metadata Documents (CIMD), where applicable
+  - OpenID Connect (OIDC)
+  - Step-Up Authorization
+  - `WWW-Authenticate` handling limitations
+  *(Note: Legacy OAuth 2.0 Implicit Grant and Resource Owner Password Credentials Grant are omissions of the OAuth 2.1 standard rather than Amazon-specific listed unsupported features, and are not attributed to Amazon).*
 
 ### 2.2 Protocol Version Documentation Discrepancy
 
@@ -239,9 +259,9 @@ The client executed exactly one bounded protocol sequence:
 - **Connection & Protocol Negotiation**: `339.91ms`.
 - **`tools/list` Round-Trip**: `106.77ms`.
 - **`echo` Tool Call Round-Trip**: `61.26ms`.
-- **Evaluation**: The observed round-trip latency of `61.26ms` is well within the `< 500ms` Alexa+ threshold.
+- **Performance Meaning & Evaluation**: Amazon specifies that MCP server round-trip query response latency must be `< 500ms`. The single observed echo tool round-trip latency of `61.26ms` satisfies this threshold for this probe.
 - **Classification**: `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`.
-- **Integrity Note**: Exactly one probe was performed. No reruns were executed to hunt for better latency numbers.
+- **Integrity Note**: Exactly one probe was performed. No reruns were executed to hunt for better latency numbers. This single probe proves transport responsiveness for this probe only and is not generalized into permanent performance or certification.
 
 ---
 
@@ -251,9 +271,9 @@ The client executed exactly one bounded protocol sequence:
 |---|---|---|
 | **MCP Transport Interoperability** | `PROVEN` | Full Streamable HTTP JSON-RPC negotiation, tools/list, and echo call succeeded over remote HTTPS |
 | **Remote HTTPS Reachability** | `PROVEN` | Reached via public `trycloudflare.com` tunnel |
-| **Alexa+ Actual Client Integration** | `NOT_RUN` | Direct Alexa+ partner access is unavailable; real SDK client was used and honestly labeled |
-| **Alexa+ Production Authentication** | `NOT_IMPLEMENTED / REQUIREMENT_RECORDED` | Full OAuth 2.1 / PKCE stack not implemented in minimal feasibility proof; requirements cataloged |
-| **Alexa+ Partner / Add-On Access** | `NOT_ESTABLISHED` | Official registration remains restricted to partner channels |
+| **Alexa+ Actual Client Integration** | `NOT_RUN` | Real MCP SDK client used and honestly labeled (`REAL_MCP_SDK_CLIENT`); Alexa+ client integration was not run |
+| **Alexa+ Production Authentication** | `NOT_IMPLEMENTED / REQUIREMENTS_RECORDED` | Two-tier model (Tier 1 service-level client_credentials + Tier 2 user-level authorization_code/PKCE) cataloged; neither tier implemented in transport proof |
+| **Alexa+ Partner / Add-On Access** | `NOT_ESTABLISHED` | Official platform availability is currently limited to select partners; operator account partner access remains unestablished |
 
 ---
 

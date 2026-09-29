@@ -234,11 +234,11 @@ Acceptance:
 Status: DONE — awaiting independent QA PASS
 
 Acceptance:
-- current spec requirement re-verified: YES (inspected official Amazon Alexa+ docs, MCP spec, and official TypeScript SDK on 2026-09-29; recorded Streamable HTTP mandatory, legacy SSE deprecated, remote HTTPS mandatory, <500ms latency threshold, OAuth 2.1 with PKCE S256, RFC 9728 Protected Resource Metadata, and protocol version discrepancies across Amazon documentation);
+- current spec requirement re-verified: YES (inspected official Amazon Alexa+ docs, MCP spec, and official TypeScript SDK on 2026-09-29; recorded Streamable HTTP mandatory, legacy SSE deprecated, remote HTTPS mandatory, <500ms MCP server round-trip query response latency threshold, two-tier auth model: Tier 1 service-level client_credentials and Tier 2 user-level authorization_code + PKCE S256 with optional account linking, RFC 9728 Protected Resource Metadata, Amazon explicit unsupported auth mechanisms, select-partner platform availability with operator partner access NOT_ESTABLISHED, and protocol version discrepancies across Amazon documentation);
 - remote HTTPS endpoint: YES (ephemeral Cloudflare Quick Tunnel provisioned via official `cloudflared` v2026.9.3 without account, domain purchase, paid plan, or persistent resource; temporary hostname `https://omissions-lessons-nutritional-warren.trycloudflare.com`);
 - Streamable HTTP works: YES (ephemeral server implemented strictly outside StillDone repo in isolated scratch dir using official `@modelcontextprotocol/sdk` v1.31.0 in stateless direct-JSON mode `enableJsonResponse: true` over `/mcp`; tested via real official MCP client SDK over public HTTPS);
 - protocol/version recorded: YES (negotiated protocol version `2025-11-25`; documented discrepancies with Amazon sample docs citing `2024-11-05`, `2025-03-26`, and `2025-11-25`);
-- latency measured: YES (connection/negotiation 339.91ms, tools/list 106.77ms, echo tool call round-trip 61.26ms; satisfies `< 500ms` Alexa+ responsiveness requirement -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`);
+- latency measured: YES (connection/negotiation 339.91ms, tools/list 106.77ms, echo tool call round-trip 61.26ms; satisfies `< 500ms` MCP server round-trip query response latency requirement -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`);
 - zero product tools: YES (strictly 0 product tools; exactly 1 diagnostic transport-only `echo` tool returning `MCP_OK`);
 - zero retries: YES (exactly 1 connection, 1 tools/list, 1 tools/call; 0 retries; 0 fallback transports);
 - zero external writes: YES (0 filesystem, 0 shell, 0 AWS, 0 Google, 0 weather, 0 mission runtime calls);
