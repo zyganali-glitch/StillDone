@@ -31,13 +31,27 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 > [!IMPORTANT]
 > **Phase Gate Outcome**: In accordance with StillDone Constitution § 3, local execution does not constitute remote closure, and the executor does not self-award phase closure. Task P-01.08 status is **`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`**. Phase P-01 status is **`DONE — awaiting independent QA phase closure`**. Phase P-02 remains **`NOT_STARTED`** and strictly locked.
 
-### 1.1 Independent QA Candidate Review & Surgical Parity Remediation
+### 1.1 Independent QA Candidate Reviews & Surgical Remediations
+
+#### Review 1: Initial Closure Candidate Review (`REPAIR`)
 The initial Phase P-01.08 phase-closure candidate received independent QA verdict **`REPAIR`**, citing three documentation truth and parity discrepancies:
 1. **AWS Personal-Spend Contradiction**: Cost tables previously presented net personal spend as `$0.00 (Target Met)` for AWS operations while text disclaimed actual billed cost as `NOT_OBSERVED / UNKNOWN`. Remediated by replacing the table with a 6-column schema clearly separating conservative gross estimates, promotional credit eligibility, `UNKNOWN` actual billed costs and personal-spend deltas, and the `$0.00` target spend, with an explicit note that the verdict is an architectural feasibility determination, not proof of $0.00 actual delta.
 2. **Competition Contract Authentication Parity**: `docs/COMPETITION_CONTRACT.md` § 4.4 previously summarized authentication with single-tier PKCE wording. Remediated to mirror the full official two-tier authentication architecture cataloged in P-01.07 (Tier 1 `client_credentials` M2M for discovery; Tier 2 `authorization_code` + PKCE S256 for user account linking; PRM; RFC 8707; Amazon unsupported mechanisms; `NOT_ESTABLISHED` partner status).
 3. **Premature Future-Phase Claims**: `docs/ARCHITECTURE.md` and related docs previously implied P-03 local append-only storage was already accepted or satisfied requirements. Remediated to explicitly state that the provider-neutral ledger port is `FROZEN`, while concrete persistence is `DEFERRED / NOT_YET_IMPLEMENTED`, with local append-only SQLite/file being a candidate direction only (not yet implemented, validated, or accepted).
 
-All three defects were documentation-only truth/parity defects; the underlying P-01 live feasibility proofs (P-01.01 through P-01.07) remain fully valid and untouched. With all three defects surgically resolved, the repaired audit evaluation stands at **`PASS`**.
+All three original defects were remediated in commit `275c8a7796a4c86d6119f57eaadd61251bf2f305`.
+
+#### Review 2: Residual Credit-Eligibility Truth Review (`REPAIR`)
+Following the first surgical repair, independent QA candidate review identified one residual/introduced credit-eligibility wording overclaim in the cost tables:
+- **Retained S3 Component Credit Offset & Cumulative Credit Buffer Overclaim**: In `docs/COST_AND_ACCESS_POLICY.md` and `docs/P01_LIVE_FEASIBILITY.md`, the P-01.04 row marked promotional credit eligibility as `"Eligible (AgentCore & S3 credit...)"` and the cumulative total listed `"Active Credit Buffer ($150 Hackathon + $100 Signup)"` inside the credit-eligibility/intended-offset column. This was broader than proven evidence: canonical P-01.04 evidence explicitly classified the specific promotional-credit offset for the retained bootstrap S3 component as `NOT_ESTABLISHED`. Furthermore, while an active $100 AWS signup credit balance was observed historically, its specific product applicability or actual offset of StillDone P-01 charges was not established by durable evidence.
+- **Surgical Correction**:
+  - Scoped Bedrock model usage eligibility strictly to proven Bedrock applicable products covered by Hackathon promotional credit.
+  - Scoped AgentCore Runtime eligibility strictly to proven AgentCore applicable products covered by Hackathon promotional credit.
+  - Explicitly classified the retained bootstrap S3 component promotional-credit offset applicability as `NOT_ESTABLISHED`.
+  - Scoped cumulative credit wording to evidence-safe truth: observed active AWS credit balances exist, applicable-product coverage was proven for Bedrock and AgentCore, and specific credit offset for the retained S3 component was not established (without implying unproven signup credit offset).
+  - Preserved `Actual Billed Cost = NOT_OBSERVED / UNKNOWN`, `Actual Personal-Spend Delta = NOT_OBSERVED / UNKNOWN`, `Personal Spend Target = $0.00`, and `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING` as an architectural feasibility determination, not an observed $0 spend result.
+
+All defects across both reviews were documentation-only truth/parity defects; the underlying P-01 live feasibility proofs (P-01.01 through P-01.07) remain fully valid and untouched. With this final surgical repair applied and zero unresolved defects remaining, the P-Ω audit evaluation stands at **`PASS`**.
 
 ---
 
@@ -87,8 +101,9 @@ All three defects were documentation-only truth/parity defects; the underlying P
 - **Personal Spend Target**: Strictly `$0.00`.
 - **AWS Credit**: $150 Hackathon Promotional Credit active and confirmed covering Bedrock and AgentCore.
 - **Cumulative Usage-Derived Gross Cost**: Bedrock Converse (~$0.00000070) + Strands (~$0.00000098) + AgentCore & CDK bootstrap remediation (~$0.00521) = `~$0.00521 USD` (well below $0.10 authorized ceiling).
+- **Credit Eligibility Scope**: Hackathon promotional credit applicability was verified for Bedrock and AgentCore applicable products. Specific credit offset for the retained bootstrap S3 component is classified as `NOT_ESTABLISHED` (canonical P-01.04 evidence). Active AWS signup credit balance was observed historically, but its product applicability or actual offset of P-01 charges was not established.
 - **Actual Billed Cost Delta / Personal Spend Delta**: Preserved honestly as `NOT_OBSERVED / UNKNOWN` (credits apply asynchronously, and bills console was not separately inspected). Cost tables in `docs/COST_AND_ACCESS_POLICY.md` and `docs/P01_LIVE_FEASIBILITY.md` explicitly separate conservative gross estimate, credit eligibility, and `UNKNOWN` actual billed costs and personal spend deltas.
-- **Retained CDK Bootstrap Cost Truth**: CDK bootstrap stack was remediated via official `cdk bootstrap --no-bootstrap-customer-key`, transitioning the customer-managed KMS key to `PendingDeletion` ($0 ongoing fee). Retained S3 template storage is < 30 KB (< $0.000001/month).
+- **Retained CDK Bootstrap Cost Truth**: CDK bootstrap stack was remediated via official `cdk bootstrap --no-bootstrap-customer-key`, transitioning the customer-managed KMS key to `PendingDeletion` ($0 ongoing fee). Retained S3 template storage is < 30 KB (< $0.000001/month); promotional-credit offset for that component was not established.
 - **External Free Services**: Google Calendar/Tasks courtesy quota ($0.00); Open-Meteo free evaluation endpoint ($0.00); Cloudflare Quick Tunnel ephemeral ($0.00).
 - **Verdict**: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING` (explicitly disclaimed as an architectural feasibility determination, not proof that the actual personal-spend delta was $0.00).
 - **Result**: **PASS**

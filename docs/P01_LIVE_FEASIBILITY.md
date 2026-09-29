@@ -112,13 +112,13 @@ StillDone's financial integrity was audited across all live operations:
 
 | Operation / Micro-Task | Conservative Gross Usage Estimate | Promotional Credit Product Eligibility / Intended Offset | Actual Billed Cost | Actual Personal-Spend Delta | Personal Spend Target |
 |---|---|---|---|---|---|
-| **Bedrock Converse (P-01.02)** | $\approx \$0.00000070\text{ USD}$ (11 tokens) | Eligible (Bedrock Foundation Models credit) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
-| **Strands SDK (P-01.03)** | $\approx \$0.00000098\text{ USD}$ (13 tokens) | Eligible (Bedrock Foundation Models credit) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
-| **AgentCore Runtime & CDK (P-01.04)** | $\approx \$0.00521\text{ USD}$ (microVM + remediated KMS prorated) | Eligible (AgentCore & S3 credit; ceiling $\le \$0.10$) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **Bedrock Converse (P-01.02)** | $\approx \$0.00000070\text{ USD}$ (11 tokens) | Eligible (Hackathon credit applicable to Bedrock products) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **Strands SDK (P-01.03)** | $\approx \$0.00000098\text{ USD}$ (13 tokens) | Eligible (Hackathon credit applicable to Bedrock products) | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
+| **AgentCore Runtime & CDK (P-01.04)** | $\approx \$0.00521\text{ USD}$ (microVM + remediated KMS prorated) | Eligible for AgentCore applicable products (Hackathon credit; ceiling $\le \$0.10$); retained S3 credit offset NOT_ESTABLISHED | `NOT_OBSERVED / UNKNOWN` | `NOT_OBSERVED / UNKNOWN` | `$0.00` |
 | **Google Calendar & Tasks (P-01.05)** | $\$0.00$ (4 read queries) | N/A (Free courtesy tier) | $\$0.00$ | $\$0.00$ | `$0.00` |
 | **Open-Meteo Forecast (P-01.06)** | $\$0.00$ (1 forecast query) | N/A (Free evaluation tier) | $\$0.00$ | $\$0.00$ | `$0.00` |
 | **Cloudflare Quick Tunnel (P-01.07)** | $\$0.00$ (ephemeral tunnel) | N/A (Free temporary service) | $\$0.00$ | $\$0.00$ | `$0.00` |
-| **Cumulative P-01 Total** | **$\approx \$0.00521\text{ USD}$ (conservative upper bound)** | **Active Credit Buffer ($150 Hackathon + $100 Signup)** | **`NOT_OBSERVED / UNKNOWN`** | **`NOT_OBSERVED / UNKNOWN`** | **`$0.00`** |
+| **Cumulative P-01 Total** | **$\approx \$0.00521\text{ USD}$ (conservative upper bound)** | **Observed active AWS credit balances exist; applicable-product coverage was proven for Bedrock and AgentCore. Specific credit offset for the retained S3 component was not established.** | **`NOT_OBSERVED / UNKNOWN`** | **`NOT_OBSERVED / UNKNOWN`** | **`$0.00`** |
 
 ### Cost Freeze Verdict:
 $$\mathbf{ZERO\_PERSONAL\_SPEND\_PATH = CREDIBLE\_THROUGH\_JUDGING}$$
