@@ -347,10 +347,21 @@ Acceptance:
 
 
 ### P-02.07 — Define evidence provenance and live/recorded/fixture separation
-Status: PENDING / NOT_STARTED
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- exact six-value provenance vocabulary: `FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE` frozen strictly as defined by `AGENTS.md` and `docs/EVIDENCE_AND_STATE_CONTRACT.md`;
+- live/recorded/fixture separation: `FIXTURE` is non-live; `LOCAL_EXECUTION` is local-only; `LIVE_AWS`, `LIVE_GOOGLE`, and `LIVE_EXTERNAL` represent fresh current-live external provenance; `RECORDED_LIVE` represents historical capture and never classifies as current-live;
+- recorded-live lineage contract: immutable `EvidenceOrigin` (`EvidenceProvenanceContract`) requiring `recorded_live_origin` drawn strictly from `{LIVE_AWS, LIVE_GOOGLE, LIVE_EXTERNAL}`; `FIXTURE`, `LOCAL_EXECUTION`, and `RECORDED_LIVE` cannot masquerade as recorded-live origin; non-`RECORDED_LIVE` provenance forbidden from carrying recorded-live origin metadata;
+- provenance is not result: zero automatic promotion to `VERIFIED`, `READY`, or `PASS`; provenance answers WHERE/HOW evidence originated;
+- timestamp contract: timezone-aware UTC normalized; naive timestamps rejected;
+- immutability: dataclasses frozen;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_provenance.py` passing.
 
 ### P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests
 Status: PENDING / NOT_STARTED
+
 
 Phase exit:
 core domain imports no AWS/Google/MCP UI SDK objects.

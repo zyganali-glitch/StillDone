@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts`
+`P-02.07 — Define evidence provenance and live/recorded/fixture separation`
  
 Status:
 `DONE — awaiting independent QA PASS`
@@ -84,11 +84,12 @@ Status:
 
 ## Next exact task in authorized batch
 
-`P-02.07 — Define evidence provenance and live/recorded/fixture separation`
+`P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests`
 
 ## Next safe action
 
-Proceed to P-02.07 as authorized in the P-02.06 -> P-02.08 batch.
+Proceed to P-02.08 as authorized in the P-02.06 -> P-02.08 batch.
+
 
 
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:

@@ -44,6 +44,12 @@ from stilldone.domain.lifecycle import (
     StepEvidenceState,
 )
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
+from stilldone.domain.provenance import (
+    VALID_RECORDED_LIVE_ORIGINS,
+    EvidenceOrigin,
+    EvidenceProvenance,
+    EvidenceProvenanceContract,
+)
 
 __all__ = [
     "APPROVAL_BINDING_DOMAIN_SEPARATOR",
@@ -58,6 +64,9 @@ __all__ = [
     "BindingHash",
     "DECLARATIVE_MISSION_TRANSITIONS",
     "DesiredStatePredicate",
+    "EvidenceOrigin",
+    "EvidenceProvenance",
+    "EvidenceProvenanceContract",
     "ExecutionAttempt",
     "ExpectedValueType",
     "FreshnessContract",
@@ -81,5 +90,6 @@ __all__ = [
     "StepEvidenceState",
     "TargetIdentity",
     "UserIntentSnapshot",
+    "VALID_RECORDED_LIVE_ORIGINS",
     "compute_approval_binding_hash",
 ]
