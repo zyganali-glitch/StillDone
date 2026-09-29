@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 DONE (AWAITING INDEPENDENT QA PASS)**
+Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 PASS; P-01.05 DONE (AWAITING INDEPENDENT QA PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,37 +73,36 @@ Preferred AWS target:
 
 ## Current exact task
 
-`P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence`
+`P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`
 
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`bfa46d24f20c69557f1e747500e874082f1406ed`
+`274187c19538e9e9f5f18fe3e2f372a8465cbc91`
 
 ## Next exact task after independent QA PASS
 
-`P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`
+`P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract`
 
 ## Next safe action
 
-Await independent QA PASS for P-01.04.
+Await independent QA PASS for P-01.05.
 
-Cycle 1 historically established real AgentCore service access, CodeZip serverless runtime deployment, and remote Python handler execution, but observed a Windows PowerShell inline JSON quoting defect returning `"UNKNOWN_PROMPT"`.
-The authorized repair cycle successfully proved deterministic acceptance:
-- Read-only audit reconciled shared CDK bootstrap infrastructure (`CDKToolkit`), originally provisioned during P-01.04.
-- Exactly 1 repair deployment executed in ephemeral scratch outside canonical repo; reached `READY` (Python 3.14, platformVersion `V1`).
-- Exactly 1 repair remote invocation executed via official data-plane CLI (`aws bedrock-agentcore invoke-agent-runtime`) using binary payload file `fileb://payload.json` (`{"prompt":"PING"}`).
-- Returned HTTP 200 with exact deterministic response `{"result": "AGENTCORE_OK"}`.
-- Strictly zero foundation models or LLMs called inside runtime; zero external calls; zero retries.
-- Mandatory teardown executed immediately: application stack deleted, runtime deleted, S3 CodeZip asset removed, scratch directory removed, AWS logout verified.
-- Independent QA identified that the original bootstrap stack provisioned an active customer-managed KMS key (`AWS::KMS::Key`, `KeyManager: CUSTOMER`), incurring ongoing $1.00/month charges unless remediated.
-- Surgical cost-closure remediation executed: exactly 1 official `cdk bootstrap --no-bootstrap-customer-key` operation performed; stack updated to `UPDATE_COMPLETE` with `FileAssetsBucketKmsKeyId=AWS_MANAGED_KEY`; `AWS::KMS::Key` transitioned to `DELETE_COMPLETE` in CloudFormation and `PendingDeletion` in KMS (zero ongoing key storage charge confirmed via official pricing); remaining resource classes audited: `AWS::ECR::Repository`, `AWS::IAM::Policy`, `AWS::IAM::Role`, `AWS::S3::Bucket`, `AWS::S3::BucketPolicy`, `AWS::SSM::Parameter`; no active customer-managed bootstrap key remains attributable to P-01.04.
-- Corrected cumulative usage-derived gross cost $\approx \$0.00521\text{ USD} \ll \$0.10$ limit (including 1.143 hours active customer KMS lifetime @ $1/mo prorated); actual billed cost and personal-spend delta remain `NOT_OBSERVED / UNKNOWN` (the `$0.00` personal-spend target remains in force; actual personal-spend delta was not observed; the retained bootstrap has only a negligible known S3 storage component $\approx \$0.0000007/\text{month}$; specific promotional-credit offset for that component was not established in this task).
-- All resource identifiers and private paths sanitized. Evidence documented in `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`.
-- Friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260928-02`).
+P-01.05 successfully proved live read-only Google Calendar and Tasks integration:
+- Verified official Google Developer documentation on 2026-09-29 for Calendar quotas, Tasks limits, OAuth scopes, and Desktop flow.
+- Enforced minimum scope contract: `calendar.calendarlist.readonly`, `calendar.events.readonly`, and `tasks.readonly` only.
+- Executed Desktop app OAuth authorization flow via ephemeral local loopback server (`65389`) with explicit test user configuration.
+- Located dedicated disposable secondary Calendar `StillDone Demo` (exactly 1 match; 0 events found; canonical `Leave for school` absent).
+- Located dedicated disposable Task List `StillDone Demo` (exactly 1 match; 0 tasks found).
+- Strictly zero write operations executed (`calendar_writes = 0`, `tasks_writes = 0`).
+- Strictly zero API retries (`api_retries = 0`).
+- Strictly zero billing or paid quota alterations ($0.00 personal spend).
+- In-memory filtering enforced: zero unrelated personal calendar/task names stored, zero emails or tokens committed.
+- Ephemeral tokens deleted from local scratch immediately (`ephemeral_token.json` deleted; remote OAuth grant `NOT_REVOKED`).
+- Durable evidence recorded in `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`.
 
-Task P-01.05 (`Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
+Task P-01.06 (`Execute first live Open-Meteo forecast call and record attribution/limit contract`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.05 receives independent QA PASS.
 
 

@@ -184,7 +184,7 @@ Acceptance:
 
 
 ### P-01.04 — Prove minimal AgentCore runtime/deployment path or formally reject it with evidence
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified SHA: `274187c19538e9e9f5f18fe3e2f372a8465cbc91`)
 
 Acceptance:
 - cycle 1 historical proof preserved: deployed serverless microVM AgentCore runtime to `us-east-1` (CodeZip, Python 3.13, platformVersion `V1`, status `READY`); executed 1 remote invocation; observed Windows PowerShell inline JSON quoting defect yielding deterministic validation string `UNKNOWN_PROMPT`; full teardown executed;
@@ -199,17 +199,22 @@ Acceptance:
 - sanitization: all raw account IDs, runtime IDs, session IDs, bucket names, and local paths sanitized in public evidence;
 - evidence doc: `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`;
 - friction logged: `F-20260928-02`;
-- note: Task marked DONE — awaiting independent QA PASS. Task P-01.05 remains PENDING / NOT_STARTED and MUST NOT start before P-01.04 receives independent QA PASS.
+- note: Task closed with independent QA PASS (Verified SHA: `274187c19538e9e9f5f18fe3e2f372a8465cbc91`).
 
 ### P-01.05 — Prove Google OAuth and live read-only access to dedicated demo Calendar and Tasks resources
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
 
 Acceptance:
-- dedicated demo resources created or identified;
-- Calendar live read;
-- Tasks live read;
-- minimum feasible scopes documented;
-- no unrelated personal data captured.
+- dedicated demo resources created or identified: YES (disposable secondary Google Calendar `StillDone Demo` and dedicated task list `StillDone Demo` created manually by operator);
+- Calendar live read: YES (1 CalendarList discovery call matched target exactly once; 1 events.list read against target calendar executed successfully returning 0 events; zero fallback to primary calendar);
+- Tasks live read: YES (1 tasklists.list discovery call matched target exactly once; 1 tasks.list read against target task list executed successfully returning 0 tasks; zero fallback to default task list);
+- minimum feasible scopes documented: YES (`calendar.calendarlist.readonly`, `calendar.events.readonly`, `tasks.readonly`; zero write scopes, zero Gmail/Drive/profile scopes);
+- no unrelated personal data captured: YES (in-memory filtering only; zero unrelated calendar/task names stored; zero personal emails or tokens committed; resource IDs sanitized as `[REDACTED_CALENDAR_ID]` and `[REDACTED_TASKLIST_ID]`);
+- zero mutation & zero retry: 0 writes, 0 retries, 0 billing/paid quota changes, $0.00 personal spend;
+- ephemeral credentials cleanup: local `ephemeral_token.json` deleted; remote OAuth grant `NOT_REVOKED`;
+- provenance: `LIVE_GOOGLE_CALENDAR` and `LIVE_GOOGLE_TASKS`;
+- evidence doc: `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`;
+- note: Task marked DONE — awaiting independent QA PASS. Task P-01.06 remains PENDING / NOT_STARTED and MUST NOT start before P-01.05 receives independent QA PASS.
 
 ### P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract
 Status: PENDING
