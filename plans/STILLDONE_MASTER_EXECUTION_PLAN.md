@@ -218,7 +218,7 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified SHA: `191eb2b4451be22bbe2360742a7a4c01a942ecb5`).
 
 ### P-01.06 — Execute first live Open-Meteo forecast call and record attribution/limit contract
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified SHA: `0cfac5a398af574bbb375a5ecf275c8a33fe7861`)
 
 Acceptance:
 - live response: YES (HTTP 200 OK from public endpoint `https://api.open-meteo.com/v1/forecast`, latency 429.34ms, generation time 0.294ms, returned timezone `America/Los_Angeles` with valid daily units and 3 forecast dates `2026-09-28` to `2026-09-30`);
@@ -228,18 +228,25 @@ Acceptance:
 - data attribution requirement recorded: YES (CC BY 4.0 licence observed; display attribution contract recorded as "Weather data by Open-Meteo.com — CC BY 4.0"; prototype/evaluation feasibility distinguished from future commercial/judging deployment eligibility to be frozen at P-01.08);
 - zero mutation & zero retry: exactly 1 forecast query attempt, 0 retries, 0 fallback providers;
 - evidence doc: `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`;
-- note: Task marked DONE — awaiting independent QA PASS. Task P-01.07 remains PENDING / NOT_STARTED and MUST NOT start before P-01.06 receives independent QA PASS.
+- note: Task closed with independent QA PASS (Verified SHA: `0cfac5a398af574bbb375a5ecf275c8a33fe7861`).
 
 ### P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
 
 Acceptance:
-- current spec requirement re-verified;
-- remote HTTPS endpoint;
-- Streamable HTTP works;
-- protocol/version recorded;
-- latency measured;
-- no product tools yet.
+- current spec requirement re-verified: YES (inspected official Amazon Alexa+ docs, MCP spec, and official TypeScript SDK on 2026-09-29; recorded Streamable HTTP mandatory, legacy SSE deprecated, remote HTTPS mandatory, <500ms latency threshold, OAuth 2.1 with PKCE S256, RFC 9728 Protected Resource Metadata, and protocol version discrepancies across Amazon documentation);
+- remote HTTPS endpoint: YES (ephemeral Cloudflare Quick Tunnel provisioned via official `cloudflared` v2026.9.3 without account, domain purchase, paid plan, or persistent resource; temporary hostname `https://omissions-lessons-nutritional-warren.trycloudflare.com`);
+- Streamable HTTP works: YES (ephemeral server implemented strictly outside StillDone repo in isolated scratch dir using official `@modelcontextprotocol/sdk` v1.31.0 in stateless direct-JSON mode `enableJsonResponse: true` over `/mcp`; tested via real official MCP client SDK over public HTTPS);
+- protocol/version recorded: YES (negotiated protocol version `2025-11-25`; documented discrepancies with Amazon sample docs citing `2024-11-05`, `2025-03-26`, and `2025-11-25`);
+- latency measured: YES (connection/negotiation 339.91ms, tools/list 106.77ms, echo tool call round-trip 61.26ms; satisfies `< 500ms` Alexa+ responsiveness requirement -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`);
+- zero product tools: YES (strictly 0 product tools; exactly 1 diagnostic transport-only `echo` tool returning `MCP_OK`);
+- zero retries: YES (exactly 1 connection, 1 tools/list, 1 tools/call; 0 retries; 0 fallback transports);
+- zero external writes: YES (0 filesystem, 0 shell, 0 AWS, 0 Google, 0 weather, 0 mission runtime calls);
+- clean teardown: YES (MCP client closed, Cloudflare tunnel killed, server killed, port 3456 released, scratch dir purged, 0 persistent Cloudflare resources created);
+- provenance: `LIVE_REMOTE_MCP` (client provenance: `REAL_MCP_SDK_CLIENT`; Alexa+ actual client integration: `NOT_RUN / NOT_ESTABLISHED`);
+- evidence doc: `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md`;
+- friction logged: `F-20260929-01`;
+- note: Task marked DONE — awaiting independent QA PASS. Task P-01.08 remains PENDING / NOT_STARTED and MUST NOT start before P-01.07 receives independent QA PASS.
 
 ### P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision
 Status: PENDING

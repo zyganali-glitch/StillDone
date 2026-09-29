@@ -124,4 +124,26 @@ Do not invent entries.
 - Would we build with it again? `YES`
 - Secrets/PII check: `CLEAN`
 
+---
+
+### F-20260929-01 — Alexa+ MCP Documentation Protocol Discrepancies and Quick Tunnel SSE Incompatibility
+
+- Date/time: 2026-09-29T09:49:54+03:00
+- Exact task: P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof
+- Tool/API/SDK: Amazon Alexa+ MCP documentation, Model Context Protocol TypeScript SDK (`@modelcontextprotocol/sdk` v1.31.0), Cloudflare Quick Tunnel (`cloudflared` v2026.9.3)
+- Version/region/account mode: Local Node.js v24.13.1 / Windows AMD64 / trycloudflare.com
+- Attempt: Validation of official protocol requirements and execution of single remote Streamable HTTP MCP handshake
+- Expected: Consistent protocol-version guidance across Amazon Alexa+ documentation and MCP specifications; clear guidance on development tunnel transport compatibility
+- Actual:
+  1. Amazon documentation exhibits protocol-version discrepancies across different sections: standard MCP schema examples state `2024-11-05`, Alexa+ initialize request payloads cite `2025-03-26`, and deprecation notices cite `2025-11-25`. The official MCP TypeScript SDK standardizes on `2025-11-25` as `LATEST_PROTOCOL_VERSION` with backward compatibility through `2024-10-07`.
+  2. Cloudflare Quick Tunnels (`trycloudflare.com`) buffer HTTP responses and do not support HTTP Server-Sent Events (SSE). To successfully prove Streamable HTTP over a zero-cost, accountless Quick Tunnel, the server transport had to be configured in direct-JSON response mode (`enableJsonResponse: true`).
+  3. The SDK's `createMcpExpressApp` applies localhost DNS rebinding protection by default, which rejects incoming requests bearing tunnel host headers (`*.trycloudflare.com`) with HTTP 403 unless explicit host allowlists are configured.
+- Severity: `LOW`
+- Workaround: Configured the ephemeral MCP server using `StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })` and standard Express body parsing without hardcoded localhost host header filtering. Handshake successfully negotiated protocol version `2025-11-25` over public HTTPS.
+- Evidence: `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? docs friction & development tunnel transport limitation
+- Actionable suggestion: Amazon Alexa+ documentation should explicitly specify supported MCP protocol-version negotiation ranges and clarify that Streamable HTTP servers supporting direct-JSON request/response modes are fully compatible with environments where HTTP SSE streaming is restricted or unsupported by edge proxies/tunnels.
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
 
