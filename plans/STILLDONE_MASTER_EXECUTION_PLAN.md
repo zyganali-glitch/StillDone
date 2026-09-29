@@ -282,7 +282,16 @@ Acceptance:
 - focused unit tests: `tests/domain/test_mission.py` passing.
 
 ### P-02.02 — Define desired-state predicate schema, required/optional semantics, and freshness contract
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- desired-state predicate: typed immutable `DesiredStatePredicate` with `PredicateId`, `MissionId`, subject, operator, scalar JSON-like expected value, required flag, and freshness contract;
+- bounded operator vocabulary: `PredicateOperator` (`==`, `!=`, `exists`, `does_not_exist`, `<`, `<=`, `>`, `>=`); arbitrary code/expressions/eval rejected;
+- freshness contract: `FreshnessContract` supporting `CURRENT` and bounded positive `MAX_AGE` (seconds); contradictory, zero, and negative values rejected;
+- required/optional semantics: explicit boolean contract defined without calculating READY;
+- immutability: all objects frozen;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_desired_state.py` passing.
 
 ### P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization
 Status: PENDING
