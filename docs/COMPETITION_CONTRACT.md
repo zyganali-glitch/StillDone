@@ -1,13 +1,13 @@
 # Competition Contract — Build, Ship, Shape: Amazon Developer Hackathon
 
-Verification & Snapshot Date: `2026-09-20`  
+Verification & Snapshot Date: `2026-09-20` (Re-verified against official Devpost rules & resources on `2026-09-29`)  
 Governing Authority: Current Official External Rules and Documentation
 
 ---
 
 ## 1. Official Sources & Attribution
 
-All facts recorded in this contract were retrieved and verified against the following current official sources on `2026-09-20`:
+All facts recorded in this contract were retrieved and verified against current official sources on `2026-09-20` and re-verified on `2026-09-29`:
 
 | Source | Official URL | Scope / Authority |
 |---|---|---|

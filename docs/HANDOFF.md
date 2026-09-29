@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-01 LIVE FEASIBILITY IN PROGRESS — P-01.01 PASS; P-01.02 PASS; P-01.03 PASS; P-01.04 PASS; P-01.05 PASS; P-01.06 PASS; P-01.07 DONE (AWAITING INDEPENDENT QA PASS)**
+Current repository state: **P-01 LIVE FEASIBILITY COMPLETED — P-01.01 through P-01.07 PASS; P-01.08 DONE — LIVE FEASIBILITY GO (AWAITING INDEPENDENT QA PASS & PHASE CLOSURE)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -35,7 +35,7 @@ Secondary:
 - Open Source Mini Challenge
 
 Rules snapshot date:
-`2026-09-20`
+`2026-09-29` (re-verified against current official Devpost rules and resources)
 
 ## Canonical killer mission
 
@@ -47,18 +47,18 @@ Preferred first live service set:
 - Open-Meteo
 
 Preferred AWS target:
-- real Bedrock reasoning path;
-- real Strands agent path;
-- real AgentCore/runtime path if live feasibility and zero-cost constraints are proven;
-- final AWS service map remains UNFROZEN until P-01 closes.
+- real Bedrock reasoning path (`amazon.nova-micro-v1:0` in `us-east-1` proven);
+- real Strands agent path (`strands-agents 1.57.1` proven);
+- real AgentCore runtime path (`@aws/agentcore` CodeZip serverless microVM in `us-east-1` proven);
+- Architecture v1 frozen at P-01.08 gate.
 
 ## Frozen constraints
 
 - Zero personal spend target: `$0.00`.
 - No paid SaaS dependency required for the core judge path.
 - Real MCP server over Streamable HTTP for the strongest Alexa+ path.
-- Direct Alexa+ partner access is optional and must not block qualification.
-- Simulated Alexa+ client surface must be visibly labeled if used.
+- Direct Alexa+ partner access is optional and classified as `NOT_ESTABLISHED`.
+- Simulated Alexa+ client surface must be visibly labeled as `SIMULATED ALEXA+ EXPERIENCE`.
 - Real backend actions must not be presented as simulated.
 - Execute response ≠ verification.
 - Independent read-back required for mutable step verification.
@@ -73,36 +73,37 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof`
+`P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision`
  
 Status:
-`DONE — awaiting independent QA PASS`
+`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`0cfac5a398af574bbb375a5ecf275c8a33fe7861`
+`87232f7f3e8bbff7882bb52691665f100e5ee16a`
 
-## Next exact task after independent QA PASS
+## Next exact task after independent QA PASS & phase closure
 
-`P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision`
+`P-02.01 — Define mission identity, immutable mission contract, and user-intent snapshot`
 
 ## Next safe action
 
-Await independent QA PASS for P-01.07.
+Await independent QA PASS for P-01.08 and phase P-01 closure.
 
-P-01.07 successfully proved remote Streamable HTTP MCP feasibility:
-- Verified current official Amazon Alexa+ docs, MCP spec, and TypeScript SDK on 2026-09-29.
-- Recorded Streamable HTTP requirement, legacy SSE deprecation, remote HTTPS requirement, <500ms MCP server round-trip query response latency requirement, two-tier auth model (Tier 1 service-level client_credentials and Tier 2 user-level authorization_code + PKCE S256 with optional account linking), Protected Resource Metadata (RFC 9728), explicit unsupported auth mechanisms, select-partner platform availability (operator partner access NOT_ESTABLISHED), and protocol version discrepancies across Amazon documentation (2024-11-05 vs 2025-03-26 vs 2025-11-25).
-- Built minimal ephemeral server outside StillDone repo using official `@modelcontextprotocol/sdk` v1.31.0 in stateless direct-JSON mode (`enableJsonResponse: true`) on `/mcp`.
-- Zero modifications to StillDone code, dependencies (`pyproject.toml`, `uv.lock`), or tests.
-- Exposed exactly 1 diagnostic transport-only `echo` tool (`{"text": "MCP_OK"}` $\to$ `MCP_OK`); zero product tools; zero external service calls.
-- Spun up ephemeral Cloudflare Quick Tunnel (`cloudflared` v2026.9.3) with zero account, zero domain purchase, zero payment, and zero persistent resources; obtained temporary public hostname `https://omissions-lessons-nutritional-warren.trycloudflare.com`.
-- Executed single bounded protocol sequence using real MCP client SDK (`REAL_MCP_SDK_CLIENT`): connect & negotiate (339.91ms, negotiated protocol `2025-11-25`), tools/list (106.77ms, 1 tool), tools/call echo (61.26ms round-trip, semantic result `MCP_OK`), clean close.
-- Measured latency: 61.26ms round-trip (< 500ms MCP server round-trip query response latency threshold -> `ALEXA_PLUS_LATENCY_REQUIREMENT = OBSERVED_PASS_FOR_THIS_PROBE`).
-- Strictly zero retries, zero transport fallbacks, zero mock substitutes.
-- Executed complete teardown: client closed, tunnel killed, server killed, port 3456 released, scratch dir purged.
-- Durable evidence recorded in `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md` and friction logged in `docs/COMPETITION_FEEDBACK_LOG.md` (`F-20260929-01`).
+**HARD STOP. P-02 MUST NOT START.**
 
-Task P-01.08 (`Freeze architecture v1 and issue live feasibility GO/BLOCKED decision`) remains PENDING / NOT_STARTED and MUST NOT start before P-01.07 receives independent QA PASS.
+Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
+- Verified complete P-01 live feasibility chain: P-01.01 through P-01.07 are all closed as independent QA PASS.
+- Re-checked current official competition rules on Devpost on 2026-09-29: Alexa+ qualifying routes, Streamable HTTP MCP spec version `>= 2025-11-25`, simulated Alexa+ experience exemption from runtime hook, repo runtime hook requirements and exceptions, video < 3:00 rules, AWS Builder mini challenge, Open Source mini challenge, 4 equally weighted criteria (25% each), and tie-breaking priority.
+- Froze Architecture v1 in `docs/ARCHITECTURE.md`:
+  - Selected proven AWS stack: Amazon Bedrock (`amazon.nova-micro-v1:0` in `us-east-1`), Strands Agents SDK (`1.57.1`), and Amazon Bedrock AgentCore Runtime (serverless CodeZip path).
+  - Explicitly classified rejected/deferred AWS services: AgentCore Gateway, AgentCore Memory, AWS Lambda, AWS Step Functions, Amazon EventBridge, Amazon SageMaker, Amazon Cognito, Amazon S3 for app state, provisioned throughput, and Marketplace 3P models all `REJECTED_FOR_V1`; AgentCore Identity and Amazon DynamoDB `DEFERRED`; provider-neutral ledger port frozen.
+  - Froze external systems: Google Calendar API v3 and Google Tasks API v1 isolated to dedicated disposable `StillDone Demo` resources; Open-Meteo Forecast API under CC BY 4.0 data licence with mandatory display attribution and non-commercial evaluation tier; MCP Streamable HTTP boundary with `< 500ms` target.
+  - Recorded operational readiness risk: Google OAuth app in Testing status (100 test user cap; 7-day token expiry requires interactive re-auth before recording/judging).
+  - Recorded downstream mandatory requirement: Canonical repository must contain and execute the real self-hosted MCP server at runtime before submission freeze.
+- Audited zero-personal-spend feasibility: $150 promotional credit active; cumulative P-01 gross estimate `~$0.00521 USD` ($\ll \$0.10$ limit); actual billed cost and personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`; CDK bootstrap customer KMS key remediated to `PendingDeletion` ($0 ongoing fee); verdict: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING`.
+- Executed broad P-Ω phase-boundary audit across 14 governance and technical dimensions: zero phase-blocking defects found; `docs/P_OMEGA_AUDIT_REPORT.md` updated.
+- Issued deterministic decision: **`LIVE FEASIBILITY GO`**. Phase P-01 is complete and awaiting independent QA phase closure.
+
 
 

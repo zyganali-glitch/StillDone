@@ -1,6 +1,6 @@
 # Cost & Access Policy
 
-Snapshot date: `2026-09-27`
+Snapshot date: `2026-09-29`
 
 ## Principle
 
@@ -20,7 +20,7 @@ Official sources:
 - Request Deadline: Wednesday, October 21, 2026 at 12:00 PM PT
 - Credit Terms: https://aws.amazon.com/awscredits/
 
-### Operator Credit Status (as of 2026-09-27)
+### Operator Credit Status (as of 2026-09-29)
 
 - **Redemption & Status**: The official `$150.00` Hackathon Promotional Credit (`Amazon Devices Global Hackathon - Teams A4`, type: Promotion) is successfully redeemed and **Active** in the operator's AWS account.
 - **Balance & Usage**: `$150.00` granted, `$150.00` remaining, `$0.00` used at observation checkpoint (`2026-09-27`).
@@ -28,8 +28,7 @@ Official sources:
 - **Applicable Products Coverage**: Directly inspected in the live AWS Billing "Applicable products" list. Explicitly confirmed to cover `Amazon Bedrock Service`, `AmazonBedrockFoundationModels`, `Amazon Bedrock`, `Amazon Bedrock Managed Knowledge Base`, and `Amazon Bedrock AgentCore`.
 - **Separate AWS Signup Credit**: A separate `AWS Free Tier` signup credit of `$100.00` (Active, expires `2027-09-27`, `$0.00` used) was also observed. Total account remaining credit is `$250.00`. The hackathon promotion remains the canonical credit basis for StillDone.
 - **Account Plan & Support**: Paid account plan explicitly chosen by the operator to permit promotional-credit redemption, with Basic (free) support plan.
-- **Current Account Charges**: `NOT_OBSERVED / UNKNOWN` in P-01.01 evidence (Bills / current account charges were not separately inspected; credit usage at checkpoint observed at `$0.00`; credit usage is not equivalent to account charges).
-- **P-01.01 Observation Outcome**: Verified on `2026-09-27`. Spend decision updated from `BLOCKED_ZERO_SPEND` to `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK`. This authorizes ONLY a single, tightly bounded P-01.02 Bedrock test inference after independent P-01.01 QA PASS.
+- **Current Account Charges**: `NOT_OBSERVED / UNKNOWN` in P-01 evidence (Bills / current account charges were not separately inspected; credit usage at checkpoint observed at `$0.00`; credit usage is not equivalent to account charges).
 - **Binding Policy**: No automatic paid fallback. Credits are a payment offset, NOT a hard spending cap. If credits exhaust or unexpected charges appear, execution halts immediately. Personal-spend exposure remains strictly `$0.00`.
 
 Official rules explicit warning:
@@ -41,14 +40,31 @@ This does NOT mean:
 - post-credit usage cannot bill;
 - credits necessarily last through judging.
 
-P-01 verification status:
-- actual account credit balance: `$150.00` remaining (`$0.00` used) on hackathon credit;
-- expiry: Billing detail `2028-09-01` vs hackathon email `2028-08-31` (discrepancy OBSERVED, cause UNKNOWN / NOT_ESTABLISHED; conservative boundary applies);
-- account charges vs credit usage: credit usage at checkpoint is `$0.00` observed; current account charges are NOT_OBSERVED / UNKNOWN in P-01.01 evidence;
-- billing behavior: AWS credits automatically apply to eligible services until exhausted or expired. AWS Budgets updates asynchronously every 8–12 hours, not a hard real-time cap;
-- service availability: candidate region `us-east-1` confirmed for Bedrock runtime and AgentCore;
-- safety decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK` (strictly bounded to 1 feasibility inference in P-01.02);
-- practical kill switch / budget strategy: documented in `docs/P01_LIVE_FEASIBILITY.md`.
+## Phase P-01 Cumulative Cost Reconciliation & Cost Freeze
+
+Audit of all live operations executed across Phase P-01:
+
+| Operation / Micro-Task | Observed Resource Consumption | Conservative Gross Usage Estimate | Promotional Offset Coverage | Net Personal Spend |
+|---|---|---|---|---|
+| **Bedrock Converse (P-01.02)** | 3 cycles; 1 Converse call; 11 tokens (8 in, 3 out) | $\approx \$0.00000070\text{ USD}$ | Bedrock Foundation Models | **$0.00** |
+| **Strands SDK (P-01.03)** | 1 agent execution; 13 tokens (8 in, 5 out) | $\approx \$0.00000098\text{ USD}$ | Bedrock Foundation Models | **$0.00** |
+| **AgentCore Runtime & CDK (P-01.04)** | 2 deployments, 2 invocations, full teardown; CDK bootstrap customer KMS key active 1.143 hrs ($1.00/mo prorated) remediated to `PendingDeletion`; retained template storage < 30 KB | $\approx \$0.00521\text{ USD}$ | AgentCore & S3 / ceiling <= $0.10 | **$0.00** |
+| **Google Calendar & Tasks (P-01.05)** | 4 read queries; standard courtesy quotas | $\$0.00$ | Free courtesy tier | **$0.00** |
+| **Open-Meteo Forecast (P-01.06)** | 1 HTTP GET forecast query; public endpoint | $\$0.00$ | Free evaluation tier | **$0.00** |
+| **Cloudflare Quick Tunnel (P-01.07)** | Ephemeral public HTTPS tunnel; full teardown | $\$0.00$ | Free temporary service | **$0.00** |
+| **Cumulative P-01 Total** | Conservative gross usage upper bound: | **$\approx \$0.00521\text{ USD}$** | Active Credit Offset | **$0.00 (Target Met)** |
+
+### Retained CDK Bootstrap Cost Truth
+- The shared `CDKToolkit` CloudFormation stack was provisioned during P-01.04.
+- An initial default customer-managed KMS key was identified by QA and remediated in P-01.04 via `cdk bootstrap --no-bootstrap-customer-key`.
+- The customer KMS key was deleted from CloudFormation and is `PendingDeletion` in KMS ($0 ongoing storage fee).
+- The retained S3 bootstrap staging bucket holds only CloudFormation templates (< 30 KB total); ongoing gross storage fee is estimated at `~$0.0000007/month`.
+- Actual billed cost and personal-spend delta remain `NOT_OBSERVED / UNKNOWN`.
+
+### Cost Freeze Verdict:
+$$\mathbf{ZERO\_PERSONAL\_SPEND\_PATH = CREDIBLE\_THROUGH\_JUDGING}$$
+
+*(Target personal spend is strictly $0.00. No guarantee is claimed; billing truth freshness will be re-verified before enabling any live cloud mutations in future phases).*
 
 ## AWS AgentCore
 

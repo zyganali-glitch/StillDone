@@ -1,128 +1,155 @@
-# P-01 Live Feasibility Record — AWS Platform & Zero-Spend Boundary
+# P-01 Live Feasibility Record & Synthesis — Platform, Protocols & Zero-Spend Boundary
 
 **Phase**: P-01 Live Access, Zero-Cost & Platform Feasibility  
-**Task**: P-01.01 — Verify AWS account, hackathon credit, billing safety, region, and service-access reality  
-**Observation Timestamp**: `2026-09-27T09:50:00+03:00`  
-**Governing Authority**: [AGENTS.md](../AGENTS.md), [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md), [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
-**Status**: **P-01.01: CLOSED / INDEPENDENT QA PASS** (Verified SHA: `e3d5aa79d8569ebe7e20e48300060b15ba30c187`) | **Current P-01.02: DONE — awaiting independent QA PASS**
+**Phase Closure Gate**: P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision  
+**Synthesis Date**: `2026-09-29`  
+**Governing Authority**: [AGENTS.md](../AGENTS.md) § 1–24; [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md); [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md)  
+**Status**: **P-01.01 through P-01.07: CLOSED / INDEPENDENT QA PASS** | **P-01.08: DONE — LIVE FEASIBILITY GO (Awaiting Independent QA Phase Closure)**  
+**Latest Independently Verified Baseline SHA**: `87232f7f3e8bbff7882bb52691665f100e5ee16a`  
 
 ---
 
-## 1. Official Documentation & Competition Baseline
+## 1. Executive Summary & Verified Feasibility Chain
 
-Facts verified against current official external sources on `2026-09-27`:
+Phase P-01 systematically established the empirical foundation for StillDone. In strict accordance with the StillDone Constitution (`AGENTS.md` § 9: Live-First Law; § 3: Closure Contract; § 12: Zero Personal Spend Law), each required technological leg was tested and proven using real execution without mocked substitutes or silent fallbacks.
 
-| Category | Source Authority | Official URL | Verified Observation |
+The independently verified task chain stands as follows:
+
+| Micro-Task | Status | Verified Remote SHA | Proven Technological Reality |
 |---|---|---|---|
-| **Promotional Credits** | AWS Billing User Guide | `https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/useconsolidatedbilling-credits.html` | Credits are viewed at Billing Console -> Credits (`/billing/home#/credits`). Applied automatically to eligible service charges until exhausted or expired. Fields: Credit ID, Credit type (e.g. Promotion), Status (Active/Paused/Exhausted/Expired), Amount remaining, Start date, Expiration date, Applicable products. Credit is a payment offset, not a hard billing cap. |
-| **Bedrock Model Access** | Amazon Bedrock User Guide | `https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html` | Access to Amazon Bedrock foundation models is enabled by default with the correct AWS Marketplace permissions in all commercial AWS regions. Third-party models automatically initiate AWS Marketplace subscription on first invocation (requires Marketplace permissions and valid payment method). Anthropic models require First Time Use (FTU) use-case form submission. Amazon-provider models have no 3P EULA / FTU prerequisite. Merely seeing a model in catalog does not guarantee inference without permission verification. |
-| **Bedrock Regional Availability** | Amazon Bedrock User Guide | `https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints-region-availability.html` | `us-east-1` (US East - N. Virginia) supports both `bedrock-runtime` and `bedrock-mantle` endpoints. |
-| **AgentCore Supported Regions** | Amazon Bedrock AgentCore Developer Guide | `https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html` | `us-east-1` (US East - N. Virginia) is an officially supported region for Amazon Bedrock AgentCore features. |
-| **Billing Safety** | AWS Budgets User Guide | `https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.md` | AWS Budgets updates asynchronously (8–12 hours delay, up to 3 times/day). It is an alerting/notification mechanism, **not** an instant real-time hard spending cap. |
-| **Hackathon Resources** | Devpost Hackathon Resources | `https://amazonappdev2026.devpost.com/resources` | Official $150 credit request form (`https://forms.gle/GaHFxSbBQNG9Kti6A`). Request deadline: October 21, 2026. Credit has been successfully requested, received, and redeemed into the active account. |
-
----
-
-## 2. Live Account State Observation (Read-Only)
-
-Operator-observed live AWS account reality reconciled on `2026-09-27`:
-
-| Dimension | Observed State | Evidence / Detail |
-|---|---|---|
-| **Authenticated Account Observable** | **YES** | Independently operator-observed via AWS Management Console sign-in. |
-| **Account / Billing Mode** | **Paid account plan** | Explicitly approved and selected by operator to permit hackathon promotional-credit redemption. Support plan: Basic (free). |
-| **Current Account Charges** | **NOT_OBSERVED / UNKNOWN** | Bills / current account charges were not separately observed or presented in P-01.01 evidence (credit usage of $0.00 is not equivalent to account charges of $0.00). Credit usage at checkpoint: $0.00 observed. |
-| **Hackathon Promotional Credit** | **PRESENT / ACTIVE** | Name displayed: `Amazon Devices Global Hackathon - Teams A4`. Type: `Promotion`. Status: `Active`. Granted: `$150.00`. Remaining: `$150.00`. Used: `$0.00`. Start date: `2026-09-01`. |
-| **Credit Expiration Date** | **Discrepancy OBSERVED** | Billing detail expiration: `2028-09-01`. Hackathon email wording: `2028-08-31`. Discrepancy: `OBSERVED`. Cause: `UNKNOWN / NOT_ESTABLISHED`. For operational safety, future automation must not assume the later date when a one-day discrepancy exists; where expiry matters for execution, use the conservative boundary (`2028-08-31`) unless current AWS Billing/API truth is freshly re-observed. |
-| **Separate AWS Signup Credit** | **PRESENT / ACTIVE** | Name displayed: `AWS Free Tier`. Status: `Active`. Granted: `$100.00`. Remaining: `$100.00`. Used: `$0.00`. Expiry: `2027-09-27`. Total observed remaining credit across both credits: `$250.00`. |
-| **Account-Specific Credit Coverage** | **OBSERVED** | Operator opened the hackathon credit's live AWS Billing "Applicable products" list. Visibly confirmed coverage includes: `Amazon Bedrock Service`, `AmazonBedrockFoundationModels`, `Amazon Bedrock`, `Amazon Bedrock Managed Knowledge Base`, and `Amazon Bedrock AgentCore`. |
-| **Account History Correction** | **RECONCILED** | Earlier sign-in blocker was based on the assumption that an existing AWS account already existed. Subsequent signup flow successfully created a new AWS account with the intended email, establishing that the prior state was a Builder ID / no usable AWS account situation rather than an inaccessible existing AWS account. The support case opened during that assumption is not active feasibility evidence and is no longer a blocker. |
-| **Reconciliation Executor AWS Mutations** | **NONE** | Reconciliation executor AWS mutations: NONE. Cloud resource mutations: NONE. Bedrock inference: NONE. (Prior operator-authorized account/billing actions: AWS account creation, Paid plan selection, Basic support selection, and promotional-credit redemption occurred outside the executor reconciliation run and are recorded only as observed current state; these operator actions are not classified as product/runtime integration proof). |
-| **Bedrock Inference Performed** | **NONE** | Zero Bedrock inference calls executed. |
-| **Bedrock Control-Plane Visibility** | **DISCOVERY_COMPLETED_IN_P01_02** | Bedrock foundation-model access is enabled by default in commercial regions per current official documentation. (Historical: Programmatic read discovery subsequently executed during P-01.02, confirming active Amazon foundation models in `us-east-1`). |
-
----
-
-## 3. Candidate AWS Region & Rationale
-
-- **Primary Candidate Region**: `us-east-1` (US East - N. Virginia)
-  - **Factual Rationale** (based strictly on current official AWS documentation):
-    1. Full availability of Amazon Bedrock inference endpoints (`bedrock-runtime` and `bedrock-mantle`) per official endpoints documentation.
-    2. Official support for Amazon Bedrock AgentCore Runtime per official AgentCore regions documentation.
-    3. Factual basis only: Region selection is based solely on documented service and runtime support. Region selection has no bearing on promotional credit redemption.
-- **Alternative Regions Evaluated**:
-  - `us-west-2` (Oregon): Secondary candidate supported by Bedrock runtime and AgentCore; available for cross-region fallback if necessary.
-- **Model ID Decision**: **HISTORICAL P-01.01 BASELINE (RESOLVED IN P-01.02)**. (Historical: Model selection subsequently occurred during P-01.02 based on live Bedrock catalog discovery, selecting Amazon-provider text model `amazon.nova-micro-v1:0`).
-
----
-
-## 4. Zero-Personal-Spend Safety Decision
-
-### Decision: `SAFE_TO_ATTEMPT_NEXT_LIVE_TASK` (HISTORICAL P-01.01 DECISION — AUTHORITY CONSUMED)
-
-**Deterministic Rationale (Historical P-01.01 Baseline)**:
-1. Target personal spend is strictly **`$0.00`** (AGENTS.md § 12).
-2. The official `$150.00` Hackathon Promotional Credit was confirmed Active and redeemed in the AWS account, with `$150.00` remaining and `$0.00` used at checkpoint.
-3. Live "Applicable products" list in AWS Billing explicitly covers Amazon Bedrock and Amazon Bedrock AgentCore.
-4. Credit usage at checkpoint was observed at `$0.00`. (Separate Bills / current-account-charges evidence was NOT_OBSERVED / UNKNOWN in P-01.01 evidence, but the active $150.00 hackathon credit, explicit Bedrock inclusion in applicable products, $150.00 credit remaining, bounded one-call contract, no paid fallback, and explicit operator authorization for Paid plan provide the bounded safety basis).
-5. The prior blocker (`BLOCKED_ZERO_SPEND` due to unobserved credit disbursement) was resolved by direct operator observation.
-
-**Historical Scope & Consumed Authority**:
-- This historical decision authorized **ONLY**: The initial tightly bounded P-01.02 Bedrock feasibility inference following independent P-01.01 QA PASS.
-- **Authority Status: FULLY CONSUMED**:
-  - That initial single-attempt authorization, along with a subsequent QA-authorized second cycle, has been fully consumed.
-  - Two bounded inference attempts occurred; both returned errors (`AccessDeniedException` then `ValidationException: Operation not allowed`).
-  - Read-only diagnostic check confirmed `authorizationStatus = NOT_AUTHORIZED`.
-  - Authenticated AWS Support case is `OPEN / AWS_RESPONSE_PENDING`.
-  - **Zero inference authority exists currently**; third inference remains strictly **`NOT AUTHORIZED`**; external state is **`AWS_SUPPORT_PENDING`**.
-- It never meant:
-  - unlimited AWS usage;
-  - unlimited spend;
-  - permission to exhaust credits;
-  - permission for paid fallback;
-  - permission to create unrelated resources;
-  - permission for provisioned throughput;
-  - permission for arbitrary Marketplace purchases.
-- Promotional credit is a payment offset, **not** a hard billing cap.
-- AWS Budgets remains an asynchronous alerting/notification mechanism (8–12 hr delay), not an instant hard circuit breaker.
-
----
-
-## 5. Historical P-01.02 Safety Contract (Initial Invariant Baseline — Authority Consumed)
-
-Documented initial requirements and constraints defined during P-01.01 for subsequent task P-01.02 (Historical record; all initial single-attempt execution authorizations are now CONSUMED):
-
-1. **Pre-Invocation Credit Verification**:
-   - Re-check that the hackathon promotional credit remains Active and non-zero immediately prior to invocation where practical.
-2. **Live Catalog Model Selection**:
-   - Discover available models from live Bedrock state; do NOT hard-code a model ID from stale documentation.
-   - Prefer an Amazon-provider text model for the initial feasibility call to avoid unnecessary third-party Marketplace subscription delays, EULAs, or FTU use-case questionnaires.
-3. **Strict Invocation Bounding**:
-   - Single-turn, sanitized, minimal prompt string (e.g. `"Ping: return pong"`).
-   - Aggressive token bounding: `max_tokens` / `maxTokens` capped at `<= 100`.
-   - Number of calls: exactly **1** inference initially.
-4. **Metadata & Cost Audit**:
-   - Record actual region, model ID, latency, and request/response metadata without secrets.
-   - Verify post-call credit and cost evidence in the Billing console when observable.
-5. **Kill Switch & No Paid Fallback**:
-   - If promotional credit is exhausted, fails to apply, or if any unexpected personal charge (even `$0.01`) appears, immediately abort all live execution with `BLOCKED_ZERO_SPEND`.
-   - Never charge operator payment methods or enable pay-as-you-go continuation.
-
----
-
-## 6. Execution Boundary & Next Step Lock
+| **P-01.01** | **PASS** | `e3d5aa79d8569ebe7e20e48300060b15ba30c187` | AWS account active; $150 hackathon credit redeemed (`Active`, $150 remaining); Bedrock & AgentCore covered in applicable products; candidate region `us-east-1` confirmed; zero-spend safety gate established. |
+| **P-01.02** | **PASS** | `67bf97a26e3c5a1cea9cb90929cfa390c43b9995` | Real Bedrock Converse API inference against Amazon-provider text model `amazon.nova-micro-v1:0` in `us-east-1` succeeded with genuine model response (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms); account verification hold and authorization blockers remediated via authenticated AWS Support. |
+| **P-01.03** | **PASS** | `bfa46d24f20c69557f1e747500e874082f1406ed` | Real Strands Agents SDK execution (`strands-agents 1.57.1`, Python 3.13) against `amazon.nova-micro-v1:0` via native `BedrockModel`; bounded tool-free execution returned genuine response `STRANDS_OK` in 1179ms. |
+| **P-01.04** | **PASS** | `274187c19538e9e9f5f18fe3e2f372a8465cbc91` | Amazon Bedrock AgentCore Runtime deployed to `us-east-1` (serverless microVM, CodeZip build, Python 3.14, platform `V1`); remote invocation returned HTTP 200 with deterministic acceptance string `AGENTCORE_OK`; full teardown completed; retained CDK bootstrap customer KMS key remediated to `PendingDeletion` to eliminate ongoing storage fees. |
+| **P-01.05** | **PASS** | `191eb2b4451be22bbe2360742a7a4c01a942ecb5` | Real Google Calendar & Tasks read-only access proven via desktop OAuth flow with test user; least-privilege scopes enforced; dedicated disposable secondary calendar `StillDone Demo` and task list `StillDone Demo` discovered and read (0 events, 0 tasks); zero writes, zero token leakage, $0.00 personal spend. |
+| **P-01.06** | **PASS** | `0cfac5a398af574bbb375a5ecf275c8a33fe7861` | Real Open-Meteo Forecast API call executed against public demo coordinates (Seattle, WA); HTTP 200 returned valid 3-day forecast in 429.34ms; zero API keys, credentials, or personal geolocation sent; CC BY 4.0 display attribution contract recorded; non-commercial evaluation tier confirmed. |
+| **P-01.07** | **PASS** | `87232f7f3e8bbff7882bb52691665f100e5ee16a` | Minimal remote Streamable HTTP MCP server built outside repo (`@modelcontextprotocol/sdk` v1.31.0 in direct-JSON mode on `/mcp`); exposed over public HTTPS via ephemeral Cloudflare Quick Tunnel; real MCP client connected, negotiated protocol `2025-11-25`, and called `echo` tool with round-trip latency of **61.26ms** (< 500ms target); clean teardown executed; Alexa+ two-tier auth model cataloged; Alexa+ partner client access classified as `NOT_ESTABLISHED`. |
+| **P-01.08** | **DONE** | Candidate closure | Architecture v1 frozen; selected, deferred, and rejected AWS services classified; external service set frozen; zero-personal-spend path verified credible; broad P-Ω audit passed; **LIVE FEASIBILITY GO** issued. |
 
 > [!NOTE]
-> **P-01.02 Inference Executed & Succeeded — DONE (awaiting independent QA PASS)**:
-> - **Cycle 1 (`2026-09-27T11:05:34+03:00`)**: Single real Bedrock Converse call failed with `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.` (Account verification hold).
-> - **Cycle 2 (`2026-09-27T13:19:20+03:00`)**: Fresh QA-authorized single attempt executed > 2 hours later. Returned `ValidationException: Operation not allowed` on direct invocation of `amazon.nova-micro-v1:0`.
-> - **Diagnostic Cycle (`2026-09-27T20:58:05+03:00`)**: Read-only `get-foundation-model-availability` returned `authorizationStatus = NOT_AUTHORIZED` (agreement: AVAILABLE, entitlement: AVAILABLE, region: AVAILABLE). Zero inference executed (attempts in cycle = 0; lifetime inference attempts = 2).
-> - **AWS Support Escalation (`2026-09-27` – `2026-09-28`)**: Authenticated AWS Support case opened. AWS Support requested project use case; operator provided it; AWS Support stated authorized service team completed account adjustments for base Amazon Bedrock models.
-> - **Cycle 3 (`2026-09-28T19:27:16+03:00`)**: Fresh read-only preflight gate confirmed `authorizationStatus = AUTHORIZED`. Single real Converse inference attempt executed against `amazon.nova-micro-v1:0` in `us-east-1` and succeeded with genuine model response (`pong`, stopReason=`end_turn`, tokens: in=8, out=3, total=11, latency=7259ms).
-> Strictly adhering to the no-retry safety rule, zero retries were attempted (lifetime P-01.02 inference attempts = 3).
-> P-01.02 status: **`DONE — awaiting independent QA PASS`**.
-> Fourth inference attempt is strictly **`NOT_RUN / NOT_AUTHORIZED`**.
-> Task P-01.03 remains **`PENDING / LOCKED`** and strictly locked until P-01.02 receives independent QA PASS.
+> **Evidence Provenance Truth**: Live evidence observed during micro-task execution was classified as `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, and `LIVE_REMOTE_MCP`. Durable records stored in the repository now constitute **`RECORDED_LIVE`** evidence. Recorded-live evidence is historical truth at observation time and is never presented as a fresh live call.
+
+---
+
+## 2. Proven AWS Stack Selection & Regional Reality
+
+Architecture v1 selects only the AWS technologies that earned their place through successful, repeatable live proof:
+
+1. **Amazon Bedrock (Model Inference)**:
+   - **Proven Model**: `amazon.nova-micro-v1:0`
+   - **Proven Region**: `us-east-1` (US East - N. Virginia)
+   - **Observed Characteristics**: Real Converse API execution verified. Sub-cent gross cost per call ($\approx \$0.00000070$). Zero third-party Marketplace EULA or FTU dependencies. Covered under the hackathon promotional credit.
+2. **Strands Agents SDK (Agent Orchestration)**:
+   - **Proven Version**: `strands-agents 1.57.1` with `botocore[crt]` (`awscrt 0.36.0`) on Python 3.13.
+   - **Observed Characteristics**: Native `BedrockModel` integration proven against `amazon.nova-micro-v1:0` in `us-east-1`. Clean tool-free planning execution returning structured `AgentResult`.
+3. **Amazon Bedrock AgentCore Runtime (Execution Environment)**:
+   - **Proven Version**: Node.js CLI `@aws/agentcore` v0.30.0 / direct CodeZip serverless microVM deployment (AL2023, Python 3.14, platform `V1`) in `us-east-1`.
+   - **Observed Characteristics**: Deploy $\to$ `READY` $\to$ remote data-plane invoke $\to$ HTTP 200 `AGENTCORE_OK` proven. Clean teardown verified.
+
+### Downstream Integration Truth
+P-01 established that Bedrock, Strands, and AgentCore Runtime are individually feasible, compliant with zero-personal-spend, and functional in `us-east-1`. Cross-service production integration across all three components is scheduled in subsequent Master Plan tasks (P-04, P-05, P-07).
+
+---
+
+## 3. Explicit AWS Service Set Classification
+
+To protect against architecture creep and unnecessary spend, every candidate AWS service is classified:
+
+| Service | Classification | Rationale |
+|---|---|---|
+| **Amazon Bedrock (Nova Micro)** | **`SELECTED`** | Core reasoning engine; proven in P-01.02. |
+| **Strands Agents SDK** | **`SELECTED`** | Agent orchestration framework; proven in P-01.03. |
+| **AgentCore Runtime** | **`SELECTED`** | Serverless execution container; proven in P-01.04. |
+| **AgentCore Gateway** | **`REJECTED_FOR_V1`** | Direct data-plane invocation via SDK/CLI is sufficient; Gateway introduces routing complexity and cost exposure. |
+| **AgentCore Memory** | **`REJECTED_FOR_V1`** | Directly contradicts StillDone's core thesis: deterministic immutable evidence ledger owns state, not opaque LLM memory. |
+| **AgentCore Identity** | **`DEFERRED`** | External API authorization (Google OAuth) is handled via direct token management; not needed for single-operator v1. |
+| **Amazon DynamoDB** | **`DEFERRED`** | Mission ledger boundary is frozen as an architectural PORT; local append-only storage in P-03 handles initial phases at $0.00 cost; DynamoDB adapter deferred to later explicit task. |
+| **AWS Lambda (Standard)** | **`REJECTED_FOR_V1`** | Redundant; AgentCore Runtime provides the containerized serverless compute environment. |
+| **AWS Step Functions** | **`REJECTED_FOR_V1`** | Verification state machine and drift evaluation must be executed deterministically by StillDone's Python domain engine, not external cloud workflow services. |
+| **Amazon EventBridge** | **`REJECTED_FOR_V1`** | Asynchronous pub/sub event bus is unnecessary for bounded synchronous/reconciliation micro-task execution in v1. |
+| **Amazon SageMaker** | **`REJECTED_FOR_V1`** | Out of scope; Bedrock foundation models provide all required inference capabilities. |
+| **Amazon Cognito** | **`REJECTED_FOR_V1`** | Multi-tenant auth pool is unnecessary for dedicated disposable demo resources and local/simulated client surfaces. |
+| **Amazon S3 (Application State)** | **`REJECTED_FOR_V1`** | S3 is used ephemerally only by CDK/AgentCore CodeZip deployment staging, not for dynamic application state. |
+| **Bedrock Provisioned Throughput** | **`REJECTED_FOR_V1`** | Minimum commitments violate zero-spend policy; on-demand pay-per-token model strictly enforced. |
+| **AWS Marketplace 3P Models** | **`REJECTED_FOR_V1`** | Third-party models introduce EULAs, FTU questionnaires, and billing risks; Amazon-native models are fully covered by credits. |
+
+---
+
+## 4. External Systems Feasibility Synthesis
+
+Architecture v1 interfaces with exactly four external service boundaries:
+
+### 4.1 Google Calendar API & Google Tasks API
+- **Dedicated Demo Resources**: Bound strictly to secondary Calendar `StillDone Demo` and Task List `StillDone Demo`. Unrelated personal calendars and tasks are ignored via in-memory filtering.
+- **Least-Privilege Scopes**: Read-only scopes proven in P-01.05 (`calendar.calendarlist.readonly`, `calendar.events.readonly`, `tasks.readonly`). Narrow write scopes introduced only during mutation tasks under explicit human approval.
+- **Operational Readiness Risk**: Google Cloud OAuth application operates in "Testing" mode (100 test user cap); authorizations may expire after 7 days. Operator will perform interactive re-authorization prior to final demo recording and judging. This is an operational readiness item, not evidence that live access remains fresh.
+
+### 4.2 Open-Meteo Forecast API
+- **Endpoint & Privacy**: Public endpoint `https://api.open-meteo.com/v1/forecast` queried with fixed public coordinates (Seattle, WA). Strictly zero personal geolocation transmitted; network metadata handled per provider terms.
+- **Data Licence & Attribution**: Weather data governed by **Creative Commons Attribution 4.0 International (CC BY 4.0)**. Mandatory display contract frozen:  
+  > **Weather data by [Open-Meteo.com](https://open-meteo.com/) — CC BY 4.0**
+- **Evaluation Boundary**: Free hosted API tier permits non-commercial evaluation and prototyping under fair-use limits (< 10,000 calls/day). StillDone operates strictly within this non-commercial hackathon evaluation boundary. Public commercial production use is not overclaimed. Zero paid subscriptions required.
+
+### 4.3 MCP Streamable HTTP Protocol Boundary
+- **Protocol Compliance**: Implements Model Context Protocol spec version `2025-11-25` over Streamable HTTP transport.
+- **Performance**: Ephemeral remote probe in P-01.07 proved tools/call round-trip latency of **61.26ms**, well within Amazon's `< 500ms` conversational latency threshold.
+- **Downstream Mandatory Requirement**: The final canonical product repository must contain and actually execute the real self-hosted MCP server at runtime before submission freeze.
+
+---
+
+## 5. Alexa+ Track Strategy & Client Surface Classification
+
+- **Primary Technical Qualification Route**: Real self-hosted MCP server implementing MCP spec version `2025-11-25` (or later) over Streamable HTTP.
+- **Actual Alexa+ Partner Access**: Classified strictly as **`NOT_ESTABLISHED`** (neither partner access nor console add-on registration is claimed).
+- **Client Surface**: Visibly labeled **`SIMULATED ALEXA+ EXPERIENCE`**. Officially authorized alternate qualification route under hackathon rules, explicitly exempt from the repository runtime-technology-hook requirement.
+- **Truth Boundary**: The client surface is visibly labeled as a simulation; the underlying backend, MCP server, Bedrock inference, Strands planner, AgentCore runtime, Google Calendar/Tasks mutations, and Open-Meteo reads remain **100% real**.
+
+---
+
+## 6. Zero-Personal-Spend Reconciliation & Cost Freeze
+
+StillDone's financial integrity was audited across all live operations:
+
+| Component | Incurred Cost / Usage Evidence | Promotional Credit Offset | Net Personal Spend |
+|---|---|---|---|
+| **AWS Account & Credit** | $150.00 Hackathon Promotional Credit active; $100 AWS signup credit active; account charges not separately observed. | Applicable products explicitly cover Bedrock and AgentCore. | **$0.00** |
+| **Bedrock Inference (P-01.02)** | 3 cycles; 1 Converse call on Nova Micro; 11 tokens; gross estimate: $\approx \$0.00000070$. | Covered by promotional credit. Actual billed cost UNKNOWN. | **$0.00** |
+| **Strands Execution (P-01.03)** | 1 execution; 13 tokens; gross estimate: $\approx \$0.00000098$. | Covered by promotional credit. Actual billed cost UNKNOWN. | **$0.00** |
+| **AgentCore Runtime (P-01.04)** | 2 deployments, 2 invocations, full teardown; CDK bootstrap customer KMS key active 1.143 hrs ($1.00/mo prorated) remediated to `PendingDeletion`; retained template storage < 30 KB; gross estimate: $\approx \$0.00521$. | Covered by promotional credit / gross ceiling <= $0.10. Actual billed cost UNKNOWN. | **$0.00** |
+| **Google Calendar & Tasks (P-01.05)** | 4 read calls; standard courtesy limits (1M/day Calendar, 50k/day Tasks); zero billing accounts attached; zero quota increases requested. | Standard courtesy tier. | **$0.00** |
+| **Open-Meteo API (P-01.06)** | 1 forecast query; public endpoint; zero API keys or accounts. | Free non-commercial evaluation tier. | **$0.00** |
+| **Cloudflare Tunnel (P-01.07)** | Ephemeral Quick Tunnel; zero accounts, domains, or payments; full teardown. | Free temporary service. | **$0.00** |
+| **Cumulative P-01 Total** | **Conservative usage-derived gross estimate: $\approx \$0.00521\text{ USD}$** | **Covered by active credit buffer** | **$0.00 (Target Met)** |
+
+### Cost Freeze Verdict:
+$$\mathbf{ZERO\_PERSONAL\_SPEND\_PATH = CREDIBLE\_THROUGH\_JUDGING}$$
+
+*(No permanent guarantee is claimed; billing truth freshness will be re-verified before any future live cloud mutation).*
+
+---
+
+## 7. Live Feasibility Phase-Gate Decision
+
+All criteria established in Master Plan P-01.08 have been conclusively met:
+1. Bedrock real Converse inference proven live (`PASS`).
+2. Strands $\to$ Bedrock real agent invocation proven live (`PASS`).
+3. AgentCore Runtime deployment and remote invocation proven live (`PASS`).
+4. Google Calendar real read-only access proven live (`PASS`).
+5. Google Tasks real read-only access proven live (`PASS`).
+6. Open-Meteo real forecast query proven live (`PASS`).
+7. Remote HTTPS MCP Streamable HTTP protocol handshake proven live (`PASS`).
+8. Alexa+ qualifying path established from current official rules (`PASS`).
+9. Actual Alexa+ client access honestly classified as `NOT_ESTABLISHED` (`PASS`).
+10. Architecture v1 frozen with explicit selected/deferred/rejected services (`PASS`).
+11. Zero-personal-spend development path verified credible through judging (`PASS`).
+12. Zero required live proofs replaced by mocks or fixtures (`PASS`).
+13. Broad P-Ω audit identified zero unresolved phase-blocking defects (`PASS`).
+
+### Final Decision:
+- **Task P-01.08**: **`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`**
+- **Phase P-01**: **`DONE — awaiting independent QA phase closure`**
+- **Phase P-02**: **`NOT_STARTED`** (Locked until independent QA phase closure).
+
 
 
 

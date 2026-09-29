@@ -231,7 +231,7 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified SHA: `0cfac5a398af574bbb375a5ecf275c8a33fe7861`).
 
 ### P-01.07 — Validate MCP/Alexa+ current protocol requirements and build a minimal remote Streamable HTTP echo/health proof
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified SHA: `87232f7f3e8bbff7882bb52691665f100e5ee16a`)
 
 Acceptance:
 - current spec requirement re-verified: YES (inspected official Amazon Alexa+ docs, MCP spec, and official TypeScript SDK on 2026-09-29; recorded Streamable HTTP mandatory, legacy SSE deprecated, remote HTTPS mandatory, <500ms MCP server round-trip query response latency threshold, two-tier auth model: Tier 1 service-level client_credentials and Tier 2 user-level authorization_code + PKCE S256 with optional account linking, RFC 9728 Protected Resource Metadata, Amazon explicit unsupported auth mechanisms, select-partner platform availability with operator partner access NOT_ESTABLISHED, and protocol version discrepancies across Amazon documentation);
@@ -246,30 +246,22 @@ Acceptance:
 - provenance: `LIVE_REMOTE_MCP` (client provenance: `REAL_MCP_SDK_CLIENT`; Alexa+ actual client integration: `NOT_RUN / NOT_ESTABLISHED`);
 - evidence doc: `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md`;
 - friction logged: `F-20260929-01`;
-- note: Task marked DONE — awaiting independent QA PASS. Task P-01.08 remains PENDING / NOT_STARTED and MUST NOT start before P-01.07 receives independent QA PASS.
+- note: Task closed with independent QA PASS (Verified SHA: `87232f7f3e8bbff7882bb52691665f100e5ee16a`).
 
 ### P-01.08 — Freeze architecture v1 and issue live feasibility GO/BLOCKED decision
-Status: PENDING
+Status: DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS
 
 Acceptance:
-- exact proven AWS stack selected;
-- exact rejected/deferred AWS services named;
-- external service set frozen;
-- zero-cost path credible through judging;
-- Alexa+ actual access remains optional unless proven;
-- no mocked substitute can produce GO.
-
-#### External-blocker parallelization law
-
-If an AWS promotional-credit or access dependency blocks P-01 solely for external reasons, the independent QA may explicitly allow:
-- P-02 provider-neutral contracts; then
-- P-03 deterministic local evidence primitives.
-
-Hard stop after P-03 without a new explicit amendment.
-The P-01 phase remains open and cannot receive GO from local work.
-
-Phase exit:
-real model + real agent/runtime decision + real Google reads + real weather + real remote MCP spine proven.
+- exact proven AWS stack selected: YES (Amazon Bedrock foundation model `amazon.nova-micro-v1:0` in `us-east-1` for inference, Strands Agents SDK `1.57.1` with native `BedrockModel` for agent orchestration, Amazon Bedrock AgentCore Runtime serverless CodeZip path for microVM container execution);
+- exact rejected/deferred AWS services named: YES (AgentCore Gateway, AgentCore Memory, AWS Lambda, AWS Step Functions, Amazon EventBridge, Amazon SageMaker, Amazon Cognito, Amazon S3 for application state, Bedrock Provisioned Throughput, and AWS Marketplace 3P models all REJECTED_FOR_V1; Amazon DynamoDB and AgentCore Identity DEFERRED; provider-neutral ledger port frozen);
+- external service set frozen: YES (Google Calendar API v3 and Google Tasks API v1 bound to dedicated disposable `StillDone Demo` resources; Open-Meteo Forecast API under CC BY 4.0 data licence with mandatory display attribution and non-commercial evaluation tier; MCP Streamable HTTP boundary);
+- zero-cost path credible through judging: YES (target personal spend strictly $0.00; $150 hackathon promotional credit active; cumulative P-01 usage-derived gross cost estimated at ~$0.00521 USD, well below $0.10 ceiling; actual billed cost and personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`; retained CDK bootstrap customer KMS key remediated to `PendingDeletion` with $0 ongoing storage fee; Google, Open-Meteo, and Cloudflare courtesy/free paths used; verdict: `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING`);
+- Alexa+ actual access remains optional unless proven: YES (Alexa+ partner client access honestly classified as `NOT_ESTABLISHED`; simulated Alexa+ client surface visibly labeled as alternate qualifying surface exempt from runtime hook; downstream mandatory requirement for canonical repo runtime MCP execution recorded);
+- no mocked substitute can produce GO: YES (all required legs proven live on real systems; zero mock substitutes used to award GO);
+- broad P-Ω audit completed: YES (comprehensive Phase P-01 closure audit completed with zero phase-blocking defects; `docs/P_OMEGA_AUDIT_REPORT.md` updated);
+- phase gate decision: **`DONE — LIVE FEASIBILITY GO — awaiting independent QA PASS`**;
+- phase exit: Phase P-01 is complete and awaiting independent QA phase closure. Phase P-02 remains locked and `NOT_STARTED` (P-02 MUST NOT START).
+- next exact task only after independent QA phase closure: `P-02.01 — Define mission identity, immutable mission contract, and user-intent snapshot`.
 
 ---
 
