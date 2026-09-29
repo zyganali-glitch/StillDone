@@ -8,6 +8,8 @@ import pathlib
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 import stilldone.domain
 from stilldone.domain.action import (
     ActionContract,
@@ -597,10 +599,35 @@ def test_executing_cannot_bypass_verifying_to_reach_ready() -> None:
 # ===========================================================================
 
 
+def _iter_domain_source_files(root: pathlib.Path | None = None) -> list[pathlib.Path]:
+    """Return all Python source files recursively under src/stilldone/domain/**/*.py.
+
+    Accepts an optional root path to support regression testing of recursive traversal.
+    """
+    domain_dir = root if root is not None else pathlib.Path(stilldone.domain.__file__).parent
+    return sorted(f for f in domain_dir.rglob("*.py") if f.is_file())
+
+
+def _inspect_ast_purity_for_file(py_file: pathlib.Path, forbidden: set[str]) -> None:
+    """Inspect AST of a single Python source file for forbidden package imports."""
+    tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top_pkg = alias.name.split(".")[0]
+                assert top_pkg not in forbidden, (
+                    f"Forbidden import {alias.name!r} in {py_file.name}:{node.lineno}"
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            top_pkg = node.module.split(".")[0]
+            assert top_pkg not in forbidden, (
+                f"Forbidden from-import {node.module!r} in {py_file.name}:{node.lineno}"
+            )
+
+
 def test_domain_source_ast_purity() -> None:
     """D1. Static AST inspection proves zero provider, network, UI, or DB imports in domain."""
-    domain_dir = pathlib.Path(stilldone.domain.__file__).parent
-    domain_py_files = list(domain_dir.glob("*.py"))
+    domain_py_files = _iter_domain_source_files()
     assert len(domain_py_files) >= 6, "Expected at least 6 domain modules"
 
     forbidden_packages = {
@@ -623,19 +650,37 @@ def test_domain_source_ast_purity() -> None:
     }
 
     for py_file in domain_py_files:
-        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    top_pkg = alias.name.split(".")[0]
-                    assert top_pkg not in forbidden_packages, (
-                        f"Forbidden import {alias.name!r} in {py_file.name}:{node.lineno}"
-                    )
-            elif isinstance(node, ast.ImportFrom) and node.module is not None:
-                top_pkg = node.module.split(".")[0]
-                assert top_pkg not in forbidden_packages, (
-                    f"Forbidden from-import {node.module!r} in {py_file.name}:{node.lineno}"
-                )
+        _inspect_ast_purity_for_file(py_file, forbidden_packages)
+
+
+def test_domain_source_enumeration_includes_nested_modules(tmp_path: pathlib.Path) -> None:
+    """D2. Regression proof: verify recursive enumeration discovers nested packages/modules."""
+    nested_pkg = tmp_path / "evidence" / "subpackage"
+    nested_pkg.mkdir(parents=True)
+    f_root = tmp_path / "root_mod.py"
+    f_nested1 = tmp_path / "evidence" / "nested_mod.py"
+    f_nested2 = nested_pkg / "deep_mod.py"
+    f_root.write_text("# root", encoding="utf-8")
+    f_nested1.write_text("# nested1", encoding="utf-8")
+    f_nested2.write_text("# nested2", encoding="utf-8")
+
+    discovered = _iter_domain_source_files(root=tmp_path)
+    assert f_root in discovered
+    assert f_nested1 in discovered
+    assert f_nested2 in discovered
+    assert len(discovered) == 3
+
+
+def test_nested_module_forbidden_import_detected(tmp_path: pathlib.Path) -> None:
+    """D3. Regression proof: verify AST purity flags forbidden imports in nested modules."""
+
+    nested_pkg = tmp_path / "evidence" / "deep"
+    nested_pkg.mkdir(parents=True)
+    evil_file = nested_pkg / "evil.py"
+    evil_file.write_text("import boto3\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="Forbidden import 'boto3'"):
+        _inspect_ast_purity_for_file(evil_file, {"boto3"})
 
 
 # ===========================================================================
@@ -645,8 +690,7 @@ def test_domain_source_ast_purity() -> None:
 
 def test_no_database_or_persistence_implementation_in_domain() -> None:
     """E1. Ensure P-02 did not introduce persistence engines, SQLite, or file storage."""
-    domain_dir = pathlib.Path(stilldone.domain.__file__).parent
-    for py_file in domain_dir.glob("*.py"):
+    for py_file in _iter_domain_source_files():
         content = py_file.read_text(encoding="utf-8")
         assert "sqlite3" not in content
         assert "CREATE TABLE" not in content
@@ -662,8 +706,7 @@ def test_no_database_or_persistence_implementation_in_domain() -> None:
 
 def test_no_generic_evidence_ledger_or_hashing_in_domain() -> None:
     """E2. Ensure P-02 did not introduce P-03 generic evidence IDs, ledger, or content hashing."""
-    domain_dir = pathlib.Path(stilldone.domain.__file__).parent
-    for py_file in domain_dir.glob("*.py"):
+    for py_file in _iter_domain_source_files():
         content = py_file.read_text(encoding="utf-8")
         assert "EvidenceLedger" not in content
         assert "EvidenceId" not in content
@@ -673,8 +716,7 @@ def test_no_generic_evidence_ledger_or_hashing_in_domain() -> None:
 
 def test_no_runtime_transition_engine_or_model_invocation_in_domain() -> None:
     """E3. Ensure P-02 did not introduce runtime transition guards or model invocation."""
-    domain_dir = pathlib.Path(stilldone.domain.__file__).parent
-    for py_file in domain_dir.glob("*.py"):
+    for py_file in _iter_domain_source_files():
         content = py_file.read_text(encoding="utf-8")
         assert "invoke_model" not in content
         assert "call_model" not in content
