@@ -73,24 +73,23 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics`
+`P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts`
  
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`268c991c2e2a0b2d8e3937ee575ad24330bbd241`
+`e2dd124fda1af627949835c0d438861c43cf5226`
 
-## Next exact task after independent QA of P-02.05
+## Next exact task in authorized batch
 
-`P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts`
+`P-02.07 — Define evidence provenance and live/recorded/fixture separation`
 
 ## Next safe action
 
-Await independent QA PASS for P-02.05 before P-02.06.
+Proceed to P-02.07 as authorized in the P-02.06 -> P-02.08 batch.
 
-**HARD STOP. P-02.06 IS NOT AUTHORIZED.**
 
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
 - Verified complete P-01 live feasibility chain: P-01.01 through P-01.07 are all closed as independent QA PASS.

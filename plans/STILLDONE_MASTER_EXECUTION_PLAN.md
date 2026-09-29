@@ -319,7 +319,7 @@ Acceptance:
 - focused unit tests: `tests/domain/test_lifecycle.py` passing.
 
 ### P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified SHA: `e2dd124fda1af627949835c0d438861c43cf5226`)
 
 Acceptance:
 - exact authority classes: exactly five canonical classes (`READ_ONLY`, `REVERSIBLE_AUTO`, `REVERSIBLE_APPROVAL_REQUIRED`, `EXTERNAL_COMMUNICATION_APPROVAL_REQUIRED`, `IRREVERSIBLE_BLOCKED_OR_HUMAN_REQUIRED`); pure contract metadata `requires_human_approval` defined; dynamic classification deferred;
@@ -333,7 +333,18 @@ Acceptance:
 - focused unit tests: `tests/domain/test_authority.py` passing.
 
 ### P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts
-Status: PENDING / NOT_STARTED
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- idempotency contract: runtime-owned opaque UUID-backed `IdempotencyKey`; valid UUIDs accepted, malformed strings and non-UUID types rejected; generated once per mutation lineage; retries reuse the same key;
+- retry safety contract: bounded `RetryPolicy` distinguishing `NO_RETRY`, `IDEMPOTENT_RETRY`, and `READ_BEFORE_RETRY`; lost/unknown provider response cannot justify blind retry; `max_attempts` strictly bounded by `MAX_RETRY_ATTEMPTS_CEILING` (5); `NO_RETRY` strictly requires `max_attempts == 1`;
+- attempt contract: immutable 1-based `ExecutionAttempt` binding `ActionId`, `IdempotencyKey`, `AttemptId`, `attempt_number` >= 1, and UTC-normalized `started_at`; 0 and negative attempt numbers rejected; execution result and evidence remain separate;
+- resource binding contract: immutable `ResourceBinding` preserving `TargetIdentity` vocabulary; distinguishes requested/parent target from concrete resolved resource identity; creation actions can exist with `resolved_target=None` without fabricating IDs; parent container cannot masquerade as resolved child resource;
+- reconciliation request contract: immutable `ReconciliationRequest` binding `MissionId`, `ReconciliationReason` (`POST_EXECUTION_VERIFY`, `EXPLICIT_USER_CHECK`, `FRESHNESS_REFRESH`), UTC-normalized `requested_at`, and `PredicateScope` (all-required or non-empty unique selective); request contract only (zero provider reads, predicate evaluation, or mission state mutations);
+- immutability: all dataclasses frozen;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_execution.py` passing.
+
 
 ### P-02.07 — Define evidence provenance and live/recorded/fixture separation
 Status: PENDING / NOT_STARTED
