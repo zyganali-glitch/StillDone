@@ -94,7 +94,7 @@ P-01.06 successfully proved live Open-Meteo weather integration:
 - Verified official Open-Meteo documentation and terms on 2026-09-29.
 - Verified free public endpoint `https://api.open-meteo.com/v1/forecast`, rate limits (10,000/day, 5,000/hr, 600/min per IP), and CC BY 4.0 data licence.
 - Strictly zero API keys, authentication headers, user accounts, or paid plans ($0.00 personal spend).
-- Selected public canonical demo location (Seattle, WA coordinates `47.6062`, `-122.3321`, timezone `America/Los_Angeles`); zero private/device geolocation sent.
+- Selected public canonical demo location (fixed public demo coordinates for Seattle, WA `47.6062`, `-122.3321`, timezone `America/Los_Angeles`); zero operator/device geolocation sent; zero personal identifiers or credentials; network-layer metadata like source IP processed according to provider terms.
 - Executed exactly 1 HTTP GET request; received HTTP 200 OK (latency 429.34ms, generation time 0.294ms).
 - Verified deterministic response: matching timezone (`America/Los_Angeles`, GMT-7), daily units, 3 forecast dates (`2026-09-28` to `2026-09-30`), weather codes, min/max temperatures, precipitation probability and sum. Zero LLM interpretation.
 - Strictly zero retries (`api_retries = 0`), zero fallback providers.

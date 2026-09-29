@@ -36,12 +36,17 @@ In accordance with CC BY 4.0 and Open-Meteo terms of use, any user-facing displa
 
 ---
 
-## 3. Request Contract & Privacy Protection
+## 3. Request Contract & Privacy Scope
 
-- **Target Location**: Seattle, Washington, USA (Public canonical demo city; fixed coordinates, zero device/operator geolocation).
+- **Target Location**: Seattle, Washington, USA (Fixed public demo city coordinates; not operator or device geolocation).
 - **Coordinates**: `latitude=47.6062`, `longitude=-122.3321`
 - **Timezone**: `America/Los_Angeles`
-- **Private Data Sent**: **0 bytes** (zero personal identifiers, zero operator location).
+- **Application Payload & Query Privacy**:
+  - Operator/device geolocation sent: **NO**
+  - User-provided personal identifiers sent: **NONE**
+  - Credentials/API keys/tokens sent: **NONE**
+  - Location sent in query: fixed public demo coordinates for Seattle, Washington, USA
+  - Network-layer metadata note: network-layer metadata such as source IP may be processed or logged by Open-Meteo for technical and anti-abuse purposes according to its current privacy terms; this task does not claim zero network metadata collection.
 - **Authentication**: **NONE** (no API key, no Authorization header, no credentials).
 - **Call Bounds**: Exactly **1** HTTP GET request. Zero retries. Zero secondary queries.
 
@@ -124,7 +129,9 @@ Canonical structured data returned directly by the system of record:
 | API Retries | `0` | `0` | **PASS** |
 | Alternate Providers / Fallback | `0` | `0` | **PASS** |
 | Paid Subscriptions / Plans | `0` | `0` | **PASS** |
-| Personal / Private Data Sent | `0` | `0` | **PASS** |
+| Operator / Device Geolocation Sent | `NO` | `NO` | **PASS** |
+| User Personal Identifiers / Credentials Sent | `NONE` | `NONE` | **PASS** |
+| Network Metadata Scope (Source IP) | Per provider terms | May be logged by Open-Meteo | **SCOPED** |
 | Financial Personal Spend | `$0.00` | `$0.00` | **PASS** |
 
 ---

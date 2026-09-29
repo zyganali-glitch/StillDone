@@ -222,7 +222,7 @@ Status: DONE — awaiting independent QA PASS
 
 Acceptance:
 - live response: YES (HTTP 200 OK from public endpoint `https://api.open-meteo.com/v1/forecast`, latency 429.34ms, generation time 0.294ms, returned timezone `America/Los_Angeles` with valid daily units and 3 forecast dates `2026-09-28` to `2026-09-30`);
-- configured public city/location only: YES (Seattle, WA coordinates `47.6062`, `-122.3321`; zero personal/device geolocation);
+- configured public city/location only: YES (fixed public demo coordinates for Seattle, WA `47.6062`, `-122.3321`; zero operator/device geolocation sent; zero personal identifiers or credentials; network-layer metadata like source IP processed according to provider terms);
 - no API key: YES (strictly zero authentication, zero API keys, zero accounts or paid subscriptions; $0.00 personal spend);
 - provenance: `LIVE_EXTERNAL`;
 - data attribution requirement recorded: YES (CC BY 4.0 licence observed; display attribution contract recorded as "Weather data by Open-Meteo.com — CC BY 4.0"; prototype/evaluation feasibility distinguished from future commercial/judging deployment eligibility to be frozen at P-01.08);
