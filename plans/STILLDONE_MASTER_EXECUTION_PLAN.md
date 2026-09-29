@@ -294,7 +294,7 @@ Acceptance:
 - focused unit tests: `tests/domain/test_desired_state.py` passing.
 
 ### P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified commit: `268c991c2e2a0b2d8e3937ee575ad24330bbd241`)
 
 Acceptance:
 - supported action vocabulary: finite `ActionType` covering exactly 5 required capabilities (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); arbitrary shell, HTTP, filesystem, delete, and model actions forbidden;
@@ -308,7 +308,7 @@ Acceptance:
 - focused unit tests: `tests/domain/test_action.py` passing.
 
 ### P-02.04 — Define mission lifecycle and step evidence states
-Status: DONE — awaiting independent QA PASS
+Status: DONE — independent QA PASS (Verified commit: `268c991c2e2a0b2d8e3937ee575ad24330bbd241`)
 
 Acceptance:
 - mission lifecycle vocabulary: exact 10 states (`DRAFT`, `PLANNED`, `EXECUTING`, `NEEDS_APPROVAL`, `VERIFYING`, `READY`, `PARTIAL`, `FAILED`, `DRIFTED`, `CANCELLED`);
@@ -319,16 +319,27 @@ Acceptance:
 - focused unit tests: `tests/domain/test_lifecycle.py` passing.
 
 ### P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics
-Status: PENDING / NOT_STARTED
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- exact authority classes: exactly five canonical classes (`READ_ONLY`, `REVERSIBLE_AUTO`, `REVERSIBLE_APPROVAL_REQUIRED`, `EXTERNAL_COMMUNICATION_APPROVAL_REQUIRED`, `IRREVERSIBLE_BLOCKED_OR_HUMAN_REQUIRED`); pure contract metadata `requires_human_approval` defined; dynamic classification deferred;
+- approval identity: opaque UUID-backed `ApprovalId` generated deterministically by runtime code;
+- approval contract: immutable `ApprovalGrant` binding `approval_id`, `mission_id`, `action_id`, `authority_class`, `issued_at`, `expires_at`, and `binding_hash`; free-form chat strings rejected;
+- binding hash: domain-separated SHA-256 digest (`stilldone:approval-binding:v1`) binding mission ID, action ID, action type, normalized parameters, complete target identity, authority class, issued_at, and expires_at; canonical 64 lowercase hex `BindingHash` value type;
+- expiry semantics: pure deterministic `is_expired(at)` check; timezone-aware UTC normalized; boundary equality counts as expired;
+- execution/authority boundary: zero execution, zero authority classification, zero approval verification engine;
+- immutability: all objects frozen;
+- provider purity: zero external SDK or provider imports;
+- focused unit tests: `tests/domain/test_authority.py` passing.
 
 ### P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts
 Status: PENDING / NOT_STARTED
 
 ### P-02.07 — Define evidence provenance and live/recorded/fixture separation
-Status: PENDING
+Status: PENDING / NOT_STARTED
 
 ### P-02.08 — Add serialization, schema, forbidden-transition, and provider-purity tests
-Status: PENDING
+Status: PENDING / NOT_STARTED
 
 Phase exit:
 core domain imports no AWS/Google/MCP UI SDK objects.

@@ -9,6 +9,15 @@ from stilldone.domain.action import (
     ResourceKind,
     TargetIdentity,
 )
+from stilldone.domain.authority import (
+    APPROVAL_BINDING_DOMAIN_SEPARATOR,
+    Approval,
+    ApprovalGrant,
+    ApprovalId,
+    AuthorityClass,
+    BindingHash,
+    compute_approval_binding_hash,
+)
 from stilldone.domain.desired_state import (
     DesiredStatePredicate,
     ExpectedValueType,
@@ -25,10 +34,16 @@ from stilldone.domain.lifecycle import (
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
 
 __all__ = [
-    "DECLARATIVE_MISSION_TRANSITIONS",
+    "APPROVAL_BINDING_DOMAIN_SEPARATOR",
     "ActionContract",
     "ActionId",
     "ActionType",
+    "Approval",
+    "ApprovalGrant",
+    "ApprovalId",
+    "AuthorityClass",
+    "BindingHash",
+    "DECLARATIVE_MISSION_TRANSITIONS",
     "DesiredStatePredicate",
     "ExpectedValueType",
     "FreshnessContract",
@@ -44,4 +59,5 @@ __all__ = [
     "StepEvidenceState",
     "TargetIdentity",
     "UserIntentSnapshot",
+    "compute_approval_binding_hash",
 ]

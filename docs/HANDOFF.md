@@ -73,24 +73,24 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization (Surgical Invariant Repair)`
+`P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics`
  
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`ae88027e8c225c00ed692daf4afda7daaa7a17fe`
+`268c991c2e2a0b2d8e3937ee575ad24330bbd241`
 
-## Next exact task after independent QA of P-02.03
+## Next exact task after independent QA of P-02.05
 
-`P-02.04 review / closure (candidate commit preserved)`
+`P-02.06 — Define idempotency, retry, attempt, resource, and reconciliation contracts`
 
 ## Next safe action
 
-Await independent QA of repaired P-02.03 and candidate P-02.04 before P-02.05 authority boundary.
+Await independent QA PASS for P-02.05 before P-02.06.
 
-**HARD STOP. P-02.05 IS NOT AUTHORIZED.**
+**HARD STOP. P-02.06 IS NOT AUTHORIZED.**
 
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
 - Verified complete P-01 live feasibility chain: P-01.01 through P-01.07 are all closed as independent QA PASS.
