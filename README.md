@@ -107,7 +107,7 @@ See:
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
-- **Phase P-01 (Live Access, Zero-Cost & Platform Feasibility)**: Complete and closed with independent QA PASS (`P-01.01` through `P-01.08`, verified SHA `41e4ea717b43f558d9d07a7f1775c0780819910f`). Architecture v1 frozen; all live feasibility legs proven; zero personal spend verified ($0.00).
+- **Phase P-01 (Live Access, Zero-Cost & Platform Feasibility)**: Complete and closed with independent QA PASS (`P-01.01` through `P-01.08`, verified SHA `41e4ea717b43f558d9d07a7f1775c0780819910f`). Architecture v1 frozen; all live feasibility legs proven; zero-personal-spend path determined credible through judging (target personal spend strictly $0.00; actual billed cost and personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`).
 - **Phase P-02 (Provider-Neutral Mission & Desired-State Contracts)**: Complete and closed with independent QA PASS (`P-02.01` through `P-02.08`, verified SHA `293ec637464294a6caaca8cffcd85dd666890f61`).
   - Provider-neutral domain contracts: `MissionContract`, `UserIntentSnapshot`, `DesiredStatePredicate`, `FreshnessContract`, `ActionContract`, `TargetIdentity`, `NormalizedParameters`, `ApprovalGrant`, `BindingHash`, `ExecutionAttempt`, `RetryPolicy`, `ResourceBinding`, `ReconciliationRequest`, and `EvidenceOrigin`.
   - Canonical vocabularies frozen: `MissionState` (10), `StepEvidenceState` (7), `PredicateOperator` (8), `FreshnessMode` (2), `ActionType` (5), `ResourceKind` (4), `AuthorityClass` (5), `RetryStrategy` (3), `ReconciliationReason` (3), `EvidenceProvenance` (6).

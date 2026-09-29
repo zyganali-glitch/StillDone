@@ -21,7 +21,7 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 | **Authority & Invariants** | **PASS** | `INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED` chain maintained. Execute $\neq$ verify enforced; execute success alone yields at most `EXECUTED_UNVERIFIED`. 5 authority classes; approval grants bound via domain-separated SHA-256 (`stilldone:approval-binding:v1`). Bounded idempotency keys and retry policies. |
 | **Security & Privacy** | **PASS** | Zero credentials, OAuth tokens, AWS access keys, or private developer paths committed. Narrow action vocabulary (5 actions). Creation actions target parent container without fabricating IDs. |
 | **Evidence Provenance Truth** | **PASS** | Exact 6-value vocabulary (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`). Recorded-live lineage contract strictly enforces origin from `{LIVE_AWS, LIVE_GOOGLE, LIVE_EXTERNAL}`. Provenance is not result. |
-| **Cost & Zero Personal Spend** | **PASS** | Target personal spend remains strictly `$0.00`. Zero external API calls executed during Phase P-02. |
+| **Cost & Zero Personal Spend** | **PASS** | Target personal spend remains strictly `$0.00`. Zero external API calls executed during Phase P-02; actual billed cost and personal-spend delta from P-01 remain `NOT_OBSERVED / UNKNOWN`. |
 | **Donors & Licensing** | **PASS** | Apache-2.0 root license. All 9 donors pinned in `docs/DONOR_PROVENANCE.md` under `CONCEPT_ONLY`. Exactly **0 lines** of donor source code imported. All domain contracts are `CLEAN_ROOM_REIMPLEMENTED`. Zero invented provenance receipts. |
 | **Tooling, Types & CI** | **PASS** | Python 3.13 baseline; uv pinned; ruff format clean; ruff lint clean; mypy strict clean (0 issues in 20 source files); pytest passing (120 passed); validate.py clean. Zero cloud/network calls during CI/tests. |
 | **Documentation Parity** | **PASS** | README, HANDOFF, and Master Plan synchronized to current verified truth (`293ec637464294a6caaca8cffcd85dd666890f61`). Phase P-02 is CLOSED. Phase P-03 is PENDING / NOT_STARTED / NOT AUTHORIZED. |
@@ -68,7 +68,7 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 - **Core Chain**: $\text{INTENT} \to \text{CONTRACT} \to \text{AUTHORITY} \to \text{EXECUTE} \to \text{INDEPENDENT READBACK} \to \text{PREDICATE EVALUATION} \to \text{VERIFIED}$.
 - **Execute $\neq$ Verify**: Execution success produces at most `EXECUTED_UNVERIFIED`. `VERIFIED` requires independent readback and predicate evaluation.
 - **Authority Binding**: Approval grants require domain-separated SHA-256 binding hashes binding mission ID, action ID, action type, normalized parameters, target identity, authority class, issued_at, and expires_at.
-- **Idempotency & Retry**: Idempotency keys generated deterministically once per mutation lineage. Retries reuse the same key. `max_attempts` ceiling enforced (5); `NO_RETRY` requires `max_attempts == 1`.
+- **Idempotency & Retry**: `IdempotencyKey` is runtime-owned and UUID-backed (generated once per logical mutation lineage via `uuid.uuid4()`); retries reuse the same key (the UUID value itself is not deterministically derived). `max_attempts` ceiling enforced (5); `NO_RETRY` requires `max_attempts == 1`.
 - **Result**: **PASS**
 
 ### 2.5 Security, Privacy & Secret Scanning
@@ -84,8 +84,14 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 
 ### 2.7 Cost & Zero Personal Spend Policy
 - **Personal Spend Target**: Strictly `$0.00`.
-- **Phase P-02 Spend**: Exactly `$0.00` (zero external API calls made).
-- **Cumulative Cost**: Cumulative usage-derived gross estimate from P-01 remains `~$0.00521 USD` (fully offset by promotional credits).
+- **Phase P-02 Spend**: Exactly `$0.00` gross; zero external API calls executed; no cloud spend incurred in Phase P-02.
+- **Cumulative P-01 Cost Truth**:
+  - Cumulative usage-derived gross estimate: approximately `~$0.00521 USD`;
+  - Actual billed cost: `NOT_OBSERVED / UNKNOWN`;
+  - Actual personal-spend delta: `NOT_OBSERVED / UNKNOWN`;
+  - Active promotional credits and applicable-product coverage were observed for Bedrock and AgentCore;
+  - Specific promotional-credit offset for the retained S3 component was `NOT_ESTABLISHED`;
+  - `ZERO_PERSONAL_SPEND_PATH = CREDIBLE_THROUGH_JUDGING` is an architectural feasibility determination, NOT proof that actual personal spend was $0.00.
 - **Result**: **PASS**
 
 ### 2.8 Donors & Licensing
@@ -125,7 +131,7 @@ This audit conducts a comprehensive, rigorous phase-boundary review of the compl
 12. Strict provider purity (zero provider SDK imports in domain) (`PASS`)
 13. Future-phase leakage prevention (zero DB/persistence, zero generic evidence ledger, zero transition engine, zero models) (`PASS`)
 14. Donor truth and provenance boundary (0 lines imported, CONCEPT_ONLY) (`PASS`)
-15. Zero personal spend preservation ($0.00) (`PASS`)
+15. Zero-personal-spend target preservation ($0.00 target; actual delta NOT_OBSERVED / UNKNOWN) (`PASS`)
 16. Deterministic formatting, linting, strict typing, and test execution (`PASS` — 120 tests passed)
 17. Documentation sync across README, Plan, HANDOFF, and Audit Report (`PASS`)
 
