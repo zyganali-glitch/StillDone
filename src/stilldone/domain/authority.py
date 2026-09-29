@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -177,23 +177,24 @@ class ApprovalGrant:
     Cryptographically binds an explicit pending ActionContract to an AuthorityClass,
     validity window, and domain-separated SHA-256 binding hash.
     Does NOT store conversational prose ('yes') as authority.
+    Must be constructed from an ActionContract; independent injection of mission_id,
+    action_id, or binding_hash is prohibited.
     """
 
-    approval_id: ApprovalId
-    mission_id: MissionId
-    action_id: ActionId
+    action: ActionContract
     authority_class: AuthorityClass
     issued_at: datetime
     expires_at: datetime
-    binding_hash: BindingHash
+    approval_id: ApprovalId = field(default_factory=ApprovalId.generate)
+    mission_id: MissionId = field(init=False)
+    action_id: ActionId = field(init=False)
+    binding_hash: BindingHash = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.approval_id, ApprovalId):
-            raise TypeError("approval_id must be an ApprovalId instance")
-        if not isinstance(self.mission_id, MissionId):
-            raise TypeError("mission_id must be a MissionId instance")
-        if not isinstance(self.action_id, ActionId):
-            raise TypeError("action_id must be an ActionId instance")
+        if not isinstance(self.action, ActionContract):
+            raise TypeError(
+                f"action must be an ActionContract instance, got {type(self.action).__name__}"
+            )
 
         if isinstance(self.authority_class, str) and not isinstance(
             self.authority_class, AuthorityClass
@@ -226,8 +227,21 @@ class ApprovalGrant:
                 f"issued_at ({self.issued_at.isoformat()})"
             )
 
-        if not isinstance(self.binding_hash, BindingHash):
-            raise TypeError("binding_hash must be a BindingHash instance")
+        if not isinstance(self.approval_id, ApprovalId):
+            raise TypeError("approval_id must be an ApprovalId instance")
+
+        # Derive immutable identities directly from the bound ActionContract
+        object.__setattr__(self, "mission_id", self.action.mission_id)
+        object.__setattr__(self, "action_id", self.action.action_id)
+
+        # Derive cryptographic binding hash directly from the bound ActionContract
+        b_hash = compute_approval_binding_hash(
+            action=self.action,
+            authority_class=self.authority_class,
+            issued_at=self.issued_at,
+            expires_at=self.expires_at,
+        )
+        object.__setattr__(self, "binding_hash", b_hash)
 
     def is_expired(self, at: datetime) -> bool:
         """Deterministic pure expiry check against an explicit observation timestamp.
@@ -266,21 +280,12 @@ class ApprovalGrant:
             else AuthorityClass(authority_class)
         )
 
-        b_hash = compute_approval_binding_hash(
+        return cls(
             action=action,
             authority_class=auth_class,
             issued_at=issued_at,
             expires_at=expires_at,
-        )
-
-        return cls(
             approval_id=aid,
-            mission_id=action.mission_id,
-            action_id=action.action_id,
-            authority_class=auth_class,
-            issued_at=issued_at,
-            expires_at=expires_at,
-            binding_hash=b_hash,
         )
 
 

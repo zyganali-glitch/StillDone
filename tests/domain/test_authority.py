@@ -602,6 +602,94 @@ def test_killer_path_calendar_approval_binding() -> None:
     assert APPROVAL_BINDING_DOMAIN_SEPARATOR == "stilldone:approval-binding:v1"
 
 
+def test_direct_forgery_path_closed() -> None:
+    """Verify ApprovalGrant constructor rejects arbitrary identities or omitted action."""
+    action = _sample_action()
+    now = datetime.now(UTC)
+    expiry = now + timedelta(minutes=10)
+
+    # Omitting action must fail
+    with pytest.raises(TypeError):
+        ApprovalGrant(  # type: ignore[call-arg]
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=now,
+            expires_at=expiry,
+        )
+
+    # Supplying arbitrary mission_id must fail
+    with pytest.raises(TypeError):
+        ApprovalGrant(  # type: ignore[call-arg]
+            action=action,
+            mission_id=MissionId.generate(),
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=now,
+            expires_at=expiry,
+        )
+
+    # Supplying arbitrary action_id must fail
+    with pytest.raises(TypeError):
+        ApprovalGrant(  # type: ignore[call-arg]
+            action=action,
+            action_id=ActionId.generate(),
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=now,
+            expires_at=expiry,
+        )
+
+    # Supplying arbitrary binding_hash must fail
+    with pytest.raises(TypeError):
+        ApprovalGrant(  # type: ignore[call-arg]
+            action=action,
+            binding_hash=BindingHash("a" * 64),
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=now,
+            expires_at=expiry,
+        )
+
+
+def test_derived_identities_and_hash_invariants() -> None:
+    """Verify constructor automatically derives mission_id, action_id, and binding_hash."""
+    action = _sample_action()
+    issued_at = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
+    expires_at = datetime(2026, 9, 29, 12, 15, 0, tzinfo=UTC)
+
+    grant = ApprovalGrant(
+        action=action,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
+
+    assert grant.action == action
+    assert grant.mission_id == action.mission_id
+    assert grant.action_id == action.action_id
+    expected_hash = compute_approval_binding_hash(
+        action=action,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
+    assert grant.binding_hash == expected_hash
+    assert isinstance(grant.approval_id, ApprovalId)
+
+
+def test_arbitrary_binding_hash_injection_prevented() -> None:
+    """Verify caller cannot supply arbitrary BindingHash to constructor to bypass action truth."""
+    action = _sample_action()
+    issued_at = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
+    expires_at = datetime(2026, 9, 29, 12, 15, 0, tzinfo=UTC)
+    fake_hash = BindingHash("0" * 64)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'binding_hash'"):
+        ApprovalGrant(  # type: ignore[call-arg]
+            action=action,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            binding_hash=fake_hash,
+        )
+
+
 def test_no_provider_dependencies_imported() -> None:
     """J. Verify authority module does not import cloud or provider SDKs."""
     forbidden_modules = [
