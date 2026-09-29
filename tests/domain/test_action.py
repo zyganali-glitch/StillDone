@@ -235,3 +235,122 @@ def test_no_provider_dependencies_imported() -> None:
     ]
     for mod in forbidden_modules:
         assert mod not in sys.modules, f"Forbidden module {mod} was imported!"
+
+
+def test_direct_construction_canonicalizes_order_and_matches_from_dict() -> None:
+    """A. Direct construction canonicalizes unsorted inputs to match from_dict identically."""
+    direct_unsorted = NormalizedParameters(
+        _items=(("zebra", "last"), ("alpha", 1), ("middle", True))
+    )
+    from_dict_inst = NormalizedParameters.from_dict({"zebra": "last", "alpha": 1, "middle": True})
+
+    assert direct_unsorted == from_dict_inst
+    assert direct_unsorted.items() == (("alpha", 1), ("middle", True), ("zebra", "last"))
+    assert from_dict_inst.items() == (("alpha", 1), ("middle", True), ("zebra", "last"))
+
+
+def test_direct_construction_rejects_duplicate_keys() -> None:
+    """B. Direct construction rejects duplicate keys."""
+    with pytest.raises(ValueError, match="Duplicate parameter key"):
+        NormalizedParameters(_items=(("key", 1), ("key", 2)))
+
+    with pytest.raises(ValueError, match="Duplicate parameter key"):
+        NormalizedParameters(_items=(("alpha", 1), ("beta", 2), ("alpha", 3)))
+
+
+def test_direct_construction_rejects_malformed_inputs() -> None:
+    """C. Direct construction rejects blank/non-string keys, bad values, and non-finite floats."""
+    # Blank/whitespace keys
+    with pytest.raises(ValueError, match="Parameter key cannot be blank or whitespace-only"):
+        NormalizedParameters(_items=(("", "value"),))
+
+    with pytest.raises(ValueError, match="Parameter key cannot be blank or whitespace-only"):
+        NormalizedParameters(_items=(("   \t", "value"),))
+
+    # Non-string keys
+    with pytest.raises(TypeError, match="Parameter key must be a string"):
+        NormalizedParameters(_items=((123, "value"),))  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="Parameter key must be a string"):
+        NormalizedParameters(_items=((None, "value"),))  # type: ignore[arg-type]
+
+    # Nested / arbitrary object values
+    for bad_val in [{"nested": "dict"}, [1, 2], {1, 2}, (1, 2), object()]:
+        with pytest.raises(TypeError, match="Unsupported parameter value type"):
+            NormalizedParameters(_items=(("key", bad_val),))  # type: ignore[arg-type]
+
+    # Non-finite float values: NaN, +Inf, -Inf
+    with pytest.raises(ValueError, match="Non-finite float value"):
+        NormalizedParameters(_items=(("key", float("nan")),))
+
+    with pytest.raises(ValueError, match="Non-finite float value"):
+        NormalizedParameters(_items=(("key", math.inf),))
+
+    with pytest.raises(ValueError, match="Non-finite float value"):
+        NormalizedParameters(_items=(("key", -math.inf),))
+
+    # Non-tuple container or non-2-tuple items
+    with pytest.raises(TypeError, match="_items must be a tuple"):
+        NormalizedParameters(_items=[("key", 1)])  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="Each item in _items must be a 2-tuple"):
+        NormalizedParameters(_items=(("key", 1, 2),))  # type: ignore[arg-type]
+
+
+def test_from_dict_rejects_non_string_keys_before_sorting() -> None:
+    """D. from_dict rejects mixed or non-string keys intentionally with TypeError before sorting."""
+    # Mixed int and str keys
+    with pytest.raises(TypeError, match="Parameter key must be a string"):
+        NormalizedParameters.from_dict({1: "int_key", "str_key": "val"})  # type: ignore[dict-item]
+
+    # Purely integer keys
+    with pytest.raises(TypeError, match="Parameter key must be a string"):
+        NormalizedParameters.from_dict({10: "val1", 20: "val2"})  # type: ignore[dict-item]
+
+    # None key
+    with pytest.raises(TypeError, match="Parameter key must be a string"):
+        NormalizedParameters.from_dict({None: "val"})  # type: ignore[dict-item]
+
+    # Blank string key
+    with pytest.raises(ValueError, match="Parameter key cannot be blank or whitespace-only"):
+        NormalizedParameters.from_dict({"": "val"})
+
+
+def test_action_contract_cannot_be_smuggled_malformed_parameters() -> None:
+    """E. It is impossible to smuggle malformed parameters into ActionContract."""
+    mid = MissionId.generate()
+    target = TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK_LIST,
+        resource_id="demo-list",
+    )
+
+    # Attempting to construct malformed NormalizedParameters fails at construction
+    with pytest.raises(ValueError, match="Duplicate parameter key"):
+        malformed = NormalizedParameters(_items=(("dup", 1), ("dup", 2)))
+        ActionContract(
+            action_id=ActionId.generate(),
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters=malformed,
+        )
+
+    with pytest.raises(ValueError, match="Non-finite float value"):
+        malformed = NormalizedParameters(_items=(("val", float("nan")),))
+        ActionContract(
+            action_id=ActionId.generate(),
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters=malformed,
+        )
+
+    with pytest.raises(TypeError, match="parameters must be a NormalizedParameters instance"):
+        ActionContract(
+            action_id=ActionId.generate(),
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters={"not": "normalized"},  # type: ignore[arg-type]
+        )

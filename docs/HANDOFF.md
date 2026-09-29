@@ -73,22 +73,22 @@ Preferred AWS target:
 
 ## Current exact task
  
-`P-02.04 — Define mission lifecycle and step evidence states`
+`P-02.03 — Define action contract, supported action vocabulary, target identity, and parameter normalization (Surgical Invariant Repair)`
  
 Status:
 `DONE — awaiting independent QA PASS`
 
 ## Last independently VERIFIED baseline SHA
 
-`41e4ea717b43f558d9d07a7f1775c0780819910f`
+`ae88027e8c225c00ed692daf4afda7daaa7a17fe`
 
-## Next exact task after independent QA of candidate batch P-02.01 -> P-02.04
+## Next exact task after independent QA of P-02.03
 
-`P-02.05 — Define authority classes, approval object, binding hash, and expiry semantics`
+`P-02.04 review / closure (candidate commit preserved)`
 
 ## Next safe action
 
-Bounded candidate batch P-02.01 -> P-02.04 is complete. Await independent QA before starting P-02.05 (authority / approval-binding security boundary).
+Await independent QA of repaired P-02.03 and candidate P-02.04 before P-02.05 authority boundary.
 
 **HARD STOP. P-02.05 IS NOT AUTHORIZED.**
 

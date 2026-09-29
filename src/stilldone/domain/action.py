@@ -110,24 +110,34 @@ class NormalizedParameters:
 
     Enforces stable key sorting, rejects unsupported nested or non-scalar types,
     rejects non-finite floats, and preserves string semantics.
+    Self-validating regardless of construction path.
     """
 
     _items: tuple[tuple[str, NormalizedScalar], ...]
 
-    @classmethod
-    def from_dict(cls, params: Mapping[str, Any]) -> NormalizedParameters:
-        """Construct normalized parameters from a key-value mapping."""
-        if not isinstance(params, Mapping):
-            raise TypeError(f"params must be a mapping, got {type(params).__name__}")
+    def __post_init__(self) -> None:
+        if not isinstance(self._items, tuple):
+            raise TypeError(f"_items must be a tuple, got {type(self._items).__name__}")
 
-        validated_items: list[tuple[str, NormalizedScalar]] = []
-        for key in sorted(params.keys()):
+        seen_keys: set[str] = set()
+        validated: list[tuple[str, NormalizedScalar]] = []
+
+        for entry in self._items:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise TypeError(
+                    f"Each item in _items must be a 2-tuple (key, value), got {entry!r}"
+                )
+            key, val = entry
+
             if not isinstance(key, str):
                 raise TypeError(f"Parameter key must be a string, got {type(key).__name__}")
             if not key.strip():
                 raise ValueError("Parameter key cannot be blank or whitespace-only")
 
-            val = params[key]
+            if key in seen_keys:
+                raise ValueError(f"Duplicate parameter key: {key!r}")
+            seen_keys.add(key)
+
             if not isinstance(val, (str, int, float, bool, type(None))):
                 raise TypeError(
                     f"Unsupported parameter value type for key {key!r}: {type(val).__name__}. "
@@ -137,9 +147,27 @@ class NormalizedParameters:
             if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
                 raise ValueError(f"Non-finite float value for parameter key {key!r} is forbidden")
 
-            validated_items.append((key, val))
+            validated.append((key, val))
 
-        return cls(_items=tuple(validated_items))
+        # Canonicalize to deterministic lexicographical order
+        canonical_items = tuple(sorted(validated, key=lambda kv: kv[0]))
+        object.__setattr__(self, "_items", canonical_items)
+
+    @classmethod
+    def from_dict(cls, params: Mapping[str, Any]) -> NormalizedParameters:
+        """Construct normalized parameters from a key-value mapping."""
+        if not isinstance(params, Mapping):
+            raise TypeError(f"params must be a mapping, got {type(params).__name__}")
+
+        # Validate all keys are strings and non-blank before sorting
+        for key in params.keys():
+            if not isinstance(key, str):
+                raise TypeError(f"Parameter key must be a string, got {type(key).__name__}")
+            if not key.strip():
+                raise ValueError("Parameter key cannot be blank or whitespace-only")
+
+        items = tuple((k, params[k]) for k in sorted(params.keys()))
+        return cls(_items=items)
 
     def to_dict(self) -> dict[str, NormalizedScalar]:
         """Convert normalized parameters to a standard dictionary."""
