@@ -394,7 +394,15 @@ Acceptance:
 - focused tests: `tests/test_serialization.py` and `tests/test_evidence.py` passing (134 total tests passing in suite).
 
 ### P-03.02 — Implement append-only mission/action/evidence ledger interfaces
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- typed ledger records: immutable `MissionRecord`, `ActionRecord`, and `EvidenceRecord` with strict relationship integrity (`mission -> action -> evidence`);
+- content-addressed EvidenceId binding: `EvidenceRecord` strictly binds and validates exact `EvidenceId` matching canonical content-addressed hash;
+- append-only semantics: silent overwriting prohibited; identical replay raises explicit `DuplicateRecordError`; conflicting same-identity/different-content attempts fail closed with `RecordConflictError`;
+- provider-neutral interface: `MissionLedgerPort` abstract port defined; zero SQLite, zero filesystem persistence, zero DynamoDB, zero AWS/Google/MCP imports;
+- non-durable classification: `InMemoryNonDurableLedger` explicitly classified as `IS_DURABLE = False`, `DURABILITY_CLASSIFICATION = "NON_DURABLE_TEST_OR_RUNTIME_LOCAL"`;
+- focused tests: `tests/test_ledger.py` passing (142 total tests passing in suite).
 
 ### P-03.03 — Implement deterministic state-transition guards
 Status: PENDING

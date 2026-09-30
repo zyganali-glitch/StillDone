@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs
+P-03.02 — Implement append-only mission/action/evidence ledger interfaces
 
 Status:
 `DONE — awaiting independent QA`
@@ -81,8 +81,8 @@ Status:
 ## Phase P-03 Status (Active Bounded Batch: P-03.01 -> P-03.03)
 
 - P-03.01 — DONE — awaiting independent QA
-- P-03.02 — IN_PROGRESS (Next in bounded batch)
-- P-03.03 — PENDING
+- P-03.02 — DONE — awaiting independent QA
+- P-03.03 — IN_PROGRESS (Next in bounded batch)
 - P-03.04 through P-03.06 — NOT_STARTED / NOT AUTHORIZED
 
 ## Last independently VERIFIED baseline SHA
@@ -91,12 +91,12 @@ Status:
 
 ## Next exact task
 
-`P-03.02 — Implement append-only mission/action/evidence ledger interfaces`
+`P-03.03 — Implement deterministic state-transition guards`
 Status: `IN_PROGRESS`
 
 ## Next safe action
 
-Execute P-03.02 within authorized bounded implementation batch. Commit P-03.01 individually first.
+Execute P-03.03 within authorized bounded implementation batch. Commit P-03.02 individually first.
 
 ---
 
