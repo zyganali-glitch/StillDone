@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS (Verified SHA: 293ec637464294a6caaca8cffcd85dd666890f61); PHASE P-03 PENDING / NOT_STARTED**
+Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 BATCH IN PROGRESS (Verified Baseline SHA: ba2969076f724e6159a176c5c065065d4c4105ec)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,39 +73,30 @@ Preferred AWS target:
 
 ## Current exact task
  
-Phase P-02 Boundary Reconciliation / P-Ω Audit
+P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs
 
 Status:
-`CLOSED — Phase P-02 independent QA PASS`
+`DONE — awaiting independent QA`
 
-## Phase P-02 Status
+## Phase P-03 Status (Active Bounded Batch: P-03.01 -> P-03.03)
 
-- P-02.01 — DONE — independent QA PASS (Verified commit: `23ac89cb9abac7eec75bdcfcaa159335784e3c28`)
-- P-02.02 — DONE — independent QA PASS (Verified commit: `ae88027e8c225c00ed692daf4afda7daaa7a17fe`)
-- P-02.03 — DONE — independent QA PASS (Verified commit: `268c991c2e2a0b2d8e3937ee575ad24330bbd241`)
-- P-02.04 — DONE — independent QA PASS (Verified commit: `268c991c2e2a0b2d8e3937ee575ad24330bbd241`)
-- P-02.05 — DONE — independent QA PASS (Verified commit: `e2dd124fda1af627949835c0d438861c43cf5226`)
-- P-02.06 — DONE — independent QA PASS (Verified commit: `bc8e7c6e66667803fc6d10fef6e6460b803c3777`)
-- P-02.07 — DONE — independent QA PASS (Verified commit: `380c63f1a46979ecef54187117ac0b843cbd5c24`)
-- P-02.08 — DONE — independent QA PASS (Verified commit: `293ec637464294a6caaca8cffcd85dd666890f61` after recursive inspection repair)
-
-Phase P-02:
-`CLOSED — independent QA PASS`
+- P-03.01 — DONE — awaiting independent QA
+- P-03.02 — IN_PROGRESS (Next in bounded batch)
+- P-03.03 — PENDING
+- P-03.04 through P-03.06 — NOT_STARTED / NOT AUTHORIZED
 
 ## Last independently VERIFIED baseline SHA
 
-`293ec637464294a6caaca8cffcd85dd666890f61`
+`ba2969076f724e6159a176c5c065065d4c4105ec`
 
 ## Next exact task
 
-`P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs`
-Status: `PENDING / NOT_STARTED / NOT AUTHORIZED`
+`P-03.02 — Implement append-only mission/action/evidence ledger interfaces`
+Status: `IN_PROGRESS`
 
 ## Next safe action
 
-P-03.01 is **NOT AUTHORIZED** until this Phase P-02 boundary reconciliation / P-Ω audit receives independent QA review and confirmation.
-
-**HARD STOP. P-03 IS NOT AUTHORIZED.**
+Execute P-03.02 within authorized bounded implementation batch. Commit P-03.01 individually first.
 
 ---
 
