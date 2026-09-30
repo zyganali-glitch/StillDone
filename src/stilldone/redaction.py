@@ -343,7 +343,7 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
     - Replacing sensitive OAuth parameter values (code, state, token, etc.)
       with [REDACTED_SECRET].
     - Applying bounded text-redaction (email, Bearer, Basic, JWT, ya29, AWS ID)
-      to decoded non-sensitive parameter values before re-encoding.
+      to decoded non-sensitive parameter keys and values before re-encoding.
     - Preserving duplicate parameter ordering.
     """
     # Detach trailing punctuation often attached to URLs in prose
@@ -377,10 +377,11 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
                     counts["secret"] += 1
                     query_modified = True
             else:
+                new_k = _redact_non_url_text_patterns(k, counts)
                 new_v = _redact_non_url_text_patterns(v, counts)
-                if new_v != v:
+                if new_k != k or new_v != v:
                     query_modified = True
-                new_query_pairs.append((k, new_v))
+                new_query_pairs.append((new_k, new_v))
         if query_modified:
             new_query_str = urllib.parse.urlencode(
                 new_query_pairs, quote_via=urllib.parse.quote, safe="[]"
@@ -401,10 +402,11 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
                     counts["secret"] += 1
                     frag_modified = True
             else:
+                new_k = _redact_non_url_text_patterns(k, counts)
                 new_v = _redact_non_url_text_patterns(v, counts)
-                if new_v != v:
+                if new_k != k or new_v != v:
                     frag_modified = True
-                new_frag_pairs.append((k, new_v))
+                new_frag_pairs.append((new_k, new_v))
         if frag_modified:
             new_frag_str = urllib.parse.urlencode(
                 new_frag_pairs, quote_via=urllib.parse.quote, safe="[]"
@@ -430,7 +432,7 @@ def redact_text(text: str, counts: dict[str, int] | None = None) -> str:
 
     Detects and replaces:
     - OAuth callback URLs with sensitive query/fragment values -> [REDACTED_SECRET]
-    - Decoded non-sensitive query/fragment values with sensitive content -> redacted
+    - Decoded non-sensitive query/fragment keys and values with sensitive content -> redacted
     - JWT token strings -> [REDACTED_SECRET]
     - Bearer authorization headers -> Bearer [REDACTED_SECRET]
     - Basic authorization headers -> Basic [REDACTED_SECRET]

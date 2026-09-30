@@ -1313,3 +1313,165 @@ def test_canonical_redaction_categories_is_frozen_and_exported() -> None:
     """18. Canonical category set is immutable, exact, and exported."""
     assert CANONICAL_REDACTION_CATEGORIES == frozenset({"secret", "email", "identifier"})
     assert isinstance(CANONICAL_REDACTION_CATEGORIES, frozenset)
+
+
+# ===========================================================================
+# 21. URL PARAMETER KEY REDACTION TESTS (BLOCKER REPAIR)
+# ===========================================================================
+
+
+def test_url_raw_email_in_parameter_name_with_oauth_sibling_is_redacted() -> None:
+    """A. Raw email in a query parameter name with an OAuth sibling is redacted."""
+    url = "https://x.test/cb?code=AUTH&user@example.com=x"
+    result = redact_text(url)
+
+    # Email cannot survive in raw, lowercase percent-encoded, or uppercase percent-encoded form
+    assert "AUTH" not in result
+    assert "user@example.com" not in result
+    assert "user%40example.com" not in result
+    assert "user%40EXAMPLE.COM" not in result
+    assert f"code={REDACTED_SECRET}" in result
+    assert f"{REDACTED_EMAIL}=x" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["code"] == REDACTED_SECRET
+    assert params[REDACTED_EMAIL] == "x"
+
+
+def test_url_percent_encoded_email_in_parameter_name_is_decoded_and_redacted() -> None:
+    """B. Percent-encoded email in query parameter name is decoded, redacted, and reconstructed."""
+    # Lowercase percent-encoded
+    url1 = "https://x.test/cb?user%40example.com=x"
+    result1 = redact_text(url1)
+    assert "user@example.com" not in result1
+    assert "user%40example.com" not in result1
+    assert result1 == f"https://x.test/cb?{REDACTED_EMAIL}=x"
+    params1 = dict(
+        urllib.parse.parse_qsl(urllib.parse.urlsplit(result1).query, keep_blank_values=True)
+    )
+    assert params1[REDACTED_EMAIL] == "x"
+
+    # Uppercase percent-encoded
+    url2 = "https://x.test/cb?user%40EXAMPLE.COM=x"
+    result2 = redact_text(url2)
+    assert "user@example.com" not in result2
+    assert "user%40example.com" not in result2
+    assert "EXAMPLE.COM" not in result2
+    assert result2 == f"https://x.test/cb?{REDACTED_EMAIL}=x"
+
+
+def test_url_fragment_parameter_names_receive_bounded_key_redaction() -> None:
+    """C. Same behavior for fragment parameter names."""
+    url = "https://x.test/auth#code=AUTH&user%40example.com=x&AKIAIOSFODNN7EXAMPLE=key_val"
+    result = redact_text(url)
+
+    assert "AUTH" not in result
+    assert "user@example.com" not in result
+    assert "user%40example.com" not in result
+    assert "AKIAIOSFODNN7EXAMPLE" not in result
+
+    parsed = urllib.parse.urlsplit(result)
+    frag_params = dict(urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True))
+    assert frag_params["code"] == REDACTED_SECRET
+    assert frag_params[REDACTED_EMAIL] == "x"
+    assert frag_params[REDACTED_IDENTIFIER] == "key_val"
+
+
+def test_url_bounded_token_patterns_in_parameter_names_are_redacted() -> None:
+    """D. Bounded token-patterns in parameter names are redacted before URL encoding."""
+    # AWS access key in key name
+    url1 = "https://x.test/cb?code=AUTH&AKIAIOSFODNN7EXAMPLE=val"
+    result1 = redact_text(url1)
+    assert "AKIAIOSFODNN7EXAMPLE" not in result1
+    parsed1 = urllib.parse.parse_qsl(urllib.parse.urlsplit(result1).query, keep_blank_values=True)
+    assert parsed1 == [("code", REDACTED_SECRET), (REDACTED_IDENTIFIER, "val")]
+
+    # JWT in key name
+    jwt_token = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ."
+        "dozGzN_cevyvWmsTYvA_example_signature_data"
+    )
+    url2 = f"https://x.test/cb?{jwt_token}=val"
+    result2 = redact_text(url2)
+    assert jwt_token not in result2
+    parsed2 = urllib.parse.parse_qsl(urllib.parse.urlsplit(result2).query, keep_blank_values=True)
+    assert parsed2 == [(REDACTED_SECRET, "val")]
+
+    # Google token in key name
+    url3 = "https://x.test/cb?ya29.a0AfH6SMBabc1234567890=val"
+    result3 = redact_text(url3)
+    assert "ya29.a0AfH6SMBabc1234567890" not in result3
+    parsed3 = urllib.parse.parse_qsl(urllib.parse.urlsplit(result3).query, keep_blank_values=True)
+    assert parsed3 == [(REDACTED_SECRET, "val")]
+
+    # Bearer in key name
+    url4 = "https://x.test/cb?Bearer%20secrettoken123=val"
+    result4 = redact_text(url4)
+    assert "secrettoken123" not in result4
+    parsed4 = urllib.parse.parse_qsl(urllib.parse.urlsplit(result4).query, keep_blank_values=True)
+    assert parsed4 == [(f"Bearer {REDACTED_SECRET}", "val")]
+
+
+def test_url_ordinary_non_sensitive_parameter_names_remain_unchanged() -> None:
+    """E. Ordinary non-sensitive parameter names remain semantically unchanged."""
+    url = "https://x.test/cb?page=1&sort=desc&filter=active&category=books"
+    result = redact_text(url)
+    assert result == url
+    parsed = dict(
+        urllib.parse.parse_qsl(urllib.parse.urlsplit(result).query, keep_blank_values=True)
+    )
+    assert parsed == {"page": "1", "sort": "desc", "filter": "active", "category": "books"}
+
+
+def test_url_sensitive_oauth_parameter_names_retain_structural_keys_with_redacted_value() -> None:
+    """F. Sensitive OAuth parameter names retain structural key name while value is replaced."""
+    url = (
+        "https://x.test/cb?code=AUTH_CODE&state=STATE_VAL"
+        "&access_token=ACC_TOK&refresh_token=REF_TOK"
+    )
+    result = redact_text(url)
+    assert "AUTH_CODE" not in result
+    assert "STATE_VAL" not in result
+    assert "ACC_TOK" not in result
+    assert "REF_TOK" not in result
+    parsed = urllib.parse.parse_qsl(urllib.parse.urlsplit(result).query, keep_blank_values=True)
+    assert parsed == [
+        ("code", REDACTED_SECRET),
+        ("state", REDACTED_SECRET),
+        ("access_token", REDACTED_SECRET),
+        ("refresh_token", REDACTED_SECRET),
+    ]
+
+
+def test_url_duplicate_parameter_order_remains_stable_with_key_redaction() -> None:
+    """G. Duplicate parameter ordering remains stable when parameter keys are redacted."""
+    url = "https://x.test/cb?tag=a&user@example.com=val1&tag=b&user@example.com=val2&tag=c"
+    result = redact_text(url)
+    parsed = urllib.parse.parse_qsl(urllib.parse.urlsplit(result).query, keep_blank_values=True)
+    assert parsed == [
+        ("tag", "a"),
+        (REDACTED_EMAIL, "val1"),
+        ("tag", "b"),
+        (REDACTED_EMAIL, "val2"),
+        ("tag", "c"),
+    ]
+
+
+def test_url_key_redaction_remains_strictly_idempotent() -> None:
+    """H. redact(redact(url)) remains exactly idempotent with key redaction."""
+    url = "https://x.test/cb?code=AUTH&user@example.com=x&AKIAIOSFODNN7EXAMPLE=val"
+    once = redact_text(url)
+    twice = redact_text(once)
+    assert once == twice
+
+    _, meta1 = redact_with_metadata({"url": url})
+    assert meta1.is_redacted is True
+    assert meta1.redaction_counts["secret"] == 1  # code
+    assert meta1.redaction_counts["email"] == 1  # user@example.com
+    assert meta1.redaction_counts["identifier"] == 1  # AKIA...
+
+    _, meta2 = redact_with_metadata({"url": once})
+    assert meta2.is_redacted is False
+    assert meta2.redaction_counts == {"email": 0, "identifier": 0, "secret": 0}
