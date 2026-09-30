@@ -463,7 +463,17 @@ Goal:
 make future live actions bounded by design.
 
 ### P-04.01 — Implement secret/config loading and fail-closed validation
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- explicit injection & call-time process environment: config loader accepts explicit mapping or process environment at call time; strictly zero environment reads at module import time; no implicit .env loading; no python-dotenv dependency;
+- owned namespace protection: declared fields checked; unrecognized keys in owned namespace (`STILLDONE_`) fail closed with `UnknownConfigurationKeyError` (typo prevention); unrelated system environment variables ignored;
+- fail-closed validation: required fields fail closed when absent (`MissingConfigurationError`), empty string, whitespace-only, or malformed for declared type/validator (`InvalidConfigurationValueError`);
+- optional values & defaults: defaults are explicit in code, non-secret, and deterministic; optional values with malformed/empty input fail closed;
+- secret value handling: `SecretString` protects sensitive values; plaintext shielded from `repr()`, `str()`, format strings, dataclass reprs, and validation error messages; narrow explicit access via `get_secret_value()` / `reveal()`; direct string equality comparison forbidden (`TypeError`); constant-time equality with `SecretString`;
+- snapshot & alias safety: `LoadedConfig` represents an immutable snapshot completely isolated from caller environment mutations; dataclass instantiation supported via `load_dataclass`;
+- zero provider credentials required: static AWS IAM keys and Google OAuth secrets strictly excluded from schema;
+- focused unit tests: `tests/test_config.py` passing (260 total tests passing in suite).
 
 ### P-04.02 — Implement log/evidence redaction for tokens, OAuth material, emails, and sensitive identifiers
 Status: PENDING

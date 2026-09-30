@@ -73,35 +73,36 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-Ω Phase P-03 boundary reconciliation
+P-04.01 — Implement secret/config loading and fail-closed validation
 
 Status:
 `DONE — awaiting independent QA`
 
-## Phase P-03 Status
+## Phase P-04 Status
 
-- P-03.01 — PASS
-- P-03.02 — PASS
-- P-03.03 — PASS
-- P-03.04 — PASS
-- P-03.05 — PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
-- P-03.06 — PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
+- P-04.01 — DONE — awaiting independent QA
+- P-04.02 — PENDING / NOT AUTHORIZED
+- P-04.03 — PENDING / NOT AUTHORIZED
+- P-04.04 — PENDING / NOT AUTHORIZED
+- P-04.05 — PENDING / NOT AUTHORIZED
+- P-04.06 — PENDING / NOT AUTHORIZED
+- P-04.07 — PENDING / NOT AUTHORIZED
 
-Phase P-03 is **CLOSED — independent QA PASS**.
-Phase P-04 is **PENDING / NOT_STARTED / NOT AUTHORIZED**.
+Phase P-03 is **CLOSED — independent QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`)**.
+Phase P-04 is **IN_PROGRESS (P-04.01 DONE — awaiting independent QA)**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`46e55b424eb999c666932871b5b5517397b85db6`
+`03245b3832ad9e9c82b9a30060e07fd87ca2e63b`
 
 ## Next exact task
 
-`P-04.01 — Implement secret/config loading and fail-closed validation`
-Status: `PENDING / NOT AUTHORIZED` (Strictly locked until Phase P-03 boundary reconciliation / P-Ω audit receives independent QA review)
+`P-04.02 — Implement log/evidence redaction for tokens, OAuth material, emails, and sensitive identifiers`
+Status: `PENDING / NOT AUTHORIZED` (Strictly locked until P-04.01 receives independent QA review)
 
 ## Next safe action
 
-Phase P-03 boundary reconciliation completed. Run full canonical validation, commit dedicated phase-boundary audit commit, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
+Run full canonical validation, commit task commit, push remote main, verify exact-SHA CI, and await independent QA review for P-04.01. Do NOT begin P-04.02.
 
 ---
 
