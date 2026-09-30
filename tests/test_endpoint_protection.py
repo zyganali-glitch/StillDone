@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1026,3 +1027,364 @@ def test_timezone_aware_comparison_across_different_offsets() -> None:
     decision = evaluate_endpoint_admission(request, policy, rate_snap, at=at_plus3)
     assert decision.status == AdmissionStatus.ALLOW
     assert decision.reason == AdmissionReason.ALLOWED
+
+
+# ===========================================================================
+# Regression Suite A-R: EndpointAdmissionDecision Fail-Closed Self-Validation
+# ===========================================================================
+
+
+def test_regression_a_valid_evaluator_produced_allow_decisions_remain_valid() -> None:
+    """Regression A: Valid evaluator-produced ALLOW decisions remain valid."""
+    policy = create_policy(live_paid_path_enabled=True)
+    snapshot = create_rate_snapshot()
+
+    # NO_PAID_CAPABILITY ALLOW decision
+    req_no_paid = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+        caller_class=CallerClass.PUBLIC_UNTRUSTED,
+    )
+    d_no_paid = evaluate_endpoint_admission(req_no_paid, policy, snapshot, at=T_MID)
+    assert d_no_paid.status == AdmissionStatus.ALLOW
+    assert d_no_paid.reason == AdmissionReason.ALLOWED
+    assert d_no_paid.is_allowed is True
+    assert d_no_paid.cost_estimate is None
+
+    # PAID_CAPABLE_LIVE ALLOW decision
+    budget = create_budget_snapshot()
+    req_paid = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.OPERATOR_CONTROLLED,
+        cost_estimate=Decimal("0.05"),
+    )
+    d_paid = evaluate_endpoint_admission(req_paid, policy, snapshot, budget, at=T_MID)
+    assert d_paid.status == AdmissionStatus.ALLOW
+    assert d_paid.reason == AdmissionReason.ALLOWED
+    assert d_paid.is_allowed is True
+    assert d_paid.cost_estimate == Decimal("0.05")
+
+
+def test_regression_b_valid_evaluator_produced_deny_decisions_for_every_reason() -> None:
+    """Regression B: Valid evaluator-produced DENY decisions for every reason remain valid."""
+    policy = create_policy(
+        max_requests=10,
+        max_paid_live_requests=5,
+        ceiling=Decimal("10.00"),
+        live_paid_path_enabled=True,
+    )
+    rate_snap = create_rate_snapshot()
+    budget = create_budget_snapshot()
+    req_paid = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.OPERATOR_CONTROLLED,
+        cost_estimate=Decimal("0.05"),
+    )
+
+    # 1. RATE_SNAPSHOT_INVALID_OR_STALE
+    d1 = evaluate_endpoint_admission(req_paid, policy, rate_snap, budget, at=rate_snap.window_end)
+    assert d1.reason == AdmissionReason.RATE_SNAPSHOT_INVALID_OR_STALE
+    assert d1.is_denied is True
+
+    # 2. RATE_LIMIT_EXCEEDED
+    snap_full = create_rate_snapshot(total_requests=10)
+    d2 = evaluate_endpoint_admission(req_paid, policy, snap_full, budget, at=T_MID)
+    assert d2.reason == AdmissionReason.RATE_LIMIT_EXCEEDED
+    assert d2.is_denied is True
+
+    # 3. PAID_LIVE_RATE_LIMIT_EXCEEDED
+    snap_paid_full = create_rate_snapshot(total_requests=5, paid_live_requests=5)
+    d3 = evaluate_endpoint_admission(req_paid, policy, snap_paid_full, budget, at=T_MID)
+    assert d3.reason == AdmissionReason.PAID_LIVE_RATE_LIMIT_EXCEEDED
+    assert d3.is_denied is True
+
+    # 4. LIVE_PATH_DISABLED
+    pol_disabled = create_policy(live_paid_path_enabled=False)
+    d4 = evaluate_endpoint_admission(req_paid, pol_disabled, rate_snap, budget, at=T_MID)
+    assert d4.reason == AdmissionReason.LIVE_PATH_DISABLED
+    assert d4.is_denied is True
+
+    # 5. PUBLIC_PAID_PATH_FORBIDDEN
+    req_pub = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        cost_estimate=Decimal("0.05"),
+    )
+    d5 = evaluate_endpoint_admission(req_pub, policy, rate_snap, budget, at=T_MID)
+    assert d5.reason == AdmissionReason.PUBLIC_PAID_PATH_FORBIDDEN
+    assert d5.is_denied is True
+
+    # 6. COST_ESTIMATE_REQUIRED
+    req_no_est = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.OPERATOR_CONTROLLED,
+        cost_estimate=None,
+    )
+    d6 = evaluate_endpoint_admission(req_no_est, policy, rate_snap, budget, at=T_MID)
+    assert d6.reason == AdmissionReason.COST_ESTIMATE_REQUIRED
+    assert d6.is_denied is True
+
+    # 7. BUDGET_TRUTH_STALE
+    budget_stale = create_budget_snapshot(valid_until=T_MID - timedelta(seconds=1))
+    d7 = evaluate_endpoint_admission(req_paid, policy, rate_snap, budget_stale, at=T_MID)
+    assert d7.reason == AdmissionReason.BUDGET_TRUTH_STALE
+    assert d7.is_denied is True
+
+    # 8. CREDIT_COVERAGE_UNCONFIRMED
+    budget_unconf = create_budget_snapshot(credit_coverage_confirmed=False)
+    d8 = evaluate_endpoint_admission(req_paid, policy, rate_snap, budget_unconf, at=T_MID)
+    assert d8.reason == AdmissionReason.CREDIT_COVERAGE_UNCONFIRMED
+    assert d8.is_denied is True
+
+    # 9. INTERNAL_BUDGET_EXCEEDED
+    budget_over_ceiling = create_budget_snapshot(already_accounted_gross_cost=Decimal("9.99"))
+    d9 = evaluate_endpoint_admission(req_paid, policy, rate_snap, budget_over_ceiling, at=T_MID)
+    assert d9.reason == AdmissionReason.INTERNAL_BUDGET_EXCEEDED
+    assert d9.is_denied is True
+
+    # 10. INSUFFICIENT_OBSERVED_CREDIT
+    budget_low_credit = create_budget_snapshot(remaining_promotional_credit=Decimal("0.01"))
+    d10 = evaluate_endpoint_admission(req_paid, policy, rate_snap, budget_low_credit, at=T_MID)
+    assert d10.reason == AdmissionReason.INSUFFICIENT_OBSERVED_CREDIT
+    assert d10.is_denied is True
+
+
+def test_regression_c_direct_allow_plus_denial_reason_fails_closed() -> None:
+    """Regression C: Direct ALLOW + denial reason fails closed."""
+    for reason in AdmissionReason:
+        if reason == AdmissionReason.ALLOWED:
+            continue
+        with pytest.raises(EndpointProtectionValueError, match="ALLOW status requires ALLOWED"):
+            EndpointAdmissionDecision(
+                status=AdmissionStatus.ALLOW,
+                reason=reason,
+                evaluated_at=T_MID,
+                exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+                caller_class=CallerClass.PUBLIC_UNTRUSTED,
+            )
+
+
+def test_regression_d_direct_deny_plus_allowed_fails_closed() -> None:
+    """Regression D: Direct DENY + ALLOWED fails closed."""
+    with pytest.raises(EndpointProtectionValueError, match="DENY status cannot have ALLOWED"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.DENY,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_e_raw_string_status_fails() -> None:
+    """Regression E: Raw-string status fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="status must be an instance"):
+        EndpointAdmissionDecision(
+            status="ALLOW",  # type: ignore[arg-type]
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_f_raw_string_reason_fails() -> None:
+    """Regression F: Raw-string reason fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="reason must be an instance"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason="ALLOWED",  # type: ignore[arg-type]
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_g_raw_string_exposure_class_fails() -> None:
+    """Regression G: Raw-string exposure class fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="exposure_class must be an instance"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class="NO_PAID_CAPABILITY",  # type: ignore[arg-type]
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_h_raw_string_caller_class_fails() -> None:
+    """Regression H: Raw-string caller class fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="caller_class must be an instance"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class="PUBLIC_UNTRUSTED",  # type: ignore[arg-type]
+        )
+
+
+def test_regression_i_naive_evaluated_at_fails() -> None:
+    """Regression I: Naive evaluated_at fails closed."""
+    naive_t = datetime(2026, 10, 1, 12, 0, 0)
+    with pytest.raises(EndpointProtectionValueError, match="timezone-aware"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=naive_t,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_j_non_datetime_evaluated_at_fails() -> None:
+    """Regression J: Non-datetime evaluated_at fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="datetime instance"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at="2026-10-01T12:00:00Z",  # type: ignore[arg-type]
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+        )
+
+
+def test_regression_k_non_decimal_cost_estimate_fails() -> None:
+    """Regression K: Non-Decimal cost_estimate fails closed."""
+    with pytest.raises(EndpointProtectionTypeError, match="Decimal instance or None"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.DENY,
+            reason=AdmissionReason.COST_ESTIMATE_REQUIRED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+            caller_class=CallerClass.OPERATOR_CONTROLLED,
+            cost_estimate=0.05,  # type: ignore[arg-type]
+        )
+    with pytest.raises(EndpointProtectionTypeError, match="Decimal instance or None"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.DENY,
+            reason=AdmissionReason.COST_ESTIMATE_REQUIRED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+            caller_class=CallerClass.OPERATOR_CONTROLLED,
+            cost_estimate="0.05",  # type: ignore[arg-type]
+        )
+    with pytest.raises(EndpointProtectionTypeError, match="Decimal instance or None"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.DENY,
+            reason=AdmissionReason.COST_ESTIMATE_REQUIRED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+            caller_class=CallerClass.OPERATOR_CONTROLLED,
+            cost_estimate=True,  # type: ignore[arg-type]
+        )
+
+
+def test_regression_l_nan_infinity_zero_negative_cost_estimate_fails() -> None:
+    """Regression L: NaN, Infinity, zero, and negative cost_estimate fail closed."""
+    for bad_cost in [Decimal("0.00"), Decimal("-0.05")]:
+        with pytest.raises(EndpointProtectionValueError, match="strictly positive"):
+            EndpointAdmissionDecision(
+                status=AdmissionStatus.DENY,
+                reason=AdmissionReason.COST_ESTIMATE_REQUIRED,
+                evaluated_at=T_MID,
+                exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+                caller_class=CallerClass.OPERATOR_CONTROLLED,
+                cost_estimate=bad_cost,
+            )
+
+    for non_finite in [Decimal("NaN"), Decimal("Infinity")]:
+        with pytest.raises(EndpointProtectionValueError, match="finite Decimal"):
+            EndpointAdmissionDecision(
+                status=AdmissionStatus.DENY,
+                reason=AdmissionReason.COST_ESTIMATE_REQUIRED,
+                evaluated_at=T_MID,
+                exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+                caller_class=CallerClass.OPERATOR_CONTROLLED,
+                cost_estimate=non_finite,
+            )
+
+
+def test_regression_m_no_paid_capability_with_non_none_cost_estimate_fails() -> None:
+    """Regression M: NO_PAID_CAPABILITY with non-None cost_estimate fails closed."""
+    with pytest.raises(EndpointProtectionValueError, match="must not declare a cost estimate"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+            cost_estimate=Decimal("0.05"),
+        )
+
+
+def test_regression_n_paid_capable_live_allow_public_untrusted_fails() -> None:
+    """Regression N: PAID_CAPABLE_LIVE + ALLOW + PUBLIC_UNTRUSTED fails closed."""
+    with pytest.raises(EndpointProtectionValueError, match="requires OPERATOR_CONTROLLED"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+            caller_class=CallerClass.PUBLIC_UNTRUSTED,
+            cost_estimate=Decimal("0.05"),
+        )
+
+
+def test_regression_o_paid_capable_live_allow_missing_cost_estimate_fails() -> None:
+    """Regression O: PAID_CAPABLE_LIVE + ALLOW + missing cost estimate fails closed."""
+    with pytest.raises(EndpointProtectionValueError, match="requires a cost estimate"):
+        EndpointAdmissionDecision(
+            status=AdmissionStatus.ALLOW,
+            reason=AdmissionReason.ALLOWED,
+            evaluated_at=T_MID,
+            exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+            caller_class=CallerClass.OPERATOR_CONTROLLED,
+            cost_estimate=None,
+        )
+
+
+def test_regression_p_valid_paid_capable_live_allow_succeeds() -> None:
+    """Regression P: Valid PAID_CAPABLE_LIVE + ALLOW + OPERATOR_CONTROLLED + Decimal succeeds."""
+    decision = EndpointAdmissionDecision(
+        status=AdmissionStatus.ALLOW,
+        reason=AdmissionReason.ALLOWED,
+        evaluated_at=T_MID,
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.OPERATOR_CONTROLLED,
+        cost_estimate=Decimal("0.05"),
+    )
+    assert decision.is_allowed is True
+    assert decision.status == AdmissionStatus.ALLOW
+    assert decision.reason == AdmissionReason.ALLOWED
+    assert decision.cost_estimate == Decimal("0.05")
+
+
+def test_regression_q_decision_remains_frozen_immutable() -> None:
+    """Regression Q: Decision remains frozen/immutable under ordinary assignment."""
+    decision = EndpointAdmissionDecision(
+        status=AdmissionStatus.ALLOW,
+        reason=AdmissionReason.ALLOWED,
+        evaluated_at=T_MID,
+        exposure_class=RequestExposureClass.NO_PAID_CAPABILITY,
+        caller_class=CallerClass.PUBLIC_UNTRUSTED,
+    )
+    with pytest.raises(FrozenInstanceError):
+        decision.status = AdmissionStatus.DENY  # type: ignore[misc]
+
+
+def test_regression_r_evaluator_outputs_remain_deterministic() -> None:
+    """Regression R: Evaluator outputs remain completely deterministic."""
+    policy = create_policy(live_paid_path_enabled=True)
+    snapshot = create_rate_snapshot()
+    budget = create_budget_snapshot()
+    request = EndpointRequestAssessment(
+        exposure_class=RequestExposureClass.PAID_CAPABLE_LIVE,
+        caller_class=CallerClass.OPERATOR_CONTROLLED,
+        cost_estimate=Decimal("0.05"),
+    )
+
+    outputs = [
+        evaluate_endpoint_admission(request, policy, snapshot, budget, at=T_MID) for _ in range(5)
+    ]
+    for other in outputs[1:]:
+        assert outputs[0] == other

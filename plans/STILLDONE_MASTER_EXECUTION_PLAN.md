@@ -536,7 +536,7 @@ Acceptance:
 - focused unit tests: `tests/test_demo_isolation.py` passing (35 focused isolation tests, 526 total tests in suite passing).
 
 ### P-04.06 — Implement public-endpoint rate/budget protection contract
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - deterministic provider-neutral rate and budget protection: `src/stilldone/endpoint_protection.py` implementing immutable `EndpointProtectionPolicy`, `RateSnapshot`, `BudgetSnapshot`, `EndpointRequestAssessment`, `EndpointAdmissionDecision`, and pure `evaluate_endpoint_admission`;
@@ -548,8 +548,9 @@ Acceptance:
 - zero-personal-spend truth boundary: `ALLOW` decision certifies deterministic contract compliance with fresh supplied facts; does not claim billing proof, personal spend proof, or AWS hard cap;
 - rate-limit persistence boundary: pure evaluator evaluates snapshot; does not claim atomic quota consumption or concurrency safety (deferred to P-05.05 / deployment layer);
 - separation of concerns: admission decision contains zero authority classes (`AuthorityClass`), approval grants (`ApprovalGrant`), execution attempts (`ExecutionAttempt`), ledger mutations, or mission state promotions (`VERIFIED`, `READY`);
+- fail-closed decision model: `EndpointAdmissionDecision` enforces post-init self-validation for canonical enum types, timezone-aware datetime, positive finite Decimal cost estimates, `NO_PAID_CAPABILITY` estimate absence, `ALLOW`/`ALLOWED` consistency, and `OPERATOR_CONTROLLED`/non-None estimate for `PAID_CAPABLE_LIVE` `ALLOW` decisions;
 - purity: zero network, zero provider SDK imports, zero environment reads, zero wall-clock reads (`datetime.now`);
-- focused unit tests: `tests/test_endpoint_protection.py` passing (46 focused tests, 573 total tests in suite passing).
+- focused unit tests: `tests/test_endpoint_protection.py` passing (65 focused tests, 591 total tests in suite passing).
 
 ### P-04.07 — Run focused security/threat-model P-Ω audit
 Status: PENDING

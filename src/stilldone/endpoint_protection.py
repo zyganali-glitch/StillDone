@@ -293,11 +293,11 @@ class EndpointRequestAssessment:
     cost_estimate: Decimal | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.exposure_class, RequestExposureClass):
+        if type(self.exposure_class) is not RequestExposureClass:
             raise EndpointProtectionTypeError(
                 "exposure_class must be an instance of RequestExposureClass"
             )
-        if not isinstance(self.caller_class, CallerClass):
+        if type(self.caller_class) is not CallerClass:
             raise EndpointProtectionTypeError("caller_class must be an instance of CallerClass")
 
         if self.cost_estimate is not None:
@@ -339,6 +339,66 @@ class EndpointAdmissionDecision:
     exposure_class: RequestExposureClass
     caller_class: CallerClass
     cost_estimate: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.status) is not AdmissionStatus:
+            raise EndpointProtectionTypeError("status must be an instance of AdmissionStatus")
+        if type(self.reason) is not AdmissionReason:
+            raise EndpointProtectionTypeError("reason must be an instance of AdmissionReason")
+
+        if not isinstance(self.evaluated_at, datetime):
+            raise EndpointProtectionTypeError("evaluated_at must be a datetime instance")
+        if (
+            self.evaluated_at.tzinfo is None
+            or self.evaluated_at.tzinfo.utcoffset(self.evaluated_at) is None
+        ):
+            raise EndpointProtectionValueError("evaluated_at must be timezone-aware")
+
+        if type(self.exposure_class) is not RequestExposureClass:
+            raise EndpointProtectionTypeError(
+                "exposure_class must be an instance of RequestExposureClass"
+            )
+        if type(self.caller_class) is not CallerClass:
+            raise EndpointProtectionTypeError("caller_class must be an instance of CallerClass")
+
+        if self.cost_estimate is not None:
+            if isinstance(self.cost_estimate, bool) or not isinstance(self.cost_estimate, Decimal):
+                raise EndpointProtectionTypeError(
+                    "cost_estimate must be a Decimal instance or None"
+                )
+            if not self.cost_estimate.is_finite():
+                raise EndpointProtectionValueError("cost_estimate must be a finite Decimal")
+            if self.cost_estimate <= Decimal(0):
+                raise EndpointProtectionValueError("cost_estimate must be strictly positive")
+
+        if (
+            self.exposure_class == RequestExposureClass.NO_PAID_CAPABILITY
+            and self.cost_estimate is not None
+        ):
+            raise EndpointProtectionValueError(
+                "NO_PAID_CAPABILITY decisions must not declare a cost estimate"
+            )
+
+        # Status/reason consistency: status == ALLOW iff reason == ALLOWED
+        if self.status == AdmissionStatus.ALLOW and self.reason != AdmissionReason.ALLOWED:
+            raise EndpointProtectionValueError("ALLOW status requires ALLOWED reason")
+        if self.status == AdmissionStatus.DENY and self.reason == AdmissionReason.ALLOWED:
+            raise EndpointProtectionValueError("DENY status cannot have ALLOWED reason")
+
+        # A PAID_CAPABLE_LIVE ALLOW decision must require OPERATOR_CONTROLLED
+        # and a non-None cost_estimate
+        if (
+            self.exposure_class == RequestExposureClass.PAID_CAPABLE_LIVE
+            and self.status == AdmissionStatus.ALLOW
+        ):
+            if self.caller_class != CallerClass.OPERATOR_CONTROLLED:
+                raise EndpointProtectionValueError(
+                    "PAID_CAPABLE_LIVE ALLOW decision requires OPERATOR_CONTROLLED caller_class"
+                )
+            if self.cost_estimate is None:
+                raise EndpointProtectionValueError(
+                    "PAID_CAPABLE_LIVE ALLOW decision requires a cost estimate"
+                )
 
     @property
     def is_allowed(self) -> bool:
