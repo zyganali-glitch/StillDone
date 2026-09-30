@@ -405,7 +405,14 @@ Acceptance:
 - focused tests: `tests/test_ledger.py` passing (142 total tests passing in suite).
 
 ### P-03.03 — Implement deterministic state-transition guards
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- runtime transition guard engine: `MissionTransitionGuard`, `assert_valid_transition`, `assert_can_promote_to_ready`, and `is_transition_allowed` using canonical `MissionState` and `DECLARATIVE_MISSION_TRANSITIONS`;
+- critical transition laws enforced: direct transitions from `DRAFT`, `PLANNED`, `EXECUTING`, `NEEDS_APPROVAL`, `PARTIAL`, `FAILED`, and `CANCELLED` to `READY` strictly fail closed with `IllegalStatePromotionError`; `READY` may strictly be entered only from `VERIFYING`; `READY -> DRIFTED` permitted;
+- evidence-based READY promotion: executor/tool success alone (`EXECUTED_UNVERIFIED`) cannot promote to `READY`; `NOT_RUN` cannot be interpreted as `PASS`/`VERIFIED`; `CONTRADICTED`, `BLOCKED`, `FAILED`, and `STALE` prevent promotion to `READY`; all steps must be `VERIFIED`;
+- fail-closed validation: malformed or unsupported state values fail closed;
+- focused tests: `tests/test_transitions.py` passing (152 total tests passing in suite).
 
 ### P-03.04 — Implement bounded sanitized provider-output capture with digests
 Status: PENDING

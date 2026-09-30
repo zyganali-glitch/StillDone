@@ -73,17 +73,19 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.02 — Implement append-only mission/action/evidence ledger interfaces
+P-03.03 — Implement deterministic state-transition guards
 
 Status:
 `DONE — awaiting independent QA`
 
-## Phase P-03 Status (Active Bounded Batch: P-03.01 -> P-03.03)
+## Phase P-03 Status (Bounded Batch P-03.01 -> P-03.03 Complete)
 
 - P-03.01 — DONE — awaiting independent QA
 - P-03.02 — DONE — awaiting independent QA
-- P-03.03 — IN_PROGRESS (Next in bounded batch)
+- P-03.03 — DONE — awaiting independent QA
 - P-03.04 through P-03.06 — NOT_STARTED / NOT AUTHORIZED
+
+Phase P-03 is **NOT_CLOSED**. Tasks P-03.04 through P-03.06 remain pending.
 
 ## Last independently VERIFIED baseline SHA
 
@@ -91,12 +93,12 @@ Status:
 
 ## Next exact task
 
-`P-03.03 — Implement deterministic state-transition guards`
-Status: `IN_PROGRESS`
+`P-03.04 — Implement bounded sanitized provider-output capture with digests`
+Status: `PENDING / NOT_STARTED / NOT AUTHORIZED`
 
 ## Next safe action
 
-Execute P-03.03 within authorized bounded implementation batch. Commit P-03.02 individually first.
+Bounded batch (P-03.01 -> P-03.03) complete locally. Commit P-03.03, run full validation suite, push remote main, verify CI, then HARD STOP. Do NOT begin P-03.04.
 
 ---
 
