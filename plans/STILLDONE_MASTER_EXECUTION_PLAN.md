@@ -427,7 +427,16 @@ Acceptance:
 - focused tests: `tests/test_capture.py` passing (177 total tests passing in suite).
 
 ### P-03.05 — Bind receipt projections to exact mission/evidence hashes
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- typed immutable receipt projection: `ReceiptProjection` binding exact mission snapshot, canonically ordered evidence IDs, projection state, UTC timestamp, and deterministic receipt hash;
+- dedicated mission content hash: `MissionContentHash` backed by SHA-256 with domain separation `stilldone:mission-content:v1`, strictly separate from EvidenceId;
+- exact ordered evidence binding: immutable tuple of unique `EvidenceId` instances sorted lexicographically; duplicate or unsorted bindings fail closed (`DuplicateEvidenceBindingError`, `EvidenceOrderError`);
+- deterministic receipt hash: `ReceiptHash` backed by SHA-256 with domain separation `stilldone:receipt-projection:v1`; same projection yields identical hash; material changes yield distinct hashes;
+- integrity and mismatch guards: fail closed on malformed hashes, evidence belonging to mismatched missions (`ReceiptMismatchError`), or altered hashes (`ReceiptHashMismatchError`);
+- truth boundaries respected: receipt is explicitly historical (`is_historical=True`), does not claim current-live truth or independent read-back, and cannot promote to READY;
+- focused tests: `tests/test_receipt.py` passing (188 total tests passing in suite).
 
 ### P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
 Status: PENDING

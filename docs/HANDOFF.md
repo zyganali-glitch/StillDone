@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.04 — Implement bounded sanitized provider-output capture with digests
+P-03.05 — Bind receipt projections to exact mission/evidence hashes
 
 Status:
 `DONE — awaiting independent QA`
@@ -84,10 +84,10 @@ Status:
 - P-03.02 — PASS
 - P-03.03 — PASS
 - P-03.04 — DONE — awaiting independent QA
-- P-03.05 — next / in progress
-- P-03.06 — pending
+- P-03.05 — DONE — awaiting independent QA
+- P-03.06 — next / in progress
 
-Phase P-03 is **NOT_CLOSED**. Tasks P-03.05 through P-03.06 remain in batch.
+Phase P-03 is **NOT_CLOSED**. Task P-03.06 remains in batch.
 
 ## Last independently VERIFIED baseline SHA
 
@@ -95,12 +95,12 @@ Phase P-03 is **NOT_CLOSED**. Tasks P-03.05 through P-03.06 remain in batch.
 
 ## Next exact task
 
-`P-03.05 — Bind receipt projections to exact mission/evidence hashes`
+`P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests`
 Status: `IN_PROGRESS`
 
 ## Next safe action
 
-Execute P-03.05 in bounded batch. Await independent QA review upon batch completion. Hard stop after P-03.06. Do NOT begin P-04.
+Execute P-03.06 in bounded batch. Await independent QA review upon batch completion. Hard stop after P-03.06. Do NOT begin P-04.
 
 ---
 
