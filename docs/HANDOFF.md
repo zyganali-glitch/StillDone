@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 REPAIRED (Verified Baseline SHA: 69715d57cc6f2289540974bc1b3ac91d013348b6)**
+Current repository state: **PHASE P-03 CLOSED — INDEPENDENT QA PASS (Verified Baseline SHA: 46e55b424eb999c666932871b5b5517397b85db6)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,39 +73,51 @@ Preferred AWS target:
 
 ## Current exact task
  
-Phase P-03 Surgical Repair (P-03.05 & P-03.06)
+P-Ω Phase P-03 boundary reconciliation
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-03 Status
 
 - P-03.01 — PASS
 - P-03.02 — PASS
 - P-03.03 — PASS
-- P-03.04 — PASS (Verified SHA: `69715d57cc6f2289540974bc1b3ac91d013348b6`)
-- P-03.05 — REPAIRED — awaiting independent QA
-- P-03.06 — REPAIRED — awaiting independent QA
+- P-03.04 — PASS
+- P-03.05 — PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
+- P-03.06 — PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
 
-Phase P-03 is **NOT_CLOSED** pending independent QA.
-Phase P-04 is **NOT_STARTED / NOT AUTHORIZED**.
+Phase P-03 is **CLOSED — independent QA PASS**.
+Phase P-04 is **PENDING / NOT_STARTED / NOT AUTHORIZED**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`69715d57cc6f2289540974bc1b3ac91d013348b6`
+`46e55b424eb999c666932871b5b5517397b85db6`
 
 ## Next exact task
 
-`Phase P-03 Independent QA Review & Phase Closure`
-Status: `PENDING INDEPENDENT QA / NOT AUTHORIZED`
+`P-04.01 — Implement secret/config loading and fail-closed validation`
+Status: `PENDING / NOT AUTHORIZED` (Strictly locked until Phase P-03 boundary reconciliation / P-Ω audit receives independent QA review)
 
 ## Next safe action
 
-Phase P-03 surgical repair completed. Run full canonical validation, commit dedicated repair commit, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
+Phase P-03 boundary reconciliation completed. Run full canonical validation, commit dedicated phase-boundary audit commit, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
 
 ---
 
 ## Phase Milestones Summary
+
+### Phase P-03 Closure Summary
+Phase P-03 (Deterministic Evidence Ledger & Fact Authority) successfully closed with independent QA PASS:
+- Closed micro-tasks P-03.01 through P-03.06 with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`).
+- Implemented canonical deterministic primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`) with fail-closed post-NFC duplicate key detection, and strongly typed content-addressed `EvidenceId` backed by domain-separated SHA-256 (`stilldone:evidence:v1`).
+- Implemented provider-neutral append-only ledger port (`MissionLedgerPort`) with immutable records (`MissionRecord`, `ActionRecord`, `EvidenceRecord`), defensive payload snapshot isolation (`freeze_canonical_payload`, `CanonicalPayload`, `CanonicalSequence`), append-only conflict guards (`DuplicateRecordError`, `RecordConflictError`), and an explicitly non-durable in-memory implementation (`InMemoryNonDurableLedger`).
+- Implemented runtime transition guard engine (`MissionTransitionGuard`, `assert_valid_transition`, `assert_can_promote_to_ready`) strictly enforcing `DECLARATIVE_MISSION_TRANSITIONS`, requiring `VERIFYING` state and all-`VERIFIED` step evidence for `READY`, and forbidding direct promotions from non-`VERIFYING` states.
+- Implemented bounded sanitized provider-output capture (`capture_provider_output`, `SanitizedProviderCapture`) with explicit `CaptureBounds`, deterministic truncation metadata, fail-closed total size checks, and domain-separated SHA-256 `CaptureDigest` (`stilldone:provider-capture:v1`).
+- Implemented immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved exact source semantics without overclaiming raw 64-char hex digest alone.
+- Hardened with 27 adversarial tests (`tests/test_phase_p03_adversarial.py`) across tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
+- Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
+- Phase P-04 is `PENDING / NOT_STARTED / NOT AUTHORIZED`.
 
 ### Phase P-02 Closure Summary
 Phase P-02 (Provider-Neutral Mission & Desired-State Contracts) successfully closed with independent QA PASS:

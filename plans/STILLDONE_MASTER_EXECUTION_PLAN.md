@@ -427,7 +427,7 @@ Acceptance:
 - focused tests: `tests/test_capture.py` passing (177 total tests passing in suite).
 
 ### P-03.05 — Bind receipt projections to exact mission/evidence hashes
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
 
 Acceptance:
 - typed immutable receipt projection: `ReceiptProjection` binding exact mission snapshot, canonically ordered evidence IDs, projection state, UTC timestamp, and deterministic receipt hash;
@@ -440,7 +440,7 @@ Acceptance:
 - focused tests: `tests/test_receipt.py` passing (190 total tests passing in suite).
 
 ### P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`)
 
 Acceptance:
 - TAMPER tests: verified fail-closed detection of altered evidence content vs EvidenceId, mutated receipt mission hash, altered evidence binding, altered provider-output capture vs digest, caller alias mutation isolation, nested caller mutation isolation, and direct metadata mutation prevention (`TypeError`);
@@ -453,7 +453,7 @@ Acceptance:
 - focused tests: `tests/test_phase_p03_adversarial.py` passing (218 total tests passing in suite).
 
 Phase exit:
-local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is NOT_CLOSED pending independent QA. P-04 is NOT_STARTED / NOT AUTHORIZED.
+local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is CLOSED with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`). Phase P-04 is PENDING / NOT_STARTED / NOT AUTHORIZED. Next exact task: `P-04.01 — Implement secret/config loading and fail-closed validation` (NOT AUTHORIZED until Phase P-03 boundary reconciliation / P-Ω audit receives independent QA review).
 
 ---
 

@@ -103,7 +103,7 @@ See:
 
 ## Current status
 
-**PHASE P-02 CLOSED — INDEPENDENT QA PASS (Verified SHA: `293ec637464294a6caaca8cffcd85dd666890f61`); PHASE P-03 PENDING / NOT_STARTED**
+**PHASE P-03 CLOSED — INDEPENDENT QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`); PHASE P-04 PENDING / NOT_STARTED**
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
@@ -114,9 +114,17 @@ Phase progression and verified milestones:
   - Hard boundary enforcement: Strictly zero external provider SDK imports (`boto3`, `google`, `mcp`, etc.), zero database/persistence implementations, zero generic evidence ledgers, zero generic content-addressed evidence ID implementations, zero runtime state-transition guard engines, zero model/LLM invocations, and zero silent live→fixture fallback.
   - Canonical recursive domain inspection: AST purity and anti-leakage checks recursively cover `src/stilldone/domain/**/*.py` (`rglob("*.py")`) with regression proof against nested module bypasses (`test_domain_source_enumeration_includes_nested_modules`, `test_nested_module_forbidden_import_detected`).
   - Donor truth: Zero donor source code imported (0 lines); all domain logic is clean-room reimplemented; donor concepts preserved as `CONCEPT_ONLY`.
-- **Phase P-03 (Deterministic Evidence Ledger & Fact Authority)**: `PENDING / NOT_STARTED`.
-  - Next exact task: `P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs`.
-  - **Discipline constraints**: `P-03.01` is **NOT AUTHORIZED** until this Phase P-02 boundary reconciliation / P-Ω audit receives independent QA review. Phase P-03 MUST NOT START.
+- **Phase P-03 (Deterministic Evidence Ledger & Fact Authority)**: Complete and closed with independent QA PASS (`P-03.01` through `P-03.06`, verified baseline SHA `46e55b424eb999c666932871b5b5517397b85db6`).
+  - Canonical serialization & evidence identity: deterministic primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`), sorted keys, fail-closed post-NFC duplicate key collisions, and domain-separated SHA-256 `EvidenceId` (`stilldone:evidence:v1`).
+  - Append-only ledger port: provider-neutral port (`MissionLedgerPort`) with immutable records (`MissionRecord`, `ActionRecord`, `EvidenceRecord`), duplicate/conflict fail-closed guards (`DuplicateRecordError`, `RecordConflictError`), defensive payload snapshot isolation (`freeze_canonical_payload`, `CanonicalPayload`, `CanonicalSequence`), and explicitly non-durable in-memory implementation (`InMemoryNonDurableLedger`).
+  - Deterministic state-transition guards: runtime guard engine (`MissionTransitionGuard`) strictly enforcing lifecycle rules; promotion to `READY` permitted only from `VERIFYING` and requiring all-`VERIFIED` step evidence; executor success alone cannot promote; `NOT_RUN != PASS`.
+  - Bounded sanitized provider-output capture: detached structural sanitization (`capture_provider_output`, `SanitizedProviderCapture`), explicit `CaptureBounds`, deterministic truncation metadata, fail-closed total size limits, and SHA-256 `CaptureDigest` (`stilldone:provider-capture:v1`).
+  - Receipt projections: immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved source semantics without overclaiming raw 64-char hex digest alone.
+  - Adversarial hardening: 27 negative tests covering tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
+  - Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
+- **Phase P-04 (Security, Privacy & Authority Foundation)**: `PENDING / NOT_STARTED / NOT AUTHORIZED`.
+  - Next exact task: `P-04.01 — Implement secret/config loading and fail-closed validation`.
+  - **Discipline constraints**: `P-04.01` is **NOT AUTHORIZED** until this Phase P-03 boundary reconciliation / P-Ω audit receives independent QA review. Phase P-04 MUST NOT START.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
