@@ -99,11 +99,22 @@ class SecretString:
     """
 
     __slots__ = ("_plaintext",)
+    _plaintext: str
 
     def __init__(self, value: str) -> None:
         if not isinstance(value, str):
             raise TypeError(f"SecretString value must be a str, got {type(value).__name__}")
-        self._plaintext = value
+        object.__setattr__(self, "_plaintext", value)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(
+            f"{self.__class__.__name__} is immutable; attribute assignment is forbidden"
+        )
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(
+            f"{self.__class__.__name__} is immutable; attribute deletion is forbidden"
+        )
 
     def get_secret_value(self) -> str:
         """Explicitly return the underlying secret plaintext."""
@@ -167,11 +178,10 @@ def parse_string(val: str) -> str:
 
 
 def parse_secret_string(val: str) -> SecretString:
-    """Parse and validate a non-empty secret string."""
-    stripped = val.strip()
-    if not stripped:
+    """Parse and validate a non-empty secret string without mutating whitespace."""
+    if not val.strip():
         raise ValueError("Secret value cannot be empty or whitespace-only")
-    return SecretString(stripped)
+    return SecretString(val)
 
 
 def parse_int(val: str) -> int:
@@ -476,10 +486,16 @@ class ConfigSchema:
                 raw_value = env_snapshot[key]
                 is_empty_or_whitespace = raw_value.strip() == ""
 
-                if field.required and is_empty_or_whitespace:
-                    raise MissingConfigurationError(
+                if is_empty_or_whitespace:
+                    if field.required:
+                        raise MissingConfigurationError(
+                            key,
+                            f"Required configuration key {key!r} is empty or whitespace-only",
+                        )
+                    raise InvalidConfigurationValueError(
                         key,
-                        f"Required configuration key {key!r} is empty or whitespace-only",
+                        "value cannot be empty or whitespace-only",
+                        is_secret=is_secret,
                     )
 
                 # Parse value
@@ -562,8 +578,7 @@ class ConfigSchema:
                 candidates = [
                     k
                     for k in self._fields_by_key
-                    if k.lower() == df.name.lower()
-                    or k.lower() == f"{ns}{df.name}".lower()
+                    if k.lower() == df.name.lower() or k.lower() == f"{ns}{df.name}".lower()
                 ]
                 if len(candidates) == 1:
                     config_key = candidates[0]

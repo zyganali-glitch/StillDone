@@ -543,7 +543,7 @@ def test_parse_string() -> None:
 def test_parse_secret_string() -> None:
     secret = parse_secret_string("  my-secret-val  ")
     assert isinstance(secret, SecretString)
-    assert secret.get_secret_value() == "my-secret-val"
+    assert secret.get_secret_value() == "  my-secret-val  "
     with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
         parse_secret_string("")
 
@@ -742,3 +742,176 @@ def test_no_provider_credential_variables_introduced() -> None:
     for forbidden in forbidden_provider_vars:
         msg = f"Forbidden provider credential variable declared: {forbidden}"
         assert forbidden not in declared, msg
+
+
+# ===========================================================================
+# 11. P-04.01 Surgical Repair Regressions
+# ===========================================================================
+
+
+def test_secret_string_ordinary_mutation_fails_closed() -> None:
+    """A. SecretString ordinary mutation fails closed."""
+    secret = SecretString("initial-secret-value")
+
+    # 1. SecretString plaintext is correct immediately after creation
+    assert secret.get_secret_value() == "initial-secret-value"
+    assert secret.reveal() == "initial-secret-value"
+
+    # 2. secret._plaintext = 'tampered' fails
+    with pytest.raises(AttributeError, match="immutable.*assignment is forbidden"):
+        secret._plaintext = "tampered"
+
+    # Arbitrary attribute assignment fails
+    with pytest.raises(AttributeError, match="immutable.*assignment is forbidden"):
+        secret.custom_attr = "injected"
+
+    # Attribute deletion fails
+    with pytest.raises(AttributeError, match="immutable.*deletion is forbidden"):
+        del secret._plaintext
+
+    # 3. Existing repr/str/format redaction remains intact
+    assert repr(secret) == 'SecretString("**********")'
+    assert str(secret) == "[REDACTED]"
+    assert f"{secret}" == "[REDACTED]"
+    assert f"value={secret!s}" == "value=[REDACTED]"
+
+    # 4. Existing constant-time SecretString equality remains intact
+    assert secret == SecretString("initial-secret-value")
+    assert secret != SecretString("other-secret-value")
+
+    # Plaintext remains unchanged
+    assert secret.get_secret_value() == "initial-secret-value"
+
+
+def test_secret_string_hash_remains_stable() -> None:
+    """B. SecretString hash remains stable for the lifetime of the object."""
+    secret = SecretString("stable-secret-token")
+    initial_hash = hash(secret)
+
+    # Calling hash repeatedly yields identical value
+    assert hash(secret) == initial_hash
+    assert hash(secret) == hash(SecretString("stable-secret-token"))
+
+    # Attempting mutation fails and does not alter hash
+    with pytest.raises(AttributeError):
+        secret._plaintext = "tampered"
+
+    assert hash(secret) == initial_hash
+
+    # Can be reliably used as dictionary key and in sets
+    cache = {secret: "cached_data"}
+    assert secret in cache
+    assert SecretString("stable-secret-token") in cache
+    assert cache[SecretString("stable-secret-token")] == "cached_data"
+
+
+def test_loaded_config_held_secret_cannot_be_mutated() -> None:
+    """C. LoadedConfig-held secret cannot be mutated through normal attribute assignment."""
+    schema = ConfigSchema(
+        fields=[
+            ConfigField("STILLDONE_API_KEY", parse_secret_string, is_secret=True),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    cfg = schema.load({"STILLDONE_API_KEY": "original-live-key"})
+    retrieved_secret: SecretString = cfg["STILLDONE_API_KEY"]
+    assert retrieved_secret.get_secret_value() == "original-live-key"
+
+    # Normal attribute assignment fails closed
+    with pytest.raises(AttributeError, match="immutable"):
+        retrieved_secret._plaintext = "tampered-live-key"
+
+    # LoadedConfig snapshot retains original plaintext
+    assert cfg["STILLDONE_API_KEY"].get_secret_value() == "original-live-key"
+    assert retrieved_secret.get_secret_value() == "original-live-key"
+
+
+def test_optional_empty_input_fails_closed_with_permissive_parser() -> None:
+    """D. Optional empty input fails closed at the loader boundary with a permissive parser."""
+    parser_called = False
+
+    def permissive_parser(val: str) -> str:
+        nonlocal parser_called
+        parser_called = True
+        return val
+
+    schema = ConfigSchema(
+        fields=[
+            ConfigField(
+                "STILLDONE_OPTIONAL_KEY",
+                permissive_parser,
+                required=False,
+                default="default-value",
+            ),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    with pytest.raises(InvalidConfigurationValueError) as exc_info:
+        schema.load({"STILLDONE_OPTIONAL_KEY": ""})
+
+    assert exc_info.value.key == "STILLDONE_OPTIONAL_KEY"
+    assert "value cannot be empty or whitespace-only" in str(exc_info.value)
+    # Loader boundary owns this invariant; parser was never invoked
+    assert parser_called is False
+
+
+def test_optional_whitespace_input_fails_closed_with_permissive_parser() -> None:
+    """E. Optional whitespace-only input fails closed at loader boundary with permissive parser."""
+    parser_called = False
+
+    def permissive_parser(val: str) -> str:
+        nonlocal parser_called
+        parser_called = True
+        return val
+
+    schema = ConfigSchema(
+        fields=[
+            ConfigField(
+                "STILLDONE_OPTIONAL_KEY",
+                permissive_parser,
+                required=False,
+                default="default-value",
+            ),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    with pytest.raises(InvalidConfigurationValueError) as exc_info:
+        schema.load({"STILLDONE_OPTIONAL_KEY": "   \t \n  "})
+
+    assert exc_info.value.key == "STILLDONE_OPTIONAL_KEY"
+    assert "value cannot be empty or whitespace-only" in str(exc_info.value)
+    assert parser_called is False
+
+    # Absent optional key receives explicit default
+    cfg = schema.load({})
+    assert cfg["STILLDONE_OPTIONAL_KEY"] == "default-value"
+
+
+def test_parse_secret_string_preserves_whitespace_exactly() -> None:
+    """F. parse_secret_string preserves leading/trailing whitespace of valid secret exactly."""
+    s1 = parse_secret_string(" abc ")
+    assert s1.get_secret_value() == " abc "
+
+    s2 = parse_secret_string(" leading-space")
+    assert s2.get_secret_value() == " leading-space"
+
+    s3 = parse_secret_string("trailing-space ")
+    assert s3.get_secret_value() == "trailing-space "
+
+    s4 = parse_secret_string("\tsecret\n")
+    assert s4.get_secret_value() == "\tsecret\n"
+
+
+def test_parse_secret_string_blank_and_whitespace_fails_closed() -> None:
+    """G. blank/whitespace-only secret still fails closed."""
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        parse_secret_string("")
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        parse_secret_string("   ")
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        parse_secret_string("\t  \n  \r\n ")

@@ -76,11 +76,11 @@ Preferred AWS target:
 P-04.01 — Implement secret/config loading and fail-closed validation
 
 Status:
-`DONE — awaiting independent QA`
+`REPAIRED — awaiting independent QA`
 
 ## Phase P-04 Status
 
-- P-04.01 — DONE — awaiting independent QA
+- P-04.01 — REPAIRED — awaiting independent QA
 - P-04.02 — PENDING / NOT AUTHORIZED
 - P-04.03 — PENDING / NOT AUTHORIZED
 - P-04.04 — PENDING / NOT AUTHORIZED
@@ -89,7 +89,7 @@ Status:
 - P-04.07 — PENDING / NOT AUTHORIZED
 
 Phase P-03 is **CLOSED — independent QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`)**.
-Phase P-04 is **IN_PROGRESS (P-04.01 DONE — awaiting independent QA)**.
+Phase P-04 is **IN_PROGRESS (P-04.01 REPAIRED — awaiting independent QA)**.
 
 ## Last independently VERIFIED contiguous SHA
 
