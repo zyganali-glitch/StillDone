@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-03 CLOSED — INDEPENDENT QA PASS (Verified Baseline SHA: 46e55b424eb999c666932871b5b5517397b85db6)**
+Current repository state: **Phase P-03: CLOSED; Phase P-04: IN_PROGRESS (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: DONE — awaiting independent QA; P-04.04: PENDING / NOT AUTHORIZED; Last independently verified contiguous SHA: `4125da1357ed38483941216aae1a3182afadf404`)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -118,7 +118,7 @@ Phase P-03 (Deterministic Evidence Ledger & Fact Authority) successfully closed 
 - Implemented immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved exact source semantics without overclaiming raw 64-char hex digest alone.
 - Hardened with 27 adversarial tests (`tests/test_phase_p03_adversarial.py`) across tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
 - Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
-- Phase P-04 is `PENDING / NOT_STARTED / NOT AUTHORIZED`.
+- At the P-03 implementation exit, before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED` (Phase P-04 is currently `IN_PROGRESS`).
 
 ### Phase P-02 Closure Summary
 Phase P-02 (Provider-Neutral Mission & Desired-State Contracts) successfully closed with independent QA PASS:
@@ -128,7 +128,7 @@ Phase P-02 (Provider-Neutral Mission & Desired-State Contracts) successfully clo
 - Verified strict domain boundaries: strictly zero external provider SDK imports (`boto3`, `google`, `mcp`, etc.), zero database/persistence implementations, zero generic evidence ledgers, zero generic content-addressed evidence ID implementations, zero runtime state-transition guard engines, zero model/LLM invocations, and zero silent live→fixture fallback.
 - Canonical recursive protection: P-02.08 repair commit `293ec637464294a6caaca8cffcd85dd666890f61` established recursive AST and anti-leakage inspection (`rglob("*.py")`) across `src/stilldone/domain/**/*.py` with regression protection against nested module bypasses.
 - Donor truth: zero donor source code imported (0 lines); all domain logic is clean-room reimplemented; donor concepts preserved as `CONCEPT_ONLY`.
-- Phase P-03 is `PENDING / NOT_STARTED / NOT AUTHORIZED`.
+- At the Phase P-02 closure exit, Phase P-03 was `PENDING / NOT_STARTED / NOT AUTHORIZED` (Phase P-03 is now closed).
 
 ### Phase P-01 Feasibility Gate Summary
 Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:

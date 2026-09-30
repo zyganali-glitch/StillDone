@@ -370,7 +370,7 @@ Acceptance:
 - future-leakage assertions: verified zero persistence, zero SQLite, zero `open()` file calls, zero generic evidence ledger/hashing, zero runtime transition engine, zero model/LLM invocation, and zero live/fixture fallback;
 - recursive domain inspection: repair commit `293ec637464294a6caaca8cffcd85dd666890f61` canonicalized recursive `rglob("*.py")` inspection across `src/stilldone/domain/**/*.py` with regression protection against nested module bypasses (`test_domain_source_enumeration_includes_nested_modules`, `test_nested_module_forbidden_import_detected`);
 - focused unit tests: `tests/domain/test_phase_p02_contracts.py` passing (120 total tests in suite passing);
-- phase exit: Phase P-02 is complete and closed with independent QA PASS (Verified SHA: `293ec637464294a6caaca8cffcd85dd666890f61`). Phase P-03 is PENDING / NOT_STARTED / NOT AUTHORIZED. Next exact task: `P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs` (NOT AUTHORIZED until Phase P-02 boundary reconciliation is independently reviewed).
+- phase exit: Phase P-02 is complete and closed with independent QA PASS (Verified SHA: `293ec637464294a6caaca8cffcd85dd666890f61`). (Historically, at Phase P-02 closure exit, Phase P-03 was `PENDING / NOT_STARTED / NOT AUTHORIZED`; Phase P-03 is now closed).
 
 Phase exit:
 core domain imports no AWS/Google/MCP UI SDK objects; Phase P-02 closed with independent QA PASS.
@@ -453,7 +453,7 @@ Acceptance:
 - focused tests: `tests/test_phase_p03_adversarial.py` passing (218 total tests passing in suite).
 
 Phase exit:
-local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is CLOSED with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`). Phase P-04 is PENDING / NOT_STARTED / NOT AUTHORIZED. Next exact task: `P-04.01 — Implement secret/config loading and fail-closed validation` (NOT AUTHORIZED until Phase P-03 boundary reconciliation / P-Ω audit receives independent QA review).
+local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is CLOSED with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`). (Historically, at the P-03 implementation exit before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED`; Phase P-04 is currently `IN_PROGRESS`).
 
 ---
 
@@ -489,7 +489,7 @@ Acceptance:
 - detached/idempotent transformation: caller input is never mutated; result is deeply isolated; `redact(redact(x)) == redact(x)`;
 - P-03.04 capture boundary integration: raw provider output is redacted before structural sanitization, bounds checking, and digest computation in `capture_provider_output`; stored payload contains only redacted representation; digest describes stored redacted payload;
 - fail-closed & error safety: unsupported objects fail closed with `UnsupportedRedactionTypeError` without leaking repr() or memory addresses; zero secret plaintext echoed in error messages;
-- focused tests: `tests/test_redaction.py` passing (308 total tests passing in suite).
+- focused tests: `tests/test_redaction.py` passing (77 redaction tests, 16 capture tests, 54 config tests; 349 total tests passing in suite at final verified closure SHA `4125da1357ed38483941216aae1a3182afadf404`).
 
 ### P-04.03 — Implement supported-action allowlist and parameter validation
 Status: DONE — awaiting independent QA
@@ -502,7 +502,7 @@ Acceptance:
 - secret/error safety: validation errors identify key, rule, type, and target, never echoing sensitive parameter plaintext values;
 - bypass resistance: `ValidatedActionContract` is self-validating on construction; direct `ActionContract` construction undergoes identical validation;
 - purity & authority boundary: pure validation only; zero provider/network imports; zero authority classification (`AuthorityClass`), approval grants (`ApprovalGrant`), or execution side effects;
-- focused unit tests: `tests/test_action_policy.py` passing (447 total tests in suite passing).
+- focused unit tests: `tests/test_action_policy.py` passing (98 focused action-policy tests, 447 total tests in suite passing).
 
 ### P-04.04 — Implement authority classification and approval-binding verification
 Status: PENDING
