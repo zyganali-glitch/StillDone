@@ -522,7 +522,7 @@ Acceptance:
 - focused unit tests: `tests/test_authority_policy.py` passing (44 focused authority-policy tests, 491 total tests in suite passing).
 
 ### P-04.05 — Implement demo-resource isolation checks
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `95aa53aece4c16792e6fc33f916133bab02bd78d`)
 
 Acceptance:
 - precondition & bypass resistance: isolation checks accept only P-04.03 `ValidatedActionContract`; raw `ActionContract` or unvalidated objects fail closed (`DemoIsolationTypeError`);
@@ -536,7 +536,20 @@ Acceptance:
 - focused unit tests: `tests/test_demo_isolation.py` passing (35 focused isolation tests, 526 total tests in suite passing).
 
 ### P-04.06 — Implement public-endpoint rate/budget protection contract
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- deterministic provider-neutral rate and budget protection: `src/stilldone/endpoint_protection.py` implementing immutable `EndpointProtectionPolicy`, `RateSnapshot`, `BudgetSnapshot`, `EndpointRequestAssessment`, `EndpointAdmissionDecision`, and pure `evaluate_endpoint_admission`;
+- request exposure classes: minimal closed enum `RequestExposureClass` (`NO_PAID_CAPABILITY`, `PAID_CAPABLE_LIVE`); `NO_PAID_CAPABILITY` passes general rate limit without requiring budget snapshot and does not consume paid-live allowance;
+- explicit operator live gate: `policy.live_paid_path_enabled: bool` defaults to `False` (no implicit True); disabled gate fails closed (`LIVE_PATH_DISABLED`);
+- caller exposure classes: closed enum `CallerClass` (`PUBLIC_UNTRUSTED`, `OPERATOR_CONTROLLED`); `PAID_CAPABLE_LIVE` + `PUBLIC_UNTRUSTED` fails closed (`PUBLIC_PAID_PATH_FORBIDDEN`);
+- finite rate limits & fail-closed window: exact positive integer limits; bool rejected; snapshot window `window_start <= at < window_end` enforced; boundary `at == window_start` valid, `at == window_end` fails closed (`RATE_SNAPSHOT_INVALID_OR_STALE`); general rate ceiling (`RATE_LIMIT_EXCEEDED`) and paid-live rate ceiling (`PAID_LIVE_RATE_LIMIT_EXCEEDED`) enforced with zero off-by-one errors;
+- exact budget policy & credit freshness: exact `Decimal` arithmetic; floats, NaNs, infinities, and string coercions rejected; required conservative gross estimate for `PAID_CAPABLE_LIVE` (> 0, finite); snapshot freshness `observed_at <= at < valid_until` (`BUDGET_TRUTH_STALE`); unconfirmed credit coverage denied (`CREDIT_COVERAGE_UNCONFIRMED`); usage + estimate > ceiling denied (`INTERNAL_BUDGET_EXCEEDED`); estimate > remaining credit denied (`INSUFFICIENT_OBSERVED_CREDIT`); exact internal budget boundary admitted;
+- zero-personal-spend truth boundary: `ALLOW` decision certifies deterministic contract compliance with fresh supplied facts; does not claim billing proof, personal spend proof, or AWS hard cap;
+- rate-limit persistence boundary: pure evaluator evaluates snapshot; does not claim atomic quota consumption or concurrency safety (deferred to P-05.05 / deployment layer);
+- separation of concerns: admission decision contains zero authority classes (`AuthorityClass`), approval grants (`ApprovalGrant`), execution attempts (`ExecutionAttempt`), ledger mutations, or mission state promotions (`VERIFIED`, `READY`);
+- purity: zero network, zero provider SDK imports, zero environment reads, zero wall-clock reads (`datetime.now`);
+- focused unit tests: `tests/test_endpoint_protection.py` passing (46 focused tests, 573 total tests in suite passing).
 
 ### P-04.07 — Run focused security/threat-model P-Ω audit
 Status: PENDING
