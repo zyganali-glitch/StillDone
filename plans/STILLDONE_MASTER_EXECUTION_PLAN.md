@@ -476,7 +476,7 @@ Acceptance:
 - focused unit tests: `tests/test_config.py` passing (272 total tests passing in suite).
 
 ### P-04.02 — Implement log/evidence redaction for tokens, OAuth material, emails, and sensitive identifiers
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `4125da1357ed38483941216aae1a3182afadf404`)
 
 Acceptance:
 - deterministic provider-neutral redaction boundary: `src/stilldone/redaction.py` implementing `redact`, `redact_with_metadata`, `redact_text`, and `redact_log_message`;
@@ -492,7 +492,17 @@ Acceptance:
 - focused tests: `tests/test_redaction.py` passing (308 total tests passing in suite).
 
 ### P-04.03 — Implement supported-action allowlist and parameter validation
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- closed-world action policy: `src/stilldone/action_policy.py` implementing immutable `ACTION_POLICIES` mapping exactly 5 canonical `ActionType` members to `ActionPolicy`; zero dynamic/plugin/model-defined actions; missing/extra entries fail closed;
+- target system & ResourceKind compatibility: calendar.read -> google_calendar / CALENDAR_EVENT; calendar.update -> google_calendar / CALENDAR_EVENT; task.read -> google_tasks / TASK; task.create -> google_tasks / TASK_LIST; weather.read -> open_meteo / WEATHER_LOCATION; mismatched system or ResourceKind fails closed with `ActionTargetCompatibilityError`;
+- closed-world parameter schemas: calendar.read, task.read, weather.read reject all parameters; calendar.update requires at least 1 supported parameter from {summary, start_time, all_day}; task.create requires title: str and accepts optional due: str; unknown/misspelled/alias parameters fail closed with `UnknownParameterError`;
+- strict type safety & deterministic bounds: all_day accepts bool only (no int/str coercions); strings non-empty and non-whitespace; internal security bound `MAX_PARAM_STRING_LENGTH = 1024`; oversized values fail closed with `OversizedParameterError`;
+- secret/error safety: validation errors identify key, rule, type, and target, never echoing sensitive parameter plaintext values;
+- bypass resistance: `ValidatedActionContract` is self-validating on construction; direct `ActionContract` construction undergoes identical validation;
+- purity & authority boundary: pure validation only; zero provider/network imports; zero authority classification (`AuthorityClass`), approval grants (`ApprovalGrant`), or execution side effects;
+- focused unit tests: `tests/test_action_policy.py` passing (447 total tests in suite passing).
 
 ### P-04.04 — Implement authority classification and approval-binding verification
 Status: PENDING
