@@ -406,7 +406,7 @@ Acceptance:
 - focused tests: `tests/test_ledger.py` passing (161 total tests passing in suite).
 
 ### P-03.03 — Implement deterministic state-transition guards
-Status: DONE — independent QA PASS (Verified SHA: `2079f280fe8ba1fa08d963339031c6a2c0a9696c`)
+Status: DONE — independent QA PASS (Verified SHA: `2079f28d291922f0d4aa6525aa2989f42b3da610`)
 
 Acceptance:
 - runtime transition guard engine: `MissionTransitionGuard`, `assert_valid_transition`, `assert_can_promote_to_ready`, and `is_transition_allowed` using canonical `MissionState` and `DECLARATIVE_MISSION_TRANSITIONS`;
