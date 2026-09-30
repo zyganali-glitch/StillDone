@@ -505,7 +505,7 @@ Acceptance:
 - focused unit tests: `tests/test_action_policy.py` passing (98 focused action-policy tests, 447 total tests in suite passing).
 
 ### P-04.04 — Implement authority classification and approval-binding verification
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - precondition & bypass resistance: authority classification accepts only P-04.03 `ValidatedActionContract`; raw `ActionContract` or unvalidated objects fail closed (`AuthorityPolicyTypeError`);
@@ -518,8 +518,8 @@ Acceptance:
 - wrong/stale/tampered approval law: wrong mission, wrong action ID, changed parameters, changed target resource/parent, wrong action type, wrong authority class, altered binding hash, expired, or future grants fail closed; string "yes" and arbitrary model prose rejected with `InvalidApprovalTypeError`;
 - policy law: `IRREVERSIBLE_BLOCKED_OR_HUMAN_REQUIRED` is never auto-authorized even with an ApprovalGrant; `EXTERNAL_COMMUNICATION_APPROVAL_REQUIRED` requires exact bound approval;
 - replay & purity boundaries: static binding/validity verification only; does not claim single-use durable consumption; pure verification creating zero execution attempts, zero ledger mutations, and zero state promotions;
-- error secrecy: sensitive action parameter plaintext is never echoed in error messages or decision reasons; `repr(ApprovalGrant)` is not dumped;
-- focused unit tests: `tests/test_authority_policy.py` passing (39 focused authority-policy tests, 486 total tests in suite passing).
+- error secrecy: sensitive action parameter plaintext and external target identifiers (resource_id, parent_id) are never echoed in error messages or decision reasons; safe structural facts only are reported; `repr(ApprovalGrant)` is not dumped;
+- focused unit tests: `tests/test_authority_policy.py` passing (44 focused authority-policy tests, 491 total tests in suite passing).
 
 ### P-04.05 — Implement demo-resource isolation checks
 Status: PENDING

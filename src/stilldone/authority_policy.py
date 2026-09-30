@@ -16,7 +16,8 @@ Enforces StillDone's fail-closed authority classification and approval verificat
   - Freshly recomputed SHA-256 binding hash compared with constant-time equality
     (hmac.compare_digest).
   - Explicit timezone-aware validity window: issued_at <= at < expires_at.
-- Error safety: Sensitive parameter plaintext and full grant reprs are never echoed.
+- Error safety: Sensitive parameter plaintext, external target identifiers (resource_id,
+  parent_id), and full grant reprs are never echoed.
 - Replay boundary: P-04.04 verifies static binding and validity only. It does not
   implement durable single-use approval consumption, revocation registries, or replay
   ledgers. A valid grant may verify repeatedly in this pure layer.
@@ -42,6 +43,43 @@ from stilldone.domain.authority import (
     compute_approval_binding_hash,
 )
 from stilldone.domain.mission import MissionId
+
+# ===========================================================================
+# Decision Status and Rejection Reason Enums
+# ===========================================================================
+
+
+class AuthorityDecisionStatus(StrEnum):
+    """Canonical authority decision statuses."""
+
+    AUTHORIZED_NO_APPROVAL_REQUIRED = "AUTHORIZED_NO_APPROVAL_REQUIRED"
+    AUTHORIZED_BY_BOUND_APPROVAL = "AUTHORIZED_BY_BOUND_APPROVAL"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    BLOCKED = "BLOCKED"
+
+
+AuthorityDecisionCode = AuthorityDecisionStatus
+
+
+class RejectionReason(StrEnum):
+    """Specific rejection categories for non-authorized authority evaluations."""
+
+    UNEXPECTED_APPROVAL_GRANT = "UNEXPECTED_APPROVAL_GRANT"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    IRREVERSIBLE_ACTION_BLOCKED = "IRREVERSIBLE_ACTION_BLOCKED"
+    MISSION_MISMATCH = "MISSION_MISMATCH"
+    ACTION_ID_MISMATCH = "ACTION_ID_MISMATCH"
+    ACTION_TYPE_MISMATCH = "ACTION_TYPE_MISMATCH"
+    AUTHORITY_CLASS_MISMATCH = "AUTHORITY_CLASS_MISMATCH"
+    PARAMETERS_MISMATCH = "PARAMETERS_MISMATCH"
+    TARGET_SYSTEM_MISMATCH = "TARGET_SYSTEM_MISMATCH"
+    TARGET_RESOURCE_KIND_MISMATCH = "TARGET_RESOURCE_KIND_MISMATCH"
+    TARGET_RESOURCE_ID_MISMATCH = "TARGET_RESOURCE_ID_MISMATCH"
+    TARGET_PARENT_ID_MISMATCH = "TARGET_PARENT_ID_MISMATCH"
+    APPROVAL_NOT_YET_VALID = "APPROVAL_NOT_YET_VALID"
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+    BINDING_HASH_MISMATCH = "BINDING_HASH_MISMATCH"
+
 
 # ===========================================================================
 # Authority Policy Exception Hierarchy
@@ -79,6 +117,15 @@ class InvalidApprovalTypeError(AuthorityPolicyError, TypeError):
 class ApprovalBindingMismatchError(AuthorityPolicyError, ValueError):
     """Raised when an ApprovalGrant does not match the candidate action contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        rejection_reason: RejectionReason | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.rejection_reason = rejection_reason
+
 
 class ApprovalAuthorityClassMismatchError(AuthorityPolicyError, ValueError):
     """Raised when an ApprovalGrant authority class does not match the expected authority class."""
@@ -102,43 +149,6 @@ class IrreversibleActionBlockedError(AuthorityPolicyError):
 
 class AuthorityBlockedError(AuthorityPolicyError):
     """Raised when an action is blocked by authority policy."""
-
-
-# ===========================================================================
-# Decision Status and Rejection Reason Enums
-# ===========================================================================
-
-
-class AuthorityDecisionStatus(StrEnum):
-    """Canonical authority decision statuses."""
-
-    AUTHORIZED_NO_APPROVAL_REQUIRED = "AUTHORIZED_NO_APPROVAL_REQUIRED"
-    AUTHORIZED_BY_BOUND_APPROVAL = "AUTHORIZED_BY_BOUND_APPROVAL"
-    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
-    BLOCKED = "BLOCKED"
-
-
-AuthorityDecisionCode = AuthorityDecisionStatus
-
-
-class RejectionReason(StrEnum):
-    """Specific rejection categories for non-authorized authority evaluations."""
-
-    UNEXPECTED_APPROVAL_GRANT = "UNEXPECTED_APPROVAL_GRANT"
-    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
-    IRREVERSIBLE_ACTION_BLOCKED = "IRREVERSIBLE_ACTION_BLOCKED"
-    MISSION_MISMATCH = "MISSION_MISMATCH"
-    ACTION_ID_MISMATCH = "ACTION_ID_MISMATCH"
-    ACTION_TYPE_MISMATCH = "ACTION_TYPE_MISMATCH"
-    AUTHORITY_CLASS_MISMATCH = "AUTHORITY_CLASS_MISMATCH"
-    PARAMETERS_MISMATCH = "PARAMETERS_MISMATCH"
-    TARGET_SYSTEM_MISMATCH = "TARGET_SYSTEM_MISMATCH"
-    TARGET_RESOURCE_KIND_MISMATCH = "TARGET_RESOURCE_KIND_MISMATCH"
-    TARGET_RESOURCE_ID_MISMATCH = "TARGET_RESOURCE_ID_MISMATCH"
-    TARGET_PARENT_ID_MISMATCH = "TARGET_PARENT_ID_MISMATCH"
-    APPROVAL_NOT_YET_VALID = "APPROVAL_NOT_YET_VALID"
-    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
-    BINDING_HASH_MISMATCH = "BINDING_HASH_MISMATCH"
 
 
 # ===========================================================================
@@ -247,7 +257,10 @@ class AuthorityDecision:
                 RejectionReason.TARGET_RESOURCE_ID_MISMATCH,
                 RejectionReason.TARGET_PARENT_ID_MISMATCH,
             }:
-                raise ApprovalBindingMismatchError(self.reason or "Approval grant binding mismatch")
+                raise ApprovalBindingMismatchError(
+                    self.reason or "Approval grant binding mismatch",
+                    rejection_reason=self.rejection_reason,
+                )
             raise AuthorityBlockedError(
                 self.reason or f"Action '{self.action_type.value}' is blocked by authority policy"
             )
@@ -361,58 +374,64 @@ def verify_approval_grant(
     if grant.mission_id != action.mission_id:
         raise ApprovalBindingMismatchError(
             f"Approval grant '{grant.approval_id}' mission_id '{grant.mission_id}' "
-            f"does not match candidate action mission_id '{action.mission_id}'"
+            f"does not match candidate action mission_id '{action.mission_id}'",
+            rejection_reason=RejectionReason.MISSION_MISMATCH,
         )
 
     # 3. Action ID match
     if grant.action_id != action.action_id:
         raise ApprovalBindingMismatchError(
             f"Approval grant '{grant.approval_id}' action_id '{grant.action_id}' "
-            f"does not match candidate action action_id '{action.action_id}'"
+            f"does not match candidate action action_id '{action.action_id}'",
+            rejection_reason=RejectionReason.ACTION_ID_MISMATCH,
         )
 
     # 4. Action Type match
     if grant.action.action_type != action.action_type:
         raise ApprovalBindingMismatchError(
             f"Approval grant '{grant.approval_id}' action_type '{grant.action.action_type.value}' "
-            f"does not match candidate action action_type '{action.action_type.value}'"
+            f"does not match candidate action action_type '{action.action_type.value}'",
+            rejection_reason=RejectionReason.ACTION_TYPE_MISMATCH,
         )
 
     # 5. Parameters match (never echoing parameter values)
     if grant.action.parameters != action.parameters:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' parameters do not match action parameters"
+            f"Approval grant '{grant.approval_id}' parameters do not match action parameters",
+            rejection_reason=RejectionReason.PARAMETERS_MISMATCH,
         )
 
-    # 6. TargetIdentity match
+    # 6. TargetIdentity match (safe structural facts only; never echo raw target identifiers)
     if grant.action.target.system != action.target.system:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' target system '{grant.action.target.system}' "
-            f"does not match candidate action target system '{action.target.system}'"
+            f"Approval grant '{grant.approval_id}' target system does not match "
+            "candidate action target system",
+            rejection_reason=RejectionReason.TARGET_SYSTEM_MISMATCH,
         )
     if grant.action.target.resource_kind != action.target.resource_kind:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' target resource_kind "
-            f"'{grant.action.target.resource_kind.value}' does not match candidate action "
-            f"target resource_kind '{action.target.resource_kind.value}'"
+            f"Approval grant '{grant.approval_id}' target resource_kind does not match "
+            "candidate action target resource_kind",
+            rejection_reason=RejectionReason.TARGET_RESOURCE_KIND_MISMATCH,
         )
     if grant.action.target.resource_id != action.target.resource_id:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' target resource_id "
-            f"'{grant.action.target.resource_id}' does not match candidate action "
-            f"target resource_id '{action.target.resource_id}'"
+            f"Approval grant '{grant.approval_id}' target resource_id does not match "
+            "candidate action target resource_id",
+            rejection_reason=RejectionReason.TARGET_RESOURCE_ID_MISMATCH,
         )
     if grant.action.target.parent_id != action.target.parent_id:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' target parent_id "
-            f"'{grant.action.target.parent_id}' does not match candidate action "
-            f"target parent_id '{action.target.parent_id}'"
+            f"Approval grant '{grant.approval_id}' target parent_id does not match "
+            "candidate action target parent_id",
+            rejection_reason=RejectionReason.TARGET_PARENT_ID_MISMATCH,
         )
 
     # 7. Exact ActionContract identity match
     if grant.action != action.action:
         raise ApprovalBindingMismatchError(
-            f"Approval grant '{grant.approval_id}' bound action does not match candidate action"
+            f"Approval grant '{grant.approval_id}' bound action does not match candidate action",
+            rejection_reason=RejectionReason.MISSION_MISMATCH,
         )
 
     # 8. Validity window checks: issued_at <= at < expires_at
@@ -638,7 +657,9 @@ def evaluate_authority(
         return decision
     except ApprovalBindingMismatchError as exc:
         msg = str(exc)
-        if "mission_id" in msg:
+        if exc.rejection_reason is not None:
+            rej = exc.rejection_reason
+        elif "mission_id" in msg:
             rej = RejectionReason.MISSION_MISMATCH
         elif "action_id" in msg:
             rej = RejectionReason.ACTION_ID_MISMATCH

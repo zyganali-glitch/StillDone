@@ -1041,3 +1041,197 @@ def test_authority_decision_does_not_leak_grant_repr() -> None:
     # The decision contains approval_id, but not the full grant object
     assert "ApprovalGrant(" not in d_repr
     assert str(grant.approval_id) in d_repr
+
+
+# ===========================================================================
+# Target External Identifier Secrecy Tests
+# ===========================================================================
+
+_SENTINEL_GRANT_RES_ID = "sentinel-grant-resource-evt-99999"
+_SENTINEL_CANDIDATE_RES_ID = "sentinel-candidate-resource-evt-11111"
+_SENTINEL_GRANT_PARENT_ID = "sentinel-grant-calendar-cal-88888"
+_SENTINEL_CANDIDATE_PARENT_ID = "sentinel-candidate-calendar-cal-22222"
+
+
+def test_target_resource_id_mismatch_secrecy_decision_path() -> None:
+    """A. Prove resource_id mismatch never echoes sentinel IDs in reason or repr."""
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+    action_grant = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        resource_id=_SENTINEL_GRANT_RES_ID,
+    )
+    action_candidate = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        resource_id=_SENTINEL_CANDIDATE_RES_ID,
+    )
+    grant = _make_grant(action_grant)
+
+    decision = evaluate_authority(action_candidate, approval=grant, at=_TEST_EVAL_AT)
+
+    assert decision.is_authorized is False
+    assert decision.status == AuthorityDecisionStatus.BLOCKED
+    assert decision.rejection_reason == RejectionReason.TARGET_RESOURCE_ID_MISMATCH
+    assert decision.reason is not None
+
+    # Neither sentinel identifier appears in decision.reason
+    assert _SENTINEL_GRANT_RES_ID not in decision.reason
+    assert _SENTINEL_CANDIDATE_RES_ID not in decision.reason
+
+    # Neither sentinel identifier appears in repr(decision)
+    d_repr = repr(decision)
+    assert _SENTINEL_GRANT_RES_ID not in d_repr
+    assert _SENTINEL_CANDIDATE_RES_ID not in d_repr
+
+
+def test_target_resource_id_mismatch_secrecy_exception_path() -> None:
+    """B. Prove resource_id mismatch never echoes sentinel IDs in str(exc) or repr(exc)."""
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+    action_grant = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        resource_id=_SENTINEL_GRANT_RES_ID,
+    )
+    action_candidate = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        resource_id=_SENTINEL_CANDIDATE_RES_ID,
+    )
+    grant = _make_grant(action_grant)
+
+    # 1. verify_approval_grant path
+    with pytest.raises(ApprovalBindingMismatchError) as exc_info:
+        verify_approval_grant(
+            action_candidate,
+            grant,
+            expected_authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            at=_TEST_EVAL_AT,
+        )
+    exc = exc_info.value
+    assert exc.rejection_reason == RejectionReason.TARGET_RESOURCE_ID_MISMATCH
+    assert _SENTINEL_GRANT_RES_ID not in str(exc)
+    assert _SENTINEL_CANDIDATE_RES_ID not in str(exc)
+    assert _SENTINEL_GRANT_RES_ID not in repr(exc)
+    assert _SENTINEL_CANDIDATE_RES_ID not in repr(exc)
+
+    # 2. assert_authorized path
+    with pytest.raises(ApprovalBindingMismatchError) as exc_info_assert:
+        assert_authorized(action_candidate, approval=grant, at=_TEST_EVAL_AT)
+    exc_assert = exc_info_assert.value
+    assert exc_assert.rejection_reason == RejectionReason.TARGET_RESOURCE_ID_MISMATCH
+    assert _SENTINEL_GRANT_RES_ID not in str(exc_assert)
+    assert _SENTINEL_CANDIDATE_RES_ID not in str(exc_assert)
+    assert _SENTINEL_GRANT_RES_ID not in repr(exc_assert)
+    assert _SENTINEL_CANDIDATE_RES_ID not in repr(exc_assert)
+
+
+def test_target_parent_id_mismatch_secrecy_decision_path() -> None:
+    """C. Prove parent_id mismatch never echoes sentinel IDs in reason or repr."""
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+    action_grant = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        parent_id=_SENTINEL_GRANT_PARENT_ID,
+    )
+    action_candidate = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        parent_id=_SENTINEL_CANDIDATE_PARENT_ID,
+    )
+    grant = _make_grant(action_grant)
+
+    decision = evaluate_authority(action_candidate, approval=grant, at=_TEST_EVAL_AT)
+
+    assert decision.is_authorized is False
+    assert decision.status == AuthorityDecisionStatus.BLOCKED
+    assert decision.rejection_reason == RejectionReason.TARGET_PARENT_ID_MISMATCH
+    assert decision.reason is not None
+
+    # Neither sentinel identifier appears in decision.reason
+    assert _SENTINEL_GRANT_PARENT_ID not in decision.reason
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in decision.reason
+
+    # Neither sentinel identifier appears in repr(decision)
+    d_repr = repr(decision)
+    assert _SENTINEL_GRANT_PARENT_ID not in d_repr
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in d_repr
+
+
+def test_target_parent_id_mismatch_secrecy_exception_path() -> None:
+    """D. Prove parent_id mismatch never echoes sentinel IDs in str(exc) or repr(exc)."""
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+    action_grant = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        parent_id=_SENTINEL_GRANT_PARENT_ID,
+    )
+    action_candidate = _make_validated_action(
+        ActionType.CALENDAR_UPDATE,
+        mission_id=mid,
+        action_id=aid,
+        parent_id=_SENTINEL_CANDIDATE_PARENT_ID,
+    )
+    grant = _make_grant(action_grant)
+
+    # 1. verify_approval_grant path
+    with pytest.raises(ApprovalBindingMismatchError) as exc_info:
+        verify_approval_grant(
+            action_candidate,
+            grant,
+            expected_authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            at=_TEST_EVAL_AT,
+        )
+    exc = exc_info.value
+    assert exc.rejection_reason == RejectionReason.TARGET_PARENT_ID_MISMATCH
+    assert _SENTINEL_GRANT_PARENT_ID not in str(exc)
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in str(exc)
+    assert _SENTINEL_GRANT_PARENT_ID not in repr(exc)
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in repr(exc)
+
+    # 2. assert_authorized path
+    with pytest.raises(ApprovalBindingMismatchError) as exc_info_assert:
+        assert_authorized(action_candidate, approval=grant, at=_TEST_EVAL_AT)
+    exc_assert = exc_info_assert.value
+    assert exc_assert.rejection_reason == RejectionReason.TARGET_PARENT_ID_MISMATCH
+    assert _SENTINEL_GRANT_PARENT_ID not in str(exc_assert)
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in str(exc_assert)
+    assert _SENTINEL_GRANT_PARENT_ID not in repr(exc_assert)
+    assert _SENTINEL_CANDIDATE_PARENT_ID not in repr(exc_assert)
+
+
+def test_target_mismatch_specificity_preserved() -> None:
+    """E. Prove mismatch specificity is preserved across all TargetIdentity fields."""
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+
+    # resource_id mismatch -> TARGET_RESOURCE_ID_MISMATCH
+    a_res1 = _make_validated_action(
+        ActionType.CALENDAR_UPDATE, mission_id=mid, action_id=aid, resource_id="res-1"
+    )
+    a_res2 = _make_validated_action(
+        ActionType.CALENDAR_UPDATE, mission_id=mid, action_id=aid, resource_id="res-2"
+    )
+    d_res = evaluate_authority(a_res2, approval=_make_grant(a_res1), at=_TEST_EVAL_AT)
+    assert d_res.rejection_reason == RejectionReason.TARGET_RESOURCE_ID_MISMATCH
+
+    # parent_id mismatch -> TARGET_PARENT_ID_MISMATCH
+    a_par1 = _make_validated_action(
+        ActionType.CALENDAR_UPDATE, mission_id=mid, action_id=aid, parent_id="par-1"
+    )
+    a_par2 = _make_validated_action(
+        ActionType.CALENDAR_UPDATE, mission_id=mid, action_id=aid, parent_id="par-2"
+    )
+    d_par = evaluate_authority(a_par2, approval=_make_grant(a_par1), at=_TEST_EVAL_AT)
+    assert d_par.rejection_reason == RejectionReason.TARGET_PARENT_ID_MISMATCH
