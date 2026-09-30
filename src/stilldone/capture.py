@@ -23,6 +23,10 @@ from stilldone.application.ports.ledger_port import (
     CanonicalPayload,
     CanonicalSequence,
 )
+from stilldone.redaction import (
+    UnsupportedRedactionTypeError,
+    redact,
+)
 from stilldone.serialization import (
     canonical_serialize,
     normalize_datetime,
@@ -42,7 +46,7 @@ class CaptureError(Exception):
     """Base exception for provider output capture errors."""
 
 
-class UnsupportedProviderOutputError(CaptureError):
+class UnsupportedProviderOutputError(CaptureError, UnsupportedRedactionTypeError):
     """Raised when an unsupported provider output object is encountered."""
 
 
@@ -484,10 +488,16 @@ def capture_provider_output(
     if not isinstance(effective_bounds, CaptureBounds):
         raise TypeError(f"bounds must be CaptureBounds, got {type(effective_bounds).__name__}")
 
+    # P-04.02 Redaction boundary: sensitive material removed before structural capture
+    try:
+        redacted_raw = redact(raw_output)
+    except UnsupportedRedactionTypeError as err:
+        raise UnsupportedProviderOutputError(str(err)) from err
+
     reasons: set[str] = set()
 
     sanitized_payload = _sanitize_node(
-        raw_output,
+        redacted_raw,
         depth=1,
         bounds=effective_bounds,
         fail_closed=fail_closed,

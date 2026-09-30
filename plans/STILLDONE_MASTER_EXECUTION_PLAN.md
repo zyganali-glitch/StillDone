@@ -463,7 +463,7 @@ Goal:
 make future live actions bounded by design.
 
 ### P-04.01 — Implement secret/config loading and fail-closed validation
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `933b5364e69c8804dc448c9b0c84e02877d8446d`)
 
 Acceptance:
 - explicit injection & call-time process environment: config loader accepts explicit mapping or process environment at call time; strictly zero environment reads at module import time; no implicit .env loading; no python-dotenv dependency;
@@ -473,10 +473,23 @@ Acceptance:
 - secret value handling: `SecretString` protects sensitive values; plaintext shielded from `repr()`, `str()`, format strings, dataclass reprs, and validation error messages; narrow explicit access via `get_secret_value()` / `reveal()`; direct string equality comparison forbidden (`TypeError`); constant-time equality with `SecretString`;
 - snapshot & alias safety: `LoadedConfig` represents an immutable snapshot completely isolated from caller environment mutations; dataclass instantiation supported via `load_dataclass`;
 - zero provider credentials required: static AWS IAM keys and Google OAuth secrets strictly excluded from schema;
-- focused unit tests: `tests/test_config.py` passing (260 total tests passing in suite).
+- focused unit tests: `tests/test_config.py` passing (272 total tests passing in suite).
 
 ### P-04.02 — Implement log/evidence redaction for tokens, OAuth material, emails, and sensitive identifiers
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- deterministic provider-neutral redaction boundary: `src/stilldone/redaction.py` implementing `redact`, `redact_with_metadata`, `redact_text`, and `redact_log_message`;
+- semantic redaction markers: `[REDACTED_SECRET]`, `[REDACTED_EMAIL]`, `[REDACTED_IDENTIFIER]`;
+- normalized sensitive mapping keys: robust matching for snake_case, kebab-case, camelCase, PascalCase, and UPPERCASE across tokens, client secrets, passwords, credentials, API keys, and AWS credential material;
+- SecretString safety: values directly replaced with `[REDACTED_SECRET]` without ever calling `get_secret_value()` or `reveal()`;
+- email address redaction: bounded regex pattern detecting standalone or embedded emails;
+- OAuth material sanitization: callback URLs with query or fragment `code`, `state`, `token` sanitized while preserving scheme, host, path, and non-sensitive parameters;
+- sensitive external identifiers: explicit key policy (`account_id`, `calendar_id`, `task_list_id`, `session_id`, `external_resource_id`) and AWS access key IDs (`AKIA...`, `ASIA...`) redacted while preserving StillDone domain identifiers (`MissionId`, `ActionId`, `EvidenceId`);
+- detached/idempotent transformation: caller input is never mutated; result is deeply isolated; `redact(redact(x)) == redact(x)`;
+- P-03.04 capture boundary integration: raw provider output is redacted before structural sanitization, bounds checking, and digest computation in `capture_provider_output`; stored payload contains only redacted representation; digest describes stored redacted payload;
+- fail-closed & error safety: unsupported objects fail closed with `UnsupportedRedactionTypeError` without leaking repr() or memory addresses; zero secret plaintext echoed in error messages;
+- focused tests: `tests/test_redaction.py` passing (308 total tests passing in suite).
 
 ### P-04.03 — Implement supported-action allowlist and parameter validation
 Status: PENDING
