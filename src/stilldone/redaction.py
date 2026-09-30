@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import re
+import types
 import unicodedata
 import urllib.parse
 import uuid
@@ -160,6 +161,8 @@ class UnsupportedRedactionTypeError(RedactionError):
 # Metadata
 # ===========================================================================
 
+CANONICAL_REDACTION_CATEGORIES: frozenset[str] = frozenset({"secret", "email", "identifier"})
+
 
 @dataclass(frozen=True)
 class RedactionMetadata:
@@ -170,6 +173,10 @@ class RedactionMetadata:
     - Tracks categories and counts deterministically.
     - redaction_counts is an immutable, detached snapshot: neither caller-alias
       mutation after construction nor direct attribute assignment can alter it.
+    - Fails closed if redaction_counts contains unknown categories outside
+      CANONICAL_REDACTION_CATEGORIES ('secret', 'email', 'identifier').
+    - Invariant: is_redacted is True iff sum of canonical counts > 0.
+    - Deterministic canonical shape: always populates all canonical categories.
     - to_canonical() / to_dict() return fresh detached ordinary dictionaries.
     """
 
@@ -183,19 +190,35 @@ class RedactionMetadata:
             raise TypeError(
                 f"redaction_counts must be a Mapping, got {type(self.redaction_counts).__name__}"
             )
+        canonical_counts: dict[str, int] = {
+            cat: 0 for cat in sorted(CANONICAL_REDACTION_CATEGORIES)
+        }
         for cat, count in self.redaction_counts.items():
             if not isinstance(cat, str):
                 raise TypeError(f"Category key must be str, got {type(cat).__name__}")
+            if cat not in CANONICAL_REDACTION_CATEGORIES:
+                raise ValueError(
+                    f"Unknown redaction category '{cat}'. "
+                    f"Allowed categories: {sorted(CANONICAL_REDACTION_CATEGORIES)}"
+                )
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                 raise ValueError(f"Category count must be a non-negative integer, got {count!r}")
+            canonical_counts[cat] = count
+
+        total_count = sum(canonical_counts.values())
+        if total_count == 0 and self.is_redacted:
+            raise ValueError("is_redacted must be False when total redaction count is 0")
+        if total_count > 0 and not self.is_redacted:
+            raise ValueError(
+                f"is_redacted must be True when total redaction count is {total_count}"
+            )
+
         # Store a detached immutable snapshot so caller-alias mutation and
         # direct attribute assignment cannot alter metadata truth.
-        import types
-
         object.__setattr__(
             self,
             "redaction_counts",
-            types.MappingProxyType(dict(self.redaction_counts)),
+            types.MappingProxyType(canonical_counts),
         )
 
     def to_canonical(self) -> dict[str, Any]:
@@ -244,15 +267,84 @@ def normalize_key(key: str) -> str:
 
 
 # ===========================================================================
+# Text Pattern Redaction Helpers
+# ===========================================================================
+
+
+def _redact_non_url_text_patterns(text: str, counts: dict[str, int]) -> str:
+    """Apply high-confidence non-URL text patterns to a string.
+
+    Sanitizes:
+    - JWT token strings -> [REDACTED_SECRET]
+    - Bearer authorization headers -> Bearer [REDACTED_SECRET]
+    - Basic authorization headers -> Basic [REDACTED_SECRET]
+    - Google access tokens (ya29...) -> [REDACTED_SECRET]
+    - AWS access key IDs (AKIA..., ASIA...) -> [REDACTED_IDENTIFIER]
+    - Email addresses -> [REDACTED_EMAIL]
+    """
+    result = unicodedata.normalize("NFC", text)
+
+    # 1. JWT token strings
+    def _jwt_replacer(match: re.Match[str]) -> str:
+        counts["secret"] += 1
+        return REDACTED_SECRET
+
+    result = JWT_REGEX.sub(_jwt_replacer, result)
+
+    # 2. Bearer tokens
+    def _bearer_replacer(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        counts["secret"] += 1
+        return f"{prefix}{REDACTED_SECRET}"
+
+    result = BEARER_REGEX.sub(_bearer_replacer, result)
+
+    # 3. Basic auth tokens
+    def _basic_replacer(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        counts["secret"] += 1
+        return f"{prefix}{REDACTED_SECRET}"
+
+    result = BASIC_AUTH_REGEX.sub(_basic_replacer, result)
+
+    # 4. Google tokens
+    def _google_token_replacer(match: re.Match[str]) -> str:
+        counts["secret"] += 1
+        return REDACTED_SECRET
+
+    result = GOOGLE_TOKEN_REGEX.sub(_google_token_replacer, result)
+
+    # 5. AWS access key IDs
+    def _aws_key_replacer(match: re.Match[str]) -> str:
+        counts["identifier"] += 1
+        return REDACTED_IDENTIFIER
+
+    result = AWS_ACCESS_KEY_REGEX.sub(_aws_key_replacer, result)
+
+    # 6. Email addresses
+    def _email_replacer(match: re.Match[str]) -> str:
+        counts["email"] += 1
+        return REDACTED_EMAIL
+
+    result = EMAIL_REGEX.sub(_email_replacer, result)
+
+    return result
+
+
+# ===========================================================================
 # URL Sanitization Helper
 # ===========================================================================
 
 
 def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
-    """Sanitize sensitive query and fragment parameters in an OAuth candidate URL.
+    """Sanitize sensitive query and fragment parameters in a candidate URL.
 
-    Preserves scheme, host, path, and non-sensitive parameters while replacing
-    sensitive parameters (code, state, access_token, etc.) with [REDACTED_SECRET].
+    Preserves scheme, host, path, and non-sensitive parameters while:
+    - Replacing sensitive OAuth parameter values (code, state, token, etc.)
+      with [REDACTED_SECRET].
+    - Applying bounded text-redaction (email, Bearer, Basic, JWT, ya29, AWS ID)
+      to decoded non-sensitive parameter values before re-encoding.
+    - Preserving duplicate parameter ordering.
     """
     # Detach trailing punctuation often attached to URLs in prose
     trailing_punct = ""
@@ -276,36 +368,48 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
     if parsed.query:
         query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
         new_query_pairs: list[tuple[str, str]] = []
+        query_modified = False
         for k, v in query_pairs:
             norm_k = normalize_key(k)
             if norm_k in SENSITIVE_OAUTH_PARAMS:
                 new_query_pairs.append((k, REDACTED_SECRET))
                 if v != REDACTED_SECRET:
                     counts["secret"] += 1
-                    modified = True
+                    query_modified = True
             else:
-                new_query_pairs.append((k, v))
-        new_query_str = urllib.parse.urlencode(
-            new_query_pairs, quote_via=urllib.parse.quote, safe="[]"
-        )
+                new_v = _redact_non_url_text_patterns(v, counts)
+                if new_v != v:
+                    query_modified = True
+                new_query_pairs.append((k, new_v))
+        if query_modified:
+            new_query_str = urllib.parse.urlencode(
+                new_query_pairs, quote_via=urllib.parse.quote, safe="[]"
+            )
+            modified = True
 
     # Process fragment
     new_frag_str = parsed.fragment
     if parsed.fragment and "=" in parsed.fragment:
         frag_pairs = urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True)
         new_frag_pairs: list[tuple[str, str]] = []
+        frag_modified = False
         for k, v in frag_pairs:
             norm_k = normalize_key(k)
             if norm_k in SENSITIVE_OAUTH_PARAMS:
                 new_frag_pairs.append((k, REDACTED_SECRET))
                 if v != REDACTED_SECRET:
                     counts["secret"] += 1
-                    modified = True
+                    frag_modified = True
             else:
-                new_frag_pairs.append((k, v))
-        new_frag_str = urllib.parse.urlencode(
-            new_frag_pairs, quote_via=urllib.parse.quote, safe="[]"
-        )
+                new_v = _redact_non_url_text_patterns(v, counts)
+                if new_v != v:
+                    frag_modified = True
+                new_frag_pairs.append((k, new_v))
+        if frag_modified:
+            new_frag_str = urllib.parse.urlencode(
+                new_frag_pairs, quote_via=urllib.parse.quote, safe="[]"
+            )
+            modified = True
 
     if modified:
         reconstructed = urllib.parse.urlunsplit(
@@ -326,6 +430,7 @@ def redact_text(text: str, counts: dict[str, int] | None = None) -> str:
 
     Detects and replaces:
     - OAuth callback URLs with sensitive query/fragment values -> [REDACTED_SECRET]
+    - Decoded non-sensitive query/fragment values with sensitive content -> redacted
     - JWT token strings -> [REDACTED_SECRET]
     - Bearer authorization headers -> Bearer [REDACTED_SECRET]
     - Basic authorization headers -> Basic [REDACTED_SECRET]
@@ -345,55 +450,14 @@ def redact_text(text: str, counts: dict[str, int] | None = None) -> str:
     # 1. NFC normalization
     result = unicodedata.normalize("NFC", text)
 
-    # 2. OAuth URLs with sensitive query/fragment parameters
+    # 2. URLs with sensitive query/fragment parameters or values
     def _url_replacer(match: re.Match[str]) -> str:
         return _sanitize_oauth_url(match.group(0), effective_counts)
 
     result = URL_CANDIDATE_REGEX.sub(_url_replacer, result)
 
-    # 3. JWT token strings
-    def _jwt_replacer(match: re.Match[str]) -> str:
-        effective_counts["secret"] += 1
-        return REDACTED_SECRET
-
-    result = JWT_REGEX.sub(_jwt_replacer, result)
-
-    # 4. Bearer tokens
-    def _bearer_replacer(match: re.Match[str]) -> str:
-        prefix = match.group(1)
-        effective_counts["secret"] += 1
-        return f"{prefix}{REDACTED_SECRET}"
-
-    result = BEARER_REGEX.sub(_bearer_replacer, result)
-
-    # 5. Basic auth tokens
-    def _basic_replacer(match: re.Match[str]) -> str:
-        prefix = match.group(1)
-        effective_counts["secret"] += 1
-        return f"{prefix}{REDACTED_SECRET}"
-
-    result = BASIC_AUTH_REGEX.sub(_basic_replacer, result)
-
-    # 6. Google tokens
-    def _google_token_replacer(match: re.Match[str]) -> str:
-        effective_counts["secret"] += 1
-        return REDACTED_SECRET
-
-    result = GOOGLE_TOKEN_REGEX.sub(_google_token_replacer, result)
-
-    # 7. AWS access key IDs
-    def _aws_key_replacer(match: re.Match[str]) -> str:
-        effective_counts["identifier"] += 1
-        return REDACTED_IDENTIFIER
-
-    result = AWS_ACCESS_KEY_REGEX.sub(_aws_key_replacer, result)
-
-    # 8. Email addresses
-    def _email_replacer(match: re.Match[str]) -> str:
-        effective_counts["email"] += 1
-        return REDACTED_EMAIL
-
-    result = EMAIL_REGEX.sub(_email_replacer, result)
+    # 3. High-confidence non-URL text patterns
+    result = _redact_non_url_text_patterns(result, effective_counts)
 
     return result
 
@@ -622,6 +686,7 @@ def redact_with_metadata(value: Any) -> tuple[Any, RedactionMetadata]:
 redact_value = redact
 
 __all__ = [
+    "CANONICAL_REDACTION_CATEGORIES",
     "REDACTED_EMAIL",
     "REDACTED_IDENTIFIER",
     "REDACTED_SECRET",

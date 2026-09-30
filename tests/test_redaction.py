@@ -31,6 +31,7 @@ from stilldone.domain.action import ActionId
 from stilldone.domain.mission import MissionId
 from stilldone.evidence import EvidenceId
 from stilldone.redaction import (
+    CANONICAL_REDACTION_CATEGORIES,
     REDACTED_EMAIL,
     REDACTED_IDENTIFIER,
     REDACTED_SECRET,
@@ -1001,3 +1002,314 @@ def test_redaction_output_unchanged_by_metadata_mutation_attempts() -> None:
     result2, meta2 = redact_with_metadata(payload)
     assert result1 == result2
     assert meta2.to_canonical() == meta.to_canonical()
+
+
+# ===========================================================================
+# 19. URL VALUE REDACTION TESTS (BLOCKER 1 REPAIR)
+# ===========================================================================
+
+
+def test_url_email_in_non_sensitive_query_with_oauth_sibling_is_redacted() -> None:
+    """1. Email inside non-sensitive query value + OAuth-sensitive sibling is redacted."""
+    url = "https://x.test/cb?code=AUTHCODE&contact=user@example.com"
+    result = redact_text(url)
+
+    assert "AUTHCODE" not in result
+    assert "user@example.com" not in result
+    assert f"code={REDACTED_SECRET}" in result
+    assert f"contact={REDACTED_EMAIL}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["code"] == REDACTED_SECRET
+    assert params["contact"] == REDACTED_EMAIL
+
+
+def test_url_percent_encoded_email_decoded_redacted_safely_reencoded() -> None:
+    """2. Percent-encoded email is decoded, redacted, then safely re-encoded."""
+    url = "https://x.test/cb?contact=user%40example.com"
+    result = redact_text(url)
+
+    assert "user@example.com" not in result
+    assert "user%40example.com" not in result
+    assert "user%40EXAMPLE.COM" not in result
+    assert f"contact={REDACTED_EMAIL}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["contact"] == REDACTED_EMAIL
+
+
+def test_url_bearer_token_in_non_sensitive_query_is_redacted() -> None:
+    """3. Bearer token inside non-sensitive query value is redacted."""
+    url = "https://x.test/cb?auth_hdr=Bearer%20secret-token-xyz-12345"
+    result = redact_text(url)
+
+    assert "secret-token-xyz-12345" not in result
+    assert f"auth_hdr=Bearer%20{REDACTED_SECRET}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["auth_hdr"] == f"Bearer {REDACTED_SECRET}"
+
+
+def test_url_jwt_in_non_sensitive_query_is_redacted() -> None:
+    """4. JWT inside non-sensitive query value is redacted."""
+    jwt_token = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ."
+        "dozGzN_cevyvWmsTYvA_example_signature_data"
+    )
+    url = f"https://x.test/cb?custom_jwt={jwt_token}"
+    result = redact_text(url)
+
+    assert jwt_token not in result
+    assert f"custom_jwt={REDACTED_SECRET}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["custom_jwt"] == REDACTED_SECRET
+
+
+def test_url_google_token_in_non_sensitive_query_is_redacted() -> None:
+    """5. Google ya29 token inside non-sensitive query value is redacted."""
+    url = "https://x.test/cb?google_tok=ya29.a0AfH6SMBabc1234567890"
+    result = redact_text(url)
+
+    assert "ya29.a0AfH6SMBabc1234567890" not in result
+    assert f"google_tok={REDACTED_SECRET}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["google_tok"] == REDACTED_SECRET
+
+
+def test_url_aws_access_key_in_non_sensitive_query_is_redacted() -> None:
+    """6. AWS access-key identifier inside non-sensitive query value is redacted."""
+    url = "https://x.test/cb?aws_key=AKIAIOSFODNN7EXAMPLE"
+    result = redact_text(url)
+
+    assert "AKIAIOSFODNN7EXAMPLE" not in result
+    assert f"aws_key={REDACTED_IDENTIFIER}" in result
+
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params["aws_key"] == REDACTED_IDENTIFIER
+
+
+def test_url_fragment_values_receive_bounded_redaction() -> None:
+    """7. Same cases for fragment values where practical."""
+    jwt_token = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ."
+        "dozGzN_cevyvWmsTYvA_example_signature_data"
+    )
+    url = (
+        f"https://x.test/auth#access_token=SECRET_TOK"
+        f"&contact=user%40example.com"
+        f"&auth=Bearer%20tok12345"
+        f"&key=AKIAIOSFODNN7EXAMPLE"
+        f"&jwt_val={jwt_token}"
+    )
+    result = redact_text(url)
+
+    assert "SECRET_TOK" not in result
+    assert "user@example.com" not in result
+    assert "user%40example.com" not in result
+    assert "tok12345" not in result
+    assert "AKIAIOSFODNN7EXAMPLE" not in result
+    assert jwt_token not in result
+
+    parsed = urllib.parse.urlsplit(result)
+    frag_params = dict(urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True))
+    assert frag_params["access_token"] == REDACTED_SECRET
+    assert frag_params["contact"] == REDACTED_EMAIL
+    assert frag_params["auth"] == f"Bearer {REDACTED_SECRET}"
+    assert frag_params["key"] == REDACTED_IDENTIFIER
+    assert frag_params["jwt_val"] == REDACTED_SECRET
+
+
+def test_url_no_sensitive_plaintext_survives_raw_or_percent_encoded() -> None:
+    """8. No original plaintext survives in raw or reversible percent-encoded form."""
+    targets = [
+        ("user@example.com", "user%40example.com"),
+        ("admin@corp.org", "admin%40corp.org"),
+        ("test+label@domain.co.uk", "test%2Blabel%40domain.co.uk"),
+    ]
+    for raw_email, encoded_email in targets:
+        url = f"https://x.test/cb?code=AUTH&recipient={encoded_email}"
+        result = redact_text(url)
+
+        # Plaintext cannot survive
+        assert raw_email not in result
+        assert encoded_email not in result
+        assert raw_email.upper() not in result
+        assert encoded_email.upper() not in result
+
+        parsed = urllib.parse.urlsplit(result)
+        params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        assert params["recipient"] == REDACTED_EMAIL
+
+
+def test_url_ordinary_non_sensitive_values_preserve_round_trip() -> None:
+    """9. Ordinary non-sensitive values preserve semantic round trip."""
+    url = "https://x.test/cb?page=1&sort=desc&filter=active&lang=en"
+    result = redact_text(url)
+
+    assert result == url
+    parsed = urllib.parse.urlsplit(result)
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert params == {"page": "1", "sort": "desc", "filter": "active", "lang": "en"}
+
+
+def test_url_duplicate_parameter_order_remains_stable_under_value_redaction() -> None:
+    """10. Duplicate parameter order remains stable under value redaction."""
+    url = "https://x.test/cb?tag=first&tag=second&contact=user@example.com&tag=third"
+    result = redact_text(url)
+
+    parsed = urllib.parse.urlsplit(result)
+    pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    assert pairs == [
+        ("tag", "first"),
+        ("tag", "second"),
+        ("contact", REDACTED_EMAIL),
+        ("tag", "third"),
+    ]
+
+
+def test_url_redaction_remains_deterministic_and_idempotent() -> None:
+    """11. URL redaction remains deterministic and idempotent."""
+    url = (
+        "https://x.test/cb?code=SECRET&contact=user%40example.com"
+        "&auth=Bearer%20tok12345&key=AKIAIOSFODNN7EXAMPLE"
+    )
+    once = redact_text(url)
+    twice = redact_text(once)
+    assert once == twice
+
+    _, meta1 = redact_with_metadata({"url": url})
+    assert meta1.is_redacted is True
+    assert meta1.redaction_counts["secret"] == 2  # code + Bearer
+    assert meta1.redaction_counts["email"] == 1  # contact
+    assert meta1.redaction_counts["identifier"] == 1  # key
+
+    # Redacting already-redacted output increments nothing and marks is_redacted False
+    _, meta2 = redact_with_metadata({"url": once})
+    assert meta2.is_redacted is False
+    assert meta2.redaction_counts["secret"] == 0
+    assert meta2.redaction_counts["email"] == 0
+    assert meta2.redaction_counts["identifier"] == 0
+
+
+# ===========================================================================
+# 20. REDACTION METADATA CANONICAL CATEGORIES & INVARIANTS (BLOCKER 2 REPAIR)
+# ===========================================================================
+
+
+def test_metadata_unknown_category_fails_closed() -> None:
+    """12. Unknown category fails closed."""
+    with pytest.raises(ValueError, match="Unknown redaction category 'made_up_category'"):
+        RedactionMetadata(
+            is_redacted=True,
+            redaction_counts={"secret": 1, "made_up_category": 999},
+        )
+    with pytest.raises(ValueError, match="Unknown redaction category 'invalid'"):
+        RedactionMetadata(
+            is_redacted=True,
+            redaction_counts={"invalid": 1},
+        )
+
+
+def test_metadata_invalid_count_types_fail_closed() -> None:
+    """13. Negative/bool/non-int counts remain rejected."""
+    # Negative count
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RedactionMetadata(is_redacted=True, redaction_counts={"secret": -1})
+
+    # Boolean count (bool is a subclass of int in Python)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RedactionMetadata(is_redacted=True, redaction_counts={"secret": True})
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RedactionMetadata(is_redacted=False, redaction_counts={"secret": False})
+
+    # Float count
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RedactionMetadata(is_redacted=True, redaction_counts={"secret": 1.5})  # type: ignore[dict-item]
+
+    # Non-int string count
+    with pytest.raises(ValueError, match="non-negative integer"):
+        RedactionMetadata(is_redacted=True, redaction_counts={"secret": "one"})  # type: ignore[dict-item]
+
+    # Non-string category key
+    with pytest.raises(TypeError, match="Category key must be str"):
+        RedactionMetadata(is_redacted=True, redaction_counts={123: 1})  # type: ignore[dict-item]
+
+
+def test_metadata_canonical_shape_deterministically_populates_all_three_categories() -> None:
+    """14. Canonical category shape is deterministic (all 3 categories populated)."""
+    # Only "secret" provided; "email" and "identifier" populated with 0
+    meta = RedactionMetadata(is_redacted=True, redaction_counts={"secret": 2})
+
+    assert set(meta.redaction_counts.keys()) == CANONICAL_REDACTION_CATEGORIES
+    assert meta.redaction_counts["secret"] == 2
+    assert meta.redaction_counts["email"] == 0
+    assert meta.redaction_counts["identifier"] == 0
+
+    # to_canonical() orders keys lexicographically
+    canonical = meta.to_canonical()
+    assert list(canonical["redaction_counts"].keys()) == ["email", "identifier", "secret"]
+    assert canonical["redaction_counts"] == {"email": 0, "identifier": 0, "secret": 2}
+
+
+def test_metadata_contradictory_is_redacted_state_fails_closed() -> None:
+    """15. Contradictory is_redacted/count state fails closed."""
+    # is_redacted=False but positive count
+    with pytest.raises(
+        ValueError, match=r"is_redacted must be True when total redaction count is 1"
+    ):
+        RedactionMetadata(is_redacted=False, redaction_counts={"secret": 1})
+
+    # is_redacted=True but all counts are zero
+    with pytest.raises(
+        ValueError, match=r"is_redacted must be False when total redaction count is 0"
+    ):
+        RedactionMetadata(
+            is_redacted=True,
+            redaction_counts={"secret": 0, "email": 0, "identifier": 0},
+        )
+
+    # is_redacted=True with empty dict (all defaulted to 0)
+    with pytest.raises(
+        ValueError, match=r"is_redacted must be False when total redaction count is 0"
+    ):
+        RedactionMetadata(is_redacted=True, redaction_counts={})
+
+
+def test_metadata_zero_counts_strictly_requires_is_redacted_false() -> None:
+    """16. Zero counts <-> is_redacted False."""
+    meta = RedactionMetadata(
+        is_redacted=False,
+        redaction_counts={"secret": 0, "email": 0, "identifier": 0},
+    )
+    assert meta.is_redacted is False
+    assert sum(meta.redaction_counts.values()) == 0
+
+    # Omitted categories also default to 0 and allow is_redacted=False
+    meta_empty = RedactionMetadata(is_redacted=False, redaction_counts={})
+    assert meta_empty.is_redacted is False
+    assert sum(meta_empty.redaction_counts.values()) == 0
+
+
+def test_metadata_positive_counts_strictly_requires_is_redacted_true() -> None:
+    """17. Positive total <-> is_redacted True."""
+    for cat in CANONICAL_REDACTION_CATEGORIES:
+        meta = RedactionMetadata(is_redacted=True, redaction_counts={cat: 1})
+        assert meta.is_redacted is True
+        assert meta.redaction_counts[cat] == 1
+        assert sum(meta.redaction_counts.values()) == 1
+
+
+def test_canonical_redaction_categories_is_frozen_and_exported() -> None:
+    """18. Canonical category set is immutable, exact, and exported."""
+    assert CANONICAL_REDACTION_CATEGORIES == frozenset({"secret", "email", "identifier"})
+    assert isinstance(CANONICAL_REDACTION_CATEGORIES, frozenset)
