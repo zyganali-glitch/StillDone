@@ -156,3 +156,17 @@ def test_provenance_does_not_promote_result_or_state() -> None:
     # In StillDone, step state remains separate:
     # A step with LIVE_GOOGLE evidence may still be EXECUTED_UNVERIFIED, CONTRADICTED, or FAILED.
     # The existence of evidence identity never overrides this separation.
+
+
+def test_unicode_nfc_key_collision_cannot_produce_evidence_id() -> None:
+    """A dictionary with colliding NFC keys cannot produce an EvidenceId."""
+    k_composed = "\u00e9"
+    k_decomposed = "e\u0301"
+
+    colliding_payload = {k_composed: "B", k_decomposed: "A"}
+
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        compute_evidence_id(colliding_payload)
+
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        EvidenceId.compute(colliding_payload)

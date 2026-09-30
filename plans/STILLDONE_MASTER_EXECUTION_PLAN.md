@@ -384,17 +384,17 @@ Goal:
 make evidence immutable enough to reason about honestly.
 
 ### P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
-- canonical serialization: deterministic JSON primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`), sorted dictionary keys, NFC-normalized unicode, UTC-normalized timestamps, canonical enum values and ID wrapper projection; non-finite floats, naive datetimes, and unsupported types fail closed;
+- canonical serialization: deterministic JSON primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`), sorted dictionary keys, NFC-normalized unicode with fail-closed collision detection for post-NFC duplicate canonical keys, UTC-normalized timestamps, canonical enum values and ID wrapper projection; non-finite floats, naive datetimes, and unsupported types fail closed;
 - evidence identity: strongly typed immutable `EvidenceId` backed by 64 lowercase hexadecimal SHA-256 digest;
 - content-addressed hashing: `compute_evidence_id` with explicit domain separation/versioning (`stilldone:evidence:v1`); identical content yields identical EvidenceId; changed content yields distinct EvidenceId;
 - provenance/result separation: provenance records origin only, zero implicit promotion to `VERIFIED`, `READY`, or `PASS`;
-- focused tests: `tests/test_serialization.py` and `tests/test_evidence.py` passing (134 total tests passing in suite).
+- focused tests: `tests/test_serialization.py` and `tests/test_evidence.py` passing (155 total tests passing in suite).
 
 ### P-03.02 — Implement append-only mission/action/evidence ledger interfaces
-Status: DONE — awaiting independent QA
+Status: QA HELD / NOT YET CLOSED
 
 Acceptance:
 - typed ledger records: immutable `MissionRecord`, `ActionRecord`, and `EvidenceRecord` with strict relationship integrity (`mission -> action -> evidence`);
@@ -405,7 +405,7 @@ Acceptance:
 - focused tests: `tests/test_ledger.py` passing (142 total tests passing in suite).
 
 ### P-03.03 — Implement deterministic state-transition guards
-Status: DONE — awaiting independent QA
+Status: QA HELD / NOT YET CLOSED
 
 Acceptance:
 - runtime transition guard engine: `MissionTransitionGuard`, `assert_valid_transition`, `assert_can_promote_to_ready`, and `is_transition_allowed` using canonical `MissionState` and `DECLARATIVE_MISSION_TRANSITIONS`;

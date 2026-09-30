@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum, StrEnum
 
@@ -178,3 +179,59 @@ def test_unsupported_and_malformed_content_fails_closed() -> None:
     # Functions / lambdas are rejected fail-closed
     with pytest.raises(TypeError, match="Unsupported type"):
         to_canonical_primitive(lambda x: x)
+
+
+def test_unicode_nfc_key_collision_fails_closed() -> None:
+    """Distinct dictionary keys that normalize to the same NFC key fail closed.
+
+    Enforces that composed and decomposed Unicode representations cannot silently
+    collide or cause silent value loss in canonical serialization.
+    """
+    k_composed = "\u00e9"  # 'é' (U+00E9, composed)
+    k_decomposed = "e\u0301"  # 'e' + combining acute accent (U+0065 U+0301, decomposed)
+
+    # Precondition: these are distinct string keys in Python with different lengths
+    assert k_composed != k_decomposed
+    assert len(k_composed) == 1
+    assert len(k_decomposed) == 2
+    assert unicodedata.normalize("NFC", k_composed) == unicodedata.normalize("NFC", k_decomposed)
+
+    # A dict with both keys must NOT silently overwrite one with the other
+    colliding_dict_1 = {k_composed: "B", k_decomposed: "A"}
+    colliding_dict_2 = {k_decomposed: "A", k_composed: "B"}
+
+    assert len(colliding_dict_1) == 2
+    assert len(colliding_dict_2) == 2
+
+    # Fail-closed in to_canonical_primitive
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        to_canonical_primitive(colliding_dict_1)
+
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        to_canonical_primitive(colliding_dict_2)
+
+    # Fail-closed in canonical_json and canonical_serialize
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        canonical_json(colliding_dict_1)
+
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        canonical_serialize(colliding_dict_1)
+
+
+def test_unicode_nfc_normalization_preserves_deterministic_behavior_for_non_colliding_keys() -> (
+    None
+):
+    """Non-colliding Unicode keys normalize deterministically to NFC form."""
+    k_decomposed = "cafe\u0301"
+    k_composed = "caf\u00e9"
+
+    d_decomposed = {k_decomposed: 42}
+    d_composed = {k_composed: 42}
+
+    # Both yield identical canonical primitives and canonical JSON
+    assert to_canonical_primitive(d_decomposed) == {k_composed: 42}
+    assert to_canonical_primitive(d_composed) == {k_composed: 42}
+
+    assert canonical_json(d_decomposed) == '{"caf\u00e9":42}'
+    assert canonical_json(d_composed) == '{"caf\u00e9":42}'
+    assert canonical_serialize(d_decomposed) == canonical_serialize(d_composed)

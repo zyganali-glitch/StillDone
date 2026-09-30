@@ -73,16 +73,16 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.03 — Implement deterministic state-transition guards
+P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs (Surgical Repair: Post-NFC Key Collision Detection)
 
 Status:
-`DONE — awaiting independent QA`
+`REPAIRED — awaiting independent QA`
 
-## Phase P-03 Status (Bounded Batch P-03.01 -> P-03.03 Complete)
+## Phase P-03 Status
 
-- P-03.01 — DONE — awaiting independent QA
-- P-03.02 — DONE — awaiting independent QA
-- P-03.03 — DONE — awaiting independent QA
+- P-03.01 — REPAIRED — awaiting independent QA
+- P-03.02 — QA HELD / NOT YET CLOSED
+- P-03.03 — QA HELD / NOT YET CLOSED
 - P-03.04 through P-03.06 — NOT_STARTED / NOT AUTHORIZED
 
 Phase P-03 is **NOT_CLOSED**. Tasks P-03.04 through P-03.06 remain pending.
@@ -98,7 +98,7 @@ Status: `PENDING / NOT_STARTED / NOT AUTHORIZED`
 
 ## Next safe action
 
-Bounded batch (P-03.01 -> P-03.03) complete locally. Commit P-03.03, run full validation suite, push remote main, verify CI, then HARD STOP. Do NOT begin P-03.04.
+Surgical repair of P-03.01 complete. Await independent QA review on P-03.01 repair and held P-03.02/P-03.03 tasks. HARD STOP. Do NOT begin P-03.04.
 
 ---
 

@@ -32,7 +32,7 @@ def to_canonical_primitive(obj: Any) -> Any:
     """Recursively convert an object into JSON-compatible canonical primitives.
 
     Guarantees:
-    - Dict keys are strings and sorted lexicographically.
+    - Dict keys are strings and sorted lexicographically; post-NFC key collisions fail closed.
     - Strings are NFC-normalized Unicode.
     - Datetimes are normalized to UTC ISO-8601 strings.
     - Dates are converted to ISO format (YYYY-MM-DD).
@@ -102,8 +102,9 @@ def to_canonical_primitive(obj: Any) -> Any:
 
     # 6. Dictionaries
     if isinstance(obj, dict):
-        projected_dict: dict[str, Any] = {}
-        for k, v in sorted(obj.items(), key=lambda item: str(item[0])):
+        normalized_items: list[tuple[str, Any]] = []
+        seen_canonical_keys: dict[str, str] = {}
+        for k, v in obj.items():
             if not isinstance(k, str):
                 msg = (
                     "Dictionary keys must be strings for canonical serialization, "
@@ -111,14 +112,23 @@ def to_canonical_primitive(obj: Any) -> Any:
                 )
                 raise TypeError(msg)
             norm_key = unicodedata.normalize("NFC", k)
-            projected_dict[norm_key] = to_canonical_primitive(v)
-        return projected_dict
+            if norm_key in seen_canonical_keys:
+                orig_k = seen_canonical_keys[norm_key]
+                msg = (
+                    f"Canonical key collision after Unicode NFC normalization: {k!r} "
+                    f"collides with {orig_k!r} on canonical key {norm_key!r}"
+                )
+                raise ValueError(msg)
+            seen_canonical_keys[norm_key] = k
+            normalized_items.append((norm_key, to_canonical_primitive(v)))
 
-    # 8. Sequences (lists, tuples)
+        return {k: v for k, v in sorted(normalized_items, key=lambda item: item[0])}
+
+    # 7. Sequences (lists, tuples)
     if isinstance(obj, (list, tuple)):
         return [to_canonical_primitive(item) for item in obj]
 
-    # 9. Fail-closed for all unsupported types (e.g. set, custom objects, callables, etc.)
+    # 8. Fail-closed for all unsupported types (e.g. set, custom objects, callables, etc.)
     raise TypeError(f"Unsupported type for canonical serialization: {type(obj).__name__} ({obj!r})")
 
 
