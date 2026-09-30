@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 BATCH IN PROGRESS (Verified Baseline SHA: ba2969076f724e6159a176c5c065065d4c4105ec)**
+Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 BATCH IN PROGRESS (Verified Baseline SHA: 8cf48527eacc69d45a378e85ce5bcf1bff0bcfa0)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,32 +73,34 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.02 — Implement append-only mission/action/evidence ledger interfaces (Surgical Repair: Payload Immutability & Defensive Isolation)
+P-03.04 — Implement bounded sanitized provider-output capture with digests
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-03 Status
 
 - P-03.01 — PASS
-- P-03.02 — REPAIRED — awaiting independent QA
+- P-03.02 — PASS
 - P-03.03 — PASS
-- P-03.04 through P-03.06 — NOT_STARTED / NOT AUTHORIZED
+- P-03.04 — DONE — awaiting independent QA
+- P-03.05 — next / in progress
+- P-03.06 — pending
 
-Phase P-03 is **NOT_CLOSED**. Tasks P-03.04 through P-03.06 remain pending.
+Phase P-03 is **NOT_CLOSED**. Tasks P-03.05 through P-03.06 remain in batch.
 
 ## Last independently VERIFIED baseline SHA
 
-`ba2969076f724e6159a176c5c065065d4c4105ec`
+`8cf48527eacc69d45a378e85ce5bcf1bff0bcfa0`
 
 ## Next exact task
 
-`P-03.04 — Implement bounded sanitized provider-output capture with digests`
-Status: `PENDING / NOT_STARTED / NOT AUTHORIZED`
+`P-03.05 — Bind receipt projections to exact mission/evidence hashes`
+Status: `IN_PROGRESS`
 
 ## Next safe action
 
-Surgical repair of P-03.02 complete. Await independent QA review on P-03.02 repair. HARD STOP. Do NOT begin P-03.04.
+Execute P-03.05 in bounded batch. Await independent QA review upon batch completion. Hard stop after P-03.06. Do NOT begin P-04.
 
 ---
 

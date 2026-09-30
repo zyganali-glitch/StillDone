@@ -394,7 +394,7 @@ Acceptance:
 - focused tests: `tests/test_serialization.py` and `tests/test_evidence.py` passing (155 total tests passing in suite).
 
 ### P-03.02 — Implement append-only mission/action/evidence ledger interfaces
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `8cf48527eacc69d45a378e85ce5bcf1bff0bcfa0`)
 
 Acceptance:
 - typed ledger records: immutable `MissionRecord`, `ActionRecord`, and `EvidenceRecord` with strict relationship integrity (`mission -> action -> evidence`);
@@ -416,7 +416,15 @@ Acceptance:
 - focused tests: `tests/test_transitions.py` passing (152 total tests passing in suite).
 
 ### P-03.04 — Implement bounded sanitized provider-output capture with digests
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- bounded structural sanitization: detached canonical JSON-compatible primitives (`CanonicalPayload`, `CanonicalSequence`), no arbitrary provider objects, no object reprs, no memory addresses;
+- explicit deterministic bounds: `CaptureBounds` enforcing `max_depth` (16), `max_mapping_entries` (256), `max_sequence_items` (256), `max_string_length` (4096), `max_total_bytes` (65536);
+- truncation and fail-closed policies: violations fail closed under `fail_closed=True` or `max_total_bytes`; otherwise produce explicit, deterministic truncation metadata (`is_truncated=True`, sorted `truncation_reasons`);
+- content digest: strongly typed `CaptureDigest` backed by SHA-256 with domain separation `stilldone:provider-capture:v1` binding payload, truncation status, truncation reasons, and bounds;
+- evidence separation: digest does not assert or imply `VERIFIED`, `READY`, or `PASS`;
+- focused tests: `tests/test_capture.py` passing (177 total tests passing in suite).
 
 ### P-03.05 — Bind receipt projections to exact mission/evidence hashes
 Status: PENDING
