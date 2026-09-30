@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 BATCH IN PROGRESS (Verified Baseline SHA: 8cf48527eacc69d45a378e85ce5bcf1bff0bcfa0)**
+Current repository state: **PHASE P-02 CLOSED — INDEPENDENT QA PASS; PHASE P-03 REPAIRED (Verified Baseline SHA: 69715d57cc6f2289540974bc1b3ac91d013348b6)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,26 +73,26 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
+Phase P-03 Surgical Repair (P-03.05 & P-03.06)
 
 Status:
-`DONE — awaiting independent QA`
+`REPAIRED — awaiting independent QA`
 
 ## Phase P-03 Status
 
 - P-03.01 — PASS
 - P-03.02 — PASS
 - P-03.03 — PASS
-- P-03.04 — DONE — awaiting independent QA
-- P-03.05 — DONE — awaiting independent QA
-- P-03.06 — DONE — awaiting independent QA
+- P-03.04 — PASS (Verified SHA: `69715d57cc6f2289540974bc1b3ac91d013348b6`)
+- P-03.05 — REPAIRED — awaiting independent QA
+- P-03.06 — REPAIRED — awaiting independent QA
 
 Phase P-03 is **NOT_CLOSED** pending independent QA.
 Phase P-04 is **NOT_STARTED / NOT AUTHORIZED**.
 
-## Last independently VERIFIED baseline SHA
+## Last independently VERIFIED contiguous SHA
 
-`8cf48527eacc69d45a378e85ce5bcf1bff0bcfa0`
+`69715d57cc6f2289540974bc1b3ac91d013348b6`
 
 ## Next exact task
 
@@ -101,7 +101,7 @@ Status: `PENDING INDEPENDENT QA / NOT AUTHORIZED`
 
 ## Next safe action
 
-Batch execution completed through P-03.06. Run full canonical validation, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
+Phase P-03 surgical repair completed. Run full canonical validation, commit dedicated repair commit, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
 
 ---
 

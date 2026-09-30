@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from stilldone.application.ports.ledger_port import EvidenceRecord
+from stilldone.application.ports.ledger_port import (
+    CanonicalPayload,
+    EvidenceRecord,
+    freeze_canonical_payload,
+)
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
 from stilldone.evidence import EvidenceId
@@ -76,13 +80,19 @@ def _normalize_utc_dt(dt: datetime, name: str) -> datetime:
 class MissionContentHash:
     """Dedicated domain-separated SHA-256 hash of a canonical mission snapshot.
 
-    Distinct from EvidenceId semantics: hashes mission identity and intent contracts.
+    Distinct from EvidenceId semantics: hashes mission identity and intent contracts,
+    and is structurally bound to the MissionId whose canonical snapshot produced it.
     """
 
     value: str
+    mission_id: MissionId
 
     def __post_init__(self) -> None:
         _validate_hex_digest(self.value, "MissionContentHash")
+        if not isinstance(self.mission_id, MissionId):
+            raise TypeError(
+                f"mission_id must be a MissionId instance, got {type(self.mission_id).__name__}"
+            )
 
     def to_canonical(self) -> str:
         return self.value
@@ -94,6 +104,7 @@ class MissionContentHash:
 def compute_mission_content_hash(
     mission: MissionContract | dict[str, Any],
     *,
+    mission_id: MissionId | None = None,
     domain: str = MISSION_CONTENT_HASH_DOMAIN_SEPARATOR,
 ) -> MissionContentHash:
     """Compute a deterministic domain-separated SHA-256 hash for a mission snapshot."""
@@ -101,6 +112,12 @@ def compute_mission_content_hash(
         raise ValueError("domain must be a non-empty string")
 
     if isinstance(mission, MissionContract):
+        extracted_mid = mission.mission_id
+        if mission_id is not None and mission_id != extracted_mid:
+            raise ReceiptMismatchError(
+                f"Supplied mission_id {mission_id} does not match "
+                f"MissionContract mission_id {extracted_mid}"
+            )
         content = {
             "created_at": normalize_datetime(mission.created_at),
             "intent": {
@@ -112,6 +129,20 @@ def compute_mission_content_hash(
             "schema_version": mission.schema_version,
         }
     elif isinstance(mission, dict):
+        if "mission_id" in mission:
+            raw_mid = mission["mission_id"]
+            extracted_mid = raw_mid if isinstance(raw_mid, MissionId) else MissionId(str(raw_mid))
+            if mission_id is not None and mission_id != extracted_mid:
+                raise ReceiptMismatchError(
+                    f"Supplied mission_id {mission_id} does not match "
+                    f"mission dict mission_id {extracted_mid}"
+                )
+        elif mission_id is not None:
+            extracted_mid = mission_id
+        else:
+            raise ValueError(
+                "mission_id is required when mission dict does not contain 'mission_id'"
+            )
         content = to_canonical_primitive(mission)
     else:
         raise TypeError(f"Expected MissionContract or dict, got {type(mission).__name__}")
@@ -122,7 +153,7 @@ def compute_mission_content_hash(
     }
     serialized_bytes = canonical_serialize(envelope)
     digest = hashlib.sha256(serialized_bytes).hexdigest()
-    return MissionContentHash(digest)
+    return MissionContentHash(value=digest, mission_id=extracted_mid)
 
 
 @dataclass(frozen=True)
@@ -148,7 +179,7 @@ def compute_receipt_hash(
     evidence_ids: tuple[EvidenceId, ...],
     state_at_projection: MissionState,
     projected_at: datetime,
-    metadata: dict[str, Any] | None = None,
+    metadata: CanonicalPayload | dict[str, Any] | None = None,
     domain: str = RECEIPT_HASH_DOMAIN_SEPARATOR,
 ) -> ReceiptHash:
     """Compute a deterministic SHA-256 receipt hash with domain separation."""
@@ -160,6 +191,11 @@ def compute_receipt_hash(
         raise TypeError(
             f"mission_content_hash must be MissionContentHash, "
             f"got {type(mission_content_hash).__name__}"
+        )
+    if mission_content_hash.mission_id != mission_id:
+        raise ReceiptMismatchError(
+            f"MissionContentHash mission_id {mission_content_hash.mission_id} "
+            f"does not match mission_id {mission_id}"
         )
     if not isinstance(evidence_ids, tuple):
         raise TypeError(f"evidence_ids must be a tuple, got {type(evidence_ids).__name__}")
@@ -228,10 +264,11 @@ class ReceiptProjection:
     """Typed immutable receipt projection of recorded mission and evidence facts.
 
     Guarantees:
-    - Binds exact MissionId and dedicated MissionContentHash.
+    - Binds exact MissionId and dedicated MissionContentHash (verifies identity attribution).
     - Binds canonically ordered, deduplicated EvidenceId sequence.
     - Binds state at the exact moment of projection.
     - Binds domain-separated SHA-256 ReceiptHash.
+    - Stores metadata as a detached immutable CanonicalPayload snapshot.
     - Explicitly flagged as historical projection (`is_historical = True`).
     - Does NOT claim current-live truth or independent read-back beyond recorded facts.
     - Does NOT promote mission state or assert READY.
@@ -243,7 +280,7 @@ class ReceiptProjection:
     state_at_projection: MissionState
     projected_at: datetime
     receipt_hash: ReceiptHash
-    metadata: dict[str, Any]
+    metadata: CanonicalPayload
     is_historical: bool = True
 
     def __post_init__(self) -> None:
@@ -253,6 +290,11 @@ class ReceiptProjection:
             raise TypeError(
                 f"mission_content_hash must be MissionContentHash, "
                 f"got {type(self.mission_content_hash).__name__}"
+            )
+        if self.mission_content_hash.mission_id != self.mission_id:
+            raise ReceiptMismatchError(
+                f"MissionContentHash mission_id {self.mission_content_hash.mission_id} "
+                f"does not match ReceiptProjection mission_id {self.mission_id}"
             )
         if not isinstance(self.evidence_ids, tuple):
             raise TypeError(f"evidence_ids must be a tuple, got {type(self.evidence_ids).__name__}")
@@ -290,13 +332,11 @@ class ReceiptProjection:
             seen_eids.add(eid.value)
             prev_eid = eid.value
 
-        # Canonicalize metadata
-        canonical_meta = to_canonical_primitive(self.metadata or {})
-        if not isinstance(canonical_meta, dict):
-            raise TypeError("metadata must project to a canonical dictionary")
-        object.__setattr__(self, "metadata", canonical_meta)
+        # Freeze metadata as a detached immutable CanonicalPayload snapshot
+        frozen_meta = freeze_canonical_payload(self.metadata or {})
+        object.__setattr__(self, "metadata", frozen_meta)
 
-        # Verify receipt hash
+        # Verify receipt hash against stored immutable metadata
         expected_hash = compute_receipt_hash(
             mission_id=self.mission_id,
             mission_content_hash=self.mission_content_hash,
@@ -322,6 +362,19 @@ class ReceiptProjection:
         metadata: dict[str, Any] | None = None,
     ) -> ReceiptProjection:
         """Create a ReceiptProjection with canonical ordering and computed ReceiptHash."""
+        if not isinstance(mission_id, MissionId):
+            raise TypeError(f"mission_id must be MissionId, got {type(mission_id).__name__}")
+        if not isinstance(mission_content_hash, MissionContentHash):
+            raise TypeError(
+                f"mission_content_hash must be MissionContentHash, "
+                f"got {type(mission_content_hash).__name__}"
+            )
+        if mission_content_hash.mission_id != mission_id:
+            raise ReceiptMismatchError(
+                f"MissionContentHash mission_id {mission_content_hash.mission_id} "
+                f"does not match ReceiptProjection mission_id {mission_id}"
+            )
+
         norm_projected_at = _normalize_utc_dt(projected_at or datetime.now(UTC), "projected_at")
 
         # Canonicalize evidence IDs: check types, deduplicate, sort lexicographically
@@ -342,9 +395,7 @@ class ReceiptProjection:
         eids_list.sort(key=lambda x: x.value)
         ordered_eids = tuple(eids_list)
 
-        canonical_meta = to_canonical_primitive(metadata or {})
-        if not isinstance(canonical_meta, dict):
-            raise TypeError("metadata must project to a dict")
+        frozen_meta = freeze_canonical_payload(metadata or {})
 
         receipt_hash = compute_receipt_hash(
             mission_id=mission_id,
@@ -352,7 +403,7 @@ class ReceiptProjection:
             evidence_ids=ordered_eids,
             state_at_projection=state_at_projection,
             projected_at=norm_projected_at,
-            metadata=canonical_meta,
+            metadata=frozen_meta,
         )
 
         return cls(
@@ -362,7 +413,7 @@ class ReceiptProjection:
             state_at_projection=state_at_projection,
             projected_at=norm_projected_at,
             receipt_hash=receipt_hash,
-            metadata=canonical_meta,
+            metadata=frozen_meta,
             is_historical=True,
         )
 
@@ -378,6 +429,18 @@ class ReceiptProjection:
         metadata: dict[str, Any] | None = None,
     ) -> ReceiptProjection:
         """Create a ReceiptProjection from EvidenceRecord instances with mission validation."""
+        if not isinstance(mission_id, MissionId):
+            raise TypeError(f"mission_id must be MissionId, got {type(mission_id).__name__}")
+        if not isinstance(mission_content_hash, MissionContentHash):
+            raise TypeError(
+                f"mission_content_hash must be MissionContentHash, "
+                f"got {type(mission_content_hash).__name__}"
+            )
+        if mission_content_hash.mission_id != mission_id:
+            raise ReceiptMismatchError(
+                f"MissionContentHash mission_id {mission_content_hash.mission_id} "
+                f"does not match ReceiptProjection mission_id {mission_id}"
+            )
         ordered_eids = validate_evidence_records_for_mission(mission_id, evidence_records)
         return cls.create(
             mission_id=mission_id,
@@ -393,7 +456,7 @@ class ReceiptProjection:
         return {
             "evidence_ids": [eid.to_canonical() for eid in self.evidence_ids],
             "is_historical": self.is_historical,
-            "metadata": to_canonical_primitive(self.metadata),
+            "metadata": self.metadata.to_dict(),
             "mission_content_hash": self.mission_content_hash.to_canonical(),
             "mission_id": str(self.mission_id),
             "projected_at": normalize_datetime(self.projected_at),

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from stilldone.application.ports.ledger_port import EvidenceRecord
+from stilldone.application.ports.ledger_port import CanonicalPayload, EvidenceRecord
 from stilldone.domain.action import ActionId
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
@@ -67,10 +67,12 @@ def _make_evidence_record(
 
 
 def test_mission_content_hash_deterministic_and_domain_separated() -> None:
-    """MissionContentHash produces deterministic 64-char lowercase hex hash."""
-    mc1 = _make_mission_contract(MissionId("11111111-1111-4111-8111-111111111111"))
-    mc2 = _make_mission_contract(MissionId("11111111-1111-4111-8111-111111111111"))
-    mc3 = _make_mission_contract(MissionId("22222222-2222-4222-8222-222222222222"))
+    """MissionContentHash produces deterministic 64-char lowercase hex hash bound to MissionId."""
+    mid1 = MissionId("11111111-1111-4111-8111-111111111111")
+    mid2 = MissionId("22222222-2222-4222-8222-222222222222")
+    mc1 = _make_mission_contract(mid1)
+    mc2 = _make_mission_contract(mid1)
+    mc3 = _make_mission_contract(mid2)
 
     h1 = compute_mission_content_hash(mc1)
     h2 = compute_mission_content_hash(mc2)
@@ -79,6 +81,8 @@ def test_mission_content_hash_deterministic_and_domain_separated() -> None:
     assert h1 == h2
     assert h1.value == h2.value
     assert len(h1.value) == 64
+    assert h1.mission_id == mid1
+    assert h3.mission_id == mid2
     assert h1 != h3
 
     # Does not collide with EvidenceId semantics for the same dict
@@ -88,17 +92,88 @@ def test_mission_content_hash_deterministic_and_domain_separated() -> None:
 
 def test_malformed_hashes_fail_closed() -> None:
     """MissionContentHash and ReceiptHash fail closed on malformed values."""
+    mid = MissionId("11111111-1111-4111-8111-111111111111")
+
     with pytest.raises(MalformedHashError, match="must be exactly 64 characters"):
-        MissionContentHash("short")
+        MissionContentHash("short", mid)
 
     with pytest.raises(MalformedHashError, match="must be lowercase hexadecimal"):
-        MissionContentHash("A" * 64)
+        MissionContentHash("A" * 64, mid)
+
+    with pytest.raises(TypeError, match="mission_id must be a MissionId instance"):
+        MissionContentHash("a" * 64, "invalid_mid")  # type: ignore[arg-type]
 
     with pytest.raises(MalformedHashError, match="must be exactly 64 characters"):
         ReceiptHash("too_long" * 10)
 
     with pytest.raises(MalformedHashError, match="must be lowercase hexadecimal"):
         ReceiptHash("g" * 64)
+
+
+def test_mission_content_hash_mission_mismatch_fails_closed() -> None:
+    """MissionContentHash must match the ReceiptProjection mission_id on all construction paths."""
+    mid_a = MissionId("11111111-1111-4111-8111-111111111111")
+    mid_b = MissionId("22222222-2222-4222-8222-222222222222")
+
+    mc_a = _make_mission_contract(mid_a, "Task A")
+    mc_b = _make_mission_contract(mid_b, "Task B")
+    hash_a = compute_mission_content_hash(mc_a)
+    hash_b = compute_mission_content_hash(mc_b)
+
+    eid = EvidenceId("1" * 64)
+
+    # 1. ReceiptProjection.create() fails immediately with ReceiptMismatchError
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection.create(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_ids=[eid],
+            state_at_projection=MissionState.VERIFYING,
+        )
+
+    # 2. Direct constructor fails immediately with ReceiptMismatchError
+    dummy_rhash = ReceiptHash("0" * 64)
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_ids=(eid,),
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=datetime.now(UTC),
+            receipt_hash=dummy_rhash,
+            metadata=CanonicalPayload({}),
+            is_historical=True,
+        )
+
+    # 3. from_records() fails immediately with ReceiptMismatchError
+    rec_a = _make_evidence_record(mid_a)
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection.from_records(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_records=[rec_a],
+            state_at_projection=MissionState.VERIFYING,
+        )
+
+    # 4. compute_receipt_hash() fails immediately with ReceiptMismatchError
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        compute_receipt_hash(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_ids=(eid,),
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=datetime.now(UTC),
+        )
+
+    # 5. Matching mission_id + mission_content_hash succeeds
+    valid_receipt = ReceiptProjection.create(
+        mission_id=mid_a,
+        mission_content_hash=hash_a,
+        evidence_ids=[eid],
+        state_at_projection=MissionState.VERIFYING,
+    )
+    assert valid_receipt.mission_id == mid_a
+    assert valid_receipt.mission_content_hash == hash_a
 
 
 def test_same_projection_same_receipt_hash() -> None:
@@ -153,7 +228,7 @@ def test_material_changes_alter_receipt_hash() -> None:
         projected_at=proj_time,
     )
 
-    # Different mission content hash
+    # Different mission content hash (different text on same mission_id)
     diff_mission = ReceiptProjection.create(
         mission_id=mid,
         mission_content_hash=mhash2,
@@ -223,7 +298,7 @@ def test_evidence_order_error_on_direct_construction() -> None:
             state_at_projection=MissionState.VERIFYING,
             projected_at=datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC),
             receipt_hash=rhash,
-            metadata={},
+            metadata=CanonicalPayload({}),
             is_historical=True,
         )
 
@@ -244,7 +319,7 @@ def test_receipt_hash_mismatch_fails_closed() -> None:
             state_at_projection=MissionState.VERIFYING,
             projected_at=datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC),
             receipt_hash=fake_hash,
-            metadata={},
+            metadata=CanonicalPayload({}),
             is_historical=True,
         )
 
@@ -348,3 +423,72 @@ def test_receipt_canonical_projection() -> None:
     assert proj["is_historical"] is True
     assert proj["metadata"] == {"note": "audit_receipt"}
     assert proj["receipt_hash"] == r.receipt_hash.value
+
+
+def test_receipt_metadata_immutability_and_isolation() -> None:
+    """Receipt metadata is deeply isolated and immutable against caller and receiver mutations."""
+    mid = MissionId("11111111-1111-4111-8111-111111111111")
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+
+    tags_list = ["audit", "verified"]
+    nested_dict = {"tags": tags_list, "counter": 42}
+    original_meta = {
+        "env": "prod",
+        "nested": nested_dict,
+    }
+
+    r = ReceiptProjection.create(
+        mission_id=mid,
+        mission_content_hash=mhash,
+        evidence_ids=[],
+        state_at_projection=MissionState.VERIFYING,
+        metadata=original_meta,
+    )
+
+    # 1. Top-level caller mutation does not affect receipt
+    original_meta["env"] = "tampered"
+    assert r.metadata["env"] == "prod"
+
+    # 2. Nested caller dict mutation does not affect receipt
+    nested_dict["counter"] = 999
+    assert r.metadata["nested"]["counter"] == 42
+
+    # 3. Nested caller list mutation does not affect receipt
+    tags_list.append("malicious")
+    assert list(r.metadata["nested"]["tags"]) == ["audit", "verified"]
+
+    # 4. Direct mutation on receipt metadata fails closed
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata["new_key"] = "illegal"
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata["nested"]["counter"] = 100
+
+    with pytest.raises(TypeError, match="Evidence payload sequence is immutable"):
+        r.metadata["nested"]["tags"].append("illegal")
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata.pop("env")
+
+    # 5. to_canonical() and to_dict() return detached mutable copy
+    proj = r.to_dict()
+    proj["metadata"]["env"] = "modified_in_projection"
+    assert r.metadata["env"] == "prod"
+
+
+def test_receipt_metadata_post_nfc_collision_fails_closed() -> None:
+    """Metadata with post-NFC duplicate key collisions fails closed."""
+    mid = MissionId("11111111-1111-4111-8111-111111111111")
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+
+    colliding = {"e\u0301": "val1", "\u00e9": "val2"}
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        ReceiptProjection.create(
+            mission_id=mid,
+            mission_content_hash=mhash,
+            evidence_ids=[],
+            state_at_projection=MissionState.VERIFYING,
+            metadata=colliding,
+        )

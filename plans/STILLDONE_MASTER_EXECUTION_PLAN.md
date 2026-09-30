@@ -416,7 +416,7 @@ Acceptance:
 - focused tests: `tests/test_transitions.py` passing (152 total tests passing in suite).
 
 ### P-03.04 — Implement bounded sanitized provider-output capture with digests
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `69715d57cc6f2289540974bc1b3ac91d013348b6`)
 
 Acceptance:
 - bounded structural sanitization: detached canonical JSON-compatible primitives (`CanonicalPayload`, `CanonicalSequence`), no arbitrary provider objects, no object reprs, no memory addresses;
@@ -427,29 +427,30 @@ Acceptance:
 - focused tests: `tests/test_capture.py` passing (177 total tests passing in suite).
 
 ### P-03.05 — Bind receipt projections to exact mission/evidence hashes
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - typed immutable receipt projection: `ReceiptProjection` binding exact mission snapshot, canonically ordered evidence IDs, projection state, UTC timestamp, and deterministic receipt hash;
-- dedicated mission content hash: `MissionContentHash` backed by SHA-256 with domain separation `stilldone:mission-content:v1`, strictly separate from EvidenceId;
+- dedicated mission content hash: `MissionContentHash` backed by SHA-256 with domain separation `stilldone:mission-content:v1`, strictly bound to `mission_id` to prove identity attribution across all construction paths (`create`, direct `__post_init__`, `from_records`, `compute_receipt_hash`); mismatched identity fails closed immediately with `ReceiptMismatchError`;
+- detached immutable receipt metadata: receipt metadata frozen as `CanonicalPayload` via `freeze_canonical_payload`, preventing post-construction mutation and caller alias leakage; `to_canonical()` and `to_dict()` return detached mutable copies; post-NFC duplicate collisions fail closed;
 - exact ordered evidence binding: immutable tuple of unique `EvidenceId` instances sorted lexicographically; duplicate or unsorted bindings fail closed (`DuplicateEvidenceBindingError`, `EvidenceOrderError`);
 - deterministic receipt hash: `ReceiptHash` backed by SHA-256 with domain separation `stilldone:receipt-projection:v1`; same projection yields identical hash; material changes yield distinct hashes;
 - integrity and mismatch guards: fail closed on malformed hashes, evidence belonging to mismatched missions (`ReceiptMismatchError`), or altered hashes (`ReceiptHashMismatchError`);
 - truth boundaries respected: receipt is explicitly historical (`is_historical=True`), does not claim current-live truth or independent read-back, and cannot promote to READY;
-- focused tests: `tests/test_receipt.py` passing (188 total tests passing in suite).
+- focused tests: `tests/test_receipt.py` passing (190 total tests passing in suite).
 
 ### P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
-- TAMPER tests: verified fail-closed detection of altered evidence content vs EvidenceId, mutated receipt mission hash, altered evidence binding, and altered provider-output capture vs digest;
-- MISMATCH tests: verified fail-closed rejection of evidence bound to mismatched missions (`ReceiptMismatchError`), actions bound to missing missions in ledger (`RecordNotFoundError`), mission identity vs content hash mismatch, and evidence list vs projection hash mismatch;
+- TAMPER tests: verified fail-closed detection of altered evidence content vs EvidenceId, mutated receipt mission hash, altered evidence binding, altered provider-output capture vs digest, caller alias mutation isolation, nested caller mutation isolation, and direct metadata mutation prevention (`TypeError`);
+- MISMATCH tests: verified fail-closed rejection of evidence bound to mismatched missions (`ReceiptMismatchError`), actions bound to missing missions in ledger (`RecordNotFoundError`), mission identity vs content hash mismatch across all construction paths, and evidence list vs projection hash mismatch;
 - REPLAY tests: verified append-only ledger rejection of duplicate appends (`DuplicateRecordError`) and conflicting same-identity records (`RecordConflictError`), and proved historical receipts cannot silently overwrite current state;
 - STALE tests: proved STALE step evidence strictly prevents promotion to READY (`IllegalStatePromotionError`), historical receipts and RECORDED_LIVE evidence cannot masquerade as current-live truth, and freshness semantics remain separate from evidence existence;
 - FORBIDDEN PROMOTION tests: proved NOT_RUN, EXECUTED_UNVERIFIED, provider capture alone, receipt existence alone, and invalidating evidence states (CONTRADICTED, BLOCKED, FAILED) cannot promote to READY, and verified direct illegal transitions from non-VERIFYING states fail closed;
 - Unicode & canonicalization hardening: preserved fail-closed behavior for Unicode NFC collisions, non-finite floats, naive datetimes, and unsupported types;
-- Evidence payload isolation & append-only: preserved deep payload freezing and caller isolation across evidence records;
-- focused tests: `tests/test_phase_p03_adversarial.py` passing (211 total tests passing in suite).
+- Evidence payload isolation & append-only: preserved deep payload freezing and caller isolation across evidence records and receipt projections;
+- focused tests: `tests/test_phase_p03_adversarial.py` passing (218 total tests passing in suite).
 
 Phase exit:
 local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is NOT_CLOSED pending independent QA. P-04 is NOT_STARTED / NOT AUTHORIZED.

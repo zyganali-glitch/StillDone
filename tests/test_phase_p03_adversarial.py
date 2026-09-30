@@ -20,6 +20,7 @@ import pytest
 
 from stilldone.application.ports.ledger_port import (
     ActionRecord,
+    CanonicalPayload,
     DuplicateRecordError,
     EvidenceRecord,
     InMemoryNonDurableLedger,
@@ -46,10 +47,12 @@ from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.evidence import EvidenceId
 from stilldone.receipt import (
     MissionContentHash,
+    ReceiptHash,
     ReceiptHashMismatchError,
     ReceiptMismatchError,
     ReceiptProjection,
     compute_mission_content_hash,
+    compute_receipt_hash,
     validate_evidence_records_for_mission,
 )
 from stilldone.serialization import (
@@ -162,7 +165,7 @@ def test_tamper_receipt_mission_hash() -> None:
         state_at_projection=MissionState.VERIFYING,
     )
 
-    tampered_mhash = MissionContentHash("0" * 64)
+    tampered_mhash = MissionContentHash("0" * 64, mid)
     with pytest.raises(ReceiptHashMismatchError, match="Receipt hash mismatch"):
         ReceiptProjection(
             mission_id=mid,
@@ -201,6 +204,93 @@ def test_tamper_receipt_evidence_binding() -> None:
             projected_at=valid_receipt.projected_at,
             receipt_hash=valid_receipt.receipt_hash,
             metadata=valid_receipt.metadata,
+            is_historical=True,
+        )
+
+
+def test_tamper_receipt_metadata_caller_alias_isolation() -> None:
+    """Mutating caller metadata dict after creation has zero effect on receipt."""
+    mid = MissionId(str(uuid.uuid4()))
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+    orig_meta = {"env": "prod", "run_id": 42}
+    r = ReceiptProjection.create(
+        mission_id=mid,
+        mission_content_hash=mhash,
+        evidence_ids=[],
+        state_at_projection=MissionState.VERIFYING,
+        metadata=orig_meta,
+    )
+    orig_meta["env"] = "tampered"
+    orig_meta["injected"] = True
+    assert r.metadata["env"] == "prod"
+    assert "injected" not in r.metadata
+
+
+def test_tamper_receipt_metadata_nested_alias_isolation() -> None:
+    """Mutating nested caller dicts/lists has zero effect on receipt."""
+    mid = MissionId(str(uuid.uuid4()))
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+    items_list = ["a", "b"]
+    nested_config = {"level": 1, "items": items_list}
+    orig_meta = {"config": nested_config}
+    r = ReceiptProjection.create(
+        mission_id=mid,
+        mission_content_hash=mhash,
+        evidence_ids=[],
+        state_at_projection=MissionState.VERIFYING,
+        metadata=orig_meta,
+    )
+    nested_config["level"] = 99
+    items_list.append("c")
+    assert r.metadata["config"]["level"] == 1
+    assert list(r.metadata["config"]["items"]) == ["a", "b"]
+
+
+def test_tamper_receipt_metadata_direct_mutation_fails_closed() -> None:
+    """Direct mutations through receipt.metadata fail closed with TypeError."""
+    mid = MissionId(str(uuid.uuid4()))
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+    r = ReceiptProjection.create(
+        mission_id=mid,
+        mission_content_hash=mhash,
+        evidence_ids=[],
+        state_at_projection=MissionState.VERIFYING,
+        metadata={"key": "val", "sub": [1, 2]},
+    )
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata["key"] = "hacked"
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata["new_key"] = "illegal"
+    with pytest.raises(TypeError, match="Evidence payload sequence is immutable"):
+        r.metadata["sub"].append(3)
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        r.metadata.pop("key")
+
+
+def test_tamper_receipt_metadata_receipt_hash_bound() -> None:
+    """Tampering metadata on direct constructor fails closed with ReceiptHashMismatchError."""
+    mid = MissionId(str(uuid.uuid4()))
+    mc = _make_mission_contract(mid)
+    mhash = compute_mission_content_hash(mc)
+    r = ReceiptProjection.create(
+        mission_id=mid,
+        mission_content_hash=mhash,
+        evidence_ids=[],
+        state_at_projection=MissionState.VERIFYING,
+        metadata={"key": "original"},
+    )
+    with pytest.raises(ReceiptHashMismatchError, match="Receipt hash mismatch"):
+        ReceiptProjection(
+            mission_id=mid,
+            mission_content_hash=mhash,
+            evidence_ids=r.evidence_ids,
+            state_at_projection=r.state_at_projection,
+            projected_at=r.projected_at,
+            receipt_hash=r.receipt_hash,
+            metadata=CanonicalPayload({"key": "tampered"}),
             is_historical=True,
         )
 
@@ -265,34 +355,95 @@ def test_mismatch_ledger_append_action_wrong_mission() -> None:
 
 
 def test_mismatch_receipt_mission_identity_vs_mission_hash() -> None:
-    """ReceiptProjection bound to mission A but hash of mission B fails closed."""
+    """ReceiptProjection bound to mission A but hash of mission B fails closed across paths."""
     mid_a = MissionId("11111111-1111-4111-8111-111111111111")
     mid_b = MissionId("22222222-2222-4222-8222-222222222222")
+
+    mc_a = _make_mission_contract(mid_a)
+    hash_a = compute_mission_content_hash(mc_a)
 
     mc_b = _make_mission_contract(mid_b)
     hash_b = compute_mission_content_hash(mc_b)
 
     eid = EvidenceId("1" * 64)
-    # Projection has mission_id=mid_a, but hash_b embeds mid_b
-    r = ReceiptProjection.create(
-        mission_id=mid_a,
-        mission_content_hash=hash_b,
-        evidence_ids=[eid],
-        state_at_projection=MissionState.VERIFYING,
-    )
-    # The receipt hash binds both mission_id and mission_content_hash
-    # Altering mission_id to mid_b will mismatch the receipt hash
-    with pytest.raises(ReceiptHashMismatchError):
-        ReceiptProjection(
-            mission_id=mid_b,
+    now = datetime(2026, 9, 30, 10, 0, 0, tzinfo=UTC)
+
+    # 1. ReceiptProjection.create(...) with mid_a and hash_b fails closed immediately
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection.create(
+            mission_id=mid_a,
             mission_content_hash=hash_b,
-            evidence_ids=r.evidence_ids,
-            state_at_projection=r.state_at_projection,
-            projected_at=r.projected_at,
-            receipt_hash=r.receipt_hash,
-            metadata=r.metadata,
+            evidence_ids=[eid],
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=now,
+        )
+
+    # 2. ReceiptProjection(...) direct with mid_a and hash_b fails closed immediately
+    dummy_hash = ReceiptHash("f" * 64)
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_ids=(eid,),
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=now,
+            receipt_hash=dummy_hash,
+            metadata=CanonicalPayload({}),
             is_historical=True,
         )
+
+    # 3. ReceiptProjection.from_records(...) with mid_a and hash_b fails closed immediately
+    rec_a = _make_evidence_record(mid_a)
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        ReceiptProjection.from_records(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_records=[rec_a],
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=now,
+        )
+
+    # 4. compute_receipt_hash(...) with mid_a and hash_b fails closed immediately
+    with pytest.raises(ReceiptMismatchError, match="does not match"):
+        compute_receipt_hash(
+            mission_id=mid_a,
+            mission_content_hash=hash_b,
+            evidence_ids=(eid,),
+            state_at_projection=MissionState.VERIFYING,
+            projected_at=now,
+        )
+
+    # 5. Matching mission_id and hash_a succeeds across all paths
+    r_created = ReceiptProjection.create(
+        mission_id=mid_a,
+        mission_content_hash=hash_a,
+        evidence_ids=[rec_a.evidence_id],
+        state_at_projection=MissionState.VERIFYING,
+        projected_at=now,
+    )
+    assert r_created.mission_id == mid_a
+    assert r_created.mission_content_hash == hash_a
+
+    r_direct = ReceiptProjection(
+        mission_id=mid_a,
+        mission_content_hash=hash_a,
+        evidence_ids=(rec_a.evidence_id,),
+        state_at_projection=MissionState.VERIFYING,
+        projected_at=now,
+        receipt_hash=r_created.receipt_hash,
+        metadata=CanonicalPayload({}),
+        is_historical=True,
+    )
+    assert r_direct.receipt_hash == r_created.receipt_hash
+
+    r_from_rec = ReceiptProjection.from_records(
+        mission_id=mid_a,
+        mission_content_hash=hash_a,
+        evidence_records=[rec_a],
+        state_at_projection=MissionState.VERIFYING,
+        projected_at=now,
+    )
+    assert r_from_rec.receipt_hash == r_created.receipt_hash
 
 
 def test_mismatch_receipt_evidence_list_vs_projection_hash() -> None:
