@@ -331,6 +331,15 @@ class LoadedConfig:
         self._secret_keys: frozenset[str] = frozenset(secret_keys)
         self._schema = schema
 
+        for sk in self._secret_keys:
+            if sk in self._values and not isinstance(self._values[sk], SecretString):
+                val_type = type(self._values[sk]).__name__
+                raise InvalidConfigurationValueError(
+                    sk,
+                    f"Secret-classified configuration value must be a SecretString, got {val_type}",
+                    is_secret=True,
+                )
+
     def get(self, key: str, default: Any = None) -> Any:
         return self._values.get(key, default)
 
@@ -511,6 +520,14 @@ class ConfigSchema:
                         reason,
                         is_secret=is_secret,
                     ) from None
+
+                if is_secret and not isinstance(parsed, SecretString):
+                    parsed_type = type(parsed).__name__
+                    raise InvalidConfigurationValueError(
+                        key,
+                        f"Secret-classified field must parse to SecretString, got {parsed_type}",
+                        is_secret=True,
+                    )
 
                 # Validate parsed value
                 if field.validator is not None:

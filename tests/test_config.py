@@ -915,3 +915,167 @@ def test_parse_secret_string_blank_and_whitespace_fails_closed() -> None:
 
     with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
         parse_secret_string("\t  \n  \r\n ")
+
+
+# ===========================================================================
+# 12. Secret Classification Type Boundary & Defense-in-Depth Regressions
+# ===========================================================================
+
+
+def test_misconfigured_secret_parser_fails_closed() -> None:
+    """A & B. Misconfigured secret parser fails closed without leaking plaintext."""
+    schema = ConfigSchema(
+        fields=[
+            ConfigField(
+                "STILLDONE_SECRET",
+                parse_string,
+                is_secret=True,
+            ),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    sensitive_plaintext = "super-confidential-token-12345"
+    with pytest.raises(InvalidConfigurationValueError) as exc_info:
+        schema.load({"STILLDONE_SECRET": sensitive_plaintext})
+
+    err = exc_info.value
+    err_str = str(err)
+    err_repr = repr(err)
+
+    # Identifies key
+    assert err.key == "STILLDONE_SECRET"
+    assert err.is_secret is True
+    assert "STILLDONE_SECRET" in err_str
+
+    # Explains invalid secret parser/result contract
+    assert "must parse to SecretString" in err_str
+
+    # Plaintext MUST NOT be in error message or repr
+    assert sensitive_plaintext not in err_str
+    assert sensitive_plaintext not in err_repr
+
+
+def test_custom_secret_parser_returning_secret_string_succeeds() -> None:
+    """C. A custom secret parser explicitly returning SecretString succeeds."""
+
+    def custom_parser(val: str) -> SecretString:
+        if not val.startswith("custom_"):
+            raise ValueError("Must start with custom_")
+        return SecretString(val)
+
+    schema = ConfigSchema(
+        fields=[
+            ConfigField(
+                "STILLDONE_CUSTOM_SECRET",
+                custom_parser,
+                is_secret=True,
+            ),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    cfg = schema.load({"STILLDONE_CUSTOM_SECRET": "custom_token_abc"})
+    val = cfg["STILLDONE_CUSTOM_SECRET"]
+    assert isinstance(val, SecretString)
+    assert val.get_secret_value() == "custom_token_abc"
+
+
+def test_loaded_secret_retrieval_returns_secret_string_with_exact_whitespace() -> None:
+    """D & E. parse_secret_string preserves whitespace and retrieval yields SecretString."""
+    schema = ConfigSchema(
+        fields=[
+            ConfigField(
+                "STILLDONE_API_SECRET",
+                parse_secret_string,
+                is_secret=True,
+            ),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    raw_secret = "  padded_secret_token  "
+    cfg = schema.load({"STILLDONE_API_SECRET": raw_secret})
+
+    # E. Retrieval returns SecretString, never raw str
+    val = cfg["STILLDONE_API_SECRET"]
+    assert isinstance(val, SecretString)
+    assert not isinstance(val, str)
+    assert cfg.get("STILLDONE_API_SECRET") is val
+    assert isinstance(list(cfg.values())[0], SecretString)
+    assert isinstance(dict(cfg.items())["STILLDONE_API_SECRET"], SecretString)
+
+    # D. Preserves exact secret plaintext including whitespace
+    assert val.get_secret_value() == raw_secret
+
+
+@dataclass(frozen=True)
+class _SecretDataclassTarget:
+    port: int
+    secret_token: SecretString
+
+
+def test_load_dataclass_keeps_repr_str_redacted() -> None:
+    """F. Loading secret into a frozen dataclass keeps normal dataclass repr/str redacted."""
+    schema = ConfigSchema(
+        fields=[
+            ConfigField("STILLDONE_PORT", parse_port),
+            ConfigField("STILLDONE_SECRET_TOKEN", parse_secret_string, is_secret=True),
+        ],
+        namespace="STILLDONE_",
+    )
+
+    sensitive_token = "live-secret-never-print-98765"
+    cfg = schema.load_dataclass(
+        _SecretDataclassTarget,
+        env={
+            "STILLDONE_PORT": "8080",
+            "STILLDONE_SECRET_TOKEN": sensitive_token,
+        },
+    )
+
+    assert isinstance(cfg.secret_token, SecretString)
+    assert cfg.secret_token.get_secret_value() == sensitive_token
+
+    # Normal dataclass repr and str must NOT reveal plaintext
+    repr_str = repr(cfg)
+    str_str = str(cfg)
+    assert sensitive_token not in repr_str
+    assert sensitive_token not in str_str
+    assert 'SecretString("**********")' in repr_str
+
+
+def test_direct_loaded_config_construction_with_raw_str_secret_fails_closed() -> None:
+    """G. LoadedConfig construction with a secret key mapped to raw str fails closed."""
+    plaintext = "unprotected-raw-secret"
+
+    with pytest.raises(InvalidConfigurationValueError) as exc_info:
+        LoadedConfig(
+            values={"STILLDONE_SECRET": plaintext},
+            secret_keys=frozenset({"STILLDONE_SECRET"}),
+        )
+
+    err = exc_info.value
+    err_str = str(err)
+    err_repr = repr(err)
+
+    assert err.key == "STILLDONE_SECRET"
+    assert err.is_secret is True
+    assert "must be a SecretString" in err_str
+    assert plaintext not in err_str
+    assert plaintext not in err_repr
+
+    # Non-str objects (like int) also fail closed
+    with pytest.raises(InvalidConfigurationValueError) as exc_info2:
+        LoadedConfig(
+            values={"STILLDONE_SECRET": 12345},
+            secret_keys=frozenset({"STILLDONE_SECRET"}),
+        )
+    assert "must be a SecretString" in str(exc_info2.value)
+
+    # Valid construction with SecretString succeeds
+    valid_cfg = LoadedConfig(
+        values={"STILLDONE_SECRET": SecretString("protected")},
+        secret_keys=frozenset({"STILLDONE_SECRET"}),
+    )
+    assert isinstance(valid_cfg["STILLDONE_SECRET"], SecretString)
