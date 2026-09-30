@@ -384,7 +384,7 @@ Goal:
 make evidence immutable enough to reason about honestly.
 
 ### P-03.01 — Implement canonical serialization and SHA-256 content-addressed evidence IDs
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `766a42cfe5f9bd93386198c8b21878296da5402a`)
 
 Acceptance:
 - canonical serialization: deterministic JSON primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`), sorted dictionary keys, NFC-normalized unicode with fail-closed collision detection for post-NFC duplicate canonical keys, UTC-normalized timestamps, canonical enum values and ID wrapper projection; non-finite floats, naive datetimes, and unsupported types fail closed;
@@ -394,18 +394,19 @@ Acceptance:
 - focused tests: `tests/test_serialization.py` and `tests/test_evidence.py` passing (155 total tests passing in suite).
 
 ### P-03.02 — Implement append-only mission/action/evidence ledger interfaces
-Status: QA HELD / NOT YET CLOSED
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - typed ledger records: immutable `MissionRecord`, `ActionRecord`, and `EvidenceRecord` with strict relationship integrity (`mission -> action -> evidence`);
-- content-addressed EvidenceId binding: `EvidenceRecord` strictly binds and validates exact `EvidenceId` matching canonical content-addressed hash;
+- payload immutability & defensive isolation: `EvidenceRecord` owns an immutable canonical snapshot of its payload (`CanonicalPayload`, `CanonicalSequence`) preventing mutation via caller input dicts, nested dicts/lists, or retrieved ledger objects;
+- content-addressed EvidenceId binding: `EvidenceRecord` strictly binds and validates exact `EvidenceId` matching canonical content-addressed hash across freezing and retrieval;
 - append-only semantics: silent overwriting prohibited; identical replay raises explicit `DuplicateRecordError`; conflicting same-identity/different-content attempts fail closed with `RecordConflictError`;
 - provider-neutral interface: `MissionLedgerPort` abstract port defined; zero SQLite, zero filesystem persistence, zero DynamoDB, zero AWS/Google/MCP imports;
 - non-durable classification: `InMemoryNonDurableLedger` explicitly classified as `IS_DURABLE = False`, `DURABILITY_CLASSIFICATION = "NON_DURABLE_TEST_OR_RUNTIME_LOCAL"`;
-- focused tests: `tests/test_ledger.py` passing (142 total tests passing in suite).
+- focused tests: `tests/test_ledger.py` passing (161 total tests passing in suite).
 
 ### P-03.03 — Implement deterministic state-transition guards
-Status: QA HELD / NOT YET CLOSED
+Status: DONE — independent QA PASS (Verified SHA: `2079f280fe8ba1fa08d963339031c6a2c0a9696c`)
 
 Acceptance:
 - runtime transition guard engine: `MissionTransitionGuard`, `assert_valid_transition`, `assert_can_promote_to_ready`, and `is_transition_allowed` using canonical `MissionState` and `DECLARATIVE_MISSION_TRANSITIONS`;

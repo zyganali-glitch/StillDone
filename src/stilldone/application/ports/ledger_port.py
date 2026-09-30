@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, SupportsIndex
 
 from stilldone.domain.action import ActionContract, ActionId
 from stilldone.domain.authority import ApprovalId
@@ -114,11 +114,149 @@ class ActionRecord:
         object.__setattr__(self, "created_at", norm_created)
 
 
+class CanonicalSequence(list[Any]):
+    """Immutable sequence for canonical evidence payload trees."""
+
+    def __init__(self, iterable: Any = ()) -> None:
+        super().__init__(iterable)
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        raise TypeError(
+            "Evidence payload sequence is immutable and does not support item assignment"
+        )
+
+    def __delitem__(self, index: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable and does not support item deletion")
+
+    def append(self, value: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def extend(self, values: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def insert(self, index: SupportsIndex, value: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def remove(self, value: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def pop(self, index: SupportsIndex = -1) -> Any:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def clear(self) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def reverse(self) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def sort(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def __iadd__(self, other: Any) -> Any:  # type: ignore[misc]
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def __imul__(self, other: Any) -> Any:  # type: ignore[misc]
+        raise TypeError("Evidence payload sequence is immutable")
+
+    def __copy__(self) -> CanonicalSequence:
+        return _freeze_sequence(self)
+
+    def __deepcopy__(self, memo: dict[Any, Any] | None = None) -> CanonicalSequence:
+        return _freeze_sequence(self)
+
+
+class CanonicalPayload(dict[str, Any]):
+    """Immutable mapping representing a canonical evidence payload snapshot.
+
+    Guarantees:
+    - Dict mutations fail closed with TypeError.
+    - Preserves canonical dict interfaces and json serialization compatibility.
+    - Deeply isolated from external caller structures.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise TypeError("Evidence payload is immutable and does not support item assignment")
+
+    def __delitem__(self, key: Any) -> None:
+        raise TypeError("Evidence payload is immutable and does not support item deletion")
+
+    def clear(self) -> None:
+        raise TypeError("Evidence payload is immutable")
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Evidence payload is immutable")
+
+    def setdefault(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError("Evidence payload is immutable")
+
+    def pop(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError("Evidence payload is immutable")
+
+    def popitem(self) -> Any:
+        raise TypeError("Evidence payload is immutable")
+
+    def __ior__(self, other: Any) -> Any:  # type: ignore[misc]
+        raise TypeError("Evidence payload is immutable")
+
+    def __copy__(self) -> CanonicalPayload:
+        return freeze_canonical_payload(self)
+
+    def __deepcopy__(self, memo: dict[Any, Any] | None = None) -> CanonicalPayload:
+        return freeze_canonical_payload(self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached standard mutable dictionary copy of the canonical payload."""
+        res = _unfreeze(self)
+        if not isinstance(res, dict):
+            raise TypeError("Unfrozen payload must be a dict")
+        return res
+
+
+def _freeze_value(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return CanonicalPayload({k: _freeze_value(v) for k, v in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return CanonicalSequence([_freeze_value(v) for v in obj])
+    return obj
+
+
+def _freeze_sequence(seq: Any) -> CanonicalSequence:
+    return CanonicalSequence([_freeze_value(v) for v in seq])
+
+
+def _unfreeze(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _unfreeze(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_unfreeze(v) for v in obj]
+    return obj
+
+
+def freeze_canonical_payload(payload: dict[str, Any]) -> CanonicalPayload:
+    """Validate, canonicalize, and deep-freeze an evidence payload.
+
+    Preserves fail-closed post-NFC canonicalization and key collision detection.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError(f"payload must be a dict, got {type(payload).__name__}")
+    canonical = to_canonical_primitive(payload)
+    if not isinstance(canonical, dict):
+        raise TypeError(
+            f"canonical primitive projection must be a dict, got {type(canonical).__name__}"
+        )
+    return CanonicalPayload({k: _freeze_value(v) for k, v in canonical.items()})
+
+
 @dataclass(frozen=True)
 class EvidenceRecord:
     """Immutable ledger record representing evidence bound to an action and mission.
 
     Binds its exact content-addressed EvidenceId derived from canonical serialization.
+    Owns an immutable canonical snapshot of its evidence payload, preventing any
+    caller or external mutation from altering stored evidence content.
     """
 
     evidence_id: EvidenceId
@@ -145,6 +283,10 @@ class EvidenceRecord:
         norm_created = _normalize_utc(self.created_at, "created_at")
         object.__setattr__(self, "created_at", norm_created)
 
+        # Ensure EvidenceRecord owns an immutable, defensively isolated canonical snapshot
+        frozen_payload = freeze_canonical_payload(self.payload)
+        object.__setattr__(self, "payload", frozen_payload)
+
         # Validate that the bound EvidenceId strictly matches content-addressed SHA-256
         computed_id = compute_evidence_id({"origin": self.origin, "payload": self.payload})
         if self.evidence_id != computed_id:
@@ -164,13 +306,14 @@ class EvidenceRecord:
     ) -> EvidenceRecord:
         """Create an EvidenceRecord with a deterministic content-addressed EvidenceId."""
         norm_created = _normalize_utc(created_at or datetime.now(UTC), "created_at")
-        computed_id = compute_evidence_id({"origin": origin, "payload": payload})
+        frozen_payload = freeze_canonical_payload(payload)
+        computed_id = compute_evidence_id({"origin": origin, "payload": frozen_payload})
         return cls(
             evidence_id=computed_id,
             action_id=action_id,
             mission_id=mission_id,
             origin=origin,
-            payload=payload,
+            payload=frozen_payload,
             created_at=norm_created,
         )
 
@@ -337,7 +480,15 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
             raise RecordConflictError(
                 f"Conflicting record for evidence {e_key}: existing record differs from new record."
             )
-        self._evidence[e_key] = record
+        # Store a defensively isolated record to ensure ledger ownership integrity
+        self._evidence[e_key] = EvidenceRecord(
+            evidence_id=record.evidence_id,
+            action_id=record.action_id,
+            mission_id=record.mission_id,
+            origin=record.origin,
+            payload=record.payload,
+            created_at=record.created_at,
+        )
         self._action_evidence[a_key].append(e_key)
         self._mission_evidence[m_key].append(e_key)
 
@@ -345,16 +496,28 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         key = str(evidence_id)
         if key not in self._evidence:
             raise RecordNotFoundError(f"Evidence {key} not found in ledger")
-        return self._evidence[key]
+        stored = self._evidence[key]
+        return EvidenceRecord(
+            evidence_id=stored.evidence_id,
+            action_id=stored.action_id,
+            mission_id=stored.mission_id,
+            origin=stored.origin,
+            payload=stored.payload,
+            created_at=stored.created_at,
+        )
 
     def get_evidence_for_action(self, action_id: ActionId) -> list[EvidenceRecord]:
         a_key = str(action_id)
         if a_key not in self._actions:
             raise RecordNotFoundError(f"Action {a_key} not found in ledger")
-        return [self._evidence[e_key] for e_key in self._action_evidence.get(a_key, [])]
+        return [
+            self.get_evidence(EvidenceId(e_key)) for e_key in self._action_evidence.get(a_key, [])
+        ]
 
     def get_evidence_for_mission(self, mission_id: MissionId) -> list[EvidenceRecord]:
         m_key = str(mission_id)
         if m_key not in self._missions:
             raise RecordNotFoundError(f"Mission {m_key} not found in ledger")
-        return [self._evidence[e_key] for e_key in self._mission_evidence.get(m_key, [])]
+        return [
+            self.get_evidence(EvidenceId(e_key)) for e_key in self._mission_evidence.get(m_key, [])
+        ]

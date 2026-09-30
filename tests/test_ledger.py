@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,8 @@ from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.evidence import EvidenceId, compute_evidence_id
 from stilldone.ledger import (
     ActionRecord,
+    CanonicalPayload,
+    CanonicalSequence,
     DuplicateRecordError,
     EvidenceRecord,
     InMemoryNonDurableLedger,
@@ -81,7 +84,7 @@ def _make_sample_action(
 def _make_sample_evidence(
     mid: MissionId,
     aid: ActionId,
-    payload: dict[str, str] | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> EvidenceRecord:
     origin = EvidenceOrigin(
         provenance=EvidenceProvenance.LIVE_GOOGLE,
@@ -254,3 +257,230 @@ def test_relational_integrity_checks() -> None:
     )
     with pytest.raises(LedgerError, match="Relationship mismatch"):
         ledger.append_evidence(mismatched_evidence)
+
+
+def test_regression_a_top_level_input_alias_isolation() -> None:
+    """A. Mutating caller-owned input dict after EvidenceRecord creation does not alter record."""
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        observed_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+    original = {"status": "needsAction", "count": 1}
+    record = EvidenceRecord.create(
+        action_id=ActionId("11111111-1111-1111-1111-111111111111"),
+        mission_id=MissionId("00000000-0000-0000-0000-000000000001"),
+        origin=origin,
+        payload=original,
+        created_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+
+    # Mutate original caller dictionary
+    original["status"] = "tampered"
+    original["count"] = 999
+    original["injected"] = "corrupted"
+
+    # EvidenceRecord content remains unchanged
+    assert isinstance(record.payload, CanonicalPayload)
+    assert record.payload["status"] == "needsAction"
+    assert record.payload["count"] == 1
+    assert "injected" not in record.payload
+    assert record.payload == {"count": 1, "status": "needsAction"}
+
+    # EvidenceId remains strictly valid and matches content
+    recomputed_id = compute_evidence_id({"origin": record.origin, "payload": record.payload})
+    assert recomputed_id == record.evidence_id
+
+
+def test_regression_b_nested_alias_isolation() -> None:
+    """B. Mutating nested dicts/lists in payload after construction does not alter record."""
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        observed_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+    original: dict[str, Any] = {
+        "nested_dict": {"field": "original_val"},
+        "nested_list": ["item1", {"sub": 42}],
+    }
+    record = EvidenceRecord.create(
+        action_id=ActionId("11111111-1111-1111-1111-111111111111"),
+        mission_id=MissionId("00000000-0000-0000-0000-000000000001"),
+        origin=origin,
+        payload=original,
+        created_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+
+    # Mutate nested original structures
+    original["nested_dict"]["field"] = "mutated_val"
+    original["nested_dict"]["extra"] = "injected"
+    original["nested_list"].append("item2")
+    original["nested_list"][1]["sub"] = 999
+
+    # Record content remains completely unchanged
+    assert isinstance(record.payload["nested_dict"], CanonicalPayload)
+    assert isinstance(record.payload["nested_list"], CanonicalSequence)
+    assert record.payload["nested_dict"]["field"] == "original_val"
+    assert "extra" not in record.payload["nested_dict"]
+    assert len(record.payload["nested_list"]) == 2
+    assert record.payload["nested_list"][0] == "item1"
+    assert record.payload["nested_list"][1]["sub"] == 42
+
+    # EvidenceId remains strictly valid
+    assert (
+        compute_evidence_id({"origin": record.origin, "payload": record.payload})
+        == record.evidence_id
+    )
+
+
+def test_regression_c_post_append_isolation() -> None:
+    """C. External mutation of objects after append_evidence does not alter ledger evidence."""
+    ledger = InMemoryNonDurableLedger()
+    m_record = _make_sample_mission()
+    ledger.append_mission(m_record)
+    a_record = _make_sample_action(m_record.mission_id)
+    ledger.append_action(a_record)
+
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        observed_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+    original: dict[str, Any] = {
+        "step": "verify",
+        "items": [1, 2],
+        "meta": {"verified": False},
+    }
+    record = EvidenceRecord.create(
+        action_id=a_record.action_id,
+        mission_id=m_record.mission_id,
+        origin=origin,
+        payload=original,
+        created_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+
+    ledger.append_evidence(record)
+
+    # Mutate original caller-owned structures
+    original["step"] = "corrupted"
+    original["items"].append(3)
+    original["meta"]["verified"] = True
+
+    # Retrieve ledger evidence and verify it remains strictly unaffected
+    retrieved = ledger.get_evidence(record.evidence_id)
+    assert retrieved.payload["step"] == "verify"
+    assert list(retrieved.payload["items"]) == [1, 2]
+    assert retrieved.payload["meta"]["verified"] is False
+
+    # Stored EvidenceId matches stored content
+    assert (
+        compute_evidence_id({"origin": retrieved.origin, "payload": retrieved.payload})
+        == retrieved.evidence_id
+    )
+
+
+def test_regression_d_retrieval_isolation() -> None:
+    """D. Ledger retrieval does not expose a mutation path that changes stored evidence."""
+    ledger = InMemoryNonDurableLedger()
+    m_record = _make_sample_mission()
+    ledger.append_mission(m_record)
+    a_record = _make_sample_action(m_record.mission_id)
+    ledger.append_action(a_record)
+
+    e_record = _make_sample_evidence(
+        mid=m_record.mission_id,
+        aid=a_record.action_id,
+        payload={"status": "needsAction", "items": ["milk"], "meta": {"owner": "user"}},
+    )
+    ledger.append_evidence(e_record)
+
+    retrieved = ledger.get_evidence(e_record.evidence_id)
+
+    # 1. Direct mutation attempts on retrieved payload raise TypeError
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload["status"] = "tampered"
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        del retrieved.payload["status"]
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload.update({"status": "tampered"})
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload.clear()
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload.pop("status")
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload.setdefault("new_key", "val")
+
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload.__ior__({"new_key": "val"})
+
+    # 2. Nested mutations raise TypeError
+    with pytest.raises(TypeError, match="Evidence payload is immutable"):
+        retrieved.payload["meta"]["owner"] = "adversary"
+
+    with pytest.raises(TypeError, match="Evidence payload sequence is immutable"):
+        retrieved.payload["items"].append("tampered")
+
+    with pytest.raises(TypeError, match="Evidence payload sequence is immutable"):
+        retrieved.payload["items"][0] = "tampered"
+
+    # 3. Even if low-level C descriptor dict.__setitem__ is invoked on retrieved copy:
+    dict.__setitem__(retrieved.payload, "status", "tampered_low_level")
+
+    # 4. Subsequent ledger retrieval proves ledger-owned evidence remains
+    # pristine with matching EvidenceId
+    fresh_retrieval = ledger.get_evidence(e_record.evidence_id)
+    assert fresh_retrieval.payload["status"] == "needsAction"
+    assert (
+        compute_evidence_id({"origin": fresh_retrieval.origin, "payload": fresh_retrieval.payload})
+        == fresh_retrieval.evidence_id
+    )
+
+
+def test_regression_fail_closed_post_nfc_collision() -> None:
+    """Fail-closed post-NFC duplicate key collisions are rejected during EvidenceRecord creation."""
+    import unicodedata
+
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        observed_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+    k_composed = "\u00e9"
+    k_decomposed = unicodedata.normalize("NFD", k_composed)
+    colliding = {k_composed: 1, k_decomposed: 2}
+
+    with pytest.raises(ValueError, match="Canonical key collision after Unicode NFC normalization"):
+        EvidenceRecord.create(
+            action_id=ActionId("11111111-1111-1111-1111-111111111111"),
+            mission_id=MissionId("00000000-0000-0000-0000-000000000001"),
+            origin=origin,
+            payload=colliding,
+            created_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+        )
+
+
+def test_regression_to_dict_returns_detached_mutable_copy() -> None:
+    """to_dict() returns a detached standard mutable copy that does not affect CanonicalPayload."""
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        observed_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+    record = EvidenceRecord.create(
+        action_id=ActionId("11111111-1111-1111-1111-111111111111"),
+        mission_id=MissionId("00000000-0000-0000-0000-000000000001"),
+        origin=origin,
+        payload={"a": 1, "items": [10, 20]},
+        created_at=datetime(2026, 9, 30, 8, 2, 0, tzinfo=UTC),
+    )
+
+    assert isinstance(record.payload, CanonicalPayload)
+    detached = record.payload.to_dict()
+    assert type(detached) is dict
+    assert type(detached["items"]) is list
+
+    detached["a"] = 999
+    detached["items"].append(30)
+
+    assert record.payload["a"] == 1
+    assert list(record.payload["items"]) == [10, 20]

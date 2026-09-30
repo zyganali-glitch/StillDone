@@ -2,6 +2,8 @@
 
 from stilldone.application.ports.ledger_port import (
     ActionRecord,
+    CanonicalPayload,
+    CanonicalSequence,
     DuplicateRecordError,
     EvidenceRecord,
     InMemoryNonDurableLedger,
@@ -10,10 +12,13 @@ from stilldone.application.ports.ledger_port import (
     MissionRecord,
     RecordConflictError,
     RecordNotFoundError,
+    freeze_canonical_payload,
 )
 
 __all__ = [
     "ActionRecord",
+    "CanonicalPayload",
+    "CanonicalSequence",
     "DuplicateRecordError",
     "EvidenceRecord",
     "InMemoryNonDurableLedger",
@@ -22,4 +27,5 @@ __all__ = [
     "MissionRecord",
     "RecordConflictError",
     "RecordNotFoundError",
+    "freeze_canonical_payload",
 ]
