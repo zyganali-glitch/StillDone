@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-03.05 — Bind receipt projections to exact mission/evidence hashes
+P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
 
 Status:
 `DONE — awaiting independent QA`
@@ -85,9 +85,10 @@ Status:
 - P-03.03 — PASS
 - P-03.04 — DONE — awaiting independent QA
 - P-03.05 — DONE — awaiting independent QA
-- P-03.06 — next / in progress
+- P-03.06 — DONE — awaiting independent QA
 
-Phase P-03 is **NOT_CLOSED**. Task P-03.06 remains in batch.
+Phase P-03 is **NOT_CLOSED** pending independent QA.
+Phase P-04 is **NOT_STARTED / NOT AUTHORIZED**.
 
 ## Last independently VERIFIED baseline SHA
 
@@ -95,12 +96,12 @@ Phase P-03 is **NOT_CLOSED**. Task P-03.06 remains in batch.
 
 ## Next exact task
 
-`P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests`
-Status: `IN_PROGRESS`
+`Phase P-03 Independent QA Review & Phase Closure`
+Status: `PENDING INDEPENDENT QA / NOT AUTHORIZED`
 
 ## Next safe action
 
-Execute P-03.06 in bounded batch. Await independent QA review upon batch completion. Hard stop after P-03.06. Do NOT begin P-04.
+Batch execution completed through P-03.06. Run full canonical validation, push remote main, verify exact-SHA CI, and HARD STOP. Do NOT begin Phase P-04.
 
 ---
 

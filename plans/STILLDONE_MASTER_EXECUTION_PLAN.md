@@ -439,10 +439,20 @@ Acceptance:
 - focused tests: `tests/test_receipt.py` passing (188 total tests passing in suite).
 
 ### P-03.06 — Add tamper, mismatch, replay, stale, and forbidden-promotion tests
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- TAMPER tests: verified fail-closed detection of altered evidence content vs EvidenceId, mutated receipt mission hash, altered evidence binding, and altered provider-output capture vs digest;
+- MISMATCH tests: verified fail-closed rejection of evidence bound to mismatched missions (`ReceiptMismatchError`), actions bound to missing missions in ledger (`RecordNotFoundError`), mission identity vs content hash mismatch, and evidence list vs projection hash mismatch;
+- REPLAY tests: verified append-only ledger rejection of duplicate appends (`DuplicateRecordError`) and conflicting same-identity records (`RecordConflictError`), and proved historical receipts cannot silently overwrite current state;
+- STALE tests: proved STALE step evidence strictly prevents promotion to READY (`IllegalStatePromotionError`), historical receipts and RECORDED_LIVE evidence cannot masquerade as current-live truth, and freshness semantics remain separate from evidence existence;
+- FORBIDDEN PROMOTION tests: proved NOT_RUN, EXECUTED_UNVERIFIED, provider capture alone, receipt existence alone, and invalidating evidence states (CONTRADICTED, BLOCKED, FAILED) cannot promote to READY, and verified direct illegal transitions from non-VERIFYING states fail closed;
+- Unicode & canonicalization hardening: preserved fail-closed behavior for Unicode NFC collisions, non-finite floats, naive datetimes, and unsupported types;
+- Evidence payload isolation & append-only: preserved deep payload freezing and caller isolation across evidence records;
+- focused tests: `tests/test_phase_p03_adversarial.py` passing (211 total tests passing in suite).
 
 Phase exit:
-local deterministic evidence primitives are green but do not claim live integration.
+local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is NOT_CLOSED pending independent QA. P-04 is NOT_STARTED / NOT AUTHORIZED.
 
 ---
 
