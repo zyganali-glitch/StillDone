@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-03: CLOSED; Phase P-04: IN_PROGRESS (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: independent QA PASS; P-04.04: REPAIRED — awaiting independent QA; P-04.05: PENDING / NOT AUTHORIZED; Last independently verified contiguous SHA: `63c5e2792967edd37e93b6583663395824b7e688`)**
+Current repository state: **Phase P-03: CLOSED; Phase P-04: IN_PROGRESS (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: independent QA PASS; P-04.04: independent QA PASS; P-04.05: DONE — awaiting independent QA; P-04.06: PENDING / NOT AUTHORIZED; Last independently verified contiguous SHA: `2b24b4826009a8d9155616c90355185c3f19062e`)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,36 +73,36 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-04.04 — Implement authority classification and approval-binding verification
+P-04.05 — Implement demo-resource isolation checks
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-04 Status
 
 - P-04.01 — independent QA PASS (Verified SHA: `933b5364e69c8804dc448c9b0c84e02877d8446d`)
 - P-04.02 — independent QA PASS (Verified SHA: `4125da1357ed38483941216aae1a3182afadf404`)
 - P-04.03 — independent QA PASS (Verified SHA: `63c5e2792967edd37e93b6583663395824b7e688`)
-- P-04.04 — REPAIRED — awaiting independent QA
-- P-04.05 — PENDING / NOT AUTHORIZED
+- P-04.04 — independent QA PASS (Verified SHA: `2b24b4826009a8d9155616c90355185c3f19062e`)
+- P-04.05 — DONE — awaiting independent QA
 - P-04.06 — PENDING / NOT AUTHORIZED
 - P-04.07 — PENDING / NOT AUTHORIZED
 
 Phase P-03 is **CLOSED — independent QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`)**.
-Phase P-04 is **IN_PROGRESS (P-04.01 PASS; P-04.02 PASS; P-04.03 PASS; P-04.04 REPAIRED — awaiting independent QA)**.
+Phase P-04 is **IN_PROGRESS (P-04.01 PASS; P-04.02 PASS; P-04.03 PASS; P-04.04 PASS; P-04.05 DONE — awaiting independent QA)**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`63c5e2792967edd37e93b6583663395824b7e688`
+`2b24b4826009a8d9155616c90355185c3f19062e`
 
 ## Next exact task
 
-`P-04.05 — Implement demo-resource isolation checks`
-Status: `PENDING / NOT AUTHORIZED` (Strictly locked until P-04.04 receives independent QA review)
+`P-04.06 — Implement public-endpoint rate/budget protection contract`
+Status: `PENDING / NOT AUTHORIZED` (Strictly locked until P-04.05 receives independent QA review)
 
 ## Next safe action
 
-Run full canonical validation, commit task commit, push remote main, verify exact-SHA CI, and await independent QA review for P-04.04. Do NOT begin P-04.05.
+Run full canonical validation, commit task commit, push remote main, verify exact-SHA CI, and await independent QA review for P-04.05. Do NOT begin P-04.06.
 
 ---
 

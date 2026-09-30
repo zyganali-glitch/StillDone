@@ -505,7 +505,7 @@ Acceptance:
 - focused unit tests: `tests/test_action_policy.py` passing (98 focused action-policy tests, 447 total tests in suite passing).
 
 ### P-04.04 — Implement authority classification and approval-binding verification
-Status: REPAIRED — awaiting independent QA
+Status: independent QA PASS (Verified SHA: `2b24b4826009a8d9155616c90355185c3f19062e`)
 
 Acceptance:
 - precondition & bypass resistance: authority classification accepts only P-04.03 `ValidatedActionContract`; raw `ActionContract` or unvalidated objects fail closed (`AuthorityPolicyTypeError`);
@@ -522,7 +522,18 @@ Acceptance:
 - focused unit tests: `tests/test_authority_policy.py` passing (44 focused authority-policy tests, 491 total tests in suite passing).
 
 ### P-04.05 — Implement demo-resource isolation checks
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- precondition & bypass resistance: isolation checks accept only P-04.03 `ValidatedActionContract`; raw `ActionContract` or unvalidated objects fail closed (`DemoIsolationTypeError`);
+- closed-world explicit scope: `src/stilldone/demo_isolation.py` implementing immutable `DemoResourceScope` with required non-empty `calendar_id` and `task_list_id`; whitespace-only or non-string IDs fail closed (`DemoScopeValueError`, `DemoScopeTypeError`); no implicit environment reads or global mutable state;
+- sensitive identifier safety: `DemoResourceScope` masks IDs in `str()` and `repr()` (`***`); exception messages and result representations never echo configured or candidate external IDs;
+- exact match law: case-sensitive exact string comparison for external IDs; prefixes, suffixes, substrings, and whitespace trimming fail closed;
+- calendar actions isolation: `calendar.read` and `calendar.update` require non-null `target.parent_id` matching `scope.calendar_id`; missing `parent_id` fails (`MissingParentContainerError`); mismatch fails (`CalendarOutOfScopeError`); varying `resource_id` allowed within demo calendar;
+- task actions isolation: `task.read` requires non-null `target.parent_id` matching `scope.task_list_id` (`TaskOutOfScopeError`); `task.create` targets container directly with `target.resource_id` matching `scope.task_list_id` and requires `target.parent_id` to be None (`UnexpectedParentContainerError`);
+- weather non-Google action: `weather.read` returns explicit `NOT_APPLICABLE` status (`DemoIsolationStatus.NOT_APPLICABLE`);
+- static-vs-live truth & authority boundary: pure static target-scope validation; zero Google API calls; zero provider/network imports; confers zero authority, creates zero approvals, and cannot produce `VERIFIED` or `READY` state;
+- focused unit tests: `tests/test_demo_isolation.py` passing (35 focused isolation tests, 526 total tests in suite passing).
 
 ### P-04.06 — Implement public-endpoint rate/budget protection contract
 Status: PENDING
