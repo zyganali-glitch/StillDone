@@ -16,6 +16,7 @@ Validates:
 from __future__ import annotations
 
 import copy
+import urllib.parse
 from typing import Any
 
 import pytest
@@ -258,7 +259,11 @@ def test_oauth_callback_url_code_state_token_material_is_redacted() -> None:
     assert "state=sec_state_xyz789" not in result
     assert f"code={REDACTED_SECRET}" in result
     assert f"state={REDACTED_SECRET}" in result
-    assert "scope=https://www.googleapis.com/auth/calendar" in result
+    # The scope parameter's decoded value must be semantically preserved
+    # (percent-encoding of reserved chars like :// is expected with canonical URL encoding)
+    parsed_result = urllib.parse.urlsplit(result)
+    result_params = dict(urllib.parse.parse_qsl(parsed_result.query, keep_blank_values=True))
+    assert result_params["scope"] == "https://www.googleapis.com/auth/calendar"
     assert result.startswith("https://app.stilldone.io/oauth/callback?")
 
 
@@ -740,3 +745,259 @@ def test_redaction_before_structural_truncation() -> None:
     assert "corporate-subdomain" not in str(cap.payload)
     assert REDACTED_EMAIL in cap.payload["data"]
     assert len(cap.payload["data"]) == 30
+
+
+# ===========================================================================
+# 16. BLOCKER 1 — NON-STRING redact_log_message REJECTION
+# ===========================================================================
+
+
+def test_redact_log_message_rejects_non_string_without_invoking_dunder_str() -> None:
+    """Non-str input to redact_log_message fails closed without calling __str__ or __repr__.
+
+    An arbitrary object whose __str__/__repr__ expose sentinel secret material must
+    never have those methods invoked. The exception must report only the safe type name.
+    """
+
+    class TrapObject:
+        """Object that explodes or leaks if __str__/__repr__ are called."""
+
+        def __str__(self) -> str:
+            raise AssertionError("__str__ MUST NEVER be called by redact_log_message")
+
+        def __repr__(self) -> str:
+            raise AssertionError("__repr__ MUST NEVER be called by redact_log_message")
+
+    trap = TrapObject()
+    with pytest.raises(TypeError, match="redact_log_message requires a str") as exc_info:
+        redact_log_message(trap)  # type: ignore[arg-type]
+
+    err_msg = str(exc_info.value)
+    assert "TrapObject" in err_msg
+    # Sentinel secret material never appears
+    assert "MUST NEVER" not in err_msg
+
+
+def test_redact_log_message_rejects_non_string_with_secret_payload() -> None:
+    """Object whose __str__ returns sensitive plaintext that bypasses redaction patterns.
+
+    This verifies that even if __str__ would produce something that looks harmless to
+    the bounded patterns, the function never calls it.
+    """
+
+    class SecretLeaker:
+        def __str__(self) -> str:
+            return "SECRET_API_KEY_UNREDACTABLE_PATTERN_xyz789"
+
+        def __repr__(self) -> str:
+            return "<SecretLeaker: SECRET_API_KEY_UNREDACTABLE_PATTERN_xyz789>"
+
+    leaker = SecretLeaker()
+    with pytest.raises(TypeError) as exc_info:
+        redact_log_message(leaker)  # type: ignore[arg-type]
+
+    err_msg = str(exc_info.value)
+    assert "SECRET_API_KEY_UNREDACTABLE_PATTERN_xyz789" not in err_msg
+    assert "SecretLeaker" in err_msg
+
+
+def test_redact_log_message_rejects_int_bool_none_list_dict() -> None:
+    """Common non-str types are all rejected with TypeError."""
+    for non_str in [42, True, None, ["msg"], {"key": "val"}, 3.14]:
+        with pytest.raises(TypeError, match="redact_log_message requires a str"):
+            redact_log_message(non_str)  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# 17. BLOCKER 2 — OAUTH URL ENCODING SAFETY
+# ===========================================================================
+
+
+def test_encoded_ampersand_in_non_sensitive_value_stays_in_value() -> None:
+    """A. Encoded ampersand/equal signs inside a non-sensitive value remain part of
+    that value after sanitization and do not become new parameters."""
+    url = "https://example.test/callback?scope=a%26b%3Dc&code=SECRET_CODE"
+    result = redact_text(url)
+
+    # The secret code is redacted
+    assert "SECRET_CODE" not in result
+    assert f"code={REDACTED_SECRET}" in result
+
+    # The scope value must remain semantically "a&b=c" (one parameter, not split)
+    parsed = urllib.parse.urlsplit(result)
+    result_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    scope_values = [v for k, v in result_params if k == "scope"]
+    assert len(scope_values) == 1
+    assert scope_values[0] == "a&b=c"
+
+    # No unredacted access_token or stray parameter from value splitting
+    param_keys = [k for k, _ in result_params]
+    assert "access_token" not in param_keys
+
+
+def test_encoded_access_token_inside_non_sensitive_value_cannot_escape() -> None:
+    """B. An encoded string resembling access_token=SECRET inside a non-sensitive
+    parameter cannot emerge as a new unredacted access_token parameter."""
+    url = "https://example.test/callback?scope=a%26access_token%3DSECRET"
+    result = redact_text(url)
+
+    # Parse the result and ensure access_token never appears as a separate param
+    parsed = urllib.parse.urlsplit(result)
+    result_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    param_keys = [k for k, _ in result_params]
+    assert "access_token" not in param_keys
+
+    # The scope value's decoded semantic form is preserved
+    scope_values = [v for k, v in result_params if k == "scope"]
+    assert len(scope_values) == 1
+    assert scope_values[0] == "a&access_token=SECRET"
+
+
+def test_unicode_and_reserved_chars_in_non_sensitive_query_values() -> None:
+    """C. Unicode and reserved characters in non-sensitive query values preserve
+    semantic round-trip behavior."""
+    url = "https://example.test/callback?name=%C3%BCser%40test&code=OAUTH_CODE_XYZ"
+    result = redact_text(url)
+
+    assert "OAUTH_CODE_XYZ" not in result
+    parsed = urllib.parse.urlsplit(result)
+    result_params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    # "üser@test" must be semantically preserved
+    assert result_params["name"] == "üser@test"
+
+
+def test_duplicate_query_parameters_remain_deterministic_and_ordered() -> None:
+    """D. Duplicate query parameters remain deterministic and ordered."""
+    url = "https://example.test/callback?scope=read&scope=write&code=SECRET1&state=STATE1"
+    result = redact_text(url)
+
+    assert "SECRET1" not in result
+    assert "STATE1" not in result
+
+    parsed = urllib.parse.urlsplit(result)
+    result_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    scope_values = [v for k, v in result_params if k == "scope"]
+    assert scope_values == ["read", "write"]  # order preserved
+
+
+def test_fragment_parameters_receive_safe_encoding_treatment() -> None:
+    """E. Fragment parameters receive the same safe treatment."""
+    url = (
+        "https://example.test/auth"
+        "#access_token=FRAG_SECRET&token_type=Bearer&scope=val%26extra%3Dmore"
+    )
+    result = redact_text(url)
+
+    assert "FRAG_SECRET" not in result
+    parsed = urllib.parse.urlsplit(result)
+    frag_params = dict(urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True))
+    assert frag_params["token_type"] == "Bearer"
+    assert frag_params["scope"] == "val&extra=more"
+
+
+def test_existing_oauth_code_state_token_redaction_still_works() -> None:
+    """F. Existing OAuth code/state/token redaction tests remain green."""
+    url = "https://app.example.com/cb?code=AUTH_CODE&state=STATE_VAL&scope=email"
+    result = redact_text(url)
+    assert "AUTH_CODE" not in result
+    assert "STATE_VAL" not in result
+    assert f"code={REDACTED_SECRET}" in result
+    assert f"state={REDACTED_SECRET}" in result
+    parsed = urllib.parse.urlsplit(result)
+    result_params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    assert result_params["scope"] == "email"
+
+
+def test_oauth_url_redaction_is_idempotent() -> None:
+    """G. redact(redact(url)) remains identical."""
+    url = "https://example.test/callback?code=SECRET_CODE&scope=a%26b%3Dc&state=STATE_VAL"
+    once = redact_text(url)
+    twice = redact_text(once)
+    assert once == twice
+
+
+# ===========================================================================
+# 18. BLOCKER 3 — RedactionMetadata IMMUTABILITY
+# ===========================================================================
+
+
+def test_metadata_caller_alias_mutation_cannot_change_metadata() -> None:
+    """A. Constructor caller-alias mutation after construction cannot affect metadata."""
+    caller_dict: dict[str, int] = {"secret": 3, "email": 1, "identifier": 2}
+    meta = RedactionMetadata(is_redacted=True, redaction_counts=caller_dict)
+
+    # Mutate the caller's original dict
+    caller_dict["secret"] = 999
+    caller_dict["new_category"] = 42
+
+    # Metadata is unaffected
+    assert meta.redaction_counts["secret"] == 3
+    assert "new_category" not in meta.redaction_counts
+    assert meta.to_canonical()["redaction_counts"]["secret"] == 3
+
+
+def test_metadata_redaction_counts_assignment_fails() -> None:
+    """B. meta.redaction_counts[...] assignment fails."""
+    meta = RedactionMetadata(
+        is_redacted=True,
+        redaction_counts={"secret": 1, "email": 0, "identifier": 0},
+    )
+    with pytest.raises(TypeError):
+        meta.redaction_counts["secret"] = 999  # type: ignore[index]
+
+
+def test_metadata_to_dict_to_canonical_returned_dict_mutation_does_not_affect_metadata() -> None:
+    """C. to_dict()/to_canonical() returned nested dict mutation does not affect metadata."""
+    meta = RedactionMetadata(
+        is_redacted=True,
+        redaction_counts={"secret": 5, "email": 2, "identifier": 1},
+    )
+
+    # Mutate to_dict result
+    d1 = meta.to_dict()
+    d1["redaction_counts"]["secret"] = 0
+    d1["is_redacted"] = False
+
+    # Mutate to_canonical result
+    d2 = meta.to_canonical()
+    d2["redaction_counts"]["email"] = 999
+
+    # Metadata is unaffected by either mutation
+    assert meta.is_redacted is True
+    assert meta.redaction_counts["secret"] == 5
+    assert meta.redaction_counts["email"] == 2
+
+    # Fresh projection is correct
+    fresh = meta.to_canonical()
+    assert fresh["redaction_counts"]["secret"] == 5
+    assert fresh["redaction_counts"]["email"] == 2
+
+
+def test_redact_with_metadata_result_remains_deterministic() -> None:
+    """D. redact_with_metadata result remains deterministic regardless of metadata mutation."""
+    payload = {"token": "sec1", "email_field": "a@b.com", "calendar_id": "cal1"}
+    _, meta1 = redact_with_metadata(payload)
+    _, meta2 = redact_with_metadata(payload)
+
+    assert meta1.to_canonical() == meta2.to_canonical()
+    assert meta1.redaction_counts["secret"] == meta2.redaction_counts["secret"]
+
+
+def test_redaction_output_unchanged_by_metadata_mutation_attempts() -> None:
+    """E. Redaction output itself remains unchanged by metadata mutation attempts."""
+    payload = {"token": "sec_val", "public": "safe"}
+    result1, meta = redact_with_metadata(payload)
+
+    # Attempt mutations on metadata (all should fail or be isolated)
+    try:
+        meta.redaction_counts["secret"] = 0  # type: ignore[index]
+    except TypeError:
+        pass
+
+    d = meta.to_dict()
+    d["redaction_counts"]["secret"] = 999
+
+    # Run again — output unchanged
+    result2, meta2 = redact_with_metadata(payload)
+    assert result1 == result2
+    assert meta2.to_canonical() == meta.to_canonical()

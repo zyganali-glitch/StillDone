@@ -168,7 +168,9 @@ class RedactionMetadata:
     Guarantees:
     - Never contains sensitive plaintext, keys, or hashes of secrets.
     - Tracks categories and counts deterministically.
-    - to_canonical() returns a lexicographically sorted dictionary.
+    - redaction_counts is an immutable, detached snapshot: neither caller-alias
+      mutation after construction nor direct attribute assignment can alter it.
+    - to_canonical() / to_dict() return fresh detached ordinary dictionaries.
     """
 
     is_redacted: bool
@@ -186,9 +188,21 @@ class RedactionMetadata:
                 raise TypeError(f"Category key must be str, got {type(cat).__name__}")
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                 raise ValueError(f"Category count must be a non-negative integer, got {count!r}")
+        # Store a detached immutable snapshot so caller-alias mutation and
+        # direct attribute assignment cannot alter metadata truth.
+        import types
+
+        object.__setattr__(
+            self,
+            "redaction_counts",
+            types.MappingProxyType(dict(self.redaction_counts)),
+        )
 
     def to_canonical(self) -> dict[str, Any]:
-        """Return canonical JSON-compatible projection of the metadata."""
+        """Return canonical JSON-compatible projection of the metadata.
+
+        Returns a fresh detached dictionary; mutating it cannot affect this metadata.
+        """
         return {
             "is_redacted": self.is_redacted,
             "redaction_counts": {
@@ -197,6 +211,7 @@ class RedactionMetadata:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a fresh detached dictionary identical to to_canonical()."""
         return self.to_canonical()
 
 
@@ -270,7 +285,9 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
                     modified = True
             else:
                 new_query_pairs.append((k, v))
-        new_query_str = "&".join(f"{k}={v}" for k, v in new_query_pairs)
+        new_query_str = urllib.parse.urlencode(
+            new_query_pairs, quote_via=urllib.parse.quote, safe="[]"
+        )
 
     # Process fragment
     new_frag_str = parsed.fragment
@@ -286,7 +303,9 @@ def _sanitize_oauth_url(url: str, counts: dict[str, int]) -> str:
                     modified = True
             else:
                 new_frag_pairs.append((k, v))
-        new_frag_str = "&".join(f"{k}={v}" for k, v in new_frag_pairs)
+        new_frag_str = urllib.parse.urlencode(
+            new_frag_pairs, quote_via=urllib.parse.quote, safe="[]"
+        )
 
     if modified:
         reconstructed = urllib.parse.urlunsplit(
@@ -380,12 +399,25 @@ def redact_text(text: str, counts: dict[str, int] | None = None) -> str:
 
 
 def redact_log_message(msg: str) -> str:
-    """Convenience function to sanitize a log message string before emission.
+    """Sanitize a log message string before emission.
 
-    Guarantees no sensitive tokens, OAuth material, AWS keys, or emails enter logs.
+    Applies the bounded set of explicitly implemented redaction patterns
+    (sensitive mapping keys, OAuth URL parameters, Bearer/Basic/JWT tokens,
+    Google access tokens, AWS access key IDs, and email addresses) to the
+    input string.
+
+    This helper does NOT guarantee discovery of every possible secret, token,
+    or PII format. It sanitizes only the categories listed above.
+
+    Raises:
+        TypeError: If *msg* is not a ``str``.  Non-string objects are rejected
+            without invoking ``__str__``, ``__repr__``, ``format``, or any
+            other projection hook, because arbitrary implementations of those
+            methods may return sensitive plaintext that does not match the
+            bounded redaction patterns.
     """
     if not isinstance(msg, str):
-        msg = str(msg)
+        raise TypeError(f"redact_log_message requires a str, got {type(msg).__name__}")
     return redact_text(msg)
 
 
