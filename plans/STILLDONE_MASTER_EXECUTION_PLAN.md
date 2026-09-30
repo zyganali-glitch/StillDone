@@ -492,7 +492,7 @@ Acceptance:
 - focused tests: `tests/test_redaction.py` passing (77 redaction tests, 16 capture tests, 54 config tests; 349 total tests passing in suite at final verified closure SHA `4125da1357ed38483941216aae1a3182afadf404`).
 
 ### P-04.03 — Implement supported-action allowlist and parameter validation
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `63c5e2792967edd37e93b6583663395824b7e688`)
 
 Acceptance:
 - closed-world action policy: `src/stilldone/action_policy.py` implementing immutable `ACTION_POLICIES` mapping exactly 5 canonical `ActionType` members to `ActionPolicy`; zero dynamic/plugin/model-defined actions; missing/extra entries fail closed;
@@ -505,7 +505,21 @@ Acceptance:
 - focused unit tests: `tests/test_action_policy.py` passing (98 focused action-policy tests, 447 total tests in suite passing).
 
 ### P-04.04 — Implement authority classification and approval-binding verification
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- precondition & bypass resistance: authority classification accepts only P-04.03 `ValidatedActionContract`; raw `ActionContract` or unvalidated objects fail closed (`AuthorityPolicyTypeError`);
+- closed-world classification: `src/stilldone/authority_policy.py` implementing immutable `ACTION_AUTHORITY_TABLE` mapping all 5 canonical `ActionType` members: calendar.read -> READ_ONLY, task.read -> READ_ONLY, weather.read -> READ_ONLY, task.create -> REVERSIBLE_AUTO, calendar.update -> REVERSIBLE_APPROVAL_REQUIRED; missing/extra entries fail closed;
+- deterministic authority decision semantics: immutable `AuthorityDecision` model with 4 canonical statuses: `AUTHORIZED_NO_APPROVAL_REQUIRED`, `AUTHORIZED_BY_BOUND_APPROVAL`, `APPROVAL_REQUIRED`, `BLOCKED`; preserves action ID, mission ID, action type, evaluation timestamp, approval ID, and structured `RejectionReason`;
+- no-approval actions: `READ_ONLY` and `REVERSIBLE_AUTO` succeed with `approval=None`; unexpected approval grants fail closed (`UnexpectedApprovalGrantError` / `UNEXPECTED_APPROVAL_GRANT`);
+- approval-required actions: `calendar.update` requires exact cryptographically bound `ApprovalGrant`; missing approval yields `APPROVAL_REQUIRED`;
+- exact cryptographic binding verification: `verify_approval_grant` strictly verifies candidate action against grant action, mission ID, action ID, action type, parameters, and complete `TargetIdentity`; recomputes `compute_approval_binding_hash` and verifies with constant-time equality (`hmac.compare_digest`);
+- validity window enforcement: strict evaluation against explicit timezone-aware observation timestamp `at` (`issued_at <= at < expires_at`); naive datetimes fail closed (`AuthorityPolicyValueError`); boundary `at == expires_at` is expired; boundary `at == issued_at` is valid;
+- wrong/stale/tampered approval law: wrong mission, wrong action ID, changed parameters, changed target resource/parent, wrong action type, wrong authority class, altered binding hash, expired, or future grants fail closed; string "yes" and arbitrary model prose rejected with `InvalidApprovalTypeError`;
+- policy law: `IRREVERSIBLE_BLOCKED_OR_HUMAN_REQUIRED` is never auto-authorized even with an ApprovalGrant; `EXTERNAL_COMMUNICATION_APPROVAL_REQUIRED` requires exact bound approval;
+- replay & purity boundaries: static binding/validity verification only; does not claim single-use durable consumption; pure verification creating zero execution attempts, zero ledger mutations, and zero state promotions;
+- error secrecy: sensitive action parameter plaintext is never echoed in error messages or decision reasons; `repr(ApprovalGrant)` is not dumped;
+- focused unit tests: `tests/test_authority_policy.py` passing (39 focused authority-policy tests, 486 total tests in suite passing).
 
 ### P-04.05 — Implement demo-resource isolation checks
 Status: PENDING
