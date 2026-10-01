@@ -617,11 +617,12 @@ Acceptance:
 - full test coverage added in `tests/test_mcp_server.py` (33 focused MCP tests); 664 total tests passing in suite.
 
 ### P-05.03 — Expose read-only mission-status tool over typed contracts
-Status: DONE — awaiting independent QA
+Status: P-05.03 REPAIRED — awaiting independent QA
 
 Acceptance:
 - StillDone's first business MCP tool registered: `mission_status` using official MCPServer tool API;
 - input schema derived from type hints requires `mission_id: str`;
+- published MCP input schema explicitly declares `additionalProperties: false`; unexpected extra arguments fail closed at runtime with redacted values (`[REDACTED]`), zero ledger mutation, and full transport-level verification over Streamable HTTP;
 - tool input parses strictly via canonical `MissionId` and queries `MissionLedgerPort.get_mission(MissionId)`;
 - malformed UUID fails closed with bounded safe tool error without echoing malformed input;
 - missing mission maps `RecordNotFoundError` to visible bounded safe tool error without manufacturing records or storage;

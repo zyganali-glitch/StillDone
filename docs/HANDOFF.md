@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: PASS; P-05.03: DONE — awaiting independent QA)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: PASS; P-05.03: REPAIRED — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -76,7 +76,7 @@ Preferred AWS target:
 P-05.03 — Expose read-only mission-status tool over typed contracts
 
 Status:
-`DONE — awaiting independent QA`
+`P-05.03 REPAIRED — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -94,7 +94,7 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 
 - P-05.01 — independent QA PASS (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`)
 - P-05.02 — PASS (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`)
-- P-05.03 — DONE — awaiting independent QA
+- P-05.03 — REPAIRED — awaiting independent QA
 - P-05.04 — PENDING / NOT AUTHORIZED
 - P-05.05 — PENDING / NOT AUTHORIZED
 - P-05.06 — PENDING / NOT AUTHORIZED

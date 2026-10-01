@@ -321,6 +321,7 @@ class TestMissionStatusToolDiscovery:
                     assert "mission_id" in schema["properties"]
                     assert schema["properties"]["mission_id"].get("type") == "string"
                     assert schema.get("required") == ["mission_id"]
+                    assert schema.get("additionalProperties") is False
 
     @pytest.mark.anyio
     async def test_12_13_tool_annotations_read_only(self) -> None:
@@ -668,17 +669,40 @@ class TestMissionStatusFailures:
     async def test_29_arbitrary_extra_input_and_schema_validation(self) -> None:
         """29. Arbitrary extra input or invalid schema types are rejected."""
         import jsonschema  # type: ignore[import-untyped]
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
         from mcp.server.mcpserver.exceptions import ToolError
 
-        from stilldone.mcp import MISSION_STATUS_TOOL_NAME, create_mcp_server
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            MISSION_STATUS_TOOL_NAME,
+            MCPServerConfig,
+            create_mcp_server,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
 
         server = create_mcp_server()
         tools = await server.list_tools()
         tool = tools[0]
         schema = tool.input_schema
 
+        # 1. Generated schema explicitly forbids additional properties
+        assert schema.get("additionalProperties") is False
+
+        # 2. Schema validation with jsonschema
         # Valid input passes schema validation
         jsonschema.validate({"mission_id": "fad1a408-fc61-49ff-926f-32ad7bf82416"}, schema)
+
+        # Extra unexpected property is rejected by schema
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(
+                {
+                    "mission_id": "fad1a408-fc61-49ff-926f-32ad7bf82416",
+                    "unexpected_extra_key": "not_allowed",
+                },
+                schema,
+            )
 
         # Missing required parameter is rejected by schema
         with pytest.raises(jsonschema.ValidationError):
@@ -691,7 +715,22 @@ class TestMissionStatusFailures:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({"mission_id": {"nested": "dict_not_allowed"}}, schema)
 
-        # In runtime execution, passing non-string / dict fails closed
+        # 3. Direct runtime execution fails closed on extra property with value redaction
+        secret_direct = "CLASSIFIED_DIRECT_ARGUMENT_VAL_999"
+        with pytest.raises(ToolError) as exc_info:
+            await server.call_tool(
+                MISSION_STATUS_TOOL_NAME,
+                {
+                    "mission_id": "fad1a408-fc61-49ff-926f-32ad7bf82416",
+                    "injected_extra_prop": secret_direct,
+                },
+            )
+        err_msg = str(exc_info.value)
+        assert "injected_extra_prop" in err_msg
+        assert secret_direct not in err_msg
+        assert "[REDACTED]" in err_msg
+
+        # Non-string / missing also fails closed in runtime execution
         with pytest.raises(ToolError):
             await server.call_tool(
                 MISSION_STATUS_TOOL_NAME,
@@ -700,6 +739,51 @@ class TestMissionStatusFailures:
 
         with pytest.raises(ToolError):
             await server.call_tool(MISSION_STATUS_TOOL_NAME, {})
+
+        # 4. End-to-end Streamable HTTP transport rejection and ledger isolation
+        record, ledger = _make_sample_record(state=MissionState.READY)
+        initial_mission_count = len(ledger._missions)
+        initial_missions = dict(ledger._missions)
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        config = MCPServerConfig(port=port)
+
+        async with run_loopback_mcp_server(config, ledger=ledger) as (_, endpoint_url):
+            async with streamable_http_client(endpoint_url) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+
+                    # Valid single-argument call still succeeds identically
+                    valid_res = await session.call_tool(
+                        MISSION_STATUS_TOOL_NAME,
+                        {"mission_id": str(record.mission_id)},
+                    )
+                    assert valid_res.is_error is False
+                    valid_data = json.loads(str(getattr(valid_res.content[0], "text", "")))
+                    assert valid_data["state"] == "READY"
+                    assert valid_data["mission_id"] == str(record.mission_id)
+
+                    # Unexpected extra property fails closed over transport
+                    secret_transport = "HIGHLY_CONFIDENTIAL_INJECTED_TRANSPORT_PAYLOAD"
+                    err_res = await session.call_tool(
+                        MISSION_STATUS_TOOL_NAME,
+                        {
+                            "mission_id": str(record.mission_id),
+                            "unexpected_extra_property": secret_transport,
+                        },
+                    )
+                    assert err_res.is_error is True
+                    assert len(err_res.content) > 0
+                    transport_err_text = str(getattr(err_res.content[0], "text", ""))
+                    assert "unexpected_extra_property" in transport_err_text
+                    assert secret_transport not in transport_err_text
+                    assert "[REDACTED]" in transport_err_text
+
+                    # Ledger state is completely unmutated
+                    assert len(ledger._missions) == initial_mission_count
+                    assert ledger._missions == initial_missions
+                    assert len(ledger._actions) == 0
+                    assert len(ledger._evidence) == 0
 
 
 # ===========================================================================
