@@ -601,11 +601,13 @@ Status: DONE — awaiting independent QA
 
 Acceptance:
 - immutable protocol snapshots `MCPCapabilitySnapshot` and `MCPInitializationSnapshot` implemented in `src/stilldone/mcp/protocol.py`;
-- truthful protocol negotiation snapshot extracting real negotiated protocol version (`2025-11-25` matching Alexa+ spec), server name/version, and declared capability flags;
-- strictly zero business tools exposed (`has_tools=True`, `tools_list_changed=False`, `list_tools()` returns empty list `[]`);
-- strictly zero prompts exposed (`has_prompts=False`, `list_prompts()` returns empty list `[]`);
-- strictly zero resources exposed (`has_resources=False`, `list_resources()` returns empty list `[]`);
-- strictly zero mission execution tools (`mission_status`, `mission_start`, etc.), zero provider capabilities (`google`, `aws`, `bedrock`, `weather`), and zero auth mechanisms declared;
+- truthful protocol negotiation snapshot extracting real negotiated protocol version (`2025-11-25` matching Alexa+ spec), canonical server identity (`StillDone` / `0.1.0`), and declared capability flags;
+- official MCP runtime advertises tools capability (`has_tools=True`, `tools.listChanged` observed `False`);
+- official MCP runtime advertises prompts capability (`has_prompts=True`);
+- official MCP runtime advertises resources capability (`has_resources=True`);
+- current StillDone business surface remains empty: 0 tools (`list_tools() == []`), 0 prompts (`list_prompts() == []`), 0 resources (`list_resources() == []`);
+- protocol capability advertised != business items exposed; advertising protocol capabilities does not mean a StillDone business feature exists;
+- no mission-status/start business tool exists yet (`mission_status`, `mission_start`, etc.), zero provider capabilities (`google`, `aws`, `bedrock`, `weather`), and zero auth mechanisms declared;
 - protocol snapshots confer zero authority, create zero approval grants or execution attempts, and cannot produce `VERIFIED` or `READY` mission state;
 - deterministic plain HTTP `/health` endpoint implemented in `src/stilldone/mcp/health.py` returning `{"status": "alive", "scope": "process"}` (HTTP 200, no-cache headers);
 - deterministic plain HTTP `/ready` endpoint implemented in `src/stilldone/mcp/health.py` returning `{"status": "ready", "scope": "mcp_transport"}` (HTTP 200) when transport is ready, or `{"status": "not_ready", "scope": "mcp_transport"}` (HTTP 503) when unready;
