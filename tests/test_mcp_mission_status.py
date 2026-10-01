@@ -733,12 +733,28 @@ class TestMissionStatusFailures:
         assert secret_direct not in err_msg
         assert "[REDACTED]" in err_msg
 
-        # Non-string / missing also fails closed in runtime execution
-        with pytest.raises(ToolError):
+        # Non-string / missing also fails closed in runtime execution with value redaction
+        secret_dict_direct = "SENTINEL_PRIVATE_STATUS_DICT_DIRECT_777"
+        with pytest.raises(ToolError) as exc_info_dict:
             await server.call_tool(
                 MISSION_STATUS_TOOL_NAME,
-                {"mission_id": {"nested": "dict"}},
+                {"mission_id": {"token": secret_dict_direct}},
             )
+        err_dict_msg = str(exc_info_dict.value)
+        assert secret_dict_direct not in err_dict_msg
+        assert "[REDACTED]" in err_dict_msg
+        assert "mission_id" in err_dict_msg
+
+        secret_list_direct = "SENTINEL_PRIVATE_STATUS_LIST_DIRECT_888"
+        with pytest.raises(ToolError) as exc_info_list:
+            await server.call_tool(
+                MISSION_STATUS_TOOL_NAME,
+                {"mission_id": [secret_list_direct]},
+            )
+        err_list_msg = str(exc_info_list.value)
+        assert secret_list_direct not in err_list_msg
+        assert "[REDACTED]" in err_list_msg
+        assert "mission_id" in err_list_msg
 
         with pytest.raises(ToolError):
             await server.call_tool(MISSION_STATUS_TOOL_NAME, {})
@@ -766,7 +782,7 @@ class TestMissionStatusFailures:
                     assert valid_data["state"] == "READY"
                     assert valid_data["mission_id"] == str(record.mission_id)
 
-                    # Unexpected extra property fails closed over transport
+                    # Unexpected extra property fails closed over transport with redaction
                     secret_transport = "HIGHLY_CONFIDENTIAL_INJECTED_TRANSPORT_PAYLOAD"
                     err_res = await session.call_tool(
                         MISSION_STATUS_TOOL_NAME,
@@ -782,7 +798,42 @@ class TestMissionStatusFailures:
                     assert secret_transport not in transport_err_text
                     assert "[REDACTED]" in transport_err_text
 
-                    # Ledger state is completely unmutated
+                    # Non-string mission_id (dict) fails closed over transport with redaction
+                    secret_status_dict = "SENTINEL_PRIVATE_STATUS_DICT_SECRET_111"
+                    err_dict_res = await session.call_tool(
+                        MISSION_STATUS_TOOL_NAME,
+                        {"mission_id": {"token": secret_status_dict}},
+                    )
+                    assert err_dict_res.is_error is True
+                    transport_dict_err = str(getattr(err_dict_res.content[0], "text", ""))
+                    assert secret_status_dict not in transport_dict_err
+                    assert "[REDACTED]" in transport_dict_err
+                    assert "mission_id" in transport_dict_err
+
+                    # Non-string mission_id (list) fails closed over transport with redaction
+                    secret_status_list = "SENTINEL_PRIVATE_STATUS_LIST_SECRET_222"
+                    err_list_res = await session.call_tool(
+                        MISSION_STATUS_TOOL_NAME,
+                        {"mission_id": [secret_status_list]},
+                    )
+                    assert err_list_res.is_error is True
+                    transport_list_err = str(getattr(err_list_res.content[0], "text", ""))
+                    assert secret_status_list not in transport_list_err
+                    assert "[REDACTED]" in transport_list_err
+                    assert "mission_id" in transport_list_err
+
+                    # Malformed string UUID retains existing bounded safe behavior without echo
+                    malformed_str = "malformed-string-uuid-value-12345"
+                    malformed_res = await session.call_tool(
+                        MISSION_STATUS_TOOL_NAME,
+                        {"mission_id": malformed_str},
+                    )
+                    assert malformed_res.is_error is True
+                    malformed_err = str(getattr(malformed_res.content[0], "text", ""))
+                    assert malformed_str not in malformed_err
+                    assert "malformed UUID format" in malformed_err
+
+                    # Ledger state is completely unmutated (read-only)
                     assert len(ledger._missions) == initial_mission_count
                     assert ledger._missions == initial_missions
                     assert len(ledger._actions) == 0

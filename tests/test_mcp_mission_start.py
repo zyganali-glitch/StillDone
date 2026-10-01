@@ -599,7 +599,8 @@ class TestMissionStartFailures:
 
     @pytest.mark.anyio
     async def test_38_non_string_intent_fails(self) -> None:
-        """38: Non-string intent fails closed through schema/runtime validation."""
+        """38: Non-string intent fails closed through schema/runtime validation with value
+        redaction."""
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
 
@@ -615,24 +616,66 @@ class TestMissionStartFailures:
         port = find_free_loopback_port(CANONICAL_MCP_HOST)
         config = MCPServerConfig(port=port)
 
+        sentinel_secret_dict = "SENTINEL_PRIVATE_INTENT_TOKEN_DICT_98765"
+        sentinel_secret_list = "SENTINEL_PRIVATE_INTENT_TOKEN_LIST_43210"
+
         async with run_loopback_mcp_server(config, ledger=ledger) as (_, endpoint_url):
             async with streamable_http_client(endpoint_url) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
 
+                    # 1, 2, 3, 4: dict containing secret sentinel is rejected without leak;
+                    # [REDACTED] appears; field name 'intent' may remain visible
+                    res_dict = await session.call_tool(
+                        MISSION_START_TOOL_NAME,
+                        {"intent": {"secret": sentinel_secret_dict}},
+                    )
+                    assert res_dict.is_error is True
+                    err_dict_text = str(getattr(res_dict.content[0], "text", ""))
+                    assert sentinel_secret_dict not in err_dict_text
+                    assert "[REDACTED]" in err_dict_text
+                    assert "intent" in err_dict_text
+
+                    # 5, 6: ledger mission, action, and evidence counts remain unchanged (0)
+                    assert len(ledger._missions) == 0
+                    assert len(ledger._actions) == 0
+                    assert len(ledger._evidence) == 0
+
+                    # 7: list containing secret sentinel is likewise rejected without leak
+                    res_list = await session.call_tool(
+                        MISSION_START_TOOL_NAME,
+                        {"intent": [sentinel_secret_list, "extra_item"]},
+                    )
+                    assert res_list.is_error is True
+                    err_list_text = str(getattr(res_list.content[0], "text", ""))
+                    assert sentinel_secret_list not in err_list_text
+                    assert "[REDACTED]" in err_list_text
+                    assert "intent" in err_list_text
+
+                    # Integer intent fails closed without echoing raw value
                     res_num = await session.call_tool(
                         MISSION_START_TOOL_NAME,
                         {"intent": 12345},
                     )
                     assert res_num.is_error is True
+                    err_num_text = str(getattr(res_num.content[0], "text", ""))
+                    assert "[REDACTED]" in err_num_text
 
-                    res_dict = await session.call_tool(
-                        MISSION_START_TOOL_NAME,
-                        {"intent": {"nested": "intent"}},
-                    )
-                    assert res_dict.is_error is True
-
+                    # Ledger counts still 0
                     assert len(ledger._missions) == 0
+                    assert len(ledger._actions) == 0
+                    assert len(ledger._evidence) == 0
+
+                    # 8, 9: valid string intent still succeeds and exact text is stored verbatim
+                    valid_intent = "Prepare backpacks and set alarm for 6:45 AM verbatim."
+                    res_valid = await session.call_tool(
+                        MISSION_START_TOOL_NAME,
+                        {"intent": valid_intent},
+                    )
+                    assert res_valid.is_error is False
+                    assert len(ledger._missions) == 1
+                    stored_record = next(iter(ledger._missions.values()))
+                    assert stored_record.contract.intent.text == valid_intent
 
     @pytest.mark.anyio
     async def test_39_42_extra_property_fails_and_redacts(self) -> None:
