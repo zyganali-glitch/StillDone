@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-03: CLOSED; Phase P-04: CLOSURE CANDIDATE (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: independent QA PASS; P-04.04: independent QA PASS; P-04.05: independent QA PASS; P-04.06: independent QA PASS; P-04.07: DONE — awaiting independent QA; Last independently verified contiguous SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)**
+Current repository state: **Phase P-03: CLOSED; Phase P-04: CLOSURE CANDIDATE (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: independent QA PASS; P-04.04: independent QA PASS; P-04.05: independent QA PASS; P-04.06: independent QA PASS; P-04.07: REPAIRED — awaiting independent QA; Last independently verified contiguous SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -35,7 +35,7 @@ Secondary:
 - Open Source Mini Challenge
 
 Rules snapshot date:
-`2026-09-29` (re-verified against current official Devpost rules and resources)
+`2026-10-01` (re-verified against current official Devpost rules and resources)
 
 ## Canonical killer mission
 
@@ -76,7 +76,7 @@ Preferred AWS target:
 P-04.07 — Run focused security/threat-model P-Ω audit
 
 Status:
-`DONE — awaiting independent QA`
+`REPAIRED — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -86,7 +86,7 @@ Status:
 - P-04.04 — independent QA PASS (Verified SHA: `2b24b4826009a8d9155616c90355185c3f19062e`)
 - P-04.05 — independent QA PASS (Verified SHA: `95aa53aece4c16792e6fc33f916133bab02bd78d`)
 - P-04.06 — independent QA PASS (Verified SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)
-- P-04.07 — DONE — awaiting independent QA
+- P-04.07 — REPAIRED — awaiting independent QA
 
 Phase P-03 is **CLOSED — independent QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`)**.
 Phase P-04 is **CLOSURE CANDIDATE — awaiting independent QA review**.
@@ -102,7 +102,7 @@ Phase P-04 is **CLOSURE CANDIDATE — awaiting independent QA review**.
 
 ## Next safe action
 
-Push P-04.07 commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review for Phase P-04 closure. Do NOT begin Phase P-05.
+Push P-04.07 repair commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review for Phase P-04 closure. Do NOT begin Phase P-05.
 
 ---
 

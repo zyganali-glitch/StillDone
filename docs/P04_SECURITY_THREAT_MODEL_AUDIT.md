@@ -6,7 +6,8 @@
 |---|---|
 | Audit date | 2026-10-01 |
 | Starting verified SHA | `a44955595aabaf7f34daecc35100bb72b5120095` |
-| Audit candidate SHA | _to be recorded after commit_ |
+| Initial audit candidate SHA | `d2016979731eb81b23cc14dc995f09404b282b48` |
+| Audit repair candidate SHA | _to be recorded upon repair commit_ |
 | Auditor | Antigravity executor (awaiting independent QA) |
 | Phase | P-04 — Security, Privacy & Authority Foundation |
 | Task | P-04.07 — Run focused security/threat-model P-Ω audit |
@@ -435,7 +436,26 @@ P-04.03 — PASS
 P-04.04 — PASS
 P-04.05 — PASS
 P-04.06 — PASS
-P-04.07 — DONE — awaiting independent QA
+P-04.07 — REPAIRED — awaiting independent QA
 Phase P-04 — CLOSURE CANDIDATE / awaiting independent QA
 P-05.01 — PENDING / NOT AUTHORIZED
 ```
+
+## 13. Independent QA Review & Surgical Documentation Repair
+
+- **Initial audit candidate SHA**: `d2016979731eb81b23cc14dc995f09404b282b48`
+- **Independent QA review finding**: Found one documentation/judge-truth defect: stale `README.md` Phase P-04 current-state claims (stating Phase P-04 was `IN_PROGRESS` with `P-04.01 DONE — awaiting independent QA` and `P-04.02 PENDING / NOT AUTHORIZED`).
+- **Production security implementation status**: Zero newly discovered blockers; production source code remains untouched.
+- **Surgical repair executed**: `README.md` parity was repaired to truthfully reflect all closed micro-tasks P-04.01 through P-04.06 (independent QA PASS), P-04.07 as `REPAIRED — awaiting independent QA`, Phase P-04 as `CLOSURE CANDIDATE — awaiting independent QA`, and Phase P-05 as `PENDING / NOT AUTHORIZED`.
+- **Status after repair**: P-04.07 remains `REPAIRED — awaiting independent QA`.
+
+### Checklist Reconciliation: JUDGE TRUTH / README PARITY
+
+| Check | Status | Verification Detail |
+|---|---|---|
+| README matches implemented phase state | ✅ PASS | README updated to reflect P-04.01–P-04.06 independent QA PASS, P-04.07 REPAIRED, Phase P-04 CLOSURE CANDIDATE. |
+| Live / recorded / simulated wording honest | ✅ PASS | Explicitly declares P-04 evidence as `LOCAL_EXECUTION` / CI; no live provider integration claimed for P-04. |
+| No P-05 / P-06 implementation claimed | ✅ PASS | Explicitly documents that no MCP server (P-05) and no external provider adapters (P-06) exist yet. |
+| Demo/product description remains target | ✅ PASS | Canonical killer mission steps clearly labeled as target demo path requiring future phases. |
+| Suite truth accurate | ✅ PASS | 591 tests verified at P-04.06 baseline; 631 tests in P-04.07 candidate suite (clearly labeled as candidate awaiting QA). |
+

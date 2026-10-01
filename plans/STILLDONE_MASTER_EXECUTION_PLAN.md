@@ -553,7 +553,7 @@ Acceptance:
 - focused unit tests: `tests/test_endpoint_protection.py` passing (65 focused tests, 591 total tests in suite passing).
 
 ### P-04.07 — Run focused security/threat-model P-Ω audit
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - 16-dimension security/threat-model audit executed and documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`;
