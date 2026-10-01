@@ -129,12 +129,14 @@ def create_mcp_server(
 
     Guarantees:
     - Stable StillDone identity (name and version from config).
-    - Exactly 1 StillDone business tool: mission_status (P-05.03).
+    - Exactly 2 StillDone business tools: mission_status (P-05.03) and mission_start (P-05.04).
     - Bound to canonical MissionLedgerPort; defaults to an isolated InMemoryNonDurableLedger.
+    - Both tools share the exact same effective MissionLedgerPort instance.
     - Zero prompts, zero resources.
     - Zero authentication/authorization middleware (deferred to P-05.05).
     """
     from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger, MissionLedgerPort
+    from stilldone.mcp.mission_start import register_mission_start_tool
     from stilldone.mcp.mission_status import register_mission_status_tool
 
     cfg = config or MCPServerConfig()
@@ -148,6 +150,7 @@ def create_mcp_server(
             f"ledger must implement MissionLedgerPort, got {type(effective_ledger).__name__}"
         )
     register_mission_status_tool(server, effective_ledger)
+    register_mission_start_tool(server, effective_ledger)
     return server
 
 

@@ -285,9 +285,11 @@ class TestMissionStatusToolDiscovery:
                     await session.initialize()
 
                     tools_result = await session.list_tools()
-                    # Exactly 1 StillDone business tool
-                    assert len(tools_result.tools) == 1
-                    tool = tools_result.tools[0]
+                    # 2 StillDone business tools in P-05.04
+                    assert len(tools_result.tools) == 2
+                    tool_names = [t.name for t in tools_result.tools]
+                    assert MISSION_STATUS_TOOL_NAME in tool_names
+                    tool = next(t for t in tools_result.tools if t.name == MISSION_STATUS_TOOL_NAME)
                     assert tool.name == MISSION_STATUS_TOOL_NAME
                     assert tool.name == "mission_status"
 
@@ -299,6 +301,7 @@ class TestMissionStatusToolDiscovery:
 
         from stilldone.mcp import (
             CANONICAL_MCP_HOST,
+            MISSION_STATUS_TOOL_NAME,
             MCPServerConfig,
             find_free_loopback_port,
             run_loopback_mcp_server,
@@ -313,7 +316,7 @@ class TestMissionStatusToolDiscovery:
                     await session.initialize()
 
                     tools_result = await session.list_tools()
-                    tool = tools_result.tools[0]
+                    tool = next(t for t in tools_result.tools if t.name == MISSION_STATUS_TOOL_NAME)
                     schema = tool.input_schema
 
                     assert schema.get("type") == "object"
@@ -332,6 +335,7 @@ class TestMissionStatusToolDiscovery:
 
         from stilldone.mcp import (
             CANONICAL_MCP_HOST,
+            MISSION_STATUS_TOOL_NAME,
             MCPServerConfig,
             find_free_loopback_port,
             run_loopback_mcp_server,
@@ -346,7 +350,7 @@ class TestMissionStatusToolDiscovery:
                     await session.initialize()
 
                     tools_result = await session.list_tools()
-                    tool = tools_result.tools[0]
+                    tool = next(t for t in tools_result.tools if t.name == MISSION_STATUS_TOOL_NAME)
                     annotations = tool.annotations
                     assert annotations is not None
                     assert (
@@ -384,8 +388,7 @@ class TestMissionStatusToolDiscovery:
                     tools_result = await session.list_tools()
                     tool_names = [t.name for t in tools_result.tools]
 
-                    # No premature mutation tools
-                    assert "mission_start" not in tool_names
+                    # No aliases
                     assert "start_mission" not in tool_names
                     assert "create_mission" not in tool_names
                     assert "execute_mission" not in tool_names
@@ -684,7 +687,7 @@ class TestMissionStatusFailures:
 
         server = create_mcp_server()
         tools = await server.list_tools()
-        tool = tools[0]
+        tool = next(t for t in tools if t.name == MISSION_STATUS_TOOL_NAME)
         schema = tool.input_schema
 
         # 1. Generated schema explicitly forbids additional properties

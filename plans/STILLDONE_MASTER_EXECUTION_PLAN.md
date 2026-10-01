@@ -637,7 +637,25 @@ Acceptance:
 - full test coverage added in `tests/test_mcp_mission_status.py` (30 focused tests, 63 total MCP tests, 694 total tests passing in suite).
 
 ### P-05.04 — Expose mission-start tool without live mutation yet
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- StillDone's second business MCP tool registered: `mission_start` using official MCPServer tool API;
+- business surface contains exactly 2 business tools: `mission_status` and `mission_start`; zero aliases (`start_mission`, `create_mission`, `execute_mission`); prompts remain empty (0), resources remain empty (0);
+- input schema contains strictly `intent: str` with `additionalProperties: false`; unexpected extra arguments (e.g. caller-supplied `mission_id`, `state`, `created_at`, `actions`, `approval`) fail closed at both schema and runtime levels with redacted values (`[REDACTED]`), leaving ledger completely unmutated;
+- blank and whitespace-only intents fail closed with bounded safe tool errors;
+- canonical domain creation path reused: runtime-generated `MissionId`, verbatim `UserIntentSnapshot`, `MissionContract`, initial `MissionRecord(state=MissionState.DRAFT)`, appended via `MissionLedgerPort.append_mission()`;
+- zero second `MissionId`, intent object, lifecycle enum, MCP mission store, or parallel domain model;
+- initial state is strictly `MissionState.DRAFT`; no promotion to `PLANNED`, `EXECUTING`, `VERIFYING`, or `READY`;
+- deterministic timestamp ownership: single UTC timestamp used across `captured_at`, `contract.created_at`, `record.created_at`, `record.updated_at`;
+- shared ledger law enforced: `mission_start` and `mission_status` share the exact same `MissionLedgerPort` instance within the MCP server; calling `mission_start` then immediately `mission_status` returns matching `DRAFT` record without extra mutation;
+- strictly zero live / external mutation: 0 Google calls, 0 Tasks calls, 0 AWS/AgentCore/Bedrock calls, 0 model planning, 0 action execution, 0 provider reads, 0 reconciliation;
+- zero ActionRecord, EvidenceRecord, ApprovalGrant, or ExecutionAttempt created;
+- output contract privacy minimization: typed immutable projection `MissionStartView` and wire payload `MissionStartPayload` returning strictly `mission_id`, `state` ("DRAFT"), `created_at`; verbatim user intent and internal ledger repr are strictly excluded from output;
+- official `ToolAnnotations` marks tool truthfully: `read_only_hint=False`, `destructive_hint=False`, `idempotent_hint=False`, `open_world_hint=False`;
+- duplicate call truth documented and tested: two calls with identical intent generate two distinct `MissionId`s and two independent records; no silent deduplication;
+- shared strict-input helper `src/stilldone/mcp/strict_input.py` extracted and reused across `mission_status` and `mission_start`;
+- full test coverage in `tests/test_mcp_mission_start.py` (19 focused test methods covering all 45 requirements); 82 total MCP tests, 713 total tests passing in suite.
 
 ### P-05.05 — Add auth/rate-limit boundary appropriate to the proven judge path
 Status: PENDING

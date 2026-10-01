@@ -1,12 +1,14 @@
-"""Read-only mission-status MCP tool and typed projection contracts for StillDone.
+"""Mission-start MCP tool and typed projection contracts for StillDone.
 
-Phase P-05.03:
-- Exposes StillDone's first business MCP tool: 'mission_status'.
-- Bounded, typed, read-only projection over canonical MissionLedgerPort.
-- Canonical truth source is MissionLedgerPort.get_mission(MissionId) -> MissionRecord.
-- MCP layer is strictly a read projection and does NOT create a second mission-state truth.
-- Zero mission mutation, zero provider calls, zero model calls.
-- Privacy minimization: returns only mission_id, state, created_at, updated_at.
+Phase P-05.04:
+- Exposes StillDone's second business MCP tool: 'mission_start'.
+- Bounded, typed projection creating a new mission in local DRAFT state.
+- Canonical creation flow:
+    verbatim intent -> runtime MissionId -> UserIntentSnapshot -> MissionContract ->
+    MissionRecord(state=DRAFT) -> MissionLedgerPort.append_mission()
+- Mutates local runtime ledger ONLY by appending exactly one MissionRecord.
+- Zero live/external mutation: no Google, no Tasks, no AWS, no Bedrock/model, no provider calls.
+- Privacy minimization: response returns only mission_id, state, created_at.
   Excludes user intent, action parameters, target IDs, evidence payloads, secrets.
 """
 
@@ -24,21 +26,24 @@ from mcp.types import ToolAnnotations
 from stilldone.application.ports.ledger_port import (
     MissionLedgerPort,
     MissionRecord,
-    RecordNotFoundError,
 )
 from stilldone.domain.lifecycle import MissionState
-from stilldone.domain.mission import MissionId
+from stilldone.domain.mission import (
+    MissionContract,
+    MissionId,
+    UserIntentSnapshot,
+)
 from stilldone.mcp.strict_input import enforce_strict_input_contract
 
-MISSION_STATUS_TOOL_NAME: Final[str] = "mission_status"
-MISSION_STATUS_TOOL_DESCRIPTION: Final[str] = (
-    "Return the current locally recorded StillDone mission state without "
-    "executing, mutating, approving, reconciling, verifying, or refreshing anything."
+MISSION_START_TOOL_NAME: Final[str] = "mission_start"
+MISSION_START_TOOL_DESCRIPTION: Final[str] = (
+    "Create and start a new StillDone mission in local DRAFT state from bounded "
+    "user intent, without executing, planning, or mutating external systems."
 )
-MISSION_STATUS_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
-    read_only_hint=True,
+MISSION_START_ANNOTATIONS: Final[ToolAnnotations] = ToolAnnotations(
+    read_only_hint=False,
     destructive_hint=False,
-    idempotent_hint=True,
+    idempotent_hint=False,
     open_world_hint=False,
 )
 
@@ -53,8 +58,8 @@ def _normalize_utc(dt: datetime, name: str) -> datetime:
 
 
 @dataclass(frozen=True)
-class MissionStatusPayload:
-    """Bounded primitive wire representation of mission status.
+class MissionStartPayload:
+    """Bounded primitive wire representation of mission start response.
 
     Derives typed MCP output schema from dataclass fields.
     """
@@ -62,7 +67,6 @@ class MissionStatusPayload:
     mission_id: str
     state: str
     created_at: str
-    updated_at: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.mission_id, str):
@@ -71,8 +75,6 @@ class MissionStatusPayload:
             raise TypeError("state must be a string")
         if not isinstance(self.created_at, str):
             raise TypeError("created_at must be a string")
-        if not isinstance(self.updated_at, str):
-            raise TypeError("updated_at must be a string")
 
     def to_dict(self) -> dict[str, str]:
         """Convert payload to a dictionary."""
@@ -80,15 +82,14 @@ class MissionStatusPayload:
             "mission_id": self.mission_id,
             "state": self.state,
             "created_at": self.created_at,
-            "updated_at": self.updated_at,
         }
 
 
 @dataclass(frozen=True)
-class MissionStatusView:
-    """Immutable read-only status projection for a StillDone mission.
+class MissionStartView:
+    """Immutable view of a newly started StillDone mission.
 
-    Exposes the minimum bounded mission status record without disclosing
+    Exposes the minimum bounded start projection without disclosing
     user intent text, action contracts, target resource IDs, approval grants,
     evidence payloads, or provider captures.
     """
@@ -96,7 +97,6 @@ class MissionStatusView:
     mission_id: MissionId
     state: MissionState
     created_at: datetime
-    updated_at: datetime
 
     def __post_init__(self) -> None:
         if not isinstance(self.mission_id, MissionId):
@@ -104,20 +104,17 @@ class MissionStatusView:
         if not isinstance(self.state, MissionState):
             raise TypeError(f"state must be MissionState, got {type(self.state).__name__}")
         norm_created = _normalize_utc(self.created_at, "created_at")
-        norm_updated = _normalize_utc(self.updated_at, "updated_at")
         object.__setattr__(self, "created_at", norm_created)
-        object.__setattr__(self, "updated_at", norm_updated)
 
     @classmethod
-    def from_record(cls, record: MissionRecord) -> MissionStatusView:
-        """Create a status projection from a canonical MissionRecord."""
+    def from_record(cls, record: MissionRecord) -> MissionStartView:
+        """Create a start projection from a canonical MissionRecord."""
         if not isinstance(record, MissionRecord):
             raise TypeError(f"record must be MissionRecord, got {type(record).__name__}")
         return cls(
             mission_id=record.mission_id,
             state=record.state,
             created_at=record.created_at,
-            updated_at=record.updated_at,
         )
 
     def to_dict(self) -> dict[str, str]:
@@ -126,73 +123,90 @@ class MissionStatusView:
             "mission_id": str(self.mission_id),
             "state": self.state.value,
             "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
         }
 
     def serialize(self) -> dict[str, str]:
         """Alias for to_dict() for canonical serialization interface."""
         return self.to_dict()
 
-    def to_payload(self) -> MissionStatusPayload:
+    def to_payload(self) -> MissionStartPayload:
         """Project into bounded wire dataclass."""
-        return MissionStatusPayload(
+        return MissionStartPayload(
             mission_id=str(self.mission_id),
             state=self.state.value,
             created_at=self.created_at.isoformat(),
-            updated_at=self.updated_at.isoformat(),
         )
 
 
-def create_mission_status_handler(
+def create_mission_start_handler(
     ledger: MissionLedgerPort,
-) -> Callable[[str], MissionStatusPayload]:
-    """Create a bounded read-only mission_status MCP tool handler bound to an explicit ledger."""
+    *,
+    clock: Callable[[], datetime] | None = None,
+) -> Callable[[str], MissionStartPayload]:
+    """Create a mission_start MCP tool handler bound to an explicit ledger."""
     if not isinstance(ledger, MissionLedgerPort):
         raise TypeError(f"ledger must implement MissionLedgerPort, got {type(ledger).__name__}")
 
-    def mission_status(mission_id: str) -> MissionStatusPayload:
-        """Return current locally recorded mission state without mutation or execution."""
-        if not isinstance(mission_id, str):
-            raise ToolError("Invalid mission ID: must be a string")
+    def mission_start(intent: str) -> MissionStartPayload:
+        """Start a new StillDone mission in DRAFT state from user intent."""
+        if not isinstance(intent, str):
+            raise ToolError("Invalid intent: must be a string")
+        if not intent.strip():
+            raise ToolError("Invalid intent: cannot be blank or whitespace-only")
+
+        raw_now = clock() if clock is not None else datetime.now(UTC)
+        now = _normalize_utc(raw_now, "created_at")
+        mid = MissionId.generate()
 
         try:
-            canonical_id = MissionId(mission_id)
+            intent_snapshot = UserIntentSnapshot(text=intent, captured_at=now, mission_id=mid)
+            contract = MissionContract(
+                mission_id=mid,
+                intent=intent_snapshot,
+                created_at=now,
+                schema_version="v1",
+            )
+            record = MissionRecord(
+                mission_id=mid,
+                contract=contract,
+                state=MissionState.DRAFT,
+                created_at=now,
+                updated_at=now,
+            )
+            ledger.append_mission(record)
         except (ValueError, TypeError):
-            # Fail closed with bounded safe tool error without echoing malformed plaintext
-            raise ToolError("Invalid mission ID: malformed UUID format") from None
+            # Fail closed with safe tool error without leaking sensitive user text
+            raise ToolError("Failed to initialize mission contract") from None
 
-        try:
-            record = ledger.get_mission(canonical_id)
-        except RecordNotFoundError:
-            raise ToolError(f"Mission not found: {canonical_id}") from None
-
-        view = MissionStatusView.from_record(record)
+        view = MissionStartView.from_record(record)
         return view.to_payload()
 
-    return mission_status
+    return mission_start
 
 
-_enforce_strict_input_contract = enforce_strict_input_contract
-
-
-def register_mission_status_tool(server: MCPServer, ledger: MissionLedgerPort) -> None:
-    """Register the single canonical mission_status tool on the official MCPServer."""
+def register_mission_start_tool(
+    server: MCPServer,
+    ledger: MissionLedgerPort,
+    *,
+    clock: Callable[[], datetime] | None = None,
+) -> None:
+    """Register the canonical mission_start tool on the official MCPServer."""
     if not (isinstance(server, MCPServer) or type(server).__name__ == "MCPServer"):
         raise TypeError(f"server must be MCPServer, got {type(server).__name__}")
     if not isinstance(ledger, MissionLedgerPort):
         raise TypeError(f"ledger must implement MissionLedgerPort, got {type(ledger).__name__}")
 
     annotations_dict = {
-        "read_only_hint": MISSION_STATUS_ANNOTATIONS.read_only_hint,
-        "destructive_hint": MISSION_STATUS_ANNOTATIONS.destructive_hint,
-        "idempotent_hint": MISSION_STATUS_ANNOTATIONS.idempotent_hint,
-        "open_world_hint": MISSION_STATUS_ANNOTATIONS.open_world_hint,
+        "read_only_hint": MISSION_START_ANNOTATIONS.read_only_hint,
+        "destructive_hint": MISSION_START_ANNOTATIONS.destructive_hint,
+        "idempotent_hint": MISSION_START_ANNOTATIONS.idempotent_hint,
+        "open_world_hint": MISSION_START_ANNOTATIONS.open_world_hint,
     }
-    handler = create_mission_status_handler(ledger)
+    handler = create_mission_start_handler(ledger, clock=clock)
     server.add_tool(
         handler,
-        name=MISSION_STATUS_TOOL_NAME,
-        description=MISSION_STATUS_TOOL_DESCRIPTION,
+        name=MISSION_START_TOOL_NAME,
+        description=MISSION_START_TOOL_DESCRIPTION,
         annotations=annotations_dict,  # type: ignore[arg-type]
     )
-    _enforce_strict_input_contract(server, MISSION_STATUS_TOOL_NAME)
+    enforce_strict_input_contract(server, MISSION_START_TOOL_NAME)

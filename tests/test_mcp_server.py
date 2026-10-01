@@ -46,8 +46,6 @@ def assert_port_available(host: str, port: int) -> None:
 def _cleanup_mcp_sys_modules() -> Generator[None, None, None]:
     """Module-level cleanup to keep sys.modules pure after MCP server tests finish."""
     yield
-    # Unload MCP and stilldone.mcp modules to preserve provider-purity invariant
-    # for any later test processes
     mcp_keys = [
         k
         for k in list(sys.modules.keys())
@@ -407,19 +405,17 @@ class TestMCPLoopbackTransport:
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
 
-                    # 9. Exactly one business tool exposed: mission_status
+                    # 9. Exactly 2 business tools exposed: mission_status and mission_start
                     tools_result = await session.list_tools()
-                    assert len(tools_result.tools) == 1, (
-                        f"Expected exactly 1 tool in P-05.03, found: {tools_result.tools}"
+                    assert len(tools_result.tools) == 2, (
+                        f"Expected exactly 2 tools in P-05.04, found: {tools_result.tools}"
                     )
 
-                    tool = tools_result.tools[0]
-                    assert tool.name == "mission_status"
-
                     tool_names = [t.name for t in tools_result.tools]
+                    assert "mission_status" in tool_names
+                    assert "mission_start" in tool_names
 
-                    # 10. No mission-start tool
-                    assert "mission_start" not in tool_names
+                    # 10. No aliases
                     assert "start_mission" not in tool_names
                     assert "create_mission" not in tool_names
                     assert "execute_mission" not in tool_names
@@ -492,8 +488,8 @@ class TestMCPLoopbackTransport:
                     assert init1.protocol_version == "2025-11-25"
                     assert init1.server_info.name == "StillDone"
                     tools1 = await s1.list_tools()
-                    assert len(tools1.tools) == 1
-                    assert tools1.tools[0].name == "mission_status"
+                    assert len(tools1.tools) == 2
+                    assert {t.name for t in tools1.tools} == {"mission_status", "mission_start"}
 
             # Session 2 against the same running server
             async with streamable_http_client(endpoint_url) as (r2, w2):
@@ -502,8 +498,8 @@ class TestMCPLoopbackTransport:
                     assert init2.protocol_version == "2025-11-25"
                     assert init2.server_info.name == "StillDone"
                     tools2 = await s2.list_tools()
-                    assert len(tools2.tools) == 1
-                    assert tools2.tools[0].name == "mission_status"
+                    assert len(tools2.tools) == 2
+                    assert {t.name for t in tools2.tools} == {"mission_status", "mission_start"}
 
 
 # ===========================================================================
@@ -826,20 +822,20 @@ class TestMCPProtocolInitializationAndCapabilities:
                     init_result = await session.initialize()
                     snapshot = MCPInitializationSnapshot.from_initialize_result(init_result)
 
-                    # 16. Actual surface contains exactly mission_status; zero prompts/resources
+                    # 16. Actual surface contains exactly mission_status and mission_start;
+                    # zero prompts/resources
                     tools = await session.list_tools()
                     prompts = await session.list_prompts()
                     resources = await session.list_resources()
 
-                    assert len(tools.tools) == 1
-                    assert tools.tools[0].name == "mission_status"
+                    assert len(tools.tools) == 2
+                    assert {t.name for t in tools.tools} == {"mission_status", "mission_start"}
                     assert len(prompts.prompts) == 0
                     assert len(resources.resources) == 0
 
                     tool_names = [t.name for t in tools.tools]
 
-                    # 17. No premature mission tools falsely declared
-                    assert "mission_start" not in tool_names
+                    # 17. No aliases falsely declared
                     assert "start_mission" not in tool_names
                     assert "create_mission" not in tool_names
                     assert "execute_mission" not in tool_names
