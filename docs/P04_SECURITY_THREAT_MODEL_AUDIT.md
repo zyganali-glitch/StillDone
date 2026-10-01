@@ -6,8 +6,9 @@
 |---|---|
 | Audit date | 2026-10-01 |
 | Starting verified SHA | `a44955595aabaf7f34daecc35100bb72b5120095` |
-| Initial audit candidate SHA | `d2016979731eb81b23cc14dc995f09404b282b48` |
-| Audit repair candidate SHA | _to be recorded upon repair commit_ |
+| Initial audit candidate SHA (historical) | `d2016979731eb81b23cc14dc995f09404b282b48` |
+| Prior repair candidate SHA (historical) | `e4f87a08edce5b1aa5f17352b168abe80ff5777d` |
+| Active audit repair candidate | Containing Git commit; authoritative SHA resolved from canonical remote history and independently verified at phase closure |
 | Auditor | Antigravity executor (awaiting independent QA) |
 | Phase | P-04 — Security, Privacy & Authority Foundation |
 | Task | P-04.07 — Run focused security/threat-model P-Ω audit |
@@ -447,6 +448,13 @@ P-05.01 — PENDING / NOT AUTHORIZED
 - **Independent QA review finding**: Found one documentation/judge-truth defect: stale `README.md` Phase P-04 current-state claims (stating Phase P-04 was `IN_PROGRESS` with `P-04.01 DONE — awaiting independent QA` and `P-04.02 PENDING / NOT AUTHORIZED`).
 - **Production security implementation status**: Zero newly discovered blockers; production source code remains untouched.
 - **Surgical repair executed**: `README.md` parity was repaired to truthfully reflect all closed micro-tasks P-04.01 through P-04.06 (independent QA PASS), P-04.07 as `REPAIRED — awaiting independent QA`, Phase P-04 as `CLOSURE CANDIDATE — awaiting independent QA`, and Phase P-05 as `PENDING / NOT AUTHORIZED`.
+- **Prior repair candidate SHA (historical)**: `e4f87a08edce5b1aa5f17352b168abe80ff5777d`
+- **Second independent QA review & documentation repair**:
+  - Identified two residual documentation defects:
+    1. Stale historical phrasing in `docs/HANDOFF.md` ("Phase P-04 is currently IN_PROGRESS"), repaired to durable phrasing referencing top-level canonical state.
+    2. Self-referential audit candidate SHA placeholder in audit metadata, replaced with durable non-self-referential metadata ("Containing Git commit; authoritative SHA resolved from canonical remote history and independently verified at phase closure").
+  - Prior repair candidate commit `e4f87a08edce5b1aa5f17352b168abe80ff5777d` recorded as historical candidate.
+  - Zero production code or test changes.
 - **Status after repair**: P-04.07 remains `REPAIRED — awaiting independent QA`.
 
 ### Checklist Reconciliation: JUDGE TRUTH / README PARITY

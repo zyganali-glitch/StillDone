@@ -118,7 +118,7 @@ Phase P-03 (Deterministic Evidence Ledger & Fact Authority) successfully closed 
 - Implemented immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved exact source semantics without overclaiming raw 64-char hex digest alone.
 - Hardened with 27 adversarial tests (`tests/test_phase_p03_adversarial.py`) across tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
 - Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
-- At the P-03 implementation exit, before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED` (Phase P-04 is currently `IN_PROGRESS`).
+- At the P-03 implementation exit, before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED` (current Phase P-04 state is recorded in the canonical state section at the top of this HANDOFF).
 
 ### Phase P-02 Closure Summary
 Phase P-02 (Provider-Neutral Mission & Desired-State Contracts) successfully closed with independent QA PASS:
