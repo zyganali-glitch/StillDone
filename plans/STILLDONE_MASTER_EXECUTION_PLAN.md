@@ -453,7 +453,7 @@ Acceptance:
 - focused tests: `tests/test_phase_p03_adversarial.py` passing (218 total tests passing in suite).
 
 Phase exit:
-local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is CLOSED with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`). (Historically, at the P-03 implementation exit before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED`; Phase P-04 is currently `IN_PROGRESS`).
+local deterministic evidence primitives are green but do not claim live integration. Phase P-03 is CLOSED with independent QA PASS (Verified Baseline SHA: `46e55b424eb999c666932871b5b5517397b85db6`). (Historically, at the P-03 implementation exit before the P-03 phase-boundary P-Ω closure, Phase P-04 was `PENDING / NOT_STARTED / NOT AUTHORIZED`; Phase P-04 is currently `CLOSURE CANDIDATE — awaiting independent QA review`).
 
 ---
 
@@ -536,7 +536,7 @@ Acceptance:
 - focused unit tests: `tests/test_demo_isolation.py` passing (35 focused isolation tests, 526 total tests in suite passing).
 
 ### P-04.06 — Implement public-endpoint rate/budget protection contract
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)
 
 Acceptance:
 - deterministic provider-neutral rate and budget protection: `src/stilldone/endpoint_protection.py` implementing immutable `EndpointProtectionPolicy`, `RateSnapshot`, `BudgetSnapshot`, `EndpointRequestAssessment`, `EndpointAdmissionDecision`, and pure `evaluate_endpoint_admission`;
@@ -553,10 +553,25 @@ Acceptance:
 - focused unit tests: `tests/test_endpoint_protection.py` passing (65 focused tests, 591 total tests in suite passing).
 
 ### P-04.07 — Run focused security/threat-model P-Ω audit
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- 16-dimension security/threat-model audit executed and documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`;
+- historical Phase P-03 audit preserved (`docs/P_OMEGA_AUDIT_REPORT.md` untouched);
+- cross-boundary integration security test suite created: `tests/test_phase_p04_security_audit.py` (40 focused tests, 631 total tests in suite passing);
+- verified exact canonical action vocabulary (5 actions: `calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`);
+- verified exact authority classifications (`READ_ONLY`, `REVERSIBLE_AUTO`, `REVERSIBLE_APPROVAL_REQUIRED`);
+- verified zero individual P-04 gate results produce or expose `VERIFIED` or `READY` states;
+- verified AST inspection confirms zero forbidden provider SDK imports (`boto3`, `google`, `mcp`, etc.) across all 7 P-04 modules;
+- verified zero provider execution capabilities across all 7 P-04 modules;
+- verified complete absence of future-phase modules (MCP server, provider adapters, planners);
+- verified cross-gate non-substitutability across all security boundaries;
+- verified fact-authority law preservation (NOT_RUN ≠ PASS, tool success cannot promote to READY);
+- zero personal spend maintained ($0.00); clean-room reimplemented (0 donor lines imported);
+- zero blockers, zero FAIL findings, zero production code changes.
 
 Phase exit:
-live writes may begin only after this phase.
+Phase P-04 is a CLOSURE CANDIDATE awaiting independent QA review and closure determination. Live writes may begin only after Phase P-04 closure.
 
 ---
 
