@@ -685,7 +685,28 @@ Acceptance:
 - Full test coverage in `tests/test_mcp_auth_rate_limit.py` (42 focused tests including 13 fail-closed configuration tests); 755 total tests passing in suite.
 
 ### P-05.06 — Validate with current MCP inspector/client and remote deployment
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- single authorized bounded live AWS AgentCore deployment campaign executed in `us-east-1` under strict operator limits: maximum gross cost risk $\le \$0.05\text{ USD}$ (preflight estimate $\approx \$0.0377$), target personal spend strictly $\$0.00\text{ USD}$, exactly 1 deployment attempt, 1 runtime, 1 proof session, `idleRuntimeSessionTimeout = 60`s, `maxLifetime = 300`s, local ARM64 build, IAM/SigV4 ingress authentication, local SigV4 signing proxy for Inspector, and mandatory immediate teardown;
+- zero Amazon Cognito, zero AWS CodeBuild, zero customer-managed KMS keys used;
+- explicit `agentcore` deployment profile implemented in `src/stilldone/mcp/server.py` (`host=0.0.0.0`, `port=8000`, `path=/mcp`, `stateless_http=False`) selected solely via explicit CLI/config flag without widening the local default loopback binding (`127.0.0.1`);
+- bounded `/ping` health endpoint implemented in `src/stilldone/mcp/health.py` returning strictly `{"status": "Healthy"}` (HTTP 200) without secrets, tokens, AWS identifiers, or environment dumps, preserving `/health` and `/ready`;
+- local ARM64 container image packaged via `docker buildx` and pushed to AWS ECR (`cdk-hnb659fds-container-assets-[REDACTED]-us-east-1:9a9ecc5`, manifest digest `sha256:e0be0c190b8409e0a94bc07fea76f013d594bd2b103bf7009ea535172c81b8c0`);
+- minimal IAM execution role `StillDoneAgentCoreExecutionRole` created with trust principal `bedrock-agentcore.amazonaws.com` and managed policies `AmazonEC2ContainerRegistryReadOnly` and `AWSLambdaBasicExecutionRole`;
+- single AgentCore runtime `stilldone_mcp_runtime-oS0aWdAWg3` deployed and reached `READY` in `us-east-1` (Platform V1, Server-Sent Events / Streamable HTTP on port 8000);
+- direct data-plane wire invocations via `aws bedrock-agentcore invoke-agent-runtime`:
+  - `initialize`: HTTP 200 OK, protocol `2024-11-05`, server `StillDone` v0.1.0;
+  - `tools/list`: HTTP 200 OK, lists `mission_status` and `mission_start`;
+  - `mission_start`: HTTP 200 OK, initialized mission in `DRAFT` state;
+  - `mission_status`: HTTP 200 OK, read back exact `DRAFT` record from container memory within same session;
+- local SigV4 signing proxy (`scripts/sigv4_proxy.py` on `127.0.0.1:8080/mcp`) verified: zero response synthesis, passes raw wire payloads bidirectionally, signs outbound requests with AWS SigV4;
+- official `@modelcontextprotocol/inspector@2.9.0` CLI proof executed: `tools/list` and `tools/call mission_status` successfully executed over Streamable HTTP;
+- deployed rate limiting (HTTP 429) verified: burst invocations against deployed `/mcp` container endpoint triggered HTTP 429 (`ValidationException: Received error (429) from runtime`), proving fail-closed endpoint protection policy is active on the deployed remote container;
+- immediate complete teardown executed: AgentCore runtime deleted (`agentRuntimes: []`), ECR repository images purged (`imageIds: []`), IAM execution role deleted (`NoSuchEntity`), local proxy terminated, AWS session revoked (`aws logout`);
+- AWS Cost Explorer verified: `$0.00 USD` net spend;
+- all 768 unit and integration tests passing;
+- durable evidence documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
 
 ### P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
 Status: PENDING

@@ -146,4 +146,43 @@ Do not invent entries.
 - Would we build with it again? `YES`
 - Secrets/PII check: `CLEAN`
 
+---
+
+### F-20261001-01 — Bedrock AgentCore Invoke Accept Header Requirement for Streaming MCP Runtimes
+
+- Date/time: 2026-10-01T21:02:15Z
+- Exact task: P-05.06 — Validate with current MCP inspector/client and remote deployment
+- Tool/API/SDK: AWS CLI (`aws bedrock-agentcore invoke-agent-runtime`), AgentCore Runtime data plane
+- Version/region/account mode: us-east-1 / AgentCore Runtime / Container / linux/arm64 / profile: `stilldone-p01`
+- Attempt: Initial invocation of containerized MCP runtime with standard `--accept "application/json"`
+- Expected: Runtime returns HTTP 200 with JSON or event-stream payload
+- Actual: Runtime returned `ValidationException: 406 Not Acceptable`. AgentCore container runtime protocol configuration specified Server-Sent Events / Streamable HTTP, which strictly requires the client Accept header to include `text/event-stream`.
+- Severity: `LOW`
+- Workaround: Specified `--accept "application/json, text/event-stream"` on all `invoke-agent-runtime` calls.
+- Evidence: `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? docs friction
+- Actionable suggestion: AgentCore documentation for containerized MCP runtimes should explicitly highlight that `--accept "application/json, text/event-stream"` is mandatory when invoking Streamable HTTP / SSE-configured runtimes.
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
+---
+
+### F-20261001-02 — AWS CLI Login Remote Mode Base64 Redirect Friction
+
+- Date/time: 2026-10-01T20:45:00Z
+- Exact task: P-05.06 — Validate with current MCP inspector/client and remote deployment
+- Tool/API/SDK: AWS CLI v2 (`aws login --remote`)
+- Version/region/account mode: us-east-1 / profile: `stilldone-p01`
+- Attempt: Authenticating operator session using `aws login --profile stilldone-p01 --remote`
+- Expected: Clean, robust terminal paste workflow for authorization response
+- Actual: The `--remote` flag prompts the operator to complete authentication in the browser and paste an opaque redirect payload (`base64("code=...&state=...")`). If pasted with any newline, terminal truncation, or across fragmented inputs, the CLI errors with invalid grant or state mismatch. Conversely, running standard `aws login --profile stilldone-p01` (without `--remote`) launches a reliable local loopback callback server on `http://127.0.0.1:<port>/oauth/callback` which handles the redirect automatically in 1 second with zero manual copy-paste risk.
+- Severity: `LOW`
+- Workaround: Used standard loopback `aws login --profile stilldone-p01` without `--remote`.
+- Evidence: `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? CLI UX friction
+- Actionable suggestion: AWS CLI documentation should strongly recommend standard loopback `aws login` for local developer workstations, and reserve `--remote` solely for headless remote servers (e.g. SSH/cloud shells) with clearer input sanitation for multi-line base64 strings.
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
+
 

@@ -73,10 +73,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-05.05 — Add auth/rate-limit boundary appropriate to the proven judge path
+P-05.06 — Validate with current MCP inspector/client and remote deployment
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -96,24 +96,24 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 - P-05.02 — PASS (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`)
 - P-05.03 — PASS (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`)
 - P-05.04 — PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
-- P-05.05 — REPAIRED — awaiting independent QA
-- P-05.06 — PENDING / NOT AUTHORIZED
+- P-05.05 — PASS (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`)
+- P-05.06 — DONE — awaiting independent QA
 - P-05.07 — PENDING / NOT AUTHORIZED
 
 Phase P-05 is **IN_PROGRESS**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`e208ebf93e11863c64d886f3de3462fc427ed3e1`
+`85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`
 
 ## Next exact task
 
-`P-05.05 Independent QA Review`
-(Phase P-05.06 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
+`P-05.06 Independent QA Review`
+(Phase P-05.07 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
 
 ## Next safe action
 
-Push P-05.05 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.06.
+Push P-05.06 closure commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.07.
 
 ---
 
