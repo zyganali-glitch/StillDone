@@ -1,0 +1,41 @@
+# Secrets & credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+token*.json
+oauth*.json
+secrets/
+
+# Git & GitHub
+.git/
+.github/
+
+# Virtual environments & caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests & Documentation
+tests/
+docs/
+plans/
+scripts/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch & artifacts
+tmp/
+.local/
+artifacts/
+node_modules/

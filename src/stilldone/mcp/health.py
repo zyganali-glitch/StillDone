@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 
 CANONICAL_HEALTH_PATH: Final[str] = "/health"
 CANONICAL_READY_PATH: Final[str] = "/ready"
+CANONICAL_PING_PATH: Final[str] = "/ping"
 
 HEALTH_STATUS_ALIVE: Final[str] = "alive"
 HEALTH_SCOPE_PROCESS: Final[str] = "process"
@@ -25,9 +26,20 @@ READY_STATUS_READY: Final[str] = "ready"
 READY_STATUS_NOT_READY: Final[str] = "not_ready"
 READY_SCOPE_TRANSPORT: Final[str] = "mcp_transport"
 
+PING_STATUS_HEALTHY: Final[str] = "Healthy"
+
 NO_CACHE_HEADERS: Final[dict[str, str]] = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
 }
+
+
+async def ping_endpoint(request: Request) -> JSONResponse:
+    """AgentCore health check probe returning bounded Healthy status."""
+    return JSONResponse(
+        {"status": PING_STATUS_HEALTHY},
+        status_code=200,
+        headers=NO_CACHE_HEADERS,
+    )
 
 
 async def health_endpoint(request: Request) -> JSONResponse:

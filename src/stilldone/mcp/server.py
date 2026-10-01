@@ -3,9 +3,9 @@
 Provides deterministic construction of the StillDone MCP server over
 the official Streamable HTTP transport required for the Alexa+ competition path.
 
-Strict Phase P-05.05 boundary:
+Phase P-05.05 boundary:
 - Real MCP Server and real Streamable HTTP transport via the official MCP SDK.
-- Bound to loopback only (127.0.0.1) for local execution tests.
+- Bound to loopback only (127.0.0.1) for LOCAL default profile.
 - Exactly 2 business tools: mission_status (P-05.03) and mission_start (P-05.04).
 - Protected OAuth 2.0 Resource Server boundary (P-05.05):
   - Token verification delegated to external TokenVerifier.
@@ -15,7 +15,13 @@ Strict Phase P-05.05 boundary:
   - Check-and-consume in single atomic transaction (zero race window).
   - Evaluated using pure P-04.06 evaluate_endpoint_admission.
   - Exceeded quota returns HTTP 429 without ledger mutation.
-- Zero remote deployment or public tunnels (belongs to P-05.06).
+
+Phase P-05.06 AgentCore deployment profile:
+- Explicit deployment_profile="agentcore" enables non-loopback binding (0.0.0.0).
+- Default profile (deployment_profile=None) remains strictly loopback-only.
+- AgentCore IAM/SigV4 protects the remote runtime boundary.
+- P-05.05 OAuth RS exists for the proven OAuth profile but is NOT
+  the AgentCore IAM mechanism. The two are separate, documented layers.
 """
 
 from __future__ import annotations
@@ -50,12 +56,21 @@ CANONICAL_MCP_PATH: Final[str] = "/mcp"
 DEFAULT_SERVER_NAME: Final[str] = "StillDone"
 DEFAULT_SERVER_VERSION: Final[str] = __version__
 
+# Deployment profiles — explicit selection required for non-loopback binding
+DEPLOYMENT_PROFILE_AGENTCORE: Final[str] = "agentcore"
+_VALID_DEPLOYMENT_PROFILES: Final[frozenset[str]] = frozenset({DEPLOYMENT_PROFILE_AGENTCORE})
+
 
 @dataclass(frozen=True)
 class MCPServerConfig:
     """Deterministic configuration for StillDone MCP server spine.
 
-    Enforces loopback-only binding for local execution boundaries.
+    Profile behaviour:
+    - deployment_profile=None (default): Enforces loopback-only binding.
+      This is the LOCAL execution boundary for tests and local development.
+    - deployment_profile="agentcore": Allows non-loopback binding (e.g. 0.0.0.0)
+      required for AgentCore container deployment. Must be selected explicitly.
+      This does NOT silently widen bind address via environment variables.
     """
 
     host: str = CANONICAL_MCP_HOST
@@ -68,7 +83,11 @@ class MCPServerConfig:
 
     health_path: str = "/health"
     ready_path: str = "/ready"
+    ping_path: str = "/ping"
     transport_ready: bool = True
+
+    # Deployment profile — explicit non-loopback gate
+    deployment_profile: str | None = None
 
     # P-05.05 Auth & Rate Limit boundaries
     auth_config: MCPAuthConfig | None = None
@@ -81,16 +100,27 @@ class MCPServerConfig:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("host must be a non-empty string")
 
+        # Validate deployment profile
+        if self.deployment_profile is not None:
+            if not isinstance(self.deployment_profile, str):
+                raise TypeError("deployment_profile must be a string or None")
+            if self.deployment_profile not in _VALID_DEPLOYMENT_PROFILES:
+                raise ValueError(
+                    f"Unknown deployment_profile: {self.deployment_profile!r}. "
+                    f"Valid profiles: {sorted(_VALID_DEPLOYMENT_PROFILES)}"
+                )
+
         stripped_host = self.host.strip().lower()
         if stripped_host != "localhost":
             try:
                 ip = ipaddress.ip_address(stripped_host)
             except ValueError as err:
                 raise ValueError(f"Invalid host address: {self.host}") from err
-            if not ip.is_loopback:
+            if not ip.is_loopback and self.deployment_profile is None:
                 raise ValueError(
                     "host must be a loopback address for local execution boundary, "
-                    f"got: {self.host}"
+                    f"got: {self.host}. Use deployment_profile='agentcore' for "
+                    "non-loopback binding in container deployment."
                 )
 
         if not isinstance(self.port, int) or isinstance(self.port, bool):
@@ -113,12 +143,23 @@ class MCPServerConfig:
         if len(self.ready_path.strip()) <= 1:
             raise ValueError("ready_path must be a non-root path starting with '/'")
 
+        if not isinstance(self.ping_path, str) or not self.ping_path.startswith("/"):
+            raise ValueError("ping_path must be a string starting with '/'")
+        if len(self.ping_path.strip()) <= 1:
+            raise ValueError("ping_path must be a non-root path starting with '/'")
+
         if self.health_path == self.path:
             raise ValueError("health_path cannot clash with mcp path")
         if self.ready_path == self.path:
             raise ValueError("ready_path cannot clash with mcp path")
+        if self.ping_path == self.path:
+            raise ValueError("ping_path cannot clash with mcp path")
         if self.health_path == self.ready_path:
             raise ValueError("health_path and ready_path cannot be identical")
+        if self.ping_path == self.ready_path:
+            raise ValueError("ping_path and ready_path cannot be identical")
+        if self.ping_path == self.health_path and self.health_path != "/ping":
+            raise ValueError("ping_path and health_path cannot be identical")
 
         if not isinstance(self.server_name, str) or not self.server_name.strip():
             raise ValueError("server_name must be a non-empty string")
@@ -257,7 +298,11 @@ def create_mcp_app(
     """
     from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
 
-    from stilldone.mcp.health import create_readiness_endpoint, health_endpoint
+    from stilldone.mcp.health import (
+        create_readiness_endpoint,
+        health_endpoint,
+        ping_endpoint,
+    )
 
     cfg = config or MCPServerConfig()
 
@@ -320,6 +365,7 @@ def create_mcp_app(
     app.add_route(cfg.health_path, health_endpoint, methods=["GET"])
     readiness_handler = create_readiness_endpoint(is_ready=cfg.transport_ready)
     app.add_route(cfg.ready_path, readiness_handler, methods=["GET"])
+    app.add_route(cfg.ping_path, ping_endpoint, methods=["GET"])
 
     # Locate canonical /mcp route for auth & rate limiting boundaries
     mcp_route = next((r for r in app.routes if getattr(r, "path", None) == cfg.path), None)
@@ -435,3 +481,58 @@ async def run_loopback_mcp_server(
     finally:
         srv.should_exit = True
         await server_task
+
+
+def create_agentcore_config(
+    *,
+    port: int = 8000,
+    rate_limit_policy: EndpointProtectionPolicy | None = None,
+    rate_limit_db_path: str | Path | None = None,
+    rate_limit_window_seconds: int = 60,
+    max_requests_per_window: int = 10,
+) -> MCPServerConfig:
+    """Create explicit MCPServerConfig for AgentCore container deployment.
+
+    Enforces:
+    - host = "0.0.0.0" (required for container ingress)
+    - port = 8000 (AgentCore MCP container port)
+    - path = "/mcp" (canonical MCP endpoint)
+    - stateless_http = False (stateful session affinity for mission_start -> mission_status)
+    - deployment_profile = "agentcore" (explicit non-loopback gate)
+    - ping_path = "/ping"
+    - health_path = "/health"
+    - ready_path = "/ready"
+    - rate_limit_policy: EndpointProtectionPolicy active on /mcp
+    - rate_limit_db_path: runtime-local SQLite store
+    - auth_config = None (IAM / SigV4 ingress terminates at AgentCore boundary)
+    """
+    if rate_limit_policy is None:
+        from decimal import Decimal
+
+        from stilldone.endpoint_protection import EndpointProtectionPolicy
+
+        rate_limit_policy = EndpointProtectionPolicy(
+            max_requests_per_window=max_requests_per_window,
+            max_paid_live_requests_per_window=1,
+            internal_gross_ceiling=Decimal("0.05"),
+            live_paid_path_enabled=False,
+        )
+
+    if rate_limit_db_path is None:
+        import tempfile
+
+        rate_limit_db_path = Path(tempfile.gettempdir()) / "stilldone_rate_limit.db"
+
+    return MCPServerConfig(
+        host="0.0.0.0",
+        port=port,
+        path=CANONICAL_MCP_PATH,
+        stateless_http=False,
+        deployment_profile=DEPLOYMENT_PROFILE_AGENTCORE,
+        ping_path="/ping",
+        health_path="/health",
+        ready_path="/ready",
+        rate_limit_policy=rate_limit_policy,
+        rate_limit_db_path=rate_limit_db_path,
+        rate_limit_window_seconds=rate_limit_window_seconds,
+    )
