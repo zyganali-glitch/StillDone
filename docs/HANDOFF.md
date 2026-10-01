@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: DONE — awaiting independent QA)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: PASS; P-05.03: DONE — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-05.02 — Implement protocol initialization, capability declaration, and health/readiness
+P-05.03 — Expose read-only mission-status tool over typed contracts
 
 Status:
 `DONE — awaiting independent QA`
@@ -93,8 +93,8 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 ## Phase P-05 Status
 
 - P-05.01 — independent QA PASS (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`)
-- P-05.02 — DONE — awaiting independent QA
-- P-05.03 — PENDING / NOT AUTHORIZED
+- P-05.02 — PASS (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`)
+- P-05.03 — DONE — awaiting independent QA
 - P-05.04 — PENDING / NOT AUTHORIZED
 - P-05.05 — PENDING / NOT AUTHORIZED
 - P-05.06 — PENDING / NOT AUTHORIZED
@@ -104,16 +104,16 @@ Phase P-05 is **IN_PROGRESS**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`c87c2046f8175f17db575b2a27c538bfaa95e150`
+`a5812224ef2430699d40d37a75ef9937c1be482d`
 
 ## Next exact task
 
-`P-05.02 Independent QA Review`
-(Phase P-05.03 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
+`P-05.03 Independent QA Review`
+(Phase P-05.04 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
 
 ## Next safe action
 
-Push P-05.02 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.03.
+Push P-05.03 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.04.
 
 ---
 

@@ -617,7 +617,23 @@ Acceptance:
 - full test coverage added in `tests/test_mcp_server.py` (33 focused MCP tests); 664 total tests passing in suite.
 
 ### P-05.03 — Expose read-only mission-status tool over typed contracts
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- StillDone's first business MCP tool registered: `mission_status` using official MCPServer tool API;
+- input schema derived from type hints requires `mission_id: str`;
+- tool input parses strictly via canonical `MissionId` and queries `MissionLedgerPort.get_mission(MissionId)`;
+- malformed UUID fails closed with bounded safe tool error without echoing malformed input;
+- missing mission maps `RecordNotFoundError` to visible bounded safe tool error without manufacturing records or storage;
+- typed immutable projection `MissionStatusView` implemented in `src/stilldone/mcp/mission_status.py` preserving `MissionId`, `MissionState`, and timezone-aware UTC timestamps;
+- bounded wire serialization `MissionStatusPayload` projects strictly `mission_id`, `state`, `created_at`, `updated_at`;
+- privacy minimization strictly enforced: zero user intent text, zero action contracts, zero target IDs, zero evidence payloads, zero approval material, zero secrets;
+- official `ToolAnnotations` marks tool as read-only (`read_only_hint=True`, `destructive_hint=False`, `idempotent_hint=True`, `open_world_hint=False`);
+- zero mutation: mission_status performs zero ledger writes, zero state alterations, zero attempt/grant creation;
+- zero provider/model calls: 0 Google calls, 0 AWS/Bedrock/AgentCore calls, 0 Open-Meteo calls, 0 LLM calls;
+- deterministic ledger fact pass-through across multiple canonical `MissionState` members with zero model prose rewriting;
+- business surface updated from 0 tools to exactly 1 tool (`mission_status`); `mission_start` remains absent, prompts remain empty (0), resources remain empty (0);
+- full test coverage added in `tests/test_mcp_mission_status.py` (30 focused tests, 63 total MCP tests, 694 total tests passing in suite).
 
 ### P-05.04 — Expose mission-start tool without live mutation yet
 Status: PENDING

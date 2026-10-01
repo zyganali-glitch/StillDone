@@ -19,7 +19,10 @@ import socket
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from stilldone.application.ports.ledger_port import MissionLedgerPort
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
@@ -118,25 +121,40 @@ def find_free_loopback_port(host: str = CANONICAL_MCP_HOST) -> int:
         return int(s.getsockname()[1])
 
 
-def create_mcp_server(config: MCPServerConfig | None = None) -> MCPServer:
+def create_mcp_server(
+    config: MCPServerConfig | None = None,
+    ledger: MissionLedgerPort | None = None,
+) -> MCPServer:
     """Create a StillDone MCP server instance using the official MCP SDK.
 
     Guarantees:
     - Stable StillDone identity (name and version from config).
-    - Zero business tools, zero prompts, zero resources in P-05.01.
+    - Exactly 1 StillDone business tool: mission_status (P-05.03).
+    - Bound to canonical MissionLedgerPort; defaults to an isolated InMemoryNonDurableLedger.
+    - Zero prompts, zero resources.
     - Zero authentication/authorization middleware (deferred to P-05.05).
     """
+    from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger, MissionLedgerPort
+    from stilldone.mcp.mission_status import register_mission_status_tool
+
     cfg = config or MCPServerConfig()
     server = MCPServer(
         name=cfg.server_name,
         version=cfg.server_version,
     )
+    effective_ledger = ledger if ledger is not None else InMemoryNonDurableLedger()
+    if not isinstance(effective_ledger, MissionLedgerPort):
+        raise TypeError(
+            f"ledger must implement MissionLedgerPort, got {type(effective_ledger).__name__}"
+        )
+    register_mission_status_tool(server, effective_ledger)
     return server
 
 
 def create_mcp_app(
     config: MCPServerConfig | None = None,
     server: MCPServer | None = None,
+    ledger: MissionLedgerPort | None = None,
 ) -> Starlette:
     """Create the Starlette ASGI application for the StillDone MCP server.
 
@@ -148,7 +166,7 @@ def create_mcp_app(
     from stilldone.mcp.health import create_readiness_endpoint, health_endpoint
 
     cfg = config or MCPServerConfig()
-    mcp_srv = server if server is not None else create_mcp_server(cfg)
+    mcp_srv = server if server is not None else create_mcp_server(cfg, ledger=ledger)
     app = mcp_srv.streamable_http_app(
         streamable_http_path=cfg.path,
         json_response=cfg.json_response,
@@ -165,6 +183,7 @@ def create_mcp_app(
 async def run_loopback_mcp_server(
     config: MCPServerConfig | None = None,
     server: MCPServer | None = None,
+    ledger: MissionLedgerPort | None = None,
 ) -> AsyncGenerator[tuple[uvicorn.Server, str], None]:
     """Run the StillDone MCP server locally on loopback inside an async context manager.
 
@@ -173,7 +192,7 @@ async def run_loopback_mcp_server(
     """
     cfg = config or MCPServerConfig()
     port = cfg.port if cfg.port != 0 else find_free_loopback_port(cfg.host)
-    app = create_mcp_app(cfg, server)
+    app = create_mcp_app(cfg, server=server, ledger=ledger)
 
     uvicorn_config = uvicorn.Config(
         app,
