@@ -103,7 +103,7 @@ See:
 
 ## Current status
 
-**PHASE P-04 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); PHASE P-05 IN_PROGRESS (P-05.01: DONE — awaiting independent QA)**
+**PHASE P-04 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); PHASE P-05 IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: DONE — awaiting independent QA)**
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
@@ -131,8 +131,9 @@ Phase progression and verified milestones:
   - `P-04.06` (Public-endpoint rate/budget admission contract): deterministic provider-neutral rate/budget policy evaluator, exact `Decimal` arithmetic, operator live gate (`live_paid_path_enabled=False` default), deny on `PAID_CAPABLE_LIVE` + `PUBLIC_UNTRUSTED`, fresh credit coverage checks, internal gross ceiling enforcement, and self-validating `EndpointAdmissionDecision`. Evaluator is pure; does not claim atomic production rate limiting (deferred to P-05.05).
   - `P-04.07` (Phase-boundary security/threat-model audit): comprehensive 16-dimension audit documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`; 40 cross-boundary integration security tests in `tests/test_phase_p04_security_audit.py` verifying vocabulary, authority, import purity, and cross-gate non-substitutability.
 - **Phase P-05 (Real MCP Server Spine)**: `IN_PROGRESS`.
-  - `P-05.01` (MCP server with Streamable HTTP transport): `DONE — awaiting independent QA`. Implemented MCP server spine over official Streamable HTTP transport using `mcp>=2.2.0`; proven locally on loopback; protocol version `2025-11-25` negotiated; zero business tools exposed; 652 tests passing.
-  - `P-05.02` through `P-05.07`: `PENDING / NOT AUTHORIZED`.
+  - `P-05.01` (MCP server with Streamable HTTP transport): `independent QA PASS` (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`).
+  - `P-05.02` (Protocol initialization, capability declaration, and health/readiness): `DONE — awaiting independent QA`. Implemented immutable `MCPCapabilitySnapshot` and `MCPInitializationSnapshot` extracting truthful protocol version and capability flags; added plain HTTP `/health` (process liveness) and `/ready` (transport-only readiness) with 503 fail-closed behavior; 664 tests passing.
+  - `P-05.03` through `P-05.07`: `PENDING / NOT AUTHORIZED`.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`

@@ -48,6 +48,10 @@ class MCPServerConfig:
     json_response: bool = False
     stateless_http: bool = False
 
+    health_path: str = "/health"
+    ready_path: str = "/ready"
+    transport_ready: bool = True
+
     def __post_init__(self) -> None:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("host must be a non-empty string")
@@ -74,6 +78,23 @@ class MCPServerConfig:
         if len(self.path.strip()) <= 1:
             raise ValueError("path must be a non-root path starting with '/'")
 
+        if not isinstance(self.health_path, str) or not self.health_path.startswith("/"):
+            raise ValueError("health_path must be a string starting with '/'")
+        if len(self.health_path.strip()) <= 1:
+            raise ValueError("health_path must be a non-root path starting with '/'")
+
+        if not isinstance(self.ready_path, str) or not self.ready_path.startswith("/"):
+            raise ValueError("ready_path must be a string starting with '/'")
+        if len(self.ready_path.strip()) <= 1:
+            raise ValueError("ready_path must be a non-root path starting with '/'")
+
+        if self.health_path == self.path:
+            raise ValueError("health_path cannot clash with mcp path")
+        if self.ready_path == self.path:
+            raise ValueError("ready_path cannot clash with mcp path")
+        if self.health_path == self.ready_path:
+            raise ValueError("health_path and ready_path cannot be identical")
+
         if not isinstance(self.server_name, str) or not self.server_name.strip():
             raise ValueError("server_name must be a non-empty string")
 
@@ -85,6 +106,9 @@ class MCPServerConfig:
 
         if not isinstance(self.stateless_http, bool):
             raise TypeError("stateless_http must be a boolean")
+
+        if not isinstance(self.transport_ready, bool):
+            raise TypeError("transport_ready must be a boolean")
 
 
 def find_free_loopback_port(host: str = CANONICAL_MCP_HOST) -> int:
@@ -116,16 +140,25 @@ def create_mcp_app(
 ) -> Starlette:
     """Create the Starlette ASGI application for the StillDone MCP server.
 
-    Uses the official SDK's Streamable HTTP transport mounted at the canonical path.
+    Mounts:
+    - Streamable HTTP transport at cfg.path (/mcp)
+    - Process liveness probe at cfg.health_path (/health)
+    - Transport-only readiness probe at cfg.ready_path (/ready)
     """
+    from stilldone.mcp.health import create_readiness_endpoint, health_endpoint
+
     cfg = config or MCPServerConfig()
     mcp_srv = server if server is not None else create_mcp_server(cfg)
-    return mcp_srv.streamable_http_app(
+    app = mcp_srv.streamable_http_app(
         streamable_http_path=cfg.path,
         json_response=cfg.json_response,
         stateless_http=cfg.stateless_http,
         host=cfg.host,
     )
+    app.add_route(cfg.health_path, health_endpoint, methods=["GET"])
+    readiness_handler = create_readiness_endpoint(is_ready=cfg.transport_ready)
+    app.add_route(cfg.ready_path, readiness_handler, methods=["GET"])
+    return app
 
 
 @asynccontextmanager

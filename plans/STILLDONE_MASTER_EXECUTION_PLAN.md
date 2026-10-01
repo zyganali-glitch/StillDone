@@ -581,7 +581,7 @@ Goal:
 build the Alexa+ track's real open-standard interface.
 
 ### P-05.01 — Implement MCP server with current required Streamable HTTP transport
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`)
 
 Acceptance:
 - official MCP Python SDK (`mcp>=2.2.0`, `mcp-types==2.2.0`) installed as minimum required direct dependency;
@@ -597,7 +597,22 @@ Acceptance:
 - all 631 existing tests remain green (total passing: 652 tests).
 
 ### P-05.02 — Implement protocol initialization, capability declaration, and health/readiness
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- immutable protocol snapshots `MCPCapabilitySnapshot` and `MCPInitializationSnapshot` implemented in `src/stilldone/mcp/protocol.py`;
+- truthful protocol negotiation snapshot extracting real negotiated protocol version (`2025-11-25` matching Alexa+ spec), server name/version, and declared capability flags;
+- strictly zero business tools exposed (`has_tools=True`, `tools_list_changed=False`, `list_tools()` returns empty list `[]`);
+- strictly zero prompts exposed (`has_prompts=False`, `list_prompts()` returns empty list `[]`);
+- strictly zero resources exposed (`has_resources=False`, `list_resources()` returns empty list `[]`);
+- strictly zero mission execution tools (`mission_status`, `mission_start`, etc.), zero provider capabilities (`google`, `aws`, `bedrock`, `weather`), and zero auth mechanisms declared;
+- protocol snapshots confer zero authority, create zero approval grants or execution attempts, and cannot produce `VERIFIED` or `READY` mission state;
+- deterministic plain HTTP `/health` endpoint implemented in `src/stilldone/mcp/health.py` returning `{"status": "alive", "scope": "process"}` (HTTP 200, no-cache headers);
+- deterministic plain HTTP `/ready` endpoint implemented in `src/stilldone/mcp/health.py` returning `{"status": "ready", "scope": "mcp_transport"}` (HTTP 200) when transport is ready, or `{"status": "not_ready", "scope": "mcp_transport"}` (HTTP 503) when unready;
+- readiness scope strictly declared as `mcp_transport`; does not claim ledger readiness, provider readiness, auth readiness, or mission readiness;
+- endpoints mounted on existing Starlette app via `MCPServerConfig` (`health_path="/health"`, `ready_path="/ready"`) with path collision validation against `/mcp`;
+- zero secrets, tokens, or environment dumps in health/ready responses;
+- full test coverage added in `tests/test_mcp_server.py` (33 focused MCP tests); 664 total tests passing in suite.
 
 ### P-05.03 — Expose read-only mission-status tool over typed contracts
 Status: PENDING

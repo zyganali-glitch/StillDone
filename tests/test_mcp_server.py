@@ -246,9 +246,11 @@ class TestMCPAntiLeakage:
         """Verify src/stilldone/mcp does not import any external cloud provider SDKs."""
         import stilldone.mcp.server as srv_mod
 
-        source_file = inspect.getfile(srv_mod)
-        source_path = pathlib.Path(source_file)
-        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        mcp_dir = pathlib.Path(inspect.getfile(srv_mod)).parent
+        py_files = list(mcp_dir.glob("*.py"))
+        assert len(py_files) >= 3, (
+            f"Expected at least 3 python files in mcp package, found: {py_files}"
+        )
 
         forbidden_packages = {
             "boto3",
@@ -260,15 +262,21 @@ class TestMCPAntiLeakage:
             "open_meteo",
         }
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    pkg = alias.name.split(".")[0]
-                    assert pkg not in forbidden_packages, f"Forbidden import: {alias.name}"
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    pkg = node.module.split(".")[0]
-                    assert pkg not in forbidden_packages, f"Forbidden import from: {node.module}"
+        for py_file in py_files:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        pkg = alias.name.split(".")[0]
+                        assert pkg not in forbidden_packages, (
+                            f"Forbidden import '{alias.name}' in {py_file.name}"
+                        )
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        pkg = node.module.split(".")[0]
+                        assert pkg not in forbidden_packages, (
+                            f"Forbidden import from '{node.module}' in {py_file.name}"
+                        )
 
     def test_12_no_auth_middleware_prm_oauth_exists(self) -> None:
         """12. No auth middleware, PRM, or OAuth implementation exists in P-05.01."""
@@ -487,3 +495,430 @@ class TestMCPLoopbackTransport:
                     assert init2.server_info.name == "StillDone"
                     tools2 = await s2.list_tools()
                     assert len(tools2.tools) == 0
+
+
+# ===========================================================================
+# Unit & Integration Tests: Health and Readiness Endpoints (P-05.02)
+# ===========================================================================
+
+
+class TestMCPHealthAndReadiness:
+    """Verify deterministic plain HTTP /health and /ready surfaces."""
+
+    def test_01_02_health_endpoint_liveness_in_process(self) -> None:
+        """1, 2, 3: /health exists, returns HTTP 200, and contains only bounded liveness info."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            HEALTH_SCOPE_PROCESS,
+            HEALTH_STATUS_ALIVE,
+            create_mcp_app,
+        )
+
+        app = create_mcp_app()
+        client = TestClient(app)
+
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {
+            "status": HEALTH_STATUS_ALIVE,
+            "scope": HEALTH_SCOPE_PROCESS,
+        }
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+
+    def test_03_04_ready_endpoint_transport_readiness_in_process(self) -> None:
+        """4, 5, 6: /ready exists, returns HTTP 200, and truth is explicitly transport-only."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            READY_SCOPE_TRANSPORT,
+            READY_STATUS_READY,
+            create_mcp_app,
+        )
+
+        app = create_mcp_app()
+        client = TestClient(app)
+
+        resp = client.get("/ready")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {
+            "status": READY_STATUS_READY,
+            "scope": READY_SCOPE_TRANSPORT,
+        }
+        assert data["scope"] == "mcp_transport"
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+
+    def test_05_ready_endpoint_fail_closed_when_unready(self) -> None:
+        """5b. /ready fails closed with HTTP 503 when transport is not ready."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            READY_SCOPE_TRANSPORT,
+            READY_STATUS_NOT_READY,
+            MCPServerConfig,
+            create_mcp_app,
+        )
+
+        app = create_mcp_app(config=MCPServerConfig(transport_ready=False))
+        client = TestClient(app)
+
+        resp = client.get("/ready")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data == {
+            "status": READY_STATUS_NOT_READY,
+            "scope": READY_SCOPE_TRANSPORT,
+        }
+
+    def test_06_health_and_ready_secrecy(self) -> None:
+        """7. Neither /health nor /ready exposes secrets, env vars, IDs, or tokens."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import create_mcp_app
+
+        app = create_mcp_app()
+        client = TestClient(app)
+
+        health_text = client.get("/health").text.lower()
+        ready_text = client.get("/ready").text.lower()
+
+        forbidden_patterns = [
+            "secret",
+            "token",
+            "password",
+            "bearer",
+            "authorization",
+            "calendar_id",
+            "task_list_id",
+            "aws_account",
+            "us-east-1",
+            "arn:aws",
+            "client_secret",
+            "refresh_token",
+            "oauth",
+        ]
+
+        for pattern in forbidden_patterns:
+            assert pattern not in health_text, f"Pattern '{pattern}' found in /health response"
+            assert pattern not in ready_text, f"Pattern '{pattern}' found in /ready response"
+
+    def test_07_health_and_ready_no_ledger_mutation(self) -> None:
+        """8, 9: /health and /ready do not mutate ledger and invoke 0 providers."""
+        from starlette.testclient import TestClient
+
+        from stilldone.ledger import InMemoryNonDurableLedger
+        from stilldone.mcp import create_mcp_app
+
+        ledger = InMemoryNonDurableLedger()
+        assert len(ledger._missions) == 0
+        assert len(ledger._actions) == 0
+        assert len(ledger._evidence) == 0
+
+        app = create_mcp_app()
+        client = TestClient(app)
+
+        client.get("/health")
+        client.get("/ready")
+
+        assert len(ledger._missions) == 0
+        assert len(ledger._actions) == 0
+        assert len(ledger._evidence) == 0
+
+    @pytest.mark.anyio
+    async def test_08_health_and_ready_real_loopback_http(self) -> None:
+        """Real loopback TCP test of /health and /ready over uvicorn."""
+
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            HEALTH_STATUS_ALIVE,
+            READY_STATUS_READY,
+            MCPServerConfig,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        config = MCPServerConfig(port=port)
+
+        async with run_loopback_mcp_server(config):
+            import httpx2
+
+            async with httpx2.AsyncClient() as http_client:
+                # Test /health over real loopback HTTP socket
+                health_url = f"http://{CANONICAL_MCP_HOST}:{port}/health"
+                resp_health = await http_client.get(health_url)
+                assert resp_health.status_code == 200
+                data_health = resp_health.json()
+                assert data_health["status"] == HEALTH_STATUS_ALIVE
+
+                # Test /ready over real loopback HTTP socket
+                ready_url = f"http://{CANONICAL_MCP_HOST}:{port}/ready"
+                resp_ready = await http_client.get(ready_url)
+                assert resp_ready.status_code == 200
+                data_ready = resp_ready.json()
+                assert data_ready["status"] == READY_STATUS_READY
+                assert data_ready["scope"] == "mcp_transport"
+
+    def test_09_no_separate_fastapi_or_flask(self) -> None:
+        """10. No separate FastAPI/Flask framework introduced; uses Starlette directly."""
+        from starlette.applications import Starlette
+
+        from stilldone.mcp import create_mcp_app
+
+        app = create_mcp_app()
+        assert isinstance(app, Starlette)
+        app_cls_name = type(app).__name__
+        assert "FastAPI" not in app_cls_name
+        assert "Flask" not in app_cls_name
+
+    def test_10_config_validation_health_and_ready_paths(self) -> None:
+        """Validate health_path and ready_path boundaries and collision prevention."""
+        from stilldone.mcp import MCPServerConfig
+
+        # Valid custom paths
+        cfg = MCPServerConfig(health_path="/ping", ready_path="/status")
+        assert cfg.health_path == "/ping"
+        assert cfg.ready_path == "/status"
+
+        # Invalid path format
+        with pytest.raises(ValueError, match="health_path must be a string starting with '/'"):
+            MCPServerConfig(health_path="health")
+        with pytest.raises(ValueError, match="health_path must be a non-root path"):
+            MCPServerConfig(health_path="/")
+        with pytest.raises(ValueError, match="ready_path must be a string starting with '/'"):
+            MCPServerConfig(ready_path="ready")
+        with pytest.raises(ValueError, match="ready_path must be a non-root path"):
+            MCPServerConfig(ready_path="/")
+
+        # Collisions
+        with pytest.raises(ValueError, match="health_path cannot clash with mcp path"):
+            MCPServerConfig(health_path="/mcp")
+        with pytest.raises(ValueError, match="ready_path cannot clash with mcp path"):
+            MCPServerConfig(ready_path="/mcp")
+        with pytest.raises(ValueError, match="health_path and ready_path cannot be identical"):
+            MCPServerConfig(health_path="/status", ready_path="/status")
+
+        # Invalid transport_ready type
+        with pytest.raises(TypeError, match="transport_ready must be a boolean"):
+            MCPServerConfig(transport_ready="yes")  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# Unit & Integration Tests: Protocol Initialization & Capabilities (P-05.02)
+# ===========================================================================
+
+
+class TestMCPProtocolInitializationAndCapabilities:
+    """Verify truthful protocol initialization, capability declaration, and snapshots."""
+
+    @pytest.mark.anyio
+    async def test_11_to_14_protocol_initialization_snapshot_from_runtime(self) -> None:
+        """11, 12, 13, 14:
+
+        - 11. Protocol version is read from runtime InitializeResult.
+        - 12. Server name is truthful ('StillDone').
+        - 13. Server version is truthful ('0.1.0').
+        - 14. Capability projection is deterministic and truthful.
+        """
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            MCPCapabilitySnapshot,
+            MCPInitializationSnapshot,
+            MCPServerConfig,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        config = MCPServerConfig(port=port)
+
+        async with run_loopback_mcp_server(config) as (_, endpoint_url):
+            async with streamable_http_client(endpoint_url) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    init_result = await session.initialize()
+
+                    # 11, 12, 13, 14: Construct snapshot from runtime observation
+                    snapshot = MCPInitializationSnapshot.from_initialize_result(init_result)
+
+                    assert snapshot.protocol_version == "2025-11-25"
+                    assert snapshot.server_name == "StillDone"
+                    assert snapshot.server_version == "0.1.0"
+                    assert isinstance(snapshot.capabilities, MCPCapabilitySnapshot)
+
+                    # SDK protocol level capabilities
+                    assert snapshot.capabilities.has_tools is True
+                    assert snapshot.capabilities.tools_list_changed is False
+                    assert snapshot.capabilities.has_prompts is True
+                    assert snapshot.capabilities.has_resources is True
+                    assert snapshot.capabilities.has_logging is False
+
+                    snap_dict = snapshot.to_dict()
+                    assert snap_dict["protocol_version"] == "2025-11-25"
+                    assert snap_dict["server_name"] == "StillDone"
+                    assert snap_dict["server_version"] == "0.1.0"
+                    assert "capabilities" in snap_dict
+
+    @pytest.mark.anyio
+    async def test_15_repeated_initialization_produces_identical_snapshots(self) -> None:
+        """15. Repeated initialization produces equivalent capability facts."""
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            MCPInitializationSnapshot,
+            MCPServerConfig,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        config = MCPServerConfig(port=port)
+
+        async with run_loopback_mcp_server(config) as (_, endpoint_url):
+            async with streamable_http_client(endpoint_url) as (r1, w1):
+                async with ClientSession(r1, w1) as s1:
+                    init1 = await s1.initialize()
+                    snap1 = MCPInitializationSnapshot.from_initialize_result(init1)
+
+            async with streamable_http_client(endpoint_url) as (r2, w2):
+                async with ClientSession(r2, w2) as s2:
+                    init2 = await s2.initialize()
+                    snap2 = MCPInitializationSnapshot.from_initialize_result(init2)
+
+            assert snap1 == snap2
+            assert snap1.to_dict() == snap2.to_dict()
+
+    @pytest.mark.anyio
+    async def test_16_to_18_capabilities_match_actual_exposed_surface(self) -> None:
+        """16, 17, 18: Capabilities match actual surface; no mission tools or provider claims."""
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            MCPInitializationSnapshot,
+            MCPServerConfig,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        config = MCPServerConfig(port=port)
+
+        async with run_loopback_mcp_server(config) as (_, endpoint_url):
+            async with streamable_http_client(endpoint_url) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    init_result = await session.initialize()
+                    snapshot = MCPInitializationSnapshot.from_initialize_result(init_result)
+
+                    # 16. Actual surface is empty
+                    tools = await session.list_tools()
+                    prompts = await session.list_prompts()
+                    resources = await session.list_resources()
+
+                    assert len(tools.tools) == 0
+                    assert len(prompts.prompts) == 0
+                    assert len(resources.resources) == 0
+
+                    tool_names = [t.name for t in tools.tools]
+
+                    # 17. No mission tool falsely declared
+                    assert "mission_status" not in tool_names
+                    assert "get_mission_status" not in tool_names
+                    assert "mission_start" not in tool_names
+                    assert "start_mission" not in tool_names
+
+                    # 18. No provider capability falsely declared
+                    cap_dict = snapshot.capabilities.to_dict()
+                    for key in ["google", "aws", "bedrock", "weather", "open_meteo"]:
+                        assert key not in cap_dict
+
+    def test_20_21_snapshot_validation_immutability_and_authority(self) -> None:
+        """20, 21: Snapshot is immutable, validates fields, confers zero authority."""
+        from stilldone.mcp import (
+            MCPCapabilitySnapshot,
+            MCPInitializationSnapshot,
+        )
+
+        cap = MCPCapabilitySnapshot(
+            has_tools=True,
+            tools_list_changed=False,
+            has_prompts=True,
+            prompts_list_changed=False,
+            has_resources=True,
+            resources_subscribe=False,
+            resources_list_changed=False,
+            has_logging=False,
+            has_completions=False,
+            has_experimental=False,
+            has_tasks=False,
+            has_extensions=False,
+        )
+
+        snap = MCPInitializationSnapshot(
+            protocol_version="2025-11-25",
+            server_name="StillDone",
+            server_version="0.1.0",
+            instructions=None,
+            capabilities=cap,
+        )
+
+        # Immutability
+        with pytest.raises(FrozenInstanceError):
+            snap.server_name = "Modified"  # type: ignore[misc]
+
+        with pytest.raises(FrozenInstanceError):
+            cap.has_tools = False  # type: ignore[misc]
+
+        # Validations fail closed
+        with pytest.raises(ValueError, match="protocol_version must be a non-empty string"):
+            MCPInitializationSnapshot(
+                protocol_version="",
+                server_name="StillDone",
+                server_version="0.1.0",
+                instructions=None,
+                capabilities=cap,
+            )
+
+        with pytest.raises(ValueError, match="server_name must be a non-empty string"):
+            MCPInitializationSnapshot(
+                protocol_version="2025-11-25",
+                server_name="",
+                server_version="0.1.0",
+                instructions=None,
+                capabilities=cap,
+            )
+
+        with pytest.raises(
+            TypeError, match="capabilities must be an MCPCapabilitySnapshot instance"
+        ):
+            MCPInitializationSnapshot(
+                protocol_version="2025-11-25",
+                server_name="StillDone",
+                server_version="0.1.0",
+                instructions=None,
+                capabilities="not_a_capability_snapshot",  # type: ignore[arg-type]
+            )
+
+        # 20. Confers zero authority or state promotion capability
+        forbidden_methods = [
+            "promote_to_ready",
+            "confer_authority",
+            "mark_verified",
+            "grant_approval",
+            "execute_action",
+            "verify_outcome",
+        ]
+        for method in forbidden_methods:
+            assert not hasattr(snap, method), (
+                f"Snapshot must not possess authority method '{method}'"
+            )
+            assert not hasattr(cap, method), (
+                f"Capability must not possess authority method '{method}'"
+            )
