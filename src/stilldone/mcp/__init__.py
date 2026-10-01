@@ -4,8 +4,16 @@ Phase P-05.01: Streamable HTTP transport spine over loopback.
 Phase P-05.02: Protocol initialization, capability declaration, and health/readiness.
 Phase P-05.03: Expose read-only mission-status tool over typed contracts.
 Phase P-05.04: Expose mission-start tool without live mutation yet.
+Phase P-05.05: Add auth/rate-limit boundary appropriate to the proven judge path.
 """
 
+from stilldone.mcp.auth import (
+    AUTHORIZATION_SERVER_LIVE_COMPATIBILITY,
+    Alexa401CompatibilityMiddleware,
+    MCPAuthConfig,
+    SyntheticTokenVerifier,
+    get_expected_prm_path,
+)
 from stilldone.mcp.health import (
     CANONICAL_HEALTH_PATH,
     CANONICAL_READY_PATH,
@@ -40,6 +48,12 @@ from stilldone.mcp.protocol import (
     MCPCapabilitySnapshot,
     MCPInitializationSnapshot,
 )
+from stilldone.mcp.rate_limit import (
+    DEFAULT_WINDOW_SECONDS,
+    RateLimitMiddleware,
+    RateLimitStoreError,
+    SqliteRateLimitStore,
+)
 from stilldone.mcp.server import (
     CANONICAL_MCP_HOST,
     CANONICAL_MCP_PATH,
@@ -56,14 +70,18 @@ from stilldone.mcp.strict_input import (
 )
 
 __all__ = [
+    "AUTHORIZATION_SERVER_LIVE_COMPATIBILITY",
+    "Alexa401CompatibilityMiddleware",
     "CANONICAL_HEALTH_PATH",
     "CANONICAL_MCP_HOST",
     "CANONICAL_MCP_PATH",
     "CANONICAL_READY_PATH",
     "DEFAULT_SERVER_NAME",
     "DEFAULT_SERVER_VERSION",
+    "DEFAULT_WINDOW_SECONDS",
     "HEALTH_SCOPE_PROCESS",
     "HEALTH_STATUS_ALIVE",
+    "MCPAuthConfig",
     "MCPCapabilitySnapshot",
     "MCPInitializationSnapshot",
     "MCPServerConfig",
@@ -80,6 +98,10 @@ __all__ = [
     "READY_SCOPE_TRANSPORT",
     "READY_STATUS_NOT_READY",
     "READY_STATUS_READY",
+    "RateLimitMiddleware",
+    "RateLimitStoreError",
+    "SqliteRateLimitStore",
+    "SyntheticTokenVerifier",
     "create_mcp_app",
     "create_mcp_server",
     "create_mission_start_handler",
@@ -87,6 +109,7 @@ __all__ = [
     "create_readiness_endpoint",
     "enforce_strict_input_contract",
     "find_free_loopback_port",
+    "get_expected_prm_path",
     "health_endpoint",
     "readiness_endpoint",
     "register_mission_start_tool",

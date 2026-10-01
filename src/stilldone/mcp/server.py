@@ -3,11 +3,18 @@
 Provides deterministic construction of the StillDone MCP server over
 the official Streamable HTTP transport required for the Alexa+ competition path.
 
-Strict Phase P-05.01 boundary:
+Strict Phase P-05.05 boundary:
 - Real MCP Server and real Streamable HTTP transport via the official MCP SDK.
 - Bound to loopback only (127.0.0.1) for local execution tests.
-- Zero business tools, zero provider calls, zero model calls, zero mission mutations.
-- Zero authentication/PRM/rate limiting (belongs to P-05.05).
+- Exactly 2 business tools: mission_status (P-05.03) and mission_start (P-05.04).
+- Protected OAuth 2.0 Resource Server boundary (P-05.05):
+  - Token verification delegated to external TokenVerifier.
+  - RFC 9728 Protected Resource Metadata (PRM) endpoint exposed.
+  - Alexa+ 401 compatibility (WWW-Authenticate suppressed on 401).
+- Atomic persistent rate limiting via stdlib SQLite (P-05.05):
+  - Check-and-consume in single atomic transaction (zero race window).
+  - Evaluated using pure P-04.06 evaluate_endpoint_admission.
+  - Exceeded quota returns HTTP 429 without ledger mutation.
 - Zero remote deployment or public tunnels (belongs to P-05.06).
 """
 
@@ -16,19 +23,27 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
-
-if TYPE_CHECKING:
-    from stilldone.application.ports.ledger_port import MissionLedgerPort
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from starlette.applications import Starlette
+from starlette.routing import Route
 
 from stilldone import __version__
+
+if TYPE_CHECKING:
+    from mcp.server.auth.provider import TokenVerifier
+
+    from stilldone.application.ports.ledger_port import MissionLedgerPort
+    from stilldone.endpoint_protection import EndpointProtectionPolicy
+    from stilldone.mcp.auth import MCPAuthConfig
+    from stilldone.mcp.rate_limit import SqliteRateLimitStore
 
 CANONICAL_MCP_HOST: Final[str] = "127.0.0.1"
 CANONICAL_MCP_PATH: Final[str] = "/mcp"
@@ -40,7 +55,7 @@ DEFAULT_SERVER_VERSION: Final[str] = __version__
 class MCPServerConfig:
     """Deterministic configuration for StillDone MCP server spine.
 
-    Enforces loopback-only binding for Phase P-05.01 local execution boundary.
+    Enforces loopback-only binding for local execution boundaries.
     """
 
     host: str = CANONICAL_MCP_HOST
@@ -55,6 +70,13 @@ class MCPServerConfig:
     ready_path: str = "/ready"
     transport_ready: bool = True
 
+    # P-05.05 Auth & Rate Limit boundaries
+    auth_config: MCPAuthConfig | None = None
+    rate_limit_policy: EndpointProtectionPolicy | None = None
+    rate_limit_db_path: str | Path | None = None
+    rate_limit_window_seconds: int = 60
+    alexa_profile: bool = True
+
     def __post_init__(self) -> None:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("host must be a non-empty string")
@@ -67,7 +89,7 @@ class MCPServerConfig:
                 raise ValueError(f"Invalid host address: {self.host}") from err
             if not ip.is_loopback:
                 raise ValueError(
-                    "host must be a loopback address for P-05.01 local execution boundary, "
+                    "host must be a loopback address for local execution boundary, "
                     f"got: {self.host}"
                 )
 
@@ -113,6 +135,38 @@ class MCPServerConfig:
         if not isinstance(self.transport_ready, bool):
             raise TypeError("transport_ready must be a boolean")
 
+        if self.auth_config is not None:
+            from stilldone.mcp.auth import MCPAuthConfig
+
+            if not (
+                isinstance(self.auth_config, MCPAuthConfig)
+                or type(self.auth_config).__name__ == "MCPAuthConfig"
+            ):
+                raise TypeError("auth_config must be an MCPAuthConfig instance")
+
+        if self.rate_limit_policy is not None:
+            from stilldone.endpoint_protection import EndpointProtectionPolicy
+
+            if not (
+                isinstance(self.rate_limit_policy, EndpointProtectionPolicy)
+                or type(self.rate_limit_policy).__name__ == "EndpointProtectionPolicy"
+            ):
+                raise TypeError("rate_limit_policy must be an EndpointProtectionPolicy instance")
+
+        if self.rate_limit_db_path is not None:
+            if not isinstance(self.rate_limit_db_path, (str, Path)):
+                raise TypeError("rate_limit_db_path must be a string or Path")
+
+        if isinstance(self.rate_limit_window_seconds, bool) or not isinstance(
+            self.rate_limit_window_seconds, int
+        ):
+            raise TypeError("rate_limit_window_seconds must be an integer, not bool")
+        if self.rate_limit_window_seconds <= 0:
+            raise ValueError("rate_limit_window_seconds must be strictly positive")
+
+        if not isinstance(self.alexa_profile, bool):
+            raise TypeError("alexa_profile must be a boolean")
+
 
 def find_free_loopback_port(host: str = CANONICAL_MCP_HOST) -> int:
     """Find an available ephemeral port on the specified loopback host."""
@@ -124,6 +178,7 @@ def find_free_loopback_port(host: str = CANONICAL_MCP_HOST) -> int:
 def create_mcp_server(
     config: MCPServerConfig | None = None,
     ledger: MissionLedgerPort | None = None,
+    token_verifier: TokenVerifier | None = None,
 ) -> MCPServer:
     """Create a StillDone MCP server instance using the official MCP SDK.
 
@@ -133,19 +188,26 @@ def create_mcp_server(
     - Bound to canonical MissionLedgerPort; defaults to an isolated InMemoryNonDurableLedger.
     - Both tools share the exact same effective MissionLedgerPort instance.
     - Zero prompts, zero resources.
-    - Zero authentication/authorization middleware (deferred to P-05.05).
+    - Injects OAuth resource-server settings when configured.
     """
     from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger, MissionLedgerPort
     from stilldone.mcp.mission_start import register_mission_start_tool
     from stilldone.mcp.mission_status import register_mission_status_tool
 
     cfg = config or MCPServerConfig()
+    auth_settings = cfg.auth_config.to_sdk_auth_settings() if cfg.auth_config is not None else None
+
     server = MCPServer(
         name=cfg.server_name,
         version=cfg.server_version,
+        auth=auth_settings,
+        token_verifier=token_verifier,
     )
     effective_ledger = ledger if ledger is not None else InMemoryNonDurableLedger()
-    if not isinstance(effective_ledger, MissionLedgerPort):
+    if not (
+        isinstance(effective_ledger, MissionLedgerPort)
+        or type(effective_ledger).__name__ in ("InMemoryNonDurableLedger", "MissionLedgerPort")
+    ):
         raise TypeError(
             f"ledger must implement MissionLedgerPort, got {type(effective_ledger).__name__}"
         )
@@ -158,18 +220,29 @@ def create_mcp_app(
     config: MCPServerConfig | None = None,
     server: MCPServer | None = None,
     ledger: MissionLedgerPort | None = None,
+    token_verifier: TokenVerifier | None = None,
+    rate_limit_store: SqliteRateLimitStore | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> Starlette:
     """Create the Starlette ASGI application for the StillDone MCP server.
 
     Mounts:
-    - Streamable HTTP transport at cfg.path (/mcp)
-    - Process liveness probe at cfg.health_path (/health)
-    - Transport-only readiness probe at cfg.ready_path (/ready)
+    - Streamable HTTP transport at cfg.path (/mcp) with auth and rate-limit middleware.
+    - Process liveness probe at cfg.health_path (/health).
+    - Transport-only readiness probe at cfg.ready_path (/ready).
+    - RFC 9728 Protected Resource Metadata at SDK-generated well-known path.
     """
+    from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
+
     from stilldone.mcp.health import create_readiness_endpoint, health_endpoint
 
     cfg = config or MCPServerConfig()
-    mcp_srv = server if server is not None else create_mcp_server(cfg, ledger=ledger)
+    effective_verifier = token_verifier
+    mcp_srv = (
+        server
+        if server is not None
+        else create_mcp_server(cfg, ledger=ledger, token_verifier=effective_verifier)
+    )
     app = mcp_srv.streamable_http_app(
         streamable_http_path=cfg.path,
         json_response=cfg.json_response,
@@ -179,6 +252,56 @@ def create_mcp_app(
     app.add_route(cfg.health_path, health_endpoint, methods=["GET"])
     readiness_handler = create_readiness_endpoint(is_ready=cfg.transport_ready)
     app.add_route(cfg.ready_path, readiness_handler, methods=["GET"])
+
+    # Locate canonical /mcp route for auth & rate limiting boundaries
+    mcp_route = next((r for r in app.routes if getattr(r, "path", None) == cfg.path), None)
+    if isinstance(mcp_route, Route):
+        effective_store = rate_limit_store
+        if effective_store is None and cfg.rate_limit_db_path is not None:
+            from stilldone.mcp.rate_limit import SqliteRateLimitStore
+
+            effective_store = SqliteRateLimitStore(
+                cfg.rate_limit_db_path,
+                window_duration_seconds=cfg.rate_limit_window_seconds,
+            )
+
+        if effective_store is not None and cfg.rate_limit_policy is not None:
+            from stilldone.mcp.rate_limit import RateLimitMiddleware
+
+            if (
+                isinstance(mcp_route.endpoint, RequireAuthMiddleware)
+                or type(mcp_route.endpoint).__name__ == "RequireAuthMiddleware"
+            ):
+                # When auth is configured, wrap the inner streamable_http_app
+                # inside RequireAuthMiddleware so auth runs first.
+                auth_endpoint = cast(Any, mcp_route.endpoint)
+                underlying_app = auth_endpoint.app
+                rate_limited_app = RateLimitMiddleware(
+                    underlying_app,
+                    store=effective_store,
+                    policy=cfg.rate_limit_policy,
+                    clock=clock,
+                )
+                auth_endpoint.app = rate_limited_app
+            else:
+                rate_limited_app = RateLimitMiddleware(
+                    mcp_route.app,
+                    store=effective_store,
+                    policy=cfg.rate_limit_policy,
+                    clock=clock,
+                )
+                mcp_route.app = rate_limited_app
+                mcp_route.endpoint = rate_limited_app
+
+        alexa_compat_enabled = (
+            cfg.auth_config.alexa_profile if cfg.auth_config is not None else cfg.alexa_profile
+        )
+        if cfg.auth_config is not None and alexa_compat_enabled:
+            from stilldone.mcp.auth import Alexa401CompatibilityMiddleware
+
+            mcp_route.app = Alexa401CompatibilityMiddleware(mcp_route.app, enabled=True)
+            mcp_route.endpoint = Alexa401CompatibilityMiddleware(mcp_route.endpoint, enabled=True)
+
     return app
 
 
@@ -187,6 +310,9 @@ async def run_loopback_mcp_server(
     config: MCPServerConfig | None = None,
     server: MCPServer | None = None,
     ledger: MissionLedgerPort | None = None,
+    token_verifier: TokenVerifier | None = None,
+    rate_limit_store: SqliteRateLimitStore | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> AsyncGenerator[tuple[uvicorn.Server, str], None]:
     """Run the StillDone MCP server locally on loopback inside an async context manager.
 
@@ -195,7 +321,14 @@ async def run_loopback_mcp_server(
     """
     cfg = config or MCPServerConfig()
     port = cfg.port if cfg.port != 0 else find_free_loopback_port(cfg.host)
-    app = create_mcp_app(cfg, server=server, ledger=ledger)
+    app = create_mcp_app(
+        cfg,
+        server=server,
+        ledger=ledger,
+        token_verifier=token_verifier,
+        rate_limit_store=rate_limit_store,
+        clock=clock,
+    )
 
     uvicorn_config = uvicorn.Config(
         app,

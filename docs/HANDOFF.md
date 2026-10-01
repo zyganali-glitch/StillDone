@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: DONE — awaiting independent QA)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: DONE — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,7 +73,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-05.04 — Expose mission-start tool without live mutation yet
+P-05.05 — Add auth/rate-limit boundary appropriate to the proven judge path
 
 Status:
 `DONE — awaiting independent QA`
@@ -95,8 +95,8 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 - P-05.01 — independent QA PASS (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`)
 - P-05.02 — PASS (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`)
 - P-05.03 — PASS (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`)
-- P-05.04 — DONE — awaiting independent QA
-- P-05.05 — PENDING / NOT AUTHORIZED
+- P-05.04 — PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
+- P-05.05 — DONE — awaiting independent QA
 - P-05.06 — PENDING / NOT AUTHORIZED
 - P-05.07 — PENDING / NOT AUTHORIZED
 
@@ -104,16 +104,16 @@ Phase P-05 is **IN_PROGRESS**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`01effe9cdd210afa71a68812d1b51908a547f4fe`
+`e208ebf93e11863c64d886f3de3462fc427ed3e1`
 
 ## Next exact task
 
-`P-05.04 Independent QA Review`
-(Phase P-05.05 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
+`P-05.05 Independent QA Review`
+(Phase P-05.06 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
 
 ## Next safe action
 
-Push P-05.04 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.05.
+Push P-05.05 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.06.
 
 ---
 
