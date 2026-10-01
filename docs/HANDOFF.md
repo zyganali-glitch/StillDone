@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-03: CLOSED; Phase P-04: CLOSURE CANDIDATE (P-04.01: independent QA PASS; P-04.02: independent QA PASS; P-04.03: independent QA PASS; P-04.04: independent QA PASS; P-04.05: independent QA PASS; P-04.06: independent QA PASS; P-04.07: REPAIRED — awaiting independent QA; Last independently verified contiguous SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: DONE — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,10 +73,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-04.07 — Run focused security/threat-model P-Ω audit
+P-05.01 — Implement MCP server with current required Streamable HTTP transport
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -86,23 +86,34 @@ Status:
 - P-04.04 — independent QA PASS (Verified SHA: `2b24b4826009a8d9155616c90355185c3f19062e`)
 - P-04.05 — independent QA PASS (Verified SHA: `95aa53aece4c16792e6fc33f916133bab02bd78d`)
 - P-04.06 — independent QA PASS (Verified SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)
-- P-04.07 — REPAIRED — awaiting independent QA
+- P-04.07 — independent QA PASS (Verified SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`)
 
-Phase P-03 is **CLOSED — independent QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`)**.
-Phase P-04 is **CLOSURE CANDIDATE — awaiting independent QA review**.
+Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`)**.
+
+## Phase P-05 Status
+
+- P-05.01 — DONE — awaiting independent QA
+- P-05.02 — PENDING / NOT AUTHORIZED
+- P-05.03 — PENDING / NOT AUTHORIZED
+- P-05.04 — PENDING / NOT AUTHORIZED
+- P-05.05 — PENDING / NOT AUTHORIZED
+- P-05.06 — PENDING / NOT AUTHORIZED
+- P-05.07 — PENDING / NOT AUTHORIZED
+
+Phase P-05 is **IN_PROGRESS**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`a44955595aabaf7f34daecc35100bb72b5120095`
+`3dbde03de5993a163f019a7867401d9f88310fdc`
 
 ## Next exact task
 
-`Phase P-04 Independent QA Review and Phase Closure Determination`
-(Phase P-05 micro-tasks remain `PENDING / NOT AUTHORIZED` until Phase P-04 closure)
+`P-05.01 Independent QA Review`
+(Phase P-05.02 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
 
 ## Next safe action
 
-Push P-04.07 repair commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review for Phase P-04 closure. Do NOT begin Phase P-05.
+Push P-05.01 implementation commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.02.
 
 ---
 

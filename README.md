@@ -103,7 +103,7 @@ See:
 
 ## Current status
 
-**PHASE P-03 CLOSED — INDEPENDENT QA PASS (Verified SHA: `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`); PHASE P-04 CLOSURE CANDIDATE — AWAITING INDEPENDENT QA (Last Verified Baseline SHA: `a44955595aabaf7f34daecc35100bb72b5120095`)**
+**PHASE P-04 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); PHASE P-05 IN_PROGRESS (P-05.01: DONE — awaiting independent QA)**
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
@@ -122,7 +122,7 @@ Phase progression and verified milestones:
   - Receipt projections: immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved source semantics without overclaiming raw 64-char hex digest alone.
   - Adversarial hardening: 27 negative tests covering tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
   - Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
-- **Phase P-04 (Security, Privacy & Authority Foundation)**: `CLOSURE CANDIDATE — awaiting independent QA`.
+- **Phase P-04 (Security, Privacy & Authority Foundation)**: Complete and closed with independent QA PASS (`P-04.01` through `P-04.07`, verified closure SHA `3dbde03de5993a163f019a7867401d9f88310fdc`).
   - `P-04.01` (Secret/config fail-closed boundary): typed `ConfigSchema`, `ConfigField`, `SecretString` with masked representations, call-time/injected environment loading, owned `STILLDONE_` namespace validation, and fail-closed secret typing.
   - `P-04.02` (Log/evidence redaction & capture safety): deterministic pattern redaction for tokens, Bearer/Basic headers, JWTs, Google tokens, AWS access keys, emails, sensitive dictionary keys, and OAuth URLs (query/fragment decoded keys and values sanitized before re-encoding); immutable `RedactionMetadata`.
   - `P-04.03` (Supported-action allowlist & parameter policy): five-action closed allowlist (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`), strict parameter typing, non-coercing bounds (`MAX_PARAM_STRING_LENGTH = 1024`), and self-validating `ValidatedActionContract`. Zero provider or network imports.
@@ -130,18 +130,9 @@ Phase progression and verified milestones:
   - `P-04.05` (Demo-resource isolation): strict runtime match against configured demo calendar ID and demo task-list ID; rejects aliases, wildcards, substrings, or unvalidated contracts; masks IDs in `DemoResourceScope` `__repr__`.
   - `P-04.06` (Public-endpoint rate/budget admission contract): deterministic provider-neutral rate/budget policy evaluator, exact `Decimal` arithmetic, operator live gate (`live_paid_path_enabled=False` default), deny on `PAID_CAPABLE_LIVE` + `PUBLIC_UNTRUSTED`, fresh credit coverage checks, internal gross ceiling enforcement, and self-validating `EndpointAdmissionDecision`. Evaluator is pure; does not claim atomic production rate limiting (deferred to P-05.05).
   - `P-04.07` (Phase-boundary security/threat-model audit): comprehensive 16-dimension audit documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`; 40 cross-boundary integration security tests in `tests/test_phase_p04_security_audit.py` verifying vocabulary, authority, import purity, and cross-gate non-substitutability.
-  - **Truth boundaries**: All P-04 evidence is strictly `LOCAL_EXECUTION` / CI. No Phase P-05 MCP server exists yet; no Phase P-06 live provider adapters exist yet; no live write/read-back implementation exists yet. Executor success does not create `VERIFIED` or `READY`.
-  - **Suite truth**: 591 tests passing at independently verified P-04.06 baseline (`a44955595aabaf7f34daecc35100bb72b5120095`); 631 tests passing in P-04.07 audit candidate suite (candidate awaiting independent QA).
-  - **Current micro-task status**:
-    - P-04.01 — independent QA PASS
-    - P-04.02 — independent QA PASS
-    - P-04.03 — independent QA PASS
-    - P-04.04 — independent QA PASS
-    - P-04.05 — independent QA PASS
-    - P-04.06 — independent QA PASS
-    - P-04.07 — `REPAIRED — awaiting independent QA`
-    - Phase P-04: `CLOSURE CANDIDATE — awaiting independent QA`
-    - P-05.01: `PENDING / NOT AUTHORIZED`
+- **Phase P-05 (Real MCP Server Spine)**: `IN_PROGRESS`.
+  - `P-05.01` (MCP server with Streamable HTTP transport): `DONE — awaiting independent QA`. Implemented MCP server spine over official Streamable HTTP transport using `mcp>=2.2.0`; proven locally on loopback; protocol version `2025-11-25` negotiated; zero business tools exposed; 652 tests passing.
+  - `P-05.02` through `P-05.07`: `PENDING / NOT AUTHORIZED`.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`

@@ -553,7 +553,7 @@ Acceptance:
 - focused unit tests: `tests/test_endpoint_protection.py` passing (65 focused tests, 591 total tests in suite passing).
 
 ### P-04.07 — Run focused security/threat-model P-Ω audit
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`)
 
 Acceptance:
 - 16-dimension security/threat-model audit executed and documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`;
@@ -571,7 +571,7 @@ Acceptance:
 - zero blockers, zero FAIL findings, zero production code changes.
 
 Phase exit:
-Phase P-04 is a CLOSURE CANDIDATE awaiting independent QA review and closure determination. Live writes may begin only after Phase P-04 closure.
+Phase P-04 is CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`).
 
 ---
 
@@ -581,7 +581,20 @@ Goal:
 build the Alexa+ track's real open-standard interface.
 
 ### P-05.01 — Implement MCP server with current required Streamable HTTP transport
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- official MCP Python SDK (`mcp>=2.2.0`, `mcp-types==2.2.0`) installed as minimum required direct dependency;
+- server spine implemented in bounded package `src/stilldone/mcp/` (`server.py`, `__init__.py`) using official `mcp.server.mcpserver.MCPServer`;
+- canonical Streamable HTTP endpoint `/mcp` configured with default loopback binding (`127.0.0.1`);
+- deterministic server configuration `MCPServerConfig` (frozen, validating host, port, path, name, version);
+- real loopback transport lifecycle `run_loopback_mcp_server` and `create_mcp_app` returning `starlette.applications.Starlette`;
+- verified real loopback transport proof with official client `streamable_http_client` and `ClientSession`: protocol negotiation succeeds, negotiated protocol version observed as `2025-11-25` matching Alexa+ specification;
+- clean shutdown: client and server terminate cleanly and loopback port is verified released;
+- zero business tools, zero prompts, zero resources exposed; no mission-status tool (P-05.03), no mission-start tool (P-05.04);
+- zero auth middleware, PRM, or OAuth (P-05.05);
+- zero Google/AWS/Open-Meteo provider calls, zero model calls, zero ledger/evidence mutations;
+- all 631 existing tests remain green (total passing: 652 tests).
 
 ### P-05.02 — Implement protocol initialization, capability declaration, and health/readiness
 Status: PENDING

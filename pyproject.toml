@@ -8,7 +8,9 @@ license = { text = "Apache-2.0" }
 authors = [
     { name = "StillDone Authors" }
 ]
-dependencies = []
+dependencies = [
+    "mcp>=2.2.0",
+]
 
 [build-system]
 requires = ["hatchling"]
