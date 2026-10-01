@@ -157,6 +157,12 @@ class MCPServerConfig:
             if not isinstance(self.rate_limit_db_path, (str, Path)):
                 raise TypeError("rate_limit_db_path must be a string or Path")
 
+        if self.rate_limit_policy is None and self.rate_limit_db_path is not None:
+            raise ValueError(
+                "rate_limit_db_path cannot be configured when rate_limit_policy is None. "
+                "Partial rate limiting configuration is forbidden."
+            )
+
         if isinstance(self.rate_limit_window_seconds, bool) or not isinstance(
             self.rate_limit_window_seconds, int
         ):
@@ -189,12 +195,20 @@ def create_mcp_server(
     - Both tools share the exact same effective MissionLedgerPort instance.
     - Zero prompts, zero resources.
     - Injects OAuth resource-server settings when configured.
+    - Fails closed if auth_config is provided without a valid TokenVerifier.
     """
     from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger, MissionLedgerPort
     from stilldone.mcp.mission_start import register_mission_start_tool
     from stilldone.mcp.mission_status import register_mission_status_tool
 
     cfg = config or MCPServerConfig()
+
+    if cfg.auth_config is not None and token_verifier is None:
+        raise ValueError(
+            "Authentication is configured (auth_config is not None) but token_verifier is None. "
+            "Server construction fails closed before serving to prevent unauthenticated access."
+        )
+
     auth_settings = cfg.auth_config.to_sdk_auth_settings() if cfg.auth_config is not None else None
 
     server = MCPServer(
@@ -231,13 +245,67 @@ def create_mcp_app(
     - Process liveness probe at cfg.health_path (/health).
     - Transport-only readiness probe at cfg.ready_path (/ready).
     - RFC 9728 Protected Resource Metadata at SDK-generated well-known path.
+
+    Fail-closed construction rules:
+    - Auth fail-closed: If auth_config is provided, an effective token_verifier is required.
+    - Rate fail-closed:
+      - If rate_limit_policy is provided, exactly one of rate_limit_store or
+        rate_limit_db_path must be provided.
+      - If rate_limit_store or rate_limit_db_path is provided without policy, fails closed.
+      - If both rate_limit_store and rate_limit_db_path are provided, fails closed
+        (ambiguity guard).
     """
     from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
 
     from stilldone.mcp.health import create_readiness_endpoint, health_endpoint
 
     cfg = config or MCPServerConfig()
+
+    # 1. Auth Fail-Closed Verification
     effective_verifier = token_verifier
+    if effective_verifier is None and server is not None:
+        effective_verifier = getattr(server, "_token_verifier", None)
+
+    if cfg.auth_config is not None and effective_verifier is None:
+        raise ValueError(
+            "Authentication is configured (auth_config is not None) but token_verifier is None. "
+            "App construction fails closed before serving /mcp to prevent unauthenticated access."
+        )
+
+    if (
+        server is not None
+        and getattr(getattr(server, "settings", None), "auth", None) is not None
+        and effective_verifier is None
+    ):
+        raise ValueError(
+            "Server has auth settings configured but no effective token_verifier was provided. "
+            "App construction fails closed before serving /mcp to prevent unauthenticated access."
+        )
+
+    # 2. Rate-Limiting Fail-Closed Verification
+    has_policy = cfg.rate_limit_policy is not None
+    has_injected_store = rate_limit_store is not None
+    has_db_path = cfg.rate_limit_db_path is not None
+
+    if has_injected_store and has_db_path:
+        raise ValueError(
+            "Both rate_limit_store and rate_limit_db_path were provided simultaneously. "
+            "Construction fails closed to prevent ambiguous rate-limiting store configuration."
+        )
+
+    if not has_policy and (has_injected_store or has_db_path):
+        raise ValueError(
+            "Rate limit store or db_path was provided without rate_limit_policy. "
+            "Construction fails closed to prevent unconfigured rate limiting."
+        )
+
+    if has_policy and not (has_injected_store or has_db_path):
+        raise ValueError(
+            "rate_limit_policy is configured, but neither rate_limit_store nor rate_limit_db_path "
+            "was provided. Construction fails closed to prevent silently unmetered traffic."
+        )
+
+    # 3. Create or wrap MCP server
     mcp_srv = (
         server
         if server is not None
@@ -255,7 +323,22 @@ def create_mcp_app(
 
     # Locate canonical /mcp route for auth & rate limiting boundaries
     mcp_route = next((r for r in app.routes if getattr(r, "path", None) == cfg.path), None)
-    if isinstance(mcp_route, Route):
+    if not isinstance(mcp_route, Route):
+        raise RuntimeError(f"Canonical route {cfg.path} was not found on Starlette application")
+
+    # Verify RequireAuthMiddleware was installed when auth is configured
+    if cfg.auth_config is not None:
+        if not (
+            isinstance(mcp_route.endpoint, RequireAuthMiddleware)
+            or type(mcp_route.endpoint).__name__ == "RequireAuthMiddleware"
+        ):
+            raise RuntimeError(
+                "auth_config was provided, but /mcp endpoint was not wrapped in "
+                "RequireAuthMiddleware. Construction fails closed."
+            )
+
+    # Install RateLimitMiddleware when rate protection is configured (Mode B)
+    if cfg.rate_limit_policy is not None:
         effective_store = rate_limit_store
         if effective_store is None and cfg.rate_limit_db_path is not None:
             from stilldone.mcp.rate_limit import SqliteRateLimitStore
@@ -265,42 +348,42 @@ def create_mcp_app(
                 window_duration_seconds=cfg.rate_limit_window_seconds,
             )
 
-        if effective_store is not None and cfg.rate_limit_policy is not None:
-            from stilldone.mcp.rate_limit import RateLimitMiddleware
+        if effective_store is None:
+            raise RuntimeError("Unexpected failure to obtain effective rate limit store")
 
-            if (
-                isinstance(mcp_route.endpoint, RequireAuthMiddleware)
-                or type(mcp_route.endpoint).__name__ == "RequireAuthMiddleware"
-            ):
-                # When auth is configured, wrap the inner streamable_http_app
-                # inside RequireAuthMiddleware so auth runs first.
-                auth_endpoint = cast(Any, mcp_route.endpoint)
-                underlying_app = auth_endpoint.app
-                rate_limited_app = RateLimitMiddleware(
-                    underlying_app,
-                    store=effective_store,
-                    policy=cfg.rate_limit_policy,
-                    clock=clock,
-                )
-                auth_endpoint.app = rate_limited_app
-            else:
-                rate_limited_app = RateLimitMiddleware(
-                    mcp_route.app,
-                    store=effective_store,
-                    policy=cfg.rate_limit_policy,
-                    clock=clock,
-                )
-                mcp_route.app = rate_limited_app
-                mcp_route.endpoint = rate_limited_app
+        from stilldone.mcp.rate_limit import RateLimitMiddleware
 
-        alexa_compat_enabled = (
-            cfg.auth_config.alexa_profile if cfg.auth_config is not None else cfg.alexa_profile
-        )
-        if cfg.auth_config is not None and alexa_compat_enabled:
-            from stilldone.mcp.auth import Alexa401CompatibilityMiddleware
+        if (
+            isinstance(mcp_route.endpoint, RequireAuthMiddleware)
+            or type(mcp_route.endpoint).__name__ == "RequireAuthMiddleware"
+        ):
+            auth_endpoint = cast(Any, mcp_route.endpoint)
+            underlying_app = auth_endpoint.app
+            rate_limited_app = RateLimitMiddleware(
+                underlying_app,
+                store=effective_store,
+                policy=cfg.rate_limit_policy,
+                clock=clock,
+            )
+            auth_endpoint.app = rate_limited_app
+        else:
+            rate_limited_app = RateLimitMiddleware(
+                mcp_route.app,
+                store=effective_store,
+                policy=cfg.rate_limit_policy,
+                clock=clock,
+            )
+            mcp_route.app = rate_limited_app
+            mcp_route.endpoint = rate_limited_app
 
-            mcp_route.app = Alexa401CompatibilityMiddleware(mcp_route.app, enabled=True)
-            mcp_route.endpoint = Alexa401CompatibilityMiddleware(mcp_route.endpoint, enabled=True)
+    alexa_compat_enabled = (
+        cfg.auth_config.alexa_profile if cfg.auth_config is not None else cfg.alexa_profile
+    )
+    if cfg.auth_config is not None and alexa_compat_enabled:
+        from stilldone.mcp.auth import Alexa401CompatibilityMiddleware
+
+        mcp_route.app = Alexa401CompatibilityMiddleware(mcp_route.app, enabled=True)
+        mcp_route.endpoint = Alexa401CompatibilityMiddleware(mcp_route.endpoint, enabled=True)
 
     return app
 
@@ -318,9 +401,9 @@ async def run_loopback_mcp_server(
 
     Yields (uvicorn_server, endpoint_url).
     Guarantees clean shutdown and port release on exit.
+    Fails closed before port binding if configuration is invalid or partial.
     """
     cfg = config or MCPServerConfig()
-    port = cfg.port if cfg.port != 0 else find_free_loopback_port(cfg.host)
     app = create_mcp_app(
         cfg,
         server=server,
@@ -329,6 +412,7 @@ async def run_loopback_mcp_server(
         rate_limit_store=rate_limit_store,
         clock=clock,
     )
+    port = cfg.port if cfg.port != 0 else find_free_loopback_port(cfg.host)
 
     uvicorn_config = uvicorn.Config(
         app,

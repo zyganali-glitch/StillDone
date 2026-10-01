@@ -473,6 +473,118 @@ class TestMCPAuthentication:
                 assert "token" not in resp.text
                 assert "db" not in resp.text
 
+    def test_auth_config_with_missing_token_verifier_fails_construction(
+        self,
+        auth_config: MCPAuthConfig,
+    ) -> None:
+        """1. auth_config + missing token_verifier fails server and app construction."""
+        from stilldone.mcp import MCPServerConfig, create_mcp_app, create_mcp_server
+
+        cfg = MCPServerConfig(auth_config=auth_config)
+
+        with pytest.raises(ValueError, match="token_verifier is None"):
+            create_mcp_server(cfg, token_verifier=None)
+
+        with pytest.raises(ValueError, match="token_verifier is None"):
+            create_mcp_app(cfg, token_verifier=None)
+
+    @pytest.mark.anyio
+    async def test_auth_failure_occurs_before_mcp_can_be_served(
+        self,
+        auth_config: MCPAuthConfig,
+    ) -> None:
+        """2. Failure occurs before /mcp can be served or loopback port bound."""
+        from stilldone.mcp import (
+            CANONICAL_MCP_HOST,
+            MCPServerConfig,
+            find_free_loopback_port,
+            run_loopback_mcp_server,
+        )
+
+        port = find_free_loopback_port(CANONICAL_MCP_HOST)
+        cfg = MCPServerConfig(
+            host=CANONICAL_MCP_HOST,
+            port=port,
+            auth_config=auth_config,
+        )
+
+        with pytest.raises(ValueError, match="token_verifier is None"):
+            async with run_loopback_mcp_server(cfg, token_verifier=None):
+                pass  # pragma: no cover
+
+    def test_no_automatic_synthetic_token_verifier_fallback(
+        self,
+        auth_config: MCPAuthConfig,
+    ) -> None:
+        """3. No automatic SyntheticTokenVerifier fallback occurs when verifier is omitted."""
+        from stilldone.mcp import MCPServerConfig, create_mcp_app
+
+        cfg = MCPServerConfig(auth_config=auth_config)
+        with pytest.raises(ValueError, match="token_verifier is None"):
+            create_mcp_app(cfg)
+
+    def test_auth_config_none_permits_explicit_local_unprotected_construction(self) -> None:
+        """4. auth_config=None still permits explicit local unprotected construction."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            MCPServerConfig,
+            create_mcp_app,
+            create_mcp_server,
+        )
+
+        cfg = MCPServerConfig(auth_config=None)
+        server = create_mcp_server(cfg)
+        assert server.name == "StillDone"
+
+        app = create_mcp_app(cfg)
+        with TestClient(app) as client:
+            resp = client.get("/health")
+            assert resp.status_code == 200
+
+    def test_empty_required_scopes_rejected(self) -> None:
+        """9. Empty required_scopes collection is rejected."""
+        from stilldone.mcp import MCPAuthConfig
+
+        with pytest.raises(ValueError, match="non-empty collection"):
+            MCPAuthConfig(
+                issuer_url=SAMPLE_ISSUER_URL,
+                resource_server_url=SAMPLE_RESOURCE_URL,
+                required_scopes=(),
+            )
+
+        with pytest.raises(ValueError, match="non-empty collection"):
+            MCPAuthConfig(
+                issuer_url=SAMPLE_ISSUER_URL,
+                resource_server_url=SAMPLE_RESOURCE_URL,
+                required_scopes=[],  # type: ignore[arg-type]
+            )
+
+    def test_duplicate_and_blank_required_scopes_rejected(self) -> None:
+        """10. Duplicate and blank required scopes are rejected."""
+        from stilldone.mcp import MCPAuthConfig
+
+        with pytest.raises(ValueError, match="Duplicate scope"):
+            MCPAuthConfig(
+                issuer_url=SAMPLE_ISSUER_URL,
+                resource_server_url=SAMPLE_RESOURCE_URL,
+                required_scopes=("stilldone:mcp", "stilldone:mcp"),
+            )
+
+        with pytest.raises(ValueError, match="non-empty strings"):
+            MCPAuthConfig(
+                issuer_url=SAMPLE_ISSUER_URL,
+                resource_server_url=SAMPLE_RESOURCE_URL,
+                required_scopes=("",),
+            )
+
+        with pytest.raises(ValueError, match="non-empty strings"):
+            MCPAuthConfig(
+                issuer_url=SAMPLE_ISSUER_URL,
+                resource_server_url=SAMPLE_RESOURCE_URL,
+                required_scopes=("   ",),
+            )
+
 
 # ===========================================================================
 # REQUIRED TESTS — RATE (Tests 16 - 30)
@@ -685,7 +797,6 @@ class TestMCPRateLimiting:
         cfg = MCPServerConfig(
             auth_config=auth_config,
             rate_limit_policy=rate_policy,
-            rate_limit_db_path=db_path,
         )
         app = create_mcp_app(
             cfg,
@@ -1031,6 +1142,119 @@ class TestMCPRateLimiting:
         rl = RateLimitMiddleware(inner_app, store=store, policy=rate_policy)
         await rl({"type": "http"}, dummy_receive, capture_send)
         assert sent[0]["status"] == 200
+
+    def test_rate_policy_without_store_or_path_fails_construction(
+        self,
+        rate_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """11. Policy without store or db_path fails construction."""
+        from stilldone.mcp import MCPServerConfig, create_mcp_app
+
+        cfg = MCPServerConfig(rate_limit_policy=rate_policy, rate_limit_db_path=None)
+        with pytest.raises(ValueError, match="neither rate_limit_store nor rate_limit_db_path"):
+            create_mcp_app(cfg, rate_limit_store=None)
+
+    def test_rate_store_without_policy_fails_construction(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """12. Store without policy fails construction."""
+        from stilldone.mcp import MCPServerConfig, SqliteRateLimitStore, create_mcp_app
+
+        db_path = temp_dir / "store_no_policy.db"
+        store = SqliteRateLimitStore(db_path, window_duration_seconds=60)
+        cfg = MCPServerConfig(rate_limit_policy=None, rate_limit_db_path=None)
+
+        with pytest.raises(ValueError, match="without rate_limit_policy"):
+            create_mcp_app(cfg, rate_limit_store=store)
+
+    def test_db_path_without_policy_fails_construction(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """13. DB path without policy fails construction."""
+        from stilldone.mcp import MCPServerConfig
+
+        db_path = temp_dir / "path_no_policy.db"
+        with pytest.raises(ValueError, match="rate_limit_db_path cannot be configured"):
+            MCPServerConfig(rate_limit_policy=None, rate_limit_db_path=db_path)
+
+    def test_both_store_and_db_path_fails_construction_ambiguity_guard(
+        self,
+        temp_dir: Path,
+        rate_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """Ambiguity guard: Both store and db_path supplied simultaneously fails closed."""
+        from stilldone.mcp import MCPServerConfig, SqliteRateLimitStore, create_mcp_app
+
+        db_path = temp_dir / "ambiguous.db"
+        store = SqliteRateLimitStore(db_path, window_duration_seconds=60)
+        cfg = MCPServerConfig(rate_limit_policy=rate_policy, rate_limit_db_path=db_path)
+
+        with pytest.raises(ValueError, match="simultaneously"):
+            create_mcp_app(cfg, rate_limit_store=store)
+
+    def test_valid_policy_with_injected_store_succeeds(
+        self,
+        temp_dir: Path,
+        rate_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """14. Valid policy + injected store succeeds in Mode B."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            MCPServerConfig,
+            SqliteRateLimitStore,
+            create_mcp_app,
+        )
+
+        db_path = temp_dir / "mode_b_store.db"
+        store = SqliteRateLimitStore(db_path, window_duration_seconds=60)
+        cfg = MCPServerConfig(rate_limit_policy=rate_policy, rate_limit_db_path=None)
+
+        app = create_mcp_app(cfg, rate_limit_store=store)
+        with TestClient(app) as client:
+            resp = client.get("/health")
+            assert resp.status_code == 200
+
+    def test_valid_policy_with_db_path_succeeds(
+        self,
+        temp_dir: Path,
+        rate_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """15. Valid policy + db path succeeds in Mode B."""
+        from starlette.testclient import TestClient
+
+        from stilldone.mcp import (
+            MCPServerConfig,
+            create_mcp_app,
+        )
+
+        db_path = temp_dir / "mode_b_path.db"
+        cfg = MCPServerConfig(rate_limit_policy=rate_policy, rate_limit_db_path=db_path)
+
+        app = create_mcp_app(cfg)
+        with TestClient(app) as client:
+            resp = client.get("/health")
+            assert resp.status_code == 200
+
+    def test_partial_config_cannot_reach_mcp_tool_execution(
+        self,
+        auth_config: MCPAuthConfig,
+        rate_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """16. Partial configuration fails closed before any tool execution can be reached."""
+        from stilldone.mcp import MCPServerConfig, create_mcp_app
+
+        # Partial auth config: cannot create app to serve tools
+        cfg_partial_auth = MCPServerConfig(auth_config=auth_config)
+        with pytest.raises(ValueError, match="token_verifier is None"):
+            create_mcp_app(cfg_partial_auth)
+
+        # Partial rate config: cannot create app to serve tools
+        cfg_partial_rate = MCPServerConfig(rate_limit_policy=rate_policy, rate_limit_db_path=None)
+        with pytest.raises(ValueError, match="neither rate_limit_store nor rate_limit_db_path"):
+            create_mcp_app(cfg_partial_rate)
 
 
 # ===========================================================================

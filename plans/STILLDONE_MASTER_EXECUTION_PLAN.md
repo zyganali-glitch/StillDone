@@ -658,18 +658,22 @@ Acceptance:
 - full test coverage in `tests/test_mcp_mission_start.py` (19 focused test methods covering all 45 requirements); 82 total MCP tests, 713 total tests passing in suite.
 
 ### P-05.05 — Add auth/rate-limit boundary appropriate to the proven judge path
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - StillDone OAuth 2.0 Resource Server boundary implemented in `src/stilldone/mcp/auth.py` via official MCP SDK primitives (`AuthSettings`, `TokenVerifier`, `AccessToken`); StillDone is RS only (zero token minting, zero login UI, zero authorization server implementation);
 - `MCPAuthConfig` immutable configuration frozen (`issuer_url`, `resource_server_url`, `required_scopes`, `validate_token_resource=True`, `alexa_profile=True`);
+- Auth fail-closed configuration enforced: `create_mcp_app` and `create_mcp_server` reject `auth_config` without effective `token_verifier` with `ValueError` before serving /mcp; `required_scopes` strictly rejects empty collections, duplicates, and blank strings;
+- Explicit local unprotected mode permitted only when `auth_config is None`;
 - Alexa+ 401 compatibility layer `Alexa401CompatibilityMiddleware` implemented: suppresses `WWW-Authenticate` header specifically on HTTP 401 responses, while preserving 403 Forbidden and other response headers with `WWW-Authenticate`;
 - RFC 9728 Protected Resource Metadata (PRM) published at canonical `/.well-known/oauth-protected-resource/mcp`, declaring canonical resource URL, external authorization server issuer, supported scopes, and `header` bearer method;
 - External Authorization Server status strictly declared as `AUTHORIZATION_SERVER_LIVE_COMPATIBILITY = "NOT_ESTABLISHED"`;
+- Current Alexa+ two-tier auth model documented: Tier 1 M2M `client_credentials` (`mcp:service`) and Tier 2 user `authorization_code` + PKCE;
 - Sentinel token protection: bearer tokens are never logged or leaked into error messages or response bodies;
 - Caller classification law preserved: authenticated public clients remain `CallerClass.PUBLIC_UNTRUSTED`;
 - Request exposure classification: `RequestExposureClass.NO_PAID_CAPABILITY` (zero paid providers wired; `live_paid_path_enabled=False`);
 - Persistent atomic rate limiting implemented in `src/stilldone/mcp/rate_limit.py` using stdlib `sqlite3` in WAL mode with `BEGIN IMMEDIATE` (zero race window);
+- Rate limit fail-closed configuration enforced: Mode A (no rate protection: all None) vs Mode B (policy + exactly one store source: either injected `rate_limit_store` or `rate_limit_db_path`); partial or ambiguous configurations reject with `ValueError` at construction before serving;
 - Canonical P-04.06 contracts strictly reused: `EndpointProtectionPolicy`, `RateSnapshot`, `EndpointRequestAssessment`, `EndpointAdmissionDecision`, `evaluate_endpoint_admission`;
 - Half-open window rollover law enforced: `[window_start, window_end)`; counts persist across store reconstruction;
 - Privacy minimization in storage: zero tokens, zero user intents, zero contracts, zero external IDs stored; stores strictly integer request counters per window;
@@ -678,7 +682,7 @@ Acceptance:
 - Strict ordering: unauthenticated callers fail with HTTP 401 at the auth boundary before reaching rate limit evaluation (unauthenticated requests never consume rate quota);
 - Full cross-boundary real loopback Streamable HTTP test executed: valid bearer + quota -> `mission_start` -> `mission_status` -> quota exhausted -> HTTP 429 (`retry_after_seconds` included) with zero ledger mutation;
 - Zero cloud/provider calls ($0.00 spend); 0 personal spend;
-- Full test coverage in `tests/test_mcp_auth_rate_limit.py` (29 focused tests); 742 total tests passing in suite.
+- Full test coverage in `tests/test_mcp_auth_rate_limit.py` (42 focused tests including 13 fail-closed configuration tests); 755 total tests passing in suite.
 
 ### P-05.06 — Validate with current MCP inspector/client and remote deployment
 Status: PENDING

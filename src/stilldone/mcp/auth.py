@@ -26,6 +26,12 @@ if TYPE_CHECKING:
     pass
 
 # Truth boundary: External Authorization Server live compatibility is not proven in P-05.05.
+# Current Alexa+ documentation (2026-10-01) defines a two-tier auth model for private MCP:
+# - Tier 1: client_credentials (service-level / M2M, reserved scope 'mcp:service',
+#   used for initialize, tools/list, service operations).
+# - Tier 2: authorization_code + PKCE S256 (user-level authentication and consent).
+# StillDone acts strictly as an OAuth Resource Server (RS); no Authorization Server is implemented,
+# and external AS live compatibility remains classified as NOT_ESTABLISHED.
 AUTHORIZATION_SERVER_LIVE_COMPATIBILITY: Final[str] = "NOT_ESTABLISHED"
 
 
@@ -63,15 +69,23 @@ class MCPAuthConfig:
         ):
             raise ValueError("resource_server_url must start with http:// or https://")
 
-        if isinstance(self.required_scopes, (tuple, list)):
-            scopes_tuple = tuple(self.required_scopes)
-        else:
+        if not isinstance(self.required_scopes, (tuple, list)):
             raise TypeError("required_scopes must be a tuple or list of strings")
+        if len(self.required_scopes) == 0:
+            raise ValueError("required_scopes must be a non-empty collection of strings")
 
-        for s in scopes_tuple:
+        seen_scopes: set[str] = set()
+        cleaned_scopes: list[str] = []
+        for s in self.required_scopes:
             if not isinstance(s, str) or not s.strip():
                 raise ValueError("All required scopes must be non-empty strings")
-        object.__setattr__(self, "required_scopes", scopes_tuple)
+            stripped = s.strip()
+            if stripped in seen_scopes:
+                raise ValueError(f"Duplicate scope '{stripped}' in required_scopes")
+            seen_scopes.add(stripped)
+            cleaned_scopes.append(stripped)
+
+        object.__setattr__(self, "required_scopes", tuple(cleaned_scopes))
 
         if not isinstance(self.validate_token_resource, bool):
             raise TypeError("validate_token_resource must be a boolean")
