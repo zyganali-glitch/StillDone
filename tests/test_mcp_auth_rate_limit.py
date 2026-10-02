@@ -1277,6 +1277,7 @@ class TestCrossBoundaryRealLoopback:
         auth_config: MCPAuthConfig,
         synthetic_verifier: SyntheticTokenVerifier,
     ) -> None:
+        import anyio
         import httpx2
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamable_http_client
@@ -1351,6 +1352,13 @@ class TestCrossBoundaryRealLoopback:
                         status_data = json.loads(status_result.content[0].text)  # type: ignore[union-attr]
                         assert status_data["mission_id"] == mission_id
                         assert status_data["state"] == MissionState.DRAFT.value
+
+                        # Allow background SSE stream establishment to settle before session close
+                        store = SqliteRateLimitStore(db_path, window_duration_seconds=60)
+                        for _ in range(50):
+                            if store.get_snapshot(datetime.now(UTC)).total_requests >= 6:
+                                break
+                            await anyio.sleep(0.02)
 
             # Verify SQLite store recorded exactly 6 requests (quota now exhausted)
             store = SqliteRateLimitStore(db_path, window_duration_seconds=60)
