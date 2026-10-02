@@ -74,21 +74,22 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy (SURGICAL REPAIR)
+P-06.03 — Implement Calendar independent read-back verifier (SURGICAL REPAIR)
 
 Status:
 `REPAIRED — awaiting independent QA review (NOT PASS)`
 
 Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
-- P-06.02 surgical repair completed:
-  1. Removed non-canonical `end_time` parameter leakage: eliminated all production branches reading `end_time` from action parameters; removed artificial `NormalizedParameters.to_dict()` monkeypatch in tests; enforced that all-day exclusive end and timed durations are derived strictly from current provider state, canonical `start_time`, and canonical `all_day`.
-  2. Preserved provider temporal metadata: summary-only updates preserve existing provider `start` and `end` resources byte-for-structure without reconstruction; timed moves preserve applicable existing `timeZone` values on `start` and `end` EventDateTime structures while updating `dateTime` and removing incompatible `date`; fail-safe normalization preserves positive duration and prevents zero-length emitted events on malformed provider state.
-  3. Google API Python client request contract maintained: update request constructed with only supported API kwargs; observed ETag attached to `req.headers["If-Match"]` before execute; wildcard `*` strictly forbidden; HTTP 412 mapped to `CalendarPreconditionFailedError`.
-- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2` (because P-06.02 and P-06.03 commits on main are awaiting independent QA review).
-- P-06.03 remains implementation-complete / awaiting independent QA, NOT PASS.
+- P-06.02 received independent QA PASS in commit `954420f91c94fb583886c17627be3e5f922a7241`.
+- P-06.03 surgical repair completed:
+  1. Sanitized mismatch evidence: replaced leaky diagnostic strings with deterministic field mismatch tokens ("summary mismatch", "start_time mismatch", "all_day mismatch") ensuring zero private summary, start time, event ID, calendar ID, token, or provider URL material leaks.
+  2. Masked ExpectedCalendarState: implemented custom __repr__ and __str__ exposing boolean presence flags (`has_summary`, `has_start_time`, `has_all_day`) without disclosing private text or temporal values.
+  3. Corrected verification timestamp semantics: removed pre-read timestamp capture; `verified_at` is now sampled strictly after the independent provider read completes and evaluation finishes.
+  4. Comprehensive hostile adversarial sentinel tests added across all public diagnostic surfaces (mismatches, repr/str, expected repr/str, NOT_FOUND, hostile raw PROVIDER_ERROR, and logs).
+- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2` (because P-06.03 commit on main is awaiting independent QA review).
 - P-06.04 remains PENDING / NOT AUTHORIZED.
-- Next safe action is independent QA review of this P-06.02 surgical repair.
+- Next safe action is independent QA review of this P-06.03 surgical repair.
 
 ## Phase P-04 Status
 

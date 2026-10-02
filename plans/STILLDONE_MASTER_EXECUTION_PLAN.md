@@ -786,7 +786,7 @@ Acceptance:
 - comprehensive unit tests in `tests/test_calendar_read_adapter.py` passing without network dependency.
 
 ### P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy
-Status: REPAIRED — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Verified SHA: `954420f91c94fb583886c17627be3e5f922a7241`)
 
 Acceptance:
 - bounded Google Calendar update adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarUpdateAdapter`);
@@ -812,17 +812,20 @@ Acceptance:
 - comprehensive unit tests in `tests/test_calendar_update_adapter.py` passing with zero live Google mutation.
 
 ### P-06.03 — Implement Calendar independent read-back verifier
-Status: DONE — awaiting independent QA PASS
+Status: REPAIRED — awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - Calendar-specific independent read-back verifier implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadbackVerifier`);
 - Independence law enforced: initiates a distinct, fresh provider read through `GoogleCalendarReadAdapter`; update response payload and provider-write success CANNOT substitute for read-back verification;
 - compares freshly observed provider state deterministically against `ExpectedCalendarState` (`summary`, `start_time`, `all_day`);
+- sanitized mismatch diagnostics: reports deterministic field mismatches ("summary mismatch", "start_time mismatch", "all_day mismatch") without leaking expected or observed private text, dates, times, tokens, URLs, or external IDs;
+- masked `ExpectedCalendarState` representation: bounded `repr` and `str` output exposing boolean field presence flags (`has_summary`, `has_start_time`, `has_all_day`) without leaking private values;
+- truthful verification timestamp: `verified_at` sampled strictly after independent provider read completes and evaluation finishes;
 - returns typed immutable `CalendarReadbackResult` (`CalendarReadbackStatus.MATCH`, `MISMATCH`, `NOT_FOUND`, `PROVIDER_ERROR`) with capture timestamp and explicit mismatch explanations;
 - external drift after write verified: simulated operator drift between write and read-back produces `MISMATCH`, proving write success alone does not verify;
 - verifier performs zero writes and zero mission/ledger state mutations;
 - zero generic P-09 predicate engine, zero multi-provider dispatch, and zero mission `READY` promotion implemented;
-- comprehensive unit tests in `tests/test_calendar_readback_verifier.py` passing.
+- hostile adversarial sentinel test coverage in `tests/test_calendar_readback_verifier.py` proving zero leak across all public diagnostic surfaces.
 
 
 ### P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list

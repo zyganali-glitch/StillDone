@@ -214,7 +214,7 @@ class TestDeterministicEvaluation:
 
         assert result.status == CalendarReadbackStatus.MISMATCH
         assert result.is_match is False
-        assert any("start_time" in m for m in result.mismatches)
+        assert result.mismatches == ("start_time mismatch",)
 
     def test_mismatched_summary_produces_mismatch(
         self,
@@ -227,7 +227,7 @@ class TestDeterministicEvaluation:
 
         assert result.status == CalendarReadbackStatus.MISMATCH
         assert result.is_match is False
-        assert any("summary" in m for m in result.mismatches)
+        assert result.mismatches == ("summary mismatch",)
 
     def test_mismatched_all_day_produces_mismatch(
         self,
@@ -240,7 +240,7 @@ class TestDeterministicEvaluation:
 
         assert result.status == CalendarReadbackStatus.MISMATCH
         assert result.is_match is False
-        assert any("all_day" in m for m in result.mismatches)
+        assert result.mismatches == ("all_day mismatch",)
 
     def test_expected_state_must_have_at_least_one_field(self) -> None:
         with pytest.raises(ValueError, match="requires at least one expected field"):
@@ -327,7 +327,7 @@ class TestWriteSuccessWithReadbackMismatch:
         # 4. Read-back MUST report MISMATCH, not match! Write success alone was not proof!
         assert readback_res.status == CalendarReadbackStatus.MISMATCH
         assert readback_res.is_match is False
-        assert any("start_time" in m for m in readback_res.mismatches)
+        assert readback_res.mismatches == ("start_time mismatch",)
 
 
 # ===========================================================================
@@ -375,3 +375,305 @@ class TestVerifierTruthBoundaries:
 
         assert VALID_EVENT_ID not in res_repr
         assert VALID_EVENT_ID not in res_str
+
+
+# ===========================================================================
+# 6. ExpectedCalendarState Masking (Defect 2)
+# ===========================================================================
+
+
+class TestExpectedCalendarStateMasking:
+    def test_expected_calendar_state_repr_and_str_mask_private_values(self) -> None:
+        state = ExpectedCalendarState(
+            summary="CONFIDENTIAL_LEAVE_FOR_SCHOOL",
+            start_time="2026-10-03T07:45:00+03:00",
+            all_day=False,
+        )
+        rep = repr(state)
+        s = str(state)
+
+        # Private values must NEVER appear
+        assert "CONFIDENTIAL_LEAVE_FOR_SCHOOL" not in rep
+        assert "CONFIDENTIAL_LEAVE_FOR_SCHOOL" not in s
+        assert "2026-10-03T07:45:00+03:00" not in rep
+        assert "2026-10-03T07:45:00+03:00" not in s
+
+        # Boolean presence flags are present
+        assert "has_summary=True" in rep
+        assert "has_start_time=True" in rep
+        assert "has_all_day=True" in rep
+        assert rep == s
+
+    def test_expected_calendar_state_repr_partial_fields(self) -> None:
+        state = ExpectedCalendarState(summary="SECRET")
+        assert (
+            repr(state)
+            == "ExpectedCalendarState(has_summary=True, has_start_time=False, has_all_day=False)"
+        )
+
+        state2 = ExpectedCalendarState(start_time="2026-10-03T07:45:00+03:00")
+        assert (
+            repr(state2)
+            == "ExpectedCalendarState(has_summary=False, has_start_time=True, has_all_day=False)"
+        )
+
+        state3 = ExpectedCalendarState(all_day=True)
+        assert (
+            repr(state3)
+            == "ExpectedCalendarState(has_summary=False, has_start_time=False, has_all_day=True)"
+        )
+
+
+# ===========================================================================
+# 7. Verification Timestamp Semantics (Defect 3)
+# ===========================================================================
+
+
+class TestVerificationTimestampSemantics:
+    def test_verified_at_occurs_after_provider_read_on_match(
+        self,
+        verifier: GoogleCalendarReadbackVerifier,
+    ) -> None:
+        t_before = datetime.now(tz=UTC)
+        target = _target_identity()
+        expected = ExpectedCalendarState(summary="Leave for school")
+
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.MATCH
+        assert result.observation is not None
+        assert result.verified_at >= t_before
+        assert result.verified_at >= result.observation.observed_at
+        assert result.verified_at <= datetime.now(tz=UTC)
+
+    def test_verified_at_occurs_after_provider_read_on_mismatch(
+        self,
+        verifier: GoogleCalendarReadbackVerifier,
+    ) -> None:
+        t_before = datetime.now(tz=UTC)
+        target = _target_identity()
+        expected = ExpectedCalendarState(summary="Different summary")
+
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.MISMATCH
+        assert result.observation is not None
+        assert result.verified_at >= t_before
+        assert result.verified_at >= result.observation.observed_at
+        assert result.verified_at <= datetime.now(tz=UTC)
+
+    def test_verified_at_occurs_after_provider_read_on_not_found(
+        self,
+        verifier: GoogleCalendarReadbackVerifier,
+    ) -> None:
+        t_before = datetime.now(tz=UTC)
+        target = _target_identity(event_id="nonexistent_evt")
+        expected = ExpectedCalendarState(summary="Leave for school")
+
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.NOT_FOUND
+        assert result.verified_at >= t_before
+        assert result.verified_at <= datetime.now(tz=UTC)
+
+    def test_verified_at_occurs_after_provider_read_on_provider_error(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        t_before = datetime.now(tz=UTC)
+        broken_transport = MagicMock()
+        broken_transport.get_event.side_effect = CalendarApiError("Google Calendar API down 503")
+        broken_read_adapter = GoogleCalendarReadAdapter(
+            scope=demo_scope, transport=broken_transport
+        )
+        verifier = GoogleCalendarReadbackVerifier(read_adapter=broken_read_adapter)
+
+        target = _target_identity()
+        expected = ExpectedCalendarState(summary="Leave for school")
+
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.PROVIDER_ERROR
+        assert result.verified_at >= t_before
+        assert result.verified_at <= datetime.now(tz=UTC)
+
+
+# ===========================================================================
+# 8. Adversarial Privacy & Hostile Sentinel Coverage
+# ===========================================================================
+
+
+SENTINEL_CALENDAR_ID = "c_secret_demo_cal_xyz_777@group.calendar.google.com"
+SENTINEL_EVENT_ID = "evt_confidential_999"
+SENTINEL_EXPECTED_SUMMARY = "TOP_SECRET_BOARD_MEETING_EXPECTED"
+SENTINEL_OBSERVED_SUMMARY = "HIGHLY_CONFIDENTIAL_DOCTOR_APPOINTMENT_OBSERVED"
+SENTINEL_EXPECTED_START = "2026-10-03T11:22:33+03:00"
+SENTINEL_OBSERVED_START = "2026-10-03T14:55:00+03:00"
+SENTINEL_ACCESS_TOKEN = "ya29.a0AfH6SMD_HOSTILE_BEARER_TOKEN_SENTINEL_SECRET"
+SENTINEL_PROVIDER_URL = (
+    "https://www.googleapis.com/calendar/v3/calendars/secret/events/confidential"
+)
+
+HOSTILE_SENTINELS = (
+    SENTINEL_CALENDAR_ID,
+    SENTINEL_EVENT_ID,
+    SENTINEL_EXPECTED_SUMMARY,
+    SENTINEL_OBSERVED_SUMMARY,
+    SENTINEL_EXPECTED_START,
+    SENTINEL_OBSERVED_START,
+    SENTINEL_ACCESS_TOKEN,
+    SENTINEL_PROVIDER_URL,
+)
+
+
+class TestAdversarialPrivacySentinels:
+    def test_mismatch_zero_sentinel_leakage(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Prove zero sentinel leakage through mismatches, repr, str, and logs in mismatch."""
+        scope = DemoResourceScope(
+            calendar_id=SENTINEL_CALENDAR_ID,
+            task_list_id=DEMO_TASKLIST_ID,
+        )
+        transport = FakeGoogleCalendarTransport()
+        transport.seed_event(
+            calendar_id=SENTINEL_CALENDAR_ID,
+            event_id=SENTINEL_EVENT_ID,
+            summary=SENTINEL_OBSERVED_SUMMARY,
+            start_time=SENTINEL_OBSERVED_START,
+            all_day=False,
+            etag='"etag_sentinel_1"',
+        )
+        read_adapter = GoogleCalendarReadAdapter(scope=scope, transport=transport)
+        verifier = GoogleCalendarReadbackVerifier(read_adapter=read_adapter)
+
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=SENTINEL_EVENT_ID,
+            parent_id=SENTINEL_CALENDAR_ID,
+        )
+        expected = ExpectedCalendarState(
+            summary=SENTINEL_EXPECTED_SUMMARY,
+            start_time=SENTINEL_EXPECTED_START,
+        )
+
+        caplog.clear()
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.MISMATCH
+        assert result.is_match is False
+        assert result.mismatches == ("summary mismatch", "start_time mismatch")
+
+        # 1. Surface: mismatches tuple/list
+        for m in result.mismatches:
+            for sentinel in HOSTILE_SENTINELS:
+                assert sentinel not in m, f"Sentinel {sentinel} leaked in mismatch: {m}"
+
+        # 2. Surface: repr(result) and str(result)
+        res_repr = repr(result)
+        res_str = str(result)
+        for sentinel in HOSTILE_SENTINELS:
+            assert sentinel not in res_repr, f"Sentinel {sentinel} leaked in result repr"
+            assert sentinel not in res_str, f"Sentinel {sentinel} leaked in result str"
+
+        # 3. Surface: repr(result.expected) and str(result.expected)
+        exp_repr = repr(result.expected)
+        exp_str = str(result.expected)
+        for sentinel in HOSTILE_SENTINELS:
+            assert sentinel not in exp_repr, f"Sentinel {sentinel} leaked in expected repr"
+            assert sentinel not in exp_str, f"Sentinel {sentinel} leaked in expected str"
+
+        # 4. Surface: captured logs
+        for sentinel in HOSTILE_SENTINELS:
+            assert sentinel not in caplog.text, f"Sentinel {sentinel} leaked in logs"
+
+    def test_not_found_zero_sentinel_leakage(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Prove zero sentinel leakage through NOT_FOUND error message and repr/str."""
+        scope = DemoResourceScope(
+            calendar_id=SENTINEL_CALENDAR_ID,
+            task_list_id=DEMO_TASKLIST_ID,
+        )
+        transport = FakeGoogleCalendarTransport()
+        read_adapter = GoogleCalendarReadAdapter(scope=scope, transport=transport)
+        verifier = GoogleCalendarReadbackVerifier(read_adapter=read_adapter)
+
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=SENTINEL_EVENT_ID,
+            parent_id=SENTINEL_CALENDAR_ID,
+        )
+        expected = ExpectedCalendarState(
+            summary=SENTINEL_EXPECTED_SUMMARY,
+            start_time=SENTINEL_EXPECTED_START,
+        )
+
+        caplog.clear()
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.NOT_FOUND
+        for sentinel in HOSTILE_SENTINELS:
+            assert sentinel not in (result.error_message or "")
+            assert sentinel not in repr(result)
+            assert sentinel not in str(result)
+            assert sentinel not in repr(result.expected)
+            assert sentinel not in str(result.expected)
+            assert sentinel not in caplog.text
+
+    def test_hostile_provider_error_zero_sentinel_leakage(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Prove raw hostile provider exception containing tokens/URLs/IDs is sanitized."""
+        scope = DemoResourceScope(
+            calendar_id=SENTINEL_CALENDAR_ID,
+            task_list_id=DEMO_TASKLIST_ID,
+        )
+        raw_hostile_exception = CalendarApiError(
+            f"CRITICAL: Failed at {SENTINEL_PROVIDER_URL} with auth {SENTINEL_ACCESS_TOKEN} "
+            f"for {SENTINEL_CALENDAR_ID}/{SENTINEL_EVENT_ID} - private summary: "
+            f"{SENTINEL_OBSERVED_SUMMARY} at {SENTINEL_OBSERVED_START} (status 500)",
+            status_code=500,
+        )
+        hostile_transport = MagicMock()
+        hostile_transport.get_event.side_effect = raw_hostile_exception
+        read_adapter = GoogleCalendarReadAdapter(scope=scope, transport=hostile_transport)
+        verifier = GoogleCalendarReadbackVerifier(read_adapter=read_adapter)
+
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=SENTINEL_EVENT_ID,
+            parent_id=SENTINEL_CALENDAR_ID,
+        )
+        expected = ExpectedCalendarState(
+            summary=SENTINEL_EXPECTED_SUMMARY,
+            start_time=SENTINEL_EXPECTED_START,
+        )
+
+        caplog.clear()
+        result = verifier.verify(target, expected)
+
+        assert result.status == CalendarReadbackStatus.PROVIDER_ERROR
+        assert result.error_message is not None
+        assert "status 500" in result.error_message
+
+        # Assert zero sentinel leakage across all public surfaces
+        for sentinel in HOSTILE_SENTINELS:
+            assert sentinel not in result.error_message, (
+                f"Sentinel {sentinel} leaked in error_message: {result.error_message}"
+            )
+            assert sentinel not in repr(result), f"Sentinel {sentinel} leaked in repr(result)"
+            assert sentinel not in str(result), f"Sentinel {sentinel} leaked in str(result)"
+            assert sentinel not in repr(result.expected), (
+                f"Sentinel {sentinel} leaked in repr(expected)"
+            )
+            assert sentinel not in str(result.expected), (
+                f"Sentinel {sentinel} leaked in str(expected)"
+            )
+            assert sentinel not in caplog.text, f"Sentinel {sentinel} leaked in log output"

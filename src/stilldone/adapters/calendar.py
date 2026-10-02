@@ -1163,6 +1163,16 @@ class ExpectedCalendarState:
         if self.summary is None and self.start_time is None and self.all_day is None:
             raise ValueError("ExpectedCalendarState requires at least one expected field")
 
+    def __repr__(self) -> str:
+        return (
+            f"ExpectedCalendarState(has_summary={self.summary is not None}, "
+            f"has_start_time={self.start_time is not None}, "
+            f"has_all_day={self.all_day is not None})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class CalendarReadbackStatus(StrEnum):
     """Result status of an independent Calendar read-back verification."""
@@ -1273,7 +1283,6 @@ class GoogleCalendarReadbackVerifier:
             )
 
         event_id = target_id.resource_id
-        now = datetime.now(tz=UTC)
 
         # Build canonical calendar.read contract for independent read
         read_action = ActionContract.create(
@@ -1292,30 +1301,33 @@ class GoogleCalendarReadbackVerifier:
         read_result = self._read_adapter.read_event(read_action)
 
         if read_result.status == CalendarReadStatus.NOT_FOUND:
+            verified_at = datetime.now(tz=UTC)
             return CalendarReadbackResult(
                 status=CalendarReadbackStatus.NOT_FOUND,
                 event_id=event_id,
                 expected=expected,
                 error_message="Event not found on calendar during read-back",
-                verified_at=now,
+                verified_at=verified_at,
             )
 
         if read_result.status == CalendarReadStatus.PROVIDER_ERROR:
+            verified_at = datetime.now(tz=UTC)
             return CalendarReadbackResult(
                 status=CalendarReadbackStatus.PROVIDER_ERROR,
                 event_id=event_id,
                 expected=expected,
                 error_message=read_result.error_message or "Provider error during read-back",
-                verified_at=now,
+                verified_at=verified_at,
             )
 
         observation = read_result.observation
         if observation is None:
+            verified_at = datetime.now(tz=UTC)
             return CalendarReadbackResult(
                 status=CalendarReadbackStatus.NOT_FOUND,
                 event_id=event_id,
                 expected=expected,
-                verified_at=now,
+                verified_at=verified_at,
             )
 
         # Deterministic comparison against expected state
@@ -1323,22 +1335,17 @@ class GoogleCalendarReadbackVerifier:
 
         if expected.summary is not None:
             if observation.summary != expected.summary:
-                mismatches.append(
-                    f"summary: expected '{expected.summary}', observed '{observation.summary}'"
-                )
+                mismatches.append("summary mismatch")
 
         if expected.all_day is not None:
             if observation.all_day != expected.all_day:
-                mismatches.append(
-                    f"all_day: expected {expected.all_day}, observed {observation.all_day}"
-                )
+                mismatches.append("all_day mismatch")
 
         if expected.start_time is not None:
             if not _is_time_equal(observation.start_time, expected.start_time):
-                mismatches.append(
-                    f"start_time: expected '{expected.start_time}', "
-                    f"observed '{observation.start_time}'"
-                )
+                mismatches.append("start_time mismatch")
+
+        verified_at = datetime.now(tz=UTC)
 
         if mismatches:
             return CalendarReadbackResult(
@@ -1347,7 +1354,7 @@ class GoogleCalendarReadbackVerifier:
                 expected=expected,
                 observation=observation,
                 mismatches=tuple(mismatches),
-                verified_at=now,
+                verified_at=verified_at,
             )
 
         return CalendarReadbackResult(
@@ -1356,5 +1363,5 @@ class GoogleCalendarReadbackVerifier:
             expected=expected,
             observation=observation,
             mismatches=(),
-            verified_at=now,
+            verified_at=verified_at,
         )
