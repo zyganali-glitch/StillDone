@@ -82,8 +82,9 @@ Status:
 Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
 - P-06.02 surgical repair completed:
-  1. Google API Python client request contract fixed: update request constructed with only supported API kwargs; observed ETag attached to `req.headers["If-Match"]` before execute; wildcard `*` strictly forbidden; HTTP 412 mapped to `CalendarPreconditionFailedError`; strict generated-client contract tests added.
-  2. All-day and timed semantics fixed: single-day all-day event emits exclusive `end.date == start.date + 1 day`; multi-day all-day move preserves existing day-span; zero-length all-day events prevented and rejected fail-closed; all-day to timed transition requires valid RFC3339 with timezone and time component (bare date fails closed with `CalendarTargetError`); payload hygiene verified; `_is_time_equal` prevents bare date vs midnight UTC datetime conflation in idempotency check.
+  1. Removed non-canonical `end_time` parameter leakage: eliminated all production branches reading `end_time` from action parameters; removed artificial `NormalizedParameters.to_dict()` monkeypatch in tests; enforced that all-day exclusive end and timed durations are derived strictly from current provider state, canonical `start_time`, and canonical `all_day`.
+  2. Preserved provider temporal metadata: summary-only updates preserve existing provider `start` and `end` resources byte-for-structure without reconstruction; timed moves preserve applicable existing `timeZone` values on `start` and `end` EventDateTime structures while updating `dateTime` and removing incompatible `date`; fail-safe normalization preserves positive duration and prevents zero-length emitted events on malformed provider state.
+  3. Google API Python client request contract maintained: update request constructed with only supported API kwargs; observed ETag attached to `req.headers["If-Match"]` before execute; wildcard `*` strictly forbidden; HTTP 412 mapped to `CalendarPreconditionFailedError`.
 - Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2` (because P-06.02 and P-06.03 commits on main are awaiting independent QA review).
 - P-06.03 remains implementation-complete / awaiting independent QA, NOT PASS.
 - P-06.04 remains PENDING / NOT AUTHORIZED.

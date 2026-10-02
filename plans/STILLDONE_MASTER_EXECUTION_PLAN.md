@@ -800,6 +800,8 @@ Acceptance:
 - conditional modification enforced: sends `If-Match: <etag>` with observed event ETag (never `*`);
 - HTTP 412 / ETag mismatch handled gracefully producing `CalendarUpdateStatus.CONFLICT` with zero blind overwrite;
 - preserves unrelated provider fields (`description`, `location`, `transparency`, etc.) across full event resource replacement;
+- preserves provider temporal metadata: summary-only updates preserve existing `start` and `end` structures byte-for-structure without reconstruction; timed moves preserve applicable existing `timeZone` values;
+- zero non-canonical `end_time` action parameter branches or validator bypasses; exclusive end and durations derived strictly from provider state and canonical parameters; fail-safe normalization prevents zero-length emitted events on malformed provider state;
 - suppresses attendee notification side effects (`sendUpdates="none"`);
 - production client transport contract: `GoogleApiClientCalendarTransport` constructs update request using only supported parameters (`calendarId`, `eventId`, `body`, `sendUpdates`); attaches exact observed ETag to `req.headers["If-Match"]` before execute; forbids `If-Match: *` or blank; maps HTTP 412 to `CalendarPreconditionFailedError`; tested against strict client stub;
 - exclusive end semantics for all-day events: single-day all-day event emits exclusive `end.date == start.date + 1 day`; multi-day all-day move preserves existing day-span; zero-length all-day events (`end.date <= start.date`) prevented and rejected fail-closed;

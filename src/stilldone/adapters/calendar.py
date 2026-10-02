@@ -14,6 +14,7 @@ Provides bounded, fail-closed integration with Google Calendar API v3:
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from dataclasses import dataclass, field
@@ -265,6 +266,7 @@ class FakeGoogleCalendarTransport:
         end_time: str | None = None,
         etag: str | None = None,
         status: str = "confirmed",
+        timezone: str | None = None,
         extra_fields: dict[str, Any] | None = None,
     ) -> CalendarTransportEvent:
         """Seed an event in the fake store for test setups."""
@@ -292,9 +294,17 @@ class FakeGoogleCalendarTransport:
             raw["start"] = {"dateTime": start_time}
             raw["end"] = {"dateTime": end_time or start_time}
 
+        if timezone:
+            if "start" in raw and isinstance(raw["start"], dict):
+                raw["start"]["timeZone"] = timezone
+            if "end" in raw and isinstance(raw["end"], dict):
+                raw["end"]["timeZone"] = timezone
+
         if extra_fields:
             for k, v in extra_fields.items():
-                if k not in raw:
+                if k in ("start", "end") and isinstance(v, dict) and isinstance(raw.get(k), dict):
+                    raw[k].update(v)
+                elif k not in raw:
                     raw[k] = v
 
         self._events[(calendar_id, event_id)] = raw
@@ -959,109 +969,119 @@ class GoogleCalendarUpdateAdapter:
                 "Unconditional overwrite (If-Match: *) is strictly forbidden; exact ETag required"
             )
 
-        raw_payload = dict(current_transport_event.raw_resource)
+        raw_payload = copy.deepcopy(current_transport_event.raw_resource)
 
         if "summary" in params:
             raw_payload["summary"] = str(params["summary"])
 
-        new_all_day = bool(params.get("all_day", current_obs.all_day))
-        new_start = str(params.get("start_time", current_obs.start_time))
+        # Determine whether temporal fields genuinely require rebuilding.
+        # If neither start_time nor all_day is being changed (e.g. summary-only update),
+        # do NOT reconstruct start/end at all; preserve original provider
+        # start/end byte-for-structure.
+        start_time_in_params = "start_time" in params
+        all_day_in_params = "all_day" in params
 
-        if new_all_day:
-            start_date_str = new_start.split("T")[0].strip()
-            try:
-                new_start_d = date.fromisoformat(start_date_str)
-            except Exception as exc:
-                raise CalendarTargetError(f"Invalid date for all-day event: {new_start}") from exc
+        temporal_changed = False
+        if all_day_in_params and bool(params["all_day"]) != current_obs.all_day:
+            temporal_changed = True
+        elif start_time_in_params and (
+            str(params["start_time"]).strip() != current_obs.start_time.strip()
+            or not _is_time_equal(current_obs.start_time, str(params["start_time"]))
+        ):
+            temporal_changed = True
 
-            # Determine day-span: preserve existing span if previously all-day, else 1 day
-            if "end_time" in params:
-                param_end_str = str(params["end_time"]).split("T")[0].strip()
+        if temporal_changed:
+            new_all_day = bool(params.get("all_day", current_obs.all_day))
+            new_start = str(params.get("start_time", current_obs.start_time))
+
+            # Retrieve existing provider start and end dicts to preserve metadata (such as timeZone)
+            start_dict = (
+                dict(raw_payload["start"]) if isinstance(raw_payload.get("start"), dict) else {}
+            )
+            end_dict = dict(raw_payload["end"]) if isinstance(raw_payload.get("end"), dict) else {}
+
+            if new_all_day:
+                start_date_str = new_start.split("T")[0].strip()
                 try:
-                    new_end_d = date.fromisoformat(param_end_str)
+                    new_start_d = date.fromisoformat(start_date_str)
                 except Exception as exc:
                     raise CalendarTargetError(
-                        f"Invalid end date for all-day event: {params['end_time']}"
+                        f"Invalid date for all-day event: {new_start}"
                     ) from exc
-            elif current_obs.all_day and current_obs.end_time:
-                try:
-                    curr_s = date.fromisoformat(current_obs.start_time.split("T")[0].strip())
-                    curr_e = date.fromisoformat(current_obs.end_time.split("T")[0].strip())
-                    span = (curr_e - curr_s).days
-                    span_days = span if span > 0 else 1
-                except Exception:
-                    span_days = 1
-                new_end_d = new_start_d + timedelta(days=span_days)
+
+                # Determine day-span: preserve existing span if previously all-day, else 1 day
+                if current_obs.all_day and current_obs.end_time:
+                    try:
+                        curr_s = date.fromisoformat(current_obs.start_time.split("T")[0].strip())
+                        curr_e = date.fromisoformat(current_obs.end_time.split("T")[0].strip())
+                        span = (curr_e - curr_s).days
+                        span_days = span if span > 0 else 1
+                    except Exception:
+                        span_days = 1
+                    new_end_d = new_start_d + timedelta(days=span_days)
+                else:
+                    new_end_d = new_start_d + timedelta(days=1)
+
+                if new_end_d <= new_start_d:
+                    new_end_d = new_start_d + timedelta(days=1)
+
+                start_dict["date"] = new_start_d.isoformat()
+                end_dict["date"] = new_end_d.isoformat()
+                start_dict.pop("dateTime", None)
+                end_dict.pop("dateTime", None)
+
+                raw_payload["start"] = start_dict
+                raw_payload["end"] = end_dict
             else:
-                new_end_d = new_start_d + timedelta(days=1)
-
-            if new_end_d <= new_start_d:
-                raise CalendarTargetError(
-                    "All-day event end date must be strictly after start date "
-                    "(zero-length all-day events are forbidden)"
-                )
-
-            raw_payload["start"] = {"date": new_start_d.isoformat()}
-            raw_payload["end"] = {"date": new_end_d.isoformat()}
-            if isinstance(raw_payload["start"], dict):
-                raw_payload["start"].pop("dateTime", None)
-            if isinstance(raw_payload["end"], dict):
-                raw_payload["end"].pop("dateTime", None)
-        else:
-            # Timed event
-            clean_start = new_start.strip()
-            if "T" not in clean_start and " " not in clean_start:
-                raise CalendarTargetError(
-                    "Timed event start_time must include time component and timezone "
-                    "(RFC3339), got bare date"
-                )
-            try:
-                new_s_dt = datetime.fromisoformat(clean_start)
-            except Exception as exc:
-                raise CalendarTargetError(
-                    f"Invalid RFC3339 datetime for timed event start_time: {new_start}"
-                ) from exc
-
-            if new_s_dt.tzinfo is None:
-                raise CalendarTargetError(
-                    "Timed event start_time must include timezone offset or 'Z' (RFC3339)"
-                )
-
-            if "end_time" in params:
-                clean_end = str(params["end_time"]).strip()
+                # Timed event
+                clean_start = new_start.strip()
+                if "T" not in clean_start and " " not in clean_start:
+                    raise CalendarTargetError(
+                        "Timed event start_time must include time component and timezone "
+                        "(RFC3339), got bare date"
+                    )
                 try:
-                    new_e_dt = datetime.fromisoformat(clean_end)
-                    if new_e_dt.tzinfo is None:
-                        raise CalendarTargetError(
-                            "Timed event end_time must include timezone offset"
-                        )
+                    new_s_dt = datetime.fromisoformat(clean_start)
                 except Exception as exc:
                     raise CalendarTargetError(
-                        f"Invalid RFC3339 datetime for timed event end_time: {clean_end}"
+                        f"Invalid RFC3339 datetime for timed event start_time: {new_start}"
                     ) from exc
-            elif not current_obs.all_day and current_obs.end_time:
-                try:
-                    orig_s_dt = datetime.fromisoformat(current_obs.start_time)
-                    orig_e_dt = datetime.fromisoformat(current_obs.end_time)
-                    duration = orig_e_dt - orig_s_dt
-                    if duration <= timedelta(0):
+
+                if new_s_dt.tzinfo is None:
+                    raise CalendarTargetError(
+                        "Timed event start_time must include timezone offset or 'Z' (RFC3339)"
+                    )
+
+                if not current_obs.all_day and current_obs.end_time:
+                    try:
+                        orig_s_dt = datetime.fromisoformat(current_obs.start_time)
+                        orig_e_dt = datetime.fromisoformat(current_obs.end_time)
+                        duration = orig_e_dt - orig_s_dt
+                        if duration <= timedelta(0):
+                            duration = timedelta(minutes=30)
+                    except Exception:
                         duration = timedelta(minutes=30)
-                except Exception:
-                    duration = timedelta(minutes=30)
-                new_e_dt = new_s_dt + duration
-            else:
-                # Transitioning from all-day (no timed duration) -> deterministic default 30 mins
-                new_e_dt = new_s_dt + timedelta(minutes=30)
+                    new_e_dt = new_s_dt + duration
+                else:
+                    # Transition from all-day (no timed duration) -> deterministic default 30 mins
+                    new_e_dt = new_s_dt + timedelta(minutes=30)
 
-            if new_e_dt <= new_s_dt:
-                raise CalendarTargetError("Timed event end_time must be strictly after start_time")
+                if new_e_dt <= new_s_dt:
+                    raise CalendarTargetError(
+                        "Timed event end_time must be strictly after start_time"
+                    )
 
-            raw_payload["start"] = {"dateTime": new_s_dt.isoformat()}
-            raw_payload["end"] = {"dateTime": new_e_dt.isoformat()}
-            if isinstance(raw_payload["start"], dict):
-                raw_payload["start"].pop("date", None)
-            if isinstance(raw_payload["end"], dict):
-                raw_payload["end"].pop("date", None)
+                start_dict["dateTime"] = new_s_dt.isoformat()
+                end_dict["dateTime"] = new_e_dt.isoformat()
+                start_dict.pop("date", None)
+                end_dict.pop("date", None)
+
+                # Ensure end_dict preserves timeZone if present on start_dict
+                if "timeZone" in start_dict and "timeZone" not in end_dict:
+                    end_dict["timeZone"] = start_dict["timeZone"]
+
+                raw_payload["start"] = start_dict
+                raw_payload["end"] = end_dict
 
         # Step 10: Execute conditional update with observed ETag
         try:

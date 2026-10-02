@@ -31,13 +31,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from stilldone.action_policy import (
     UnknownParameterError,
-    validate_action_contract,
 )
 from stilldone.adapters.calendar import (
     CalendarPreconditionFailedError,
@@ -61,7 +60,6 @@ from stilldone.demo_isolation import (
 from stilldone.domain.action import (
     ActionContract,
     ActionType,
-    NormalizedParameters,
     ResourceKind,
     TargetIdentity,
 )
@@ -692,7 +690,7 @@ class TestAllDayAndTimedSemantics:
         # 4-day span preserved: 2026-10-20 + 4 days = 2026-10-24
         assert result.observation.end_time == "2026-10-24"
 
-    def test_zero_length_allday_rejected_fails_closed(
+    def test_zero_length_provider_allday_normalized_failsafe(
         self,
         demo_scope: DemoResourceScope,
     ) -> None:
@@ -708,8 +706,8 @@ class TestAllDayAndTimedSemantics:
         )
         adapter = GoogleCalendarUpdateAdapter(scope=demo_scope, transport=transport)
 
-        # 1. Prevention: When moving an existing event that had zero length in provider,
-        # adapter must prevent zero-length and enforce end.date > start.date
+        # When moving an existing event that had zero length in provider,
+        # fail-safe normalization rule prevents zero-length and enforces end.date > start.date
         action = _make_calendar_update_contract(
             event_id="zero_len_evt",
             parameters={"start_time": "2026-10-10"},
@@ -722,30 +720,154 @@ class TestAllDayAndTimedSemantics:
         assert result.observation.end_time == "2026-10-11"
         assert result.observation.end_time > result.observation.start_time
 
-        # 2. Rejection: If parameters specify end_time <= start_time,
-        # fail-closed with CalendarTargetError before any provider write
-        real_action = _make_calendar_update_contract(
-            event_id="zero_len_evt",
-            parameters={"all_day": True, "start_time": "2026-10-15"},
-        )
-        approval_grant = _make_valid_approval(real_action)
-        validated = validate_action_contract(real_action)
+        stored = transport._events[(DEMO_CALENDAR_ID, "zero_len_evt")]
+        assert stored["start"] == {"date": "2026-10-10"}
+        assert stored["end"] == {"date": "2026-10-11"}
+        assert "dateTime" not in stored["start"]
+        assert "dateTime" not in stored["end"]
 
-        with patch("stilldone.adapters.calendar.evaluate_authority") as mock_auth:
-            mock_auth.return_value.raise_for_status.return_value = None
-            with patch.object(
-                NormalizedParameters,
-                "to_dict",
-                return_value={
-                    "all_day": True,
-                    "start_time": "2026-10-15",
-                    "end_time": "2026-10-15",
-                },
-            ):
-                with pytest.raises(
-                    CalendarTargetError, match="zero-length all-day events are forbidden"
-                ):
-                    adapter.update_event(validated, approval=approval_grant)
+    def test_negative_span_provider_allday_normalized_failsafe(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        transport = FakeGoogleCalendarTransport()
+        transport.seed_event(
+            calendar_id=DEMO_CALENDAR_ID,
+            event_id="neg_span_evt",
+            summary="Negative span event",
+            start_time="2026-10-05",
+            end_time="2026-10-04",  # malformed end < start in provider
+            all_day=True,
+            etag='"etag_neg_1"',
+        )
+        adapter = GoogleCalendarUpdateAdapter(scope=demo_scope, transport=transport)
+
+        action = _make_calendar_update_contract(
+            event_id="neg_span_evt",
+            parameters={"start_time": "2026-10-20"},
+        )
+        approval = _make_valid_approval(action)
+        result = adapter.update_event(action, approval=approval)
+        assert result.status == CalendarUpdateStatus.UPDATED
+        assert result.observation is not None
+        assert result.observation.start_time == "2026-10-20"
+        assert result.observation.end_time == "2026-10-21"
+        assert result.observation.end_time > result.observation.start_time
+
+        stored = transport._events[(DEMO_CALENDAR_ID, "neg_span_evt")]
+        assert stored["start"] == {"date": "2026-10-20"}
+        assert stored["end"] == {"date": "2026-10-21"}
+        assert "dateTime" not in stored["start"]
+        assert "dateTime" not in stored["end"]
+
+    def test_end_time_parameter_rejected_fail_closed(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        transport = FakeGoogleCalendarTransport()
+        adapter = GoogleCalendarUpdateAdapter(scope=demo_scope, transport=transport)
+        action = _make_calendar_update_contract(
+            event_id="zero_len_evt",
+            parameters={
+                "all_day": True,
+                "start_time": "2026-10-15",
+                "end_time": "2026-10-15",
+            },
+        )
+        # Rejection happens fail-closed via canonical ActionPolicy / validate_action_contract
+        # before any adapter mutation or provider write
+        with pytest.raises(UnknownParameterError, match=r"does not accept parameter 'end_time'"):
+            adapter.update_event(action)
+        assert transport.writes_count == 0
+        assert transport.reads_count == 0
+
+    def test_p06_02_contains_no_end_time_action_parameter_branch(self) -> None:
+        """P-06.02 must contain zero production branches reading end_time from params."""
+        import inspect
+
+        source = inspect.getsource(GoogleCalendarUpdateAdapter.update_event)
+        assert 'params["end_time"]' not in source
+        assert '"end_time" in params' not in source
+        assert "'end_time' in params" not in source
+
+    def test_summary_only_update_preserves_exact_start_end_structures_and_timezone(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        transport = FakeGoogleCalendarTransport()
+        initial_start = {
+            "dateTime": "2026-10-05T09:00:00+03:00",
+            "timeZone": "Europe/Istanbul",
+        }
+        initial_end = {
+            "dateTime": "2026-10-05T09:45:00+03:00",
+            "timeZone": "Europe/Istanbul",
+        }
+        transport.seed_event(
+            calendar_id=DEMO_CALENDAR_ID,
+            event_id="summary_tz_evt",
+            summary="Original summary",
+            start_time="2026-10-05T09:00:00+03:00",
+            end_time="2026-10-05T09:45:00+03:00",
+            extra_fields={
+                "start": initial_start,
+                "end": initial_end,
+            },
+        )
+        adapter = GoogleCalendarUpdateAdapter(scope=demo_scope, transport=transport)
+        action = _make_calendar_update_contract(
+            event_id="summary_tz_evt",
+            parameters={"summary": "New summary"},
+        )
+        approval = _make_valid_approval(action)
+        result = adapter.update_event(action, approval=approval)
+
+        assert result.status == CalendarUpdateStatus.UPDATED
+        assert result.writes_performed == 1
+        assert result.observation is not None
+        assert result.observation.summary == "New summary"
+
+        # Verify provider stored resource preserved exact start and end structures
+        stored = transport._events[(DEMO_CALENDAR_ID, "summary_tz_evt")]
+        assert stored["start"] == initial_start
+        assert stored["end"] == initial_end
+        assert stored["start"]["timeZone"] == "Europe/Istanbul"
+        assert stored["end"]["timeZone"] == "Europe/Istanbul"
+
+    def test_timed_start_move_preserves_applicable_existing_timezone(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        transport = FakeGoogleCalendarTransport()
+        transport.seed_event(
+            calendar_id=DEMO_CALENDAR_ID,
+            event_id="timed_tz_evt",
+            summary="Timed meeting",
+            start_time="2026-10-05T09:00:00+03:00",
+            end_time="2026-10-05T09:45:00+03:00",  # 45 min duration
+            timezone="Europe/Istanbul",
+        )
+        adapter = GoogleCalendarUpdateAdapter(scope=demo_scope, transport=transport)
+        action = _make_calendar_update_contract(
+            event_id="timed_tz_evt",
+            parameters={"start_time": "2026-10-05T14:00:00+03:00"},
+        )
+        approval = _make_valid_approval(action)
+        result = adapter.update_event(action, approval=approval)
+
+        assert result.status == CalendarUpdateStatus.UPDATED
+        assert result.writes_performed == 1
+        assert result.observation is not None
+        assert result.observation.start_time == "2026-10-05T14:00:00+03:00"
+        assert result.observation.end_time == "2026-10-05T14:45:00+03:00"
+
+        stored = transport._events[(DEMO_CALENDAR_ID, "timed_tz_evt")]
+        assert stored["start"]["dateTime"] == "2026-10-05T14:00:00+03:00"
+        assert stored["start"]["timeZone"] == "Europe/Istanbul"
+        assert "date" not in stored["start"]
+        assert stored["end"]["dateTime"] == "2026-10-05T14:45:00+03:00"
+        assert stored["end"]["timeZone"] == "Europe/Istanbul"
+        assert "date" not in stored["end"]
 
     def test_allday_to_timed_valid_rfc3339_with_timezone_and_duration(
         self,
