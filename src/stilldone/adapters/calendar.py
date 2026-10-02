@@ -32,8 +32,14 @@ from stilldone.demo_isolation import (
     DemoResourceScope,
     verify_demo_resource_isolation,
 )
-from stilldone.domain.action import ActionContract, ActionType, ResourceKind
+from stilldone.domain.action import (
+    ActionContract,
+    ActionType,
+    ResourceKind,
+    TargetIdentity,
+)
 from stilldone.domain.authority import ApprovalGrant
+from stilldone.domain.mission import MissionId
 
 logger = logging.getLogger(__name__)
 
@@ -898,4 +904,222 @@ class GoogleCalendarUpdateAdapter:
             observation=updated_obs,
             applied_parameters=dict(params),
             updated_at=now,
+        )
+
+
+# ===========================================================================
+# Read-back Verification Models
+# ===========================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCalendarState:
+    """Bounded expected calendar state for independent read-back verification.
+
+    Contains only the canonical parameters that can be verified for calendar events.
+    At least one expected attribute must be specified.
+    """
+
+    summary: str | None = None
+    start_time: str | None = None
+    all_day: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.summary is None and self.start_time is None and self.all_day is None:
+            raise ValueError("ExpectedCalendarState requires at least one expected field")
+
+
+class CalendarReadbackStatus(StrEnum):
+    """Result status of an independent Calendar read-back verification."""
+
+    MATCH = "MATCH"
+    MISMATCH = "MISMATCH"
+    NOT_FOUND = "NOT_FOUND"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarReadbackResult:
+    """Immutable, typed result of an independent Calendar read-back verification.
+
+    Proves only whether the freshly observed external calendar state deterministically
+    matches the expected state at verified_at.
+    Does NOT assert or imply mission VERIFIED or READY.
+    """
+
+    status: CalendarReadbackStatus
+    event_id: str
+    expected: ExpectedCalendarState
+    observation: CalendarEventObservation | None = None
+    mismatches: tuple[str, ...] = ()
+    error_message: str | None = None
+    verified_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+
+    @property
+    def is_match(self) -> bool:
+        """True if and only if freshly read provider state matched all expected fields."""
+        return self.status == CalendarReadbackStatus.MATCH
+
+    def __repr__(self) -> str:
+        return (
+            f"CalendarReadbackResult(status={self.status.value}, "
+            f"event_id='***', is_match={self.is_match}, "
+            f"mismatches_count={len(self.mismatches)})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+# ===========================================================================
+# Google Calendar Independent Read-Back Verifier
+# ===========================================================================
+
+
+class GoogleCalendarReadbackVerifier:
+    """Independent read-back verifier for Google Calendar events.
+
+    Independence Law:
+    - Initiates a fresh provider read through GoogleCalendarReadAdapter.
+    - NEVER accepts an execution/update response payload as proof.
+    - NEVER accepts provider-write success alone as verification.
+    - Evaluates freshly observed external state deterministically against ExpectedCalendarState.
+    - Performs ZERO mutations (read-only).
+    - Produces typed CalendarReadbackResult; does NOT promote mission state to READY.
+    """
+
+    def __init__(self, read_adapter: GoogleCalendarReadAdapter) -> None:
+        if not isinstance(read_adapter, GoogleCalendarReadAdapter):
+            raise TypeError(
+                f"read_adapter must be a GoogleCalendarReadAdapter instance, "
+                f"got {type(read_adapter).__name__}"
+            )
+        self._read_adapter = read_adapter
+
+    @property
+    def read_adapter(self) -> GoogleCalendarReadAdapter:
+        return self._read_adapter
+
+    @property
+    def scope(self) -> DemoResourceScope:
+        return self._read_adapter.scope
+
+    def verify(
+        self,
+        target: TargetIdentity | ActionContract | ValidatedActionContract,
+        expected: ExpectedCalendarState,
+    ) -> CalendarReadbackResult:
+        """Perform an independent read-back and compare against expected state.
+
+        Args:
+            target: The TargetIdentity, ActionContract, or ValidatedActionContract
+                    specifying the exact event to read back.
+            expected: The ExpectedCalendarState containing expected field values.
+
+        Returns:
+            CalendarReadbackResult with MATCH, MISMATCH, NOT_FOUND, or PROVIDER_ERROR.
+        """
+        if not isinstance(expected, ExpectedCalendarState):
+            raise TypeError(
+                f"expected must be an ExpectedCalendarState instance, got {type(expected).__name__}"
+            )
+
+        # Extract target identity and event ID
+        if isinstance(target, TargetIdentity):
+            target_id = target
+        elif isinstance(target, ValidatedActionContract):
+            target_id = target.target
+        elif isinstance(target, ActionContract):
+            target_id = target.target
+        else:
+            raise TypeError(
+                f"target must be TargetIdentity, ActionContract, or ValidatedActionContract, "
+                f"got {type(target).__name__}"
+            )
+
+        event_id = target_id.resource_id
+        now = datetime.now(tz=UTC)
+
+        # Build canonical calendar.read contract for independent read
+        read_action = ActionContract.create(
+            mission_id=MissionId.generate(),
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system=target_id.system,
+                resource_kind=target_id.resource_kind,
+                resource_id=event_id,
+                parent_id=target_id.parent_id,
+            ),
+            parameters={},
+        )
+
+        # Execute fresh read through the read adapter (this performs an actual provider read!)
+        read_result = self._read_adapter.read_event(read_action)
+
+        if read_result.status == CalendarReadStatus.NOT_FOUND:
+            return CalendarReadbackResult(
+                status=CalendarReadbackStatus.NOT_FOUND,
+                event_id=event_id,
+                expected=expected,
+                error_message=f"Event '{event_id}' not found on calendar during read-back",
+                verified_at=now,
+            )
+
+        if read_result.status == CalendarReadStatus.PROVIDER_ERROR:
+            return CalendarReadbackResult(
+                status=CalendarReadbackStatus.PROVIDER_ERROR,
+                event_id=event_id,
+                expected=expected,
+                error_message=read_result.error_message or "Provider error during read-back",
+                verified_at=now,
+            )
+
+        observation = read_result.observation
+        if observation is None:
+            return CalendarReadbackResult(
+                status=CalendarReadbackStatus.NOT_FOUND,
+                event_id=event_id,
+                expected=expected,
+                verified_at=now,
+            )
+
+        # Deterministic comparison against expected state
+        mismatches: list[str] = []
+
+        if expected.summary is not None:
+            if observation.summary != expected.summary:
+                mismatches.append(
+                    f"summary: expected '{expected.summary}', observed '{observation.summary}'"
+                )
+
+        if expected.all_day is not None:
+            if observation.all_day != expected.all_day:
+                mismatches.append(
+                    f"all_day: expected {expected.all_day}, observed {observation.all_day}"
+                )
+
+        if expected.start_time is not None:
+            if not _is_time_equal(observation.start_time, expected.start_time):
+                mismatches.append(
+                    f"start_time: expected '{expected.start_time}', "
+                    f"observed '{observation.start_time}'"
+                )
+
+        if mismatches:
+            return CalendarReadbackResult(
+                status=CalendarReadbackStatus.MISMATCH,
+                event_id=event_id,
+                expected=expected,
+                observation=observation,
+                mismatches=tuple(mismatches),
+                verified_at=now,
+            )
+
+        return CalendarReadbackResult(
+            status=CalendarReadbackStatus.MATCH,
+            event_id=event_id,
+            expected=expected,
+            observation=observation,
+            mismatches=(),
+            verified_at=now,
         )

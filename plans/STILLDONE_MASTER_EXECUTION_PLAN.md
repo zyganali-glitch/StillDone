@@ -769,13 +769,54 @@ Goal:
 prove external state can be read, mutated safely, and read back.
 
 ### P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
-Status: PENDING / NOT AUTHORIZED
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- bounded Google Calendar read adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadAdapter`);
+- strictly restricted to configured dedicated demo calendar ID (`DemoResourceScope`);
+- reuses P-04 action validation (`validate_action_contract`) and static demo isolation (`verify_demo_resource_isolation`);
+- fails closed on out-of-scope calendar IDs (`CalendarOutOfScopeError`), missing parent ID (`MissingParentContainerError`), and strictly rejects 'primary' and 'default' (`CalendarScopeError`);
+- exact event identity required (matching event summary text as identity is strictly rejected);
+- pluggable transport boundary (`CalendarTransport` Protocol) with in-memory deterministic fake (`FakeGoogleCalendarTransport`) and official client wrapper (`GoogleApiClientCalendarTransport`);
+- normalized observation (`CalendarEventObservation`) and result (`CalendarReadResult`) masking sensitive IDs in repr/str;
+- event-not-found and cancelled status correctly mapped to `CalendarReadStatus.NOT_FOUND`;
+- provider failure mapped to `CalendarReadStatus.PROVIDER_ERROR` without leaking secrets or tokens;
+- provider read success does NOT imply `VERIFIED` or `READY`; zero mission state mutation;
+- optional read-only live smoke test marked `NOT_RUN` (no stored local credentials);
+- comprehensive unit tests in `tests/test_calendar_read_adapter.py` passing without network dependency.
 
 ### P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- bounded Google Calendar update adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarUpdateAdapter`);
+- strictly restricted to canonical `calendar.update` action (`ActionType.CALENDAR_UPDATE`) and dedicated demo calendar scope;
+- authority policy strictly enforced: requires bound `ApprovalGrant` (`AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`); missing, expired, or mismatched approval fails closed before any provider read/write (`ApprovalRequiredError`, `ApprovalExpiredError`, `ApprovalBindingMismatchError`);
+- demo isolation strictly enforced before any provider call;
+- bounded update parameters: accepts only canonical `summary`, `start_time`, `all_day`; arbitrary injected payload fields fail closed (`UnknownParameterError`);
+- read-before-write performed against exact event ID before any mutation;
+- adapter-level idempotency strategy: deterministically compares currently observed fields with requested update; if already applied, performs zero provider write and returns `CalendarUpdateStatus.NOOP_ALREADY_APPLIED` with `writes_performed=0`;
+- repeated identical invocation after successful update performs zero second write (`writes_performed=0`);
+- conditional modification enforced: sends `If-Match: <etag>` with observed event ETag (never `*`);
+- HTTP 412 / ETag mismatch handled gracefully producing `CalendarUpdateStatus.CONFLICT` with zero blind overwrite;
+- preserves unrelated provider fields (`description`, `location`, `transparency`, etc.) across full event resource replacement;
+- suppresses attendee notification side effects (`sendUpdates="none"`);
+- mutation response alone does NOT create `VERIFIED` or `READY`; zero mission state mutation;
+- comprehensive unit tests in `tests/test_calendar_update_adapter.py` passing with zero live Google mutation.
 
 ### P-06.03 — Implement Calendar independent read-back verifier
-Status: PENDING
+Status: DONE — awaiting independent QA PASS
+
+Acceptance:
+- Calendar-specific independent read-back verifier implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadbackVerifier`);
+- Independence law enforced: initiates a distinct, fresh provider read through `GoogleCalendarReadAdapter`; update response payload and provider-write success CANNOT substitute for read-back verification;
+- compares freshly observed provider state deterministically against `ExpectedCalendarState` (`summary`, `start_time`, `all_day`);
+- returns typed immutable `CalendarReadbackResult` (`CalendarReadbackStatus.MATCH`, `MISMATCH`, `NOT_FOUND`, `PROVIDER_ERROR`) with capture timestamp and explicit mismatch explanations;
+- external drift after write verified: simulated operator drift between write and read-back produces `MISMATCH`, proving write success alone does not verify;
+- verifier performs zero writes and zero mission/ledger state mutations;
+- zero generic P-09 predicate engine, zero multi-provider dispatch, and zero mission `READY` promotion implemented;
+- comprehensive unit tests in `tests/test_calendar_readback_verifier.py` passing.
+
 
 ### P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
 Status: PENDING

@@ -5,9 +5,10 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-05: CLOSED — independent QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)**
+Current repository state: **Phase P-06: IN PROGRESS — Calendar Adapter Batch (P-06.01, P-06.02, P-06.03) IMPLEMENTATION COMPLETE (awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
+
 
 ## Product
 
@@ -102,20 +103,34 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 
 Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)**.
 
+## Phase P-06 Status
+
+- P-06.01 — IMPLEMENTATION COMPLETE — awaiting independent QA review
+- P-06.02 — IMPLEMENTATION COMPLETE — awaiting independent QA review
+- P-06.03 — IMPLEMENTATION COMPLETE — awaiting independent QA review
+- P-06.04 — PENDING
+- P-06.05 — PENDING
+- P-06.06 — PENDING
+- P-06.07 — PENDING
+- P-06.08 — PENDING (Live Calendar update proof remains strictly PENDING)
+
+Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
+
 ## Last independently VERIFIED contiguous SHA
 
-`6503127af61015b656fff4f44ebae2e4576ad74c`
+`cb63da879daae2b5baeb74816a26afe5167fdda2`
 
 ## Next exact task
 
-`P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar`
+`P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list`
 
 Status:
-`PENDING / NOT AUTHORIZED` (until independent QA verifies this closure-sync commit)
+`PENDING / NOT AUTHORIZED` (until independent QA verifies Phase P-06 Calendar batch)
 
 ## Next safe action
 
-Await independent QA verification of the Phase P-05 closure-sync commit. Do NOT begin P-06.01.
+Await independent QA review of the Phase P-06 Calendar batch (P-06.01, P-06.02, P-06.03). Do NOT begin P-06.04.
+
 
 ---
 
