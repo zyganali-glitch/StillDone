@@ -1,14 +1,15 @@
-"""Local SigV4 Signing Proxy for MCP Inspector and HTTP clients.
+"""Local MCP POST bridge for MCP Inspector and HTTP clients.
 
-Binds to 127.0.0.1:8080 and transparently forwards MCP wire traffic to the real
-AWS Bedrock AgentCore Runtime endpoint, authenticated via AWS SigV4 using the
-short-lived AWS profile 'stilldone-p01'.
+Binds to 127.0.0.1:8080 and acts as a local MCP POST bridge that forwards MCP
+payloads to the real AgentCore InvokeAgentRuntime data plane using the short-lived
+AWS profile and returns the remote MCP payload to Inspector.
 
 Strict Invariants:
-1. Zero mock responses, zero response synthesis or filtering.
-2. Forwards exact MCP wire traffic bidirectionally.
+1. Zero mock responses, zero synthetic MCP business responses.
+2. Forwards MCP wire payloads to the real AgentCore InvokeAgentRuntime data plane.
 3. Acquires AWS credentials solely from the active short-lived profile.
-4. Never logs, persists, or exposes credentials, tokens, or Authorization values.
+4. Never logs, persists, or exposes credentials, tokens, Authorization values, ARNs, or session IDs.
+5. Does not fabricate remote health checks or synthetic success responses.
 """
 
 from __future__ import annotations
@@ -25,25 +26,24 @@ PROFILE = os.environ.get("AWS_PROFILE", "stilldone-p01")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 AGENT_RUNTIME_ARN = os.environ.get("AGENT_RUNTIME_ARN", "")
 
-
 # Shared active session ID across requests in this run
 _active_session_id: str | None = None
 
 
 class SigV4ProxyHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
+        # Sanitize log output: log only method and path, never headers, tokens, or auth
         sys.stderr.write(f"[Proxy] {self.command} {self.path}\n")
 
     def do_GET(self) -> None:
-        if self.path in ("/ping", "/health"):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"status":"Healthy"}')
-            return
-
         self.send_response(405)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Allow", "POST")
         self.end_headers()
+        self.wfile.write(
+            b'{"error": "Method Not Allowed", '
+            b'"message": "Proxy supports only POST /mcp bridge requests"}'
+        )
 
     def do_POST(self) -> None:
         global _active_session_id
@@ -95,13 +95,14 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
             if res.returncode != 0:
                 self.send_response(502)
                 self.send_header("Content-Type", "application/json")
+                self.end_headers()
                 err_payload = json.dumps(
                     {
                         "error": "AgentCore invocation failed",
-                        "details": res.stderr,
+                        "exit_code": res.returncode,
                     }
                 )
-                self.wfile.write(err_payload.encode())
+                self.wfile.write(err_payload.encode("utf-8"))
                 return
 
             # Parse stdout JSON to capture returned session IDs

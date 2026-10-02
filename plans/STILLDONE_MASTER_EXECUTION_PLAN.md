@@ -688,7 +688,7 @@ Acceptance:
 Status: DONE — awaiting independent QA
 
 Acceptance:
-- single authorized bounded live AWS AgentCore deployment campaign executed in `us-east-1` under strict operator limits: maximum gross cost risk $\le \$0.05\text{ USD}$ (preflight estimate $\approx \$0.0377$), target personal spend strictly $\$0.00\text{ USD}$, exactly 1 deployment attempt, 1 runtime, 1 proof session, `idleRuntimeSessionTimeout = 60`s, `maxLifetime = 300`s, local ARM64 build, IAM/SigV4 ingress authentication, local SigV4 signing proxy for Inspector, and mandatory immediate teardown;
+- single authorized bounded live AWS AgentCore deployment campaign executed in `us-east-1` under strict operator limits: maximum gross cost risk $\le \$0.05\text{ USD}$ (reconciled two-session conservative authorization-risk bound $\approx \$0.0476\text{ USD}$), target personal spend strictly $\$0.00\text{ USD}$, 1 deployment attempt, 1 runtime, 2 logical proof sessions (`OPERATOR_SCOPE_DEVIATION_RECORDED`), `idleRuntimeSessionTimeout = 60`s, `maxLifetime = 300`s, local ARM64 build, IAM/SigV4 ingress authentication, local SigV4 signing/CLI bridge for Inspector, and mandatory immediate teardown;
 - zero Amazon Cognito, zero AWS CodeBuild, zero customer-managed KMS keys used;
 - explicit `agentcore` deployment profile implemented in `src/stilldone/mcp/server.py` (`host=0.0.0.0`, `port=8000`, `path=/mcp`, `stateless_http=False`) selected solely via explicit CLI/config flag without widening the local default loopback binding (`127.0.0.1`);
 - bounded `/ping` health endpoint implemented in `src/stilldone/mcp/health.py` returning strictly `{"status": "Healthy"}` (HTTP 200) without secrets, tokens, AWS identifiers, or environment dumps, preserving `/health` and `/ready`;
@@ -700,12 +700,12 @@ Acceptance:
   - `tools/list`: HTTP 200 OK, lists `mission_status` and `mission_start`;
   - `mission_start`: HTTP 200 OK, initialized mission in `DRAFT` state;
   - `mission_status`: HTTP 200 OK, read back exact `DRAFT` record from container memory within same session;
-- local SigV4 signing proxy (`scripts/sigv4_proxy.py` on `127.0.0.1:8080/mcp`) verified: zero response synthesis, passes raw wire payloads bidirectionally, signs outbound requests with AWS SigV4;
-- official `@modelcontextprotocol/inspector@2.9.0` CLI proof executed: `tools/list` and `tools/call mission_status` successfully executed over Streamable HTTP;
-- deployed rate limiting (HTTP 429) verified: burst invocations against deployed `/mcp` container endpoint triggered HTTP 429 (`ValidationException: Received error (429) from runtime`), proving fail-closed endpoint protection policy is active on the deployed remote container;
+- local SigV4 signing/CLI bridge (`scripts/sigv4_proxy.py` on `127.0.0.1:8080/mcp`) verified: forwards MCP POST payloads to AgentCore InvokeAgentRuntime data plane without synthetic MCP business responses; GET /ping and /health fail closed (405) without fabricating remote health;
+- official `@modelcontextprotocol/inspector@2.9.0` CLI proof executed: `tools/list` and `tools/call mission_status` successfully reached real AgentCore MCP endpoint through local SigV4 bridge;
+- deployed rate limiting (HTTP 429) verified: deployed `/mcp` path returned HTTP 429 after quota consumption (`ValidationException: Received error (429) from runtime`), proving the rate limiter was active on the deployed remote container;
 - immediate complete teardown executed: AgentCore runtime deleted (`agentRuntimes: []`), ECR repository images purged (`imageIds: []`), IAM execution role deleted (`NoSuchEntity`), local proxy terminated, AWS session revoked (`aws logout`);
-- AWS Cost Explorer verified: `$0.00 USD` net spend;
-- all 768 unit and integration tests passing;
+- AWS Cost Explorer observed: `$0.00 USD` (estimated/billing-latency subject; actual billed cost and personal spend delta preserved as `NOT_OBSERVED`);
+- all unit and integration tests passing;
 - durable evidence documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
 
 ### P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap

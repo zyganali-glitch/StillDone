@@ -5,7 +5,7 @@
 **AWS Region**: `us-east-1`  
 **Target AWS Account ID**: `[REDACTED_AWS_ACCOUNT_ID]`  
 **Execution Profile**: `stilldone-p01` (short-lived loopback session)  
-**Evidence Provenance**: `LIVE_AWS` + `LOCAL_EXECUTION` (SigV4 signing proxy & MCP Inspector CLI)  
+**Evidence Provenance**: `LIVE_AWS` + `LOCAL_EXECUTION` (SigV4 signing/CLI bridge & MCP Inspector CLI)  
 
 ---
 
@@ -15,11 +15,55 @@
 - **Strict Limits**:
   - Maximum Gross Cost Risk: **$0.05 USD** (Conservative preflight estimate: ~$0.0377 USD).
   - Target Personal Spend: **$0.00 USD**.
-  - Exactly ONE deployment attempt; ONE AgentCore runtime; ONE live proof session.
+  - Exactly ONE deployment attempt; ONE AgentCore runtime.
   - Lifecycle Configuration: `idleRuntimeSessionTimeout = 60` seconds, `maxLifetime = 300` seconds (5 minutes).
-  - Architecture: Local ARM64 build + IAM / SigV4 ingress authentication + Local SigV4 signing proxy for Inspector.
+  - Architecture: Local ARM64 build + IAM / SigV4 ingress authentication + Local SigV4 signing/CLI bridge for Inspector.
   - Exclusions: Zero Amazon Cognito, zero AWS CodeBuild, zero customer-managed KMS keys.
   - Mandatory immediate teardown upon proof capture.
+
+### 1.1 Session-Count Truth & Procedural Deviation Record
+The operator authorized ONE live proof session. Canonical evidence and runtime bridge behavior confirm that at least **TWO** logical AgentCore runtime sessions were actually exercised:
+1. **Session A**: Direct `aws bedrock-agentcore invoke-agent-runtime` proof session.
+2. **Session B**: Inspector validation session via the local SigV4 signing/CLI bridge (`scripts/sigv4_proxy.py`).
+
+**Reason**: `scripts/sigv4_proxy.py` starts with `_active_session_id = None`. On its first incoming Inspector MCP request, no previous session ID was passed, so the first upstream invocation created/obtained a distinct runtime session from AgentCore. Current official Amazon Bedrock AgentCore documentation states that each distinct `runtimeSessionId` receives its own dedicated microVM/session lifecycle.
+
+**Classification**:
+`OPERATOR_SCOPE_DEVIATION_RECORDED`
+
+- Exactly ONE AgentCore runtime / deployment occurred.
+- At least two logical runtime sessions were exercised, which exceeded the operator's procedural "one session" authorization.
+- No second deployment or additional runtime was created.
+- In accordance with the non-proliferation of cloud calls, no further AWS activity will be performed to alter or repeat this historical execution.
+
+### 1.2 Cost-Bound Reconciliation for Two Sessions
+Because the deployed runtime was observed as Platform V1 with a hardware ceiling of 2 vCPU and 8 GB RAM, and lifecycle max was bounded to 300 seconds (5 minutes), the conservative two-session authorization-risk bound is reconciled using official AWS AgentCore pricing:
+- Platform V1 vCPU rate: **$0.0895** / vCPU-hour
+- Platform V1 Memory rate: **$0.00945** / GB-hour
+- Hardware ceiling: **2 vCPU / 8 GB**
+
+One 5-minute maximum session:
+$$\left(\frac{5}{60}\right) \times \left[(2 \times 0.0895) + (8 \times 0.00945)\right] \approx \$0.021217\text{ USD}$$
+
+Two maximum sessions:
+$$2 \times \$0.021217 \approx \$0.042434\text{ USD}$$
+
+Pre-frozen conservative non-compute allowances:
+- CloudWatch: **$0.005000 USD**
+- ECR: **$0.000068 USD**
+- S3: **$0.000101 USD**
+- Network data transfer: **$0.000000 USD**
+- CodeBuild: **$0.00 USD**
+- Cognito: **$0.00 USD**
+- Customer KMS: **$0.00 USD**
+
+**Conservative Campaign Authorization-Risk Bound**:
+$$\$0.042434 + \$0.005169 \approx \mathbf{\$0.047603\text{ USD}}$$
+
+This bound strictly remains below the operator's **$0.05 USD** gross ceiling.
+
+> [!NOTE]
+> This figure represents a conservative theoretical authorization-risk upper bound based on maximum session lifetimes and hardware ceilings, NOT an actual measured billing quantity. Actual consumed CPU/memory values were not metered or claimed.
 
 ---
 
@@ -118,7 +162,7 @@ Direct invocations against the deployed AgentCore data-plane endpoint (`aws bedr
   event: message
   data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"prompts":{"listChanged":false},"resources":{"listChanged":false}},"serverInfo":{"name":"StillDone","version":"0.1.0"}}}
   ```
-- **Assigned Runtime Session ID**: `20a93a11-8655-4b41-8500-d582613e49fc`
+- **Assigned Runtime Session ID**: `[REDACTED_SESSION_ID]`
 
 ### 5.2 Tool Discovery (`tools/list`)
 - **Request Payload**:
@@ -168,13 +212,21 @@ Direct invocations against the deployed AgentCore data-plane endpoint (`aws bedr
   event: message
   data: {"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"{\"mission_id\": \"15a87bc8-e5ac-4a79-b8d2-bd717d11bd88\", \"state\": \"DRAFT\", \"created_at\": \"2026-10-01T21:04:11.967812+00:00\", \"updated_at\": \"2026-10-01T21:04:11.967812+00:00\"}"}],"isError":false}}
   ```
-- **Verdict**: Successfully proved stateful session persistence and independent read-back on the live remote container.
+- **Verdict**: Successfully proved stateful session persistence and independent read-back within the direct proof session on the live remote container.
 
 ---
 
-## 6. Local SigV4 Signing Proxy & Official MCP Inspector 2.9.0 Proof
+## 6. Local SigV4 Signing Bridge & Official MCP Inspector 2.9.0 Proof
 
-To validate compatibility with official MCP ecosystem tools without compromising AgentCore's IAM/SigV4 ingress boundary, StillDone executed the local signing proxy (`scripts/sigv4_proxy.py` on `127.0.0.1:8080/mcp`). The proxy performs zero response synthesis, passes raw wire payloads bidirectionally, and attaches AWS SigV4 signatures to outbound requests.
+To validate compatibility with official MCP ecosystem tools without compromising AgentCore's IAM/SigV4 ingress boundary, StillDone executed a local MCP POST bridge (`scripts/sigv4_proxy.py` on `127.0.0.1:8080/mcp`).
+
+**Architectural Contract**:
+- Inspector reached the real AgentCore MCP endpoint through a local SigV4 signing/CLI bridge.
+- The bridge forwards MCP payloads to the real AgentCore `InvokeAgentRuntime` data plane using the short-lived AWS profile and returns the remote MCP payload to Inspector.
+- It synthesizes ZERO successful MCP business responses.
+- It does NOT claim Inspector directly authenticated to AgentCore.
+- It does NOT fabricate `/ping` or `/health` responses (unsupported GET requests fail locally with HTTP 405 Method Not Allowed; the bridge does not claim to prove remote health endpoints).
+- Incoming Inspector invocations through this bridge initiated a distinct logical runtime session (Session B), as recorded in `OPERATOR_SCOPE_DEVIATION_RECORDED`.
 
 ### 6.1 Tool Listing via Inspector CLI
 ```bash
@@ -236,7 +288,7 @@ npx @modelcontextprotocol/inspector@2.9.0 --cli --server-url http://127.0.0.1:80
   "isError": false
 }
 ```
-- **Verdict**: Proven seamless interoperability with `@modelcontextprotocol/inspector@2.9.0`.
+- **Verdict**: Proven seamless interoperability with `@modelcontextprotocol/inspector@2.9.0` via the local SigV4 signing/CLI bridge.
 
 ---
 
@@ -244,11 +296,7 @@ npx @modelcontextprotocol/inspector@2.9.0 --cli --server-url http://127.0.0.1:80
 
 To verify that the deployed container's endpoint protection policy remained active behind AgentCore:
 - A burst of rapid requests was directed to the live runtime endpoint.
-- Requests 1 through 9 were admitted.
-- Request 10 was rejected with **HTTP 429 Too Many Requests**:
-  ```
-  aws: [ERROR]: An error occurred (ValidationException) when calling the InvokeAgentRuntime operation: Received error (429) from runtime
-  ```
+- The deployed `/mcp` path returned **HTTP 429** after quota consumption (`ValidationException: Received error (429) from runtime`).
 - **Verdict**: Proved that StillDone's fail-closed rate-limiting boundary is active and enforced on the deployed live AWS container.
 
 ---
@@ -274,9 +322,9 @@ In accordance with the Zero Personal Spend Law and bounded campaign parameters, 
 
 ---
 
-## 9. Cost Explorer Verification
+## 9. Cost Explorer Verification & Billing Truth
 
-AWS Cost Explorer daily usage query for `2026-10-01` confirmed zero personal spend:
+AWS Cost Explorer daily usage query for `2026-10-01` returned:
 ```json
 {
     "ResultsByTime": [
@@ -301,6 +349,13 @@ AWS Cost Explorer daily usage query for `2026-10-01` confirmed zero personal spe
     ]
 }
 ```
-- **Actual Net Spend**: **$0.00 USD**
-- **Personal Spend Delta**: **$0.00 USD**
-- **Gross Cost Upper Bound**: Strictly $< \$0.05$ (runtime alive for ~3 minutes, compute gross cost $\approx \$0.001$).
+
+### Deterministic Billing Classification:
+- **CURRENT COST EXPLORER OBSERVATION**: `$0.00 USD`
+- **STATUS**: `ESTIMATED / BILLING-LATENCY SUBJECT`
+- **ACTUAL_BILLED_COST**: `NOT_OBSERVED`
+- **PROMOTIONAL_CREDIT_OFFSET FOR THIS CAMPAIGN**: `NOT_OBSERVED`
+- **PERSONAL_SPEND_DELTA**: `NOT_OBSERVED`
+
+> [!IMPORTANT]
+> The same-day Cost Explorer record is flagged as `Estimated: true` due to AWS billing ingestion latency. Final zero personal spend cannot be deterministically asserted from this preliminary report alone. Instead, financial containment is bounded by the conservative campaign authorization-risk bound ($\approx \mathbf{\$0.047603\text{ USD}}$), which remains safely within promotional credit limits and strictly below the authorized $\$0.05\text{ USD}$ gross ceiling. Exact runtime CPU/memory consumption was not measured.
