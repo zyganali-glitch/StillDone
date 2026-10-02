@@ -597,7 +597,7 @@ Acceptance:
 - all 631 existing tests remain green (total passing: 652 tests).
 
 ### P-05.02 — Implement protocol initialization, capability declaration, and health/readiness
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`)
 
 Acceptance:
 - immutable protocol snapshots `MCPCapabilitySnapshot` and `MCPInitializationSnapshot` implemented in `src/stilldone/mcp/protocol.py`;
@@ -617,7 +617,7 @@ Acceptance:
 - full test coverage added in `tests/test_mcp_server.py` (33 focused MCP tests); 664 total tests passing in suite.
 
 ### P-05.03 — Expose read-only mission-status tool over typed contracts
-Status: P-05.03 REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`)
 
 Acceptance:
 - StillDone's first business MCP tool registered: `mission_status` using official MCPServer tool API;
@@ -637,7 +637,7 @@ Acceptance:
 - full test coverage added in `tests/test_mcp_mission_status.py` (30 focused tests, 63 total MCP tests, 694 total tests passing in suite).
 
 ### P-05.04 — Expose mission-start tool without live mutation yet
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
 
 Acceptance:
 - StillDone's second business MCP tool registered: `mission_start` using official MCPServer tool API;
@@ -658,7 +658,7 @@ Acceptance:
 - full test coverage in `tests/test_mcp_mission_start.py` (19 focused test methods covering all 45 requirements); 82 total MCP tests, 713 total tests passing in suite.
 
 ### P-05.05 — Add auth/rate-limit boundary appropriate to the proven judge path
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`)
 
 Acceptance:
 - StillDone OAuth 2.0 Resource Server boundary implemented in `src/stilldone/mcp/auth.py` via official MCP SDK primitives (`AuthSettings`, `TokenVerifier`, `AccessToken`); StillDone is RS only (zero token minting, zero login UI, zero authorization server implementation);
@@ -685,7 +685,7 @@ Acceptance:
 - Full test coverage in `tests/test_mcp_auth_rate_limit.py` (42 focused tests including 13 fail-closed configuration tests); 755 total tests passing in suite.
 
 ### P-05.06 — Validate with current MCP inspector/client and remote deployment
-Status: DONE — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`)
 
 Acceptance:
 - single authorized bounded live AWS AgentCore deployment campaign executed in `us-east-1` under strict operator limits: maximum gross cost risk $\le \$0.05\text{ USD}$ (reconciled two-session conservative authorization-risk bound $\approx \$0.0476\text{ USD}$), target personal spend strictly $\$0.00\text{ USD}$, 1 deployment attempt, 1 runtime, 2 logical proof sessions (`OPERATOR_SCOPE_DEVIATION_RECORDED`), `idleRuntimeSessionTimeout = 60`s, `maxLifetime = 300`s, local ARM64 build, IAM/SigV4 ingress authentication, local SigV4 signing/CLI bridge for Inspector, and mandatory immediate teardown;
@@ -709,7 +709,7 @@ Acceptance:
 - durable evidence documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
 
 ### P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
-Status: REPAIRED — awaiting independent QA
+Status: DONE — independent QA PASS (Verified SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)
 
 Acceptance:
 - Deterministic measurement utility created in `scripts/measure_mcp_latency.py` with pure local loopback execution over real Streamable HTTP transport;
@@ -743,7 +743,23 @@ Acceptance:
 - Bounded unit and boundary tests added in `tests/test_mcp_latency.py` (10 tests passing); zero wall-clock thresholds asserted in CI to prevent flakiness.
 
 Phase exit:
-real remote MCP server works; no fake Alexa+ integration claim.
+Phase P-05 is CLOSED — independent QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`).
+
+Phase exit truth:
+- real MCP Streamable HTTP server spine works;
+- typed mission_status and mission_start exist;
+- OAuth RS / PRM / fail-closed auth boundary proven locally;
+- persistent atomic rate limiting proven locally;
+- real AWS AgentCore remote MCP deployment proven historically / RECORDED_LIVE;
+- real remote initialize/tools/list/mission_start/mission_status read-back proven;
+- MCP Inspector 2.9.0 interoperability proven through the truthfully labeled local SigV4 signing/CLI bridge;
+- current remote AgentCore endpoint = NONE after teardown;
+- current AgentCore latency = NOT_MEASURED;
+- local protocol latency headroom measured on committed source (`MEASURED_SOURCE_SHA = 4751ac0b87071f9178e0da184135b6fa2559d857`);
+- Alexa+ direct access compatibility = INCOMPATIBLE_WITH_CURRENT_AGENTCORE_INGRESS;
+- Alexa+ partner access = NOT_ESTABLISHED / NOT_RUN;
+- no false Alexa+ integration claim;
+- preserved historical OPERATOR_SCOPE_DEVIATION_RECORDED for the two logical P-05.06 sessions.
 
 ---
 
@@ -753,7 +769,7 @@ Goal:
 prove external state can be read, mutated safely, and read back.
 
 ### P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy
 Status: PENDING

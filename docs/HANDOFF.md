@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: PASS; P-05.06: PASS; P-05.07: REPAIRED — awaiting independent QA)**
+Current repository state: **Phase P-05: CLOSED — independent QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,10 +73,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
+Phase P-05 P-Ω Closure Truth Sync
 
 Status:
-`REPAIRED — awaiting independent QA`
+`CLOSED — independent QA PASS`
 
 ## Phase P-04 Status
 
@@ -98,26 +98,40 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 - P-05.04 — PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
 - P-05.05 — PASS (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`)
 - P-05.06 — PASS (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`)
-- P-05.07 — REPAIRED — awaiting independent QA
+- P-05.07 — PASS (Verified SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)
 
-Phase P-05 is **IN_PROGRESS pending independent phase closure**.
+Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`)**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`
+`6503127af61015b656fff4f44ebae2e4576ad74c`
 
 ## Next exact task
 
-`Phase P-05 Independent QA Phase-Closure Review (P-Ω)`
-(P-06.01 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
+`P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar`
+
+Status:
+`PENDING / NOT AUTHORIZED` (until independent QA verifies this closure-sync commit)
 
 ## Next safe action
 
-Push P-05.07 surgical repair commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-06.
+Await independent QA verification of the Phase P-05 closure-sync commit. Do NOT begin P-06.01.
 
 ---
 
 ## Phase Milestones Summary
+
+### Phase P-05 Closure Summary
+Phase P-05 (Real MCP Server Spine) successfully closed with independent QA PASS:
+- Closed micro-tasks P-05.01 through P-05.07 with independent QA PASS (Verified Closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`).
+- Implemented real open-standard Streamable HTTP MCP server spine (`src/stilldone/mcp/`) using official MCP Python SDK (`mcp>=2.2.0`), supporting canonical `/mcp` path and loopback binding (`127.0.0.1`).
+- Implemented truthful protocol initialization, capability declarations, and decoupled HTTP `/health` (process liveness) and `/ready` (transport-only readiness) endpoints.
+- Registered typed read-only `mission_status` tool and `mission_start` tool over canonical `InMemoryNonDurableLedger` with strict parameter validation (`additionalProperties: false`), fail-closed sanitization (`[REDACTED]`), privacy minimization, and shared-ledger state retention.
+- Built OAuth 2.0 Resource Server boundary with RFC 9728 Protected Resource Metadata (PRM), Alexa+ 401 header suppression (`Alexa401CompatibilityMiddleware`), and persistent atomic rate limiting backed by stdlib SQLite with WAL mode and `BEGIN IMMEDIATE`.
+- Validated with real deployed AWS Bedrock AgentCore Runtime in `us-east-1` (CodeZip serverless microVM, Server-Sent Events / Streamable HTTP on port 8000) under strict operator cost bounds; proved real remote MCP `initialize`, `tools/list`, `mission_start`, and read-back `mission_status`; proved `@modelcontextprotocol/inspector@2.9.0` interoperability via local SigV4 signing bridge; proved deployed container rate-limiting (HTTP 429); executed complete immediate teardown; preserved historical `OPERATOR_SCOPE_DEVIATION_RECORDED` for the two logical sessions.
+- Measured deterministic local MCP protocol latency headroom over real Streamable HTTP (`initialize` p50 8.05ms, `tools/list` p50 7.33ms, `mission_status` p50 15.18ms); current remote endpoint = `NONE`; current AgentCore deployed latency = `NOT_MEASURED`; historical remote echo latency (61.26ms) preserved as `RECORDED_LIVE`.
+- Formulated comprehensive Alexa+ direct-access compatibility gap matrix: determined `ALEXA_PLUS_DIRECT_ACCESS_COMPATIBILITY = INCOMPATIBLE_WITH_CURRENT_AGENTCORE_INGRESS` based on AgentCore IAM SigV4 / OAuth 401 `WWW-Authenticate` header requirements versus Alexa+ no-WWW-Authenticate discovery rules; partner access recorded as `ALEXA_PLUS_PARTNER_ACCESS = NOT_ESTABLISHED / NOT_RUN`; zero false Alexa+ integration claims.
+- At Phase P-05 closure exit, Phase P-06 micro-tasks remain strictly `PENDING / NOT AUTHORIZED`.
 
 ### Phase P-03 Closure Summary
 Phase P-03 (Deterministic Evidence Ledger & Fact Authority) successfully closed with independent QA PASS:

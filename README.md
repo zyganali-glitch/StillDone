@@ -103,7 +103,7 @@ See:
 
 ## Current status
 
-**PHASE P-04 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); PHASE P-05 IN_PROGRESS (P-05.01: independent QA PASS; P-05.02: DONE — awaiting independent QA)**
+**PHASE P-05 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`); PHASE P-06 PENDING / NOT AUTHORIZED**
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
@@ -130,10 +130,15 @@ Phase progression and verified milestones:
   - `P-04.05` (Demo-resource isolation): strict runtime match against configured demo calendar ID and demo task-list ID; rejects aliases, wildcards, substrings, or unvalidated contracts; masks IDs in `DemoResourceScope` `__repr__`.
   - `P-04.06` (Public-endpoint rate/budget admission contract): deterministic provider-neutral rate/budget policy evaluator, exact `Decimal` arithmetic, operator live gate (`live_paid_path_enabled=False` default), deny on `PAID_CAPABLE_LIVE` + `PUBLIC_UNTRUSTED`, fresh credit coverage checks, internal gross ceiling enforcement, and self-validating `EndpointAdmissionDecision`. Evaluator is pure; does not claim atomic production rate limiting (deferred to P-05.05).
   - `P-04.07` (Phase-boundary security/threat-model audit): comprehensive 16-dimension audit documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`; 40 cross-boundary integration security tests in `tests/test_phase_p04_security_audit.py` verifying vocabulary, authority, import purity, and cross-gate non-substitutability.
-- **Phase P-05 (Real MCP Server Spine)**: `IN_PROGRESS`.
+- **Phase P-05 (Real MCP Server Spine)**: Complete and closed with independent QA PASS (`P-05.01` through `P-05.07`, verified closure SHA `6503127af61015b656fff4f44ebae2e4576ad74c`).
   - `P-05.01` (MCP server with Streamable HTTP transport): `independent QA PASS` (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`).
-  - `P-05.02` (Protocol initialization, capability declaration, and health/readiness): `DONE — awaiting independent QA`. Implemented immutable `MCPCapabilitySnapshot` and `MCPInitializationSnapshot` extracting truthful protocol version and capability flags; added plain HTTP `/health` (process liveness) and `/ready` (transport-only readiness) with 503 fail-closed behavior; 664 tests passing.
-  - `P-05.03` through `P-05.07`: `PENDING / NOT AUTHORIZED`.
+  - `P-05.02` (Protocol initialization, capability declaration, and health/readiness): `independent QA PASS` (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`).
+  - `P-05.03` (Read-only mission-status tool over typed contracts): `independent QA PASS` (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`).
+  - `P-05.04` (Mission-start tool without live mutation yet): `independent QA PASS` (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`).
+  - `P-05.05` (Auth/rate-limit boundary): `independent QA PASS` (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`).
+  - `P-05.06` (Validation with MCP inspector/client & remote AWS AgentCore deployment): `independent QA PASS` (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`).
+  - `P-05.07` (Measure protocol latency & Alexa+ direct-access gap): `independent QA PASS` (Verified SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`).
+- **Phase P-06 (Real External Service Adapters)**: `PENDING / NOT AUTHORIZED`.
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
