@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: PASS; P-05.06: REPAIRED — awaiting independent QA)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: PASS; P-05.06: PASS; P-05.07: DONE — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -73,10 +73,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-P-05.06 — Validate with current MCP inspector/client and remote deployment
+P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
 
 Status:
-`REPAIRED — awaiting independent QA`
+`DONE — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -97,23 +97,23 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 - P-05.03 — PASS (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`)
 - P-05.04 — PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
 - P-05.05 — PASS (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`)
-- P-05.06 — REPAIRED — awaiting independent QA
-- P-05.07 — PENDING / NOT AUTHORIZED
+- P-05.06 — PASS (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`)
+- P-05.07 — DONE — awaiting independent QA
 
-Phase P-05 is **IN_PROGRESS**.
+Phase P-05 is **IN_PROGRESS pending independent phase closure**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`075de4f51804253e2ac1503f02be1d5c0681ade1`
+`8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`
 
 ## Next exact task
 
-`P-05.06 Independent QA Review`
-(Phase P-05.07 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
+`Phase P-05 Independent QA Phase-Closure Review (P-Ω)`
+(P-06.01 and later micro-tasks remain `PENDING / NOT AUTHORIZED` until authorized)
 
 ## Next safe action
 
-Push P-05.06 surgical repair commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-05.07.
+Push P-05.07 commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-06.
 
 ---
 

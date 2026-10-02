@@ -709,7 +709,38 @@ Acceptance:
 - durable evidence documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
 
 ### P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
-Status: PENDING
+Status: DONE — awaiting independent QA
+
+Acceptance:
+- Deterministic measurement utility created in `scripts/measure_mcp_latency.py` with pure local loopback execution over real Streamable HTTP transport;
+- Real loopback Uvicorn/Starlette MCP server + official current MCP Python client (`mcp==2.2.0`);
+- Current `mission_status` tool measured against pre-populated canonical `InMemoryNonDurableLedger` (`MissionRecord` in `DRAFT` state); setup time strictly excluded from latency;
+- Monotonic high-resolution clock (`time.perf_counter_ns()`) used for all measurements;
+- Bounded deterministic campaign executed: 5 warmup + 30 measured requests per operation;
+- Observed local protocol latency metrics (source SHA `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`):
+  - `initialize`: min 5.18ms, mean 7.02ms, p50 7.34ms, p95 8.62ms, max 9.18ms
+  - `tools/list`: min 5.30ms, mean 6.65ms, p50 6.12ms, p95 8.73ms, max 9.16ms
+  - `mission_status`: min 5.51ms, mean 7.11ms, p50 6.93ms, p95 8.60ms, max 12.11ms
+- Provenance separation strictly maintained: local measurement classified as `LOCAL_LATENCY_HEADROOM_OBSERVED` under `LOCAL_EXECUTION`; historical remote echo (`61.26ms`) preserved as `RECORDED_LIVE`; current AgentCore deployed latency classified as `NOT_MEASURED`; current remote endpoint is `NONE`;
+- Explicit non-certification statement enforced: local loopback latency does not certify remote production or Alexa+ production performance;
+- Comprehensive Alexa+ direct-access compatibility gap matrix documented in `docs/P05_07_LATENCY_ALEXA_GAP.md`:
+  - Transport (Streamable HTTP): PROVEN
+  - Remote HTTPS MCP: PROVEN HISTORICALLY / RECORDED_LIVE (runtime torn down)
+  - Tool Discovery: PROVEN (`mission_status`, `mission_start`)
+  - Remote Tool Execution: PROVEN (`mission_start` -> `DRAFT`, `mission_status` read-back)
+  - Latency (<500ms): DIRECT PRODUCTION CERTIFICATION = NOT_ESTABLISHED (Local p50 6.12-7.34ms, Historical remote echo 61.26ms, AgentCore NOT_MEASURED)
+  - Service-Level Auth: INCOMPATIBLE AS DIRECT ALEXA+ AUTH PATH (Alexa+ requires OAuth client_credentials + mcp:service; AgentCore ingress requires AWS SigV4 IAM)
+  - User-Level Auth: NOT_ESTABLISHED (OAuth RS proven locally; external Authorization Server / account linking not established)
+  - 401 Discovery Semantics: INCOMPATIBLE WITH CURRENT AGENTCORE INGRESS (Alexa+ requires 401 without WWW-Authenticate; AgentCore OAuth emits WWW-Authenticate; IAM returns 403)
+  - RFC 9728 PRM: PROVEN LOCALLY; hosted PRM NOT_ESTABLISHED
+  - Authorization Server Metadata: NOT_ESTABLISHED (StillDone is RS only)
+  - DCR / OIDC / Step-Up: NOT_IMPLEMENTED (strictly compliant with Alexa+ unsupported mechanisms)
+  - Partner / Add-On Access: NOT_RUN / NOT_ESTABLISHED
+- Protocol version truth analyzed: official SDK client negotiated `2025-11-25`, AgentCore handshake used `2024-11-05`, docs cite examples; no hard requirement exists in Alexa+ docs (`PROTOCOL_VERSION_BLOCKER = NOT_ESTABLISHED`);
+- Deterministic compatibility verdict: `ALEXA_PLUS_DIRECT_ACCESS_COMPATIBILITY = INCOMPATIBLE_WITH_CURRENT_AGENTCORE_INGRESS` based on objective IAM SigV4 and OAuth 401 WWW-Authenticate header conflicts;
+- Future architecture options documented only (Option A: dedicated edge proxy; Option B: AWS ingress adapter; Option C: simulated Alexa+ client with real AWS backend); zero future components implemented;
+- Competition submission-safe wording preserved;
+- Bounded unit and boundary tests added in `tests/test_mcp_latency.py` (10 tests passing); zero wall-clock thresholds asserted in CI to prevent flakiness.
 
 Phase exit:
 real remote MCP server works; no fake Alexa+ integration claim.
