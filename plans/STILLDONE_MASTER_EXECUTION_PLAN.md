@@ -709,7 +709,7 @@ Acceptance:
 - durable evidence documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
 
 ### P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
-Status: DONE — awaiting independent QA
+Status: REPAIRED — awaiting independent QA
 
 Acceptance:
 - Deterministic measurement utility created in `scripts/measure_mcp_latency.py` with pure local loopback execution over real Streamable HTTP transport;
@@ -717,10 +717,10 @@ Acceptance:
 - Current `mission_status` tool measured against pre-populated canonical `InMemoryNonDurableLedger` (`MissionRecord` in `DRAFT` state); setup time strictly excluded from latency;
 - Monotonic high-resolution clock (`time.perf_counter_ns()`) used for all measurements;
 - Bounded deterministic campaign executed: 5 warmup + 30 measured requests per operation;
-- Observed local protocol latency metrics (source SHA `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`):
-  - `initialize`: min 5.18ms, mean 7.02ms, p50 7.34ms, p95 8.62ms, max 9.18ms
-  - `tools/list`: min 5.30ms, mean 6.65ms, p50 6.12ms, p95 8.73ms, max 9.16ms
-  - `mission_status`: min 5.51ms, mean 7.11ms, p50 6.93ms, p95 8.60ms, max 12.11ms
+- Observed local protocol latency metrics against committed source SHA `4751ac0b87071f9178e0da184135b6fa2559d857` with clean working tree:
+  - `initialize`: min 5.64ms, mean 8.15ms, p50 8.05ms, p95 10.59ms, max 11.06ms
+  - `tools/list`: min 5.46ms, mean 7.86ms, p50 7.33ms, p95 10.50ms, max 10.81ms
+  - `mission_status`: min 7.54ms, mean 14.88ms, p50 15.18ms, p95 18.56ms, max 20.47ms
 - Provenance separation strictly maintained: local measurement classified as `LOCAL_LATENCY_HEADROOM_OBSERVED` under `LOCAL_EXECUTION`; historical remote echo (`61.26ms`) preserved as `RECORDED_LIVE`; current AgentCore deployed latency classified as `NOT_MEASURED`; current remote endpoint is `NONE`;
 - Explicit non-certification statement enforced: local loopback latency does not certify remote production or Alexa+ production performance;
 - Comprehensive Alexa+ direct-access compatibility gap matrix documented in `docs/P05_07_LATENCY_ALEXA_GAP.md`:
@@ -728,14 +728,14 @@ Acceptance:
   - Remote HTTPS MCP: PROVEN HISTORICALLY / RECORDED_LIVE (runtime torn down)
   - Tool Discovery: PROVEN (`mission_status`, `mission_start`)
   - Remote Tool Execution: PROVEN (`mission_start` -> `DRAFT`, `mission_status` read-back)
-  - Latency (<500ms): DIRECT PRODUCTION CERTIFICATION = NOT_ESTABLISHED (Local p50 6.12-7.34ms, Historical remote echo 61.26ms, AgentCore NOT_MEASURED)
-  - Service-Level Auth: INCOMPATIBLE AS DIRECT ALEXA+ AUTH PATH (Alexa+ requires OAuth client_credentials + mcp:service; AgentCore ingress requires AWS SigV4 IAM)
+  - Latency (<500ms): DIRECT PRODUCTION CERTIFICATION = NOT_ESTABLISHED (Local p50 7.33-15.18ms, Historical remote echo 61.26ms, AgentCore NOT_MEASURED)
+  - Service-Level Auth: INCOMPATIBLE AS DIRECT ALEXA+ AUTH PATH (P-05.06 deployment used IAM/SigV4; AgentCore JWT bearer 401 includes WWW-Authenticate while IAM returns 403; neither satisfies Alexa+ client_credentials discovery/auth)
   - User-Level Auth: NOT_ESTABLISHED (OAuth RS proven locally; external Authorization Server / account linking not established)
   - 401 Discovery Semantics: INCOMPATIBLE WITH CURRENT AGENTCORE INGRESS (Alexa+ requires 401 without WWW-Authenticate; AgentCore OAuth emits WWW-Authenticate; IAM returns 403)
   - RFC 9728 PRM: PROVEN LOCALLY; hosted PRM NOT_ESTABLISHED
   - Authorization Server Metadata: NOT_ESTABLISHED (StillDone is RS only)
   - DCR / OIDC / Step-Up: NOT_IMPLEMENTED (strictly compliant with Alexa+ unsupported mechanisms)
-  - Partner / Add-On Access: NOT_RUN / NOT_ESTABLISHED
+  - Partner / Add-On Access: NOT_ESTABLISHED / NOT_RUN (public docs limit Category SDK / MCP Toolkit to select partners)
 - Protocol version truth analyzed: official SDK client negotiated `2025-11-25`, AgentCore handshake used `2024-11-05`, docs cite examples; no hard requirement exists in Alexa+ docs (`PROTOCOL_VERSION_BLOCKER = NOT_ESTABLISHED`);
 - Deterministic compatibility verdict: `ALEXA_PLUS_DIRECT_ACCESS_COMPATIBILITY = INCOMPATIBLE_WITH_CURRENT_AGENTCORE_INGRESS` based on objective IAM SigV4 and OAuth 401 WWW-Authenticate header conflicts;
 - Future architecture options documented only (Option A: dedicated edge proxy; Option B: AWS ingress adapter; Option C: simulated Alexa+ client with real AWS backend); zero future components implemented;

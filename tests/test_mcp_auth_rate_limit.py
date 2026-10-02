@@ -69,7 +69,7 @@ SENTINEL_TOKEN = "sentinel-super-secret-token-xyz-987"
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    with tempfile.TemporaryDirectory() as td:
         yield Path(td)
 
 

@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: PASS; P-05.06: PASS; P-05.07: DONE — awaiting independent QA)**
+Current repository state: **Phase P-04: CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de5993a163f019a7867401d9f88310fdc`); Phase P-05: IN_PROGRESS (P-05.01: PASS; P-05.02: PASS; P-05.03: PASS; P-05.04: PASS; P-05.05: PASS; P-05.06: PASS; P-05.07: REPAIRED — awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -76,7 +76,7 @@ Preferred AWS target:
 P-05.07 — Measure protocol latency and document Alexa+ direct-access compatibility gap
 
 Status:
-`DONE — awaiting independent QA`
+`REPAIRED — awaiting independent QA`
 
 ## Phase P-04 Status
 
@@ -98,7 +98,7 @@ Phase P-04 is **CLOSED — independent QA PASS (Verified closure SHA: `3dbde03de
 - P-05.04 — PASS (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`)
 - P-05.05 — PASS (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`)
 - P-05.06 — PASS (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`)
-- P-05.07 — DONE — awaiting independent QA
+- P-05.07 — REPAIRED — awaiting independent QA
 
 Phase P-05 is **IN_PROGRESS pending independent phase closure**.
 
@@ -113,7 +113,7 @@ Phase P-05 is **IN_PROGRESS pending independent phase closure**.
 
 ## Next safe action
 
-Push P-05.07 commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-06.
+Push P-05.07 surgical repair commit to canonical remote `origin/main`, verify GitHub Actions CI pass, and await independent QA review. Do NOT begin P-06.
 
 ---
 
