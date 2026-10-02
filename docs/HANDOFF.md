@@ -74,17 +74,20 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
+P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy (SURGICAL REPAIR)
 
 Status:
-`UNDER INDEPENDENT-QA REPAIR`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 Notes:
-- P-06.01 is under surgical independent-QA repair for error/log/repr sanitization and observation minimization.
-- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2`.
-- P-06.02 and P-06.03 remain implementation-complete / awaiting independent QA, NOT PASS.
+- P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
+- P-06.02 surgical repair completed:
+  1. Google API Python client request contract fixed: update request constructed with only supported API kwargs; observed ETag attached to `req.headers["If-Match"]` before execute; wildcard `*` strictly forbidden; HTTP 412 mapped to `CalendarPreconditionFailedError`; strict generated-client contract tests added.
+  2. All-day and timed semantics fixed: single-day all-day event emits exclusive `end.date == start.date + 1 day`; multi-day all-day move preserves existing day-span; zero-length all-day events prevented and rejected fail-closed; all-day to timed transition requires valid RFC3339 with timezone and time component (bare date fails closed with `CalendarTargetError`); payload hygiene verified; `_is_time_equal` prevents bare date vs midnight UTC datetime conflation in idempotency check.
+- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2` (because P-06.02 and P-06.03 commits on main are awaiting independent QA review).
+- P-06.03 remains implementation-complete / awaiting independent QA, NOT PASS.
 - P-06.04 remains PENDING / NOT AUTHORIZED.
-- Next safe action is independent QA of this P-06.01 repair.
+- Next safe action is independent QA review of this P-06.02 surgical repair.
 
 ## Phase P-04 Status
 
@@ -112,8 +115,8 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 
 ## Phase P-06 Status
 
-- P-06.01 — UNDER INDEPENDENT-QA REPAIR (sanitizing repr/str/log/error paths and minimizing observation)
-- P-06.02 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.01 — independent QA PASS (Verified SHA: `50a4f1b3d34b85889f758587d7f23f5670cc0760`)
+- P-06.02 — REPAIRED — awaiting independent QA review (NOT PASS)
 - P-06.03 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
 - P-06.04 — PENDING / NOT AUTHORIZED
 - P-06.05 — PENDING
@@ -129,14 +132,14 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Next exact task
 
-`P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar (SURGICAL REPAIR)`
+`P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy`
 
 Status:
-`UNDER INDEPENDENT-QA REPAIR`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 
-Independent QA of this P-06.01 repair. Do NOT begin P-06.04.
+Independent QA review of this P-06.02 surgical repair. Do NOT begin P-06.04.
 
 
 ---

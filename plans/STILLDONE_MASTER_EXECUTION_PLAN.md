@@ -769,7 +769,7 @@ Goal:
 prove external state can be read, mutated safely, and read back.
 
 ### P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
-Status: UNDER INDEPENDENT-QA REPAIR
+Status: DONE — independent QA PASS (Verified SHA: `50a4f1b3d34b85889f758587d7f23f5670cc0760`)
 
 Acceptance:
 - bounded Google Calendar read adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadAdapter`);
@@ -786,7 +786,7 @@ Acceptance:
 - comprehensive unit tests in `tests/test_calendar_read_adapter.py` passing without network dependency.
 
 ### P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy
-Status: DONE — awaiting independent QA PASS
+Status: REPAIRED — awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - bounded Google Calendar update adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarUpdateAdapter`);
@@ -801,6 +801,11 @@ Acceptance:
 - HTTP 412 / ETag mismatch handled gracefully producing `CalendarUpdateStatus.CONFLICT` with zero blind overwrite;
 - preserves unrelated provider fields (`description`, `location`, `transparency`, etc.) across full event resource replacement;
 - suppresses attendee notification side effects (`sendUpdates="none"`);
+- production client transport contract: `GoogleApiClientCalendarTransport` constructs update request using only supported parameters (`calendarId`, `eventId`, `body`, `sendUpdates`); attaches exact observed ETag to `req.headers["If-Match"]` before execute; forbids `If-Match: *` or blank; maps HTTP 412 to `CalendarPreconditionFailedError`; tested against strict client stub;
+- exclusive end semantics for all-day events: single-day all-day event emits exclusive `end.date == start.date + 1 day`; multi-day all-day move preserves existing day-span; zero-length all-day events (`end.date <= start.date`) prevented and rejected fail-closed;
+- timed transition semantics: all-day to timed transition requires valid RFC3339 with timezone and time component (bare date fails closed with `CalendarTargetError`); default 30-minute duration applied when original event lacked timed duration;
+- payload hygiene: `all_day=True` contains only `date` (no residual `dateTime`); `all_day=False` contains only `dateTime` (no residual `date`);
+- idempotency check: `_is_time_equal` treats bare dates as distinct from datetimes, preventing false `NOOP_ALREADY_APPLIED` matches between bare dates and midnight UTC datetimes;
 - mutation response alone does NOT create `VERIFIED` or `READY`; zero mission state mutation;
 - comprehensive unit tests in `tests/test_calendar_update_adapter.py` passing with zero live Google mutation.
 

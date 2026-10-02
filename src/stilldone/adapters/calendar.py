@@ -280,7 +280,14 @@ class FakeGoogleCalendarTransport:
         }
         if all_day:
             raw["start"] = {"date": start_time}
-            raw["end"] = {"date": end_time or start_time}
+            if end_time:
+                raw["end"] = {"date": end_time}
+            else:
+                try:
+                    s_d = date.fromisoformat(start_time.split("T")[0])
+                    raw["end"] = {"date": (s_d + timedelta(days=1)).isoformat()}
+                except Exception:
+                    raw["end"] = {"date": start_time}
         else:
             raw["start"] = {"dateTime": start_time}
             raw["end"] = {"dateTime": end_time or start_time}
@@ -312,6 +319,11 @@ class FakeGoogleCalendarTransport:
         send_updates: str = "none",
     ) -> CalendarTransportEvent:
         """Emulate PUT /calendars/{calendarId}/events/{eventId} with If-Match."""
+        if not if_match or if_match.strip() == "*":
+            raise CalendarTargetError(
+                "Unconditional overwrite (If-Match: *) is strictly forbidden; exact ETag required"
+            )
+
         self.writes_count += 1
         self.last_if_match = if_match
         self.last_send_updates = send_updates
@@ -348,11 +360,19 @@ class FakeGoogleCalendarTransport:
 
         start = raw.get("start", {})
         end = raw.get("end", {})
+        end_time: str | None = None
 
         if "date" in start:
             all_day = True
             start_time = str(start["date"])
-            end_time = str(end.get("date", start_time)) if end else None
+            if end and "date" in end:
+                end_time = str(end["date"])
+            else:
+                try:
+                    s_d = date.fromisoformat(start_time.split("T")[0])
+                    end_time = (s_d + timedelta(days=1)).isoformat()
+                except Exception:
+                    end_time = start_time
         else:
             all_day = False
             start_time = str(start.get("dateTime", ""))
@@ -417,14 +437,21 @@ class GoogleApiClientCalendarTransport:
         if_match: str,
         send_updates: str = "none",
     ) -> CalendarTransportEvent:
+        if not if_match or if_match.strip() == "*":
+            raise CalendarTargetError(
+                "Unconditional overwrite (If-Match: *) is strictly forbidden; exact ETag required"
+            )
+
         try:
             req = self._service.events().update(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=payload,
                 sendUpdates=send_updates,
-                headers={"If-Match": if_match},
             )
+            if getattr(req, "headers", None) is None:
+                req.headers = {}
+            req.headers["If-Match"] = if_match
             resp = req.execute()
             return FakeGoogleCalendarTransport._to_transport_event(resp)
         except Exception as exc:
@@ -680,17 +707,20 @@ def _normalize_iso_time(time_str: str) -> tuple[int, datetime | None]:
 
     Returns (0, dt_utc) for datetime, (1, dt_date) for date, or (2, None) if unparseable.
     """
+    clean = time_str.strip()
+    if "T" not in clean and " " not in clean:
+        try:
+            d = date.fromisoformat(clean)
+            return (1, datetime(d.year, d.month, d.day, tzinfo=UTC))
+        except Exception:
+            return (2, None)
     try:
-        dt = datetime.fromisoformat(time_str)
+        dt = datetime.fromisoformat(clean)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return (0, dt.astimezone(UTC))
     except Exception:
-        try:
-            d = date.fromisoformat(time_str)
-            return (1, datetime(d.year, d.month, d.day, tzinfo=UTC))
-        except Exception:
-            return (2, None)
+        return (2, None)
 
 
 def _is_time_equal(t1: str, t2: str) -> bool:
@@ -924,6 +954,10 @@ class GoogleCalendarUpdateAdapter:
         # Step 9: Prepare updated full event resource (preserving unrelated provider fields)
         if not current_transport_event.etag:
             raise CalendarTargetError("Cannot conditionally update event without provider ETag")
+        if current_transport_event.etag.strip() == "*":
+            raise CalendarTargetError(
+                "Unconditional overwrite (If-Match: *) is strictly forbidden; exact ETag required"
+            )
 
         raw_payload = dict(current_transport_event.raw_resource)
 
@@ -934,25 +968,100 @@ class GoogleCalendarUpdateAdapter:
         new_start = str(params.get("start_time", current_obs.start_time))
 
         if new_all_day:
-            start_date = new_start.split("T")[0]
-            raw_payload["start"] = {"date": start_date}
-            raw_payload["end"] = {"date": start_date}
-        else:
-            raw_payload["start"] = {"dateTime": new_start}
+            start_date_str = new_start.split("T")[0].strip()
             try:
-                new_s_dt = datetime.fromisoformat(new_start)
-                if current_obs.end_time:
+                new_start_d = date.fromisoformat(start_date_str)
+            except Exception as exc:
+                raise CalendarTargetError(f"Invalid date for all-day event: {new_start}") from exc
+
+            # Determine day-span: preserve existing span if previously all-day, else 1 day
+            if "end_time" in params:
+                param_end_str = str(params["end_time"]).split("T")[0].strip()
+                try:
+                    new_end_d = date.fromisoformat(param_end_str)
+                except Exception as exc:
+                    raise CalendarTargetError(
+                        f"Invalid end date for all-day event: {params['end_time']}"
+                    ) from exc
+            elif current_obs.all_day and current_obs.end_time:
+                try:
+                    curr_s = date.fromisoformat(current_obs.start_time.split("T")[0].strip())
+                    curr_e = date.fromisoformat(current_obs.end_time.split("T")[0].strip())
+                    span = (curr_e - curr_s).days
+                    span_days = span if span > 0 else 1
+                except Exception:
+                    span_days = 1
+                new_end_d = new_start_d + timedelta(days=span_days)
+            else:
+                new_end_d = new_start_d + timedelta(days=1)
+
+            if new_end_d <= new_start_d:
+                raise CalendarTargetError(
+                    "All-day event end date must be strictly after start date "
+                    "(zero-length all-day events are forbidden)"
+                )
+
+            raw_payload["start"] = {"date": new_start_d.isoformat()}
+            raw_payload["end"] = {"date": new_end_d.isoformat()}
+            if isinstance(raw_payload["start"], dict):
+                raw_payload["start"].pop("dateTime", None)
+            if isinstance(raw_payload["end"], dict):
+                raw_payload["end"].pop("dateTime", None)
+        else:
+            # Timed event
+            clean_start = new_start.strip()
+            if "T" not in clean_start and " " not in clean_start:
+                raise CalendarTargetError(
+                    "Timed event start_time must include time component and timezone "
+                    "(RFC3339), got bare date"
+                )
+            try:
+                new_s_dt = datetime.fromisoformat(clean_start)
+            except Exception as exc:
+                raise CalendarTargetError(
+                    f"Invalid RFC3339 datetime for timed event start_time: {new_start}"
+                ) from exc
+
+            if new_s_dt.tzinfo is None:
+                raise CalendarTargetError(
+                    "Timed event start_time must include timezone offset or 'Z' (RFC3339)"
+                )
+
+            if "end_time" in params:
+                clean_end = str(params["end_time"]).strip()
+                try:
+                    new_e_dt = datetime.fromisoformat(clean_end)
+                    if new_e_dt.tzinfo is None:
+                        raise CalendarTargetError(
+                            "Timed event end_time must include timezone offset"
+                        )
+                except Exception as exc:
+                    raise CalendarTargetError(
+                        f"Invalid RFC3339 datetime for timed event end_time: {clean_end}"
+                    ) from exc
+            elif not current_obs.all_day and current_obs.end_time:
+                try:
                     orig_s_dt = datetime.fromisoformat(current_obs.start_time)
                     orig_e_dt = datetime.fromisoformat(current_obs.end_time)
                     duration = orig_e_dt - orig_s_dt
                     if duration <= timedelta(0):
                         duration = timedelta(minutes=30)
-                else:
+                except Exception:
                     duration = timedelta(minutes=30)
                 new_e_dt = new_s_dt + duration
-                raw_payload["end"] = {"dateTime": new_e_dt.isoformat()}
-            except Exception:
-                raw_payload["end"] = {"dateTime": new_start}
+            else:
+                # Transitioning from all-day (no timed duration) -> deterministic default 30 mins
+                new_e_dt = new_s_dt + timedelta(minutes=30)
+
+            if new_e_dt <= new_s_dt:
+                raise CalendarTargetError("Timed event end_time must be strictly after start_time")
+
+            raw_payload["start"] = {"dateTime": new_s_dt.isoformat()}
+            raw_payload["end"] = {"dateTime": new_e_dt.isoformat()}
+            if isinstance(raw_payload["start"], dict):
+                raw_payload["start"].pop("date", None)
+            if isinstance(raw_payload["end"], dict):
+                raw_payload["end"].pop("date", None)
 
         # Step 10: Execute conditional update with observed ETag
         try:
