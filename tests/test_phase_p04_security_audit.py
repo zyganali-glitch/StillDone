@@ -347,9 +347,9 @@ class TestFuturePhaseAbsence:
             pkg_path = SRC_ROOT / mod_name
             assert not pkg_path.is_dir(), f"Future-phase package found: {pkg_path}"
 
-    def test_no_provider_adapter_modules(self) -> None:
-        """No Google/Open-Meteo provider adapter modules exist."""
-        forbidden_modules = [
+    def test_no_provider_adapter_modules_in_root_namespace(self) -> None:
+        """Provider adapters are isolated to stilldone.adapters and absent from root namespace."""
+        forbidden_root_modules = [
             "calendar_adapter",
             "google_calendar",
             "tasks_adapter",
@@ -359,11 +359,32 @@ class TestFuturePhaseAbsence:
             "readback_verifier",
             "read_back",
         ]
-        for mod_name in forbidden_modules:
+        for mod_name in forbidden_root_modules:
             mod_path = SRC_ROOT / f"{mod_name}.py"
-            assert not mod_path.exists(), f"Future-phase module found: {mod_path}"
+            assert not mod_path.exists(), f"Adapter module leaked to root namespace: {mod_path}"
             pkg_path = SRC_ROOT / mod_name
-            assert not pkg_path.is_dir(), f"Future-phase package found: {pkg_path}"
+            assert not pkg_path.is_dir(), f"Adapter package leaked to root namespace: {pkg_path}"
+
+    @pytest.mark.parametrize("module_name", P04_POLICY_MODULES)
+    def test_p04_policy_modules_do_not_depend_on_adapters(self, module_name: str) -> None:
+        """P-04 policy modules must remain pure and never import from stilldone.adapters."""
+        mod = importlib.import_module(module_name)
+
+        source_file = inspect.getfile(mod)
+        source_text = pathlib.Path(source_file).read_text(encoding="utf-8")
+        tree = ast.parse(source_text, filename=source_file)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("stilldone.adapters"), (
+                        f"P-04 module {module_name} illegally imports adapter: {alias.name}"
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    assert not node.module.startswith("stilldone.adapters"), (
+                        f"P-04 module {module_name} illegally imports from adapter: {node.module}"
+                    )
 
     def test_no_planner_or_model_integration(self) -> None:
         """No P-07 planner/model integration modules exist."""
