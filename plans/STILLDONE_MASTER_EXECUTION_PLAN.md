@@ -769,7 +769,7 @@ Goal:
 prove external state can be read, mutated safely, and read back.
 
 ### P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
-Status: DONE — awaiting independent QA PASS
+Status: UNDER INDEPENDENT-QA REPAIR
 
 Acceptance:
 - bounded Google Calendar read adapter implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadAdapter`);

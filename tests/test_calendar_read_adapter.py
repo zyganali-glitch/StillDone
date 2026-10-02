@@ -15,6 +15,8 @@ Validates:
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,10 +28,15 @@ from stilldone.action_policy import (
 from stilldone.adapters.calendar import (
     CalendarApiError,
     CalendarAuthenticationError,
+    CalendarEventNotFoundError,
+    CalendarEventObservation,
+    CalendarPreconditionFailedError,
     CalendarRateLimitError,
     CalendarReadStatus,
     CalendarScopeError,
     CalendarTargetError,
+    CalendarTransportError,
+    CalendarTransportEvent,
     FakeGoogleCalendarTransport,
     GoogleApiClientCalendarTransport,
     GoogleCalendarReadAdapter,
@@ -334,6 +341,22 @@ class TestPrivacyAndTruthBoundaries:
         assert DEMO_CALENDAR_ID not in obs_str
         assert VALID_EVENT_ID not in obs_str
 
+    def test_calendar_observation_repr_masks_private_event_details(
+        self,
+        read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        action = _make_calendar_read_contract()
+        result = read_adapter.read_event(action)
+        assert result.observation is not None
+
+        obs_repr = repr(result.observation)
+        obs_str = str(result.observation)
+
+        assert "Leave for school" not in obs_repr
+        assert "2026-10-03" not in obs_repr
+        assert "Leave for school" not in obs_str
+        assert "2026-10-03" not in obs_str
+
     def test_calendar_read_result_repr_masks_identifiers(
         self,
         read_adapter: GoogleCalendarReadAdapter,
@@ -358,6 +381,223 @@ class TestPrivacyAndTruthBoundaries:
                 assert forbidden not in attrs, (
                     f"Forbidden attribute {forbidden} found on {type(obj)}"
                 )
+
+
+# ===========================================================================
+# 5. Adversarial Privacy & Sentinel Leak Prevention
+# ===========================================================================
+
+SENTINEL_CALENDAR_ID = "c_hostile_demo_calendar_999@group.calendar.google.com"
+SENTINEL_EVENT_ID = "evt_top_secret_adversarial_id_777"
+SENTINEL_PRIVATE_TITLE = "Super Confidential Mergers & Acquisitions Board Meeting"
+SENTINEL_ACCESS_TOKEN = "ya29.a0AfH6SMD_very_secret_oauth_bearer_token_string_12345"
+SENTINEL_PROVIDER_URL = (
+    f"https://www.googleapis.com/calendar/v3/calendars/{SENTINEL_CALENDAR_ID}/"
+    f"events/{SENTINEL_EVENT_ID}?access_token={SENTINEL_ACCESS_TOKEN}"
+)
+ALL_SENTINELS = (
+    SENTINEL_CALENDAR_ID,
+    SENTINEL_EVENT_ID,
+    SENTINEL_PRIVATE_TITLE,
+    SENTINEL_ACCESS_TOKEN,
+    SENTINEL_PROVIDER_URL,
+)
+
+
+class TestAdversarialPrivacyBoundaries:
+    """Adversarial tests proving hostile provider payloads cannot leak through StillDone."""
+
+    def test_hostile_provider_error_does_not_leak_into_read_result_error_message(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        hostile_msg = (
+            f"HTTP 500 internal crash requesting {SENTINEL_PROVIDER_URL} "
+            f"for calendar {SENTINEL_CALENDAR_ID} and event {SENTINEL_EVENT_ID} "
+            f"with title '{SENTINEL_PRIVATE_TITLE}' using token {SENTINEL_ACCESS_TOKEN}"
+        )
+
+        for error_cls in (
+            CalendarApiError,
+            CalendarAuthenticationError,
+            CalendarRateLimitError,
+            CalendarTransportError,
+            RuntimeError,
+        ):
+            mock_transport = MagicMock()
+            mock_transport.get_event.side_effect = error_cls(hostile_msg)
+            adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=mock_transport)
+
+            action = _make_calendar_read_contract(event_id=SENTINEL_EVENT_ID)
+            result = adapter.read_event(action)
+
+            assert result.status == CalendarReadStatus.PROVIDER_ERROR
+            assert result.error_message is not None
+
+            for sentinel in ALL_SENTINELS:
+                assert sentinel not in result.error_message, (
+                    f"Sentinel '{sentinel}' leaked in CalendarReadResult.error_message: "
+                    f"{result.error_message}"
+                )
+                assert sentinel not in repr(result), (
+                    f"Sentinel '{sentinel}' leaked in repr(CalendarReadResult)"
+                )
+                assert sentinel not in str(result), (
+                    f"Sentinel '{sentinel}' leaked in str(CalendarReadResult)"
+                )
+
+    def test_hostile_provider_error_does_not_leak_into_logs(
+        self,
+        demo_scope: DemoResourceScope,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        hostile_msg = (
+            f"HTTP 500 error connecting to {SENTINEL_PROVIDER_URL} "
+            f"target calendar {SENTINEL_CALENDAR_ID} target event {SENTINEL_EVENT_ID} "
+            f"secret summary '{SENTINEL_PRIVATE_TITLE}' bearer {SENTINEL_ACCESS_TOKEN}"
+        )
+
+        mock_transport = MagicMock()
+        mock_transport.get_event.side_effect = CalendarApiError(hostile_msg)
+        adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=mock_transport)
+
+        caplog.set_level(logging.DEBUG)
+        action = _make_calendar_read_contract(event_id=SENTINEL_EVENT_ID)
+        adapter.read_event(action)
+
+        for sentinel in ALL_SENTINELS:
+            assert sentinel not in caplog.text, (
+                f"Sentinel '{sentinel}' leaked into captured logs: {caplog.text}"
+            )
+
+    def test_transport_event_repr_and_str_mask_private_details(self) -> None:
+        transport_event = CalendarTransportEvent(
+            id=SENTINEL_EVENT_ID,
+            etag='"etag_sentinel"',
+            summary=SENTINEL_PRIVATE_TITLE,
+            start_time="2026-10-03T07:45:00Z",
+            end_time="2026-10-03T08:15:00Z",
+            all_day=False,
+            status="confirmed",
+            raw_resource={
+                "url": SENTINEL_PROVIDER_URL,
+                "token": SENTINEL_ACCESS_TOKEN,
+                "calendar_id": SENTINEL_CALENDAR_ID,
+            },
+        )
+
+        r = repr(transport_event)
+        s = str(transport_event)
+
+        for sentinel in ALL_SENTINELS:
+            assert sentinel not in r, (
+                f"Sentinel '{sentinel}' leaked in repr(CalendarTransportEvent): {r}"
+            )
+            assert sentinel not in s, (
+                f"Sentinel '{sentinel}' leaked in str(CalendarTransportEvent): {s}"
+            )
+
+        # Summary and start_time must be masked
+        assert SENTINEL_PRIVATE_TITLE not in r
+        assert "2026-10-03T07:45:00Z" not in r
+
+    def test_observation_repr_and_str_mask_private_details(self) -> None:
+        obs = CalendarEventObservation(
+            event_id=SENTINEL_EVENT_ID,
+            calendar_id=SENTINEL_CALENDAR_ID,
+            summary=SENTINEL_PRIVATE_TITLE,
+            start_time="2026-10-03T07:45:00Z",
+            end_time="2026-10-03T08:15:00Z",
+            all_day=False,
+            etag='"etag_obs"',
+            status="confirmed",
+            observed_at=datetime.now(tz=UTC),
+        )
+
+        r = repr(obs)
+        s = str(obs)
+
+        for sentinel in ALL_SENTINELS:
+            assert sentinel not in r, (
+                f"Sentinel '{sentinel}' leaked in repr(CalendarEventObservation): {r}"
+            )
+            assert sentinel not in s, (
+                f"Sentinel '{sentinel}' leaked in str(CalendarEventObservation): {s}"
+            )
+
+        assert SENTINEL_PRIVATE_TITLE not in r
+        assert "2026-10-03T07:45:00Z" not in r
+
+    def test_observation_has_no_raw_payload_and_does_not_retain_unrelated_fields(
+        self,
+        demo_scope: DemoResourceScope,
+    ) -> None:
+        fake_transport = FakeGoogleCalendarTransport()
+        fake_transport.seed_event(
+            calendar_id=demo_scope.calendar_id,
+            event_id="rich_event_001",
+            summary="Rich Meeting",
+            start_time="2026-10-03T10:00:00Z",
+            extra_fields={
+                "attendees": [{"email": "boss@corp.com", "responseStatus": "accepted"}],
+                "description": "Sensitive internal quarterly review discussion",
+                "location": "Confidential Boardroom 4",
+                "organizer": {"email": "ceo@corp.com", "displayName": "Chief Executive"},
+                "conferenceData": {"conferenceId": "conf_xyz_123"},
+                "reminders": {
+                    "useDefault": False,
+                    "overrides": [{"method": "popup", "minutes": 10}],
+                },
+                "extendedProperties": {"private": {"salary_band": "Tier-1"}},
+                "gadget": {"title": "Internal gadget"},
+                "creator": {"email": "assistant@corp.com"},
+            },
+        )
+        adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+        action = _make_calendar_read_contract(event_id="rich_event_001")
+        result = adapter.read_event(action)
+
+        assert result.status == CalendarReadStatus.SUCCESS
+        obs = result.observation
+        assert obs is not None
+
+        # raw_event_payload must not exist on the observation
+        assert not hasattr(obs, "raw_event_payload"), (
+            "CalendarEventObservation must NOT contain raw_event_payload"
+        )
+        assert "raw_event_payload" not in CalendarEventObservation.__annotations__, (
+            "raw_event_payload must NOT be in CalendarEventObservation fields"
+        )
+
+        # Unrelated provider fields must not be retained on the observation
+        unrelated_fields = (
+            "attendees",
+            "description",
+            "location",
+            "organizer",
+            "conferenceData",
+            "reminders",
+            "extendedProperties",
+            "gadget",
+            "creator",
+            "raw_resource",
+        )
+        for field_name in unrelated_fields:
+            assert not hasattr(obs, field_name), (
+                f"Unrelated field '{field_name}' must NOT be retained on CalendarEventObservation"
+            )
+
+    def test_raised_adapter_exceptions_never_leak_identifiers(self) -> None:
+        not_found = CalendarEventNotFoundError()
+        precond = CalendarPreconditionFailedError()
+        auth = CalendarAuthenticationError()
+        rate = CalendarRateLimitError()
+        api = CalendarApiError()
+
+        for exc in (not_found, precond, auth, rate, api):
+            msg = str(exc)
+            assert VALID_EVENT_ID not in msg
+            assert DEMO_CALENDAR_ID not in msg
 
 
 # ===========================================================================

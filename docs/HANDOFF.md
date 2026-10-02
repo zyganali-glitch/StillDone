@@ -73,11 +73,18 @@ Preferred AWS target:
 - No product code before the applicable Master Plan task.
 
 ## Current exact task
- 
-Phase P-05 P-Ω Closure Truth Sync
+
+P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar
 
 Status:
-`CLOSED — independent QA PASS`
+`UNDER INDEPENDENT-QA REPAIR`
+
+Notes:
+- P-06.01 is under surgical independent-QA repair for error/log/repr sanitization and observation minimization.
+- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2`.
+- P-06.02 and P-06.03 remain implementation-complete / awaiting independent QA, NOT PASS.
+- P-06.04 remains PENDING / NOT AUTHORIZED.
+- Next safe action is independent QA of this P-06.01 repair.
 
 ## Phase P-04 Status
 
@@ -105,10 +112,10 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 
 ## Phase P-06 Status
 
-- P-06.01 — IMPLEMENTATION COMPLETE — awaiting independent QA review
-- P-06.02 — IMPLEMENTATION COMPLETE — awaiting independent QA review
-- P-06.03 — IMPLEMENTATION COMPLETE — awaiting independent QA review
-- P-06.04 — PENDING
+- P-06.01 — UNDER INDEPENDENT-QA REPAIR (sanitizing repr/str/log/error paths and minimizing observation)
+- P-06.02 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.03 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.04 — PENDING / NOT AUTHORIZED
 - P-06.05 — PENDING
 - P-06.06 — PENDING
 - P-06.07 — PENDING
@@ -122,14 +129,14 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Next exact task
 
-`P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list`
+`P-06.01 — Implement Google Calendar read adapter against dedicated demo calendar (SURGICAL REPAIR)`
 
 Status:
-`PENDING / NOT AUTHORIZED` (until independent QA verifies Phase P-06 Calendar batch)
+`UNDER INDEPENDENT-QA REPAIR`
 
 ## Next safe action
 
-Await independent QA review of the Phase P-06 Calendar batch (P-06.01, P-06.02, P-06.03). Do NOT begin P-06.04.
+Independent QA of this P-06.01 repair. Do NOT begin P-06.04.
 
 
 ---

@@ -15,6 +15,7 @@ Provides bounded, fail-closed integration with Google Calendar API v3:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -40,6 +41,7 @@ from stilldone.domain.action import (
 )
 from stilldone.domain.authority import ApprovalGrant
 from stilldone.domain.mission import MissionId
+from stilldone.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -72,25 +74,108 @@ class CalendarTargetError(CalendarAdapterError, ValueError):
 class CalendarTransportError(CalendarAdapterError):
     """Base exception for transport/network/API failures communicating with Google Calendar."""
 
+    def __init__(
+        self,
+        message: str = "Calendar transport error",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class CalendarEventNotFoundError(CalendarTransportError):
     """Raised when the requested event does not exist on the specified calendar."""
+
+    def __init__(
+        self,
+        message: str = "Calendar event not found",
+        status_code: int | None = 404,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
 
 
 class CalendarPreconditionFailedError(CalendarTransportError):
     """Raised when an ETag mismatch or HTTP 412 precondition check fails."""
 
+    def __init__(
+        self,
+        message: str = "ETag mismatch: precondition check failed for calendar event",
+        status_code: int | None = 412,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
+
 
 class CalendarAuthenticationError(CalendarTransportError):
     """Raised when credentials or OAuth tokens are rejected by Google APIs."""
+
+    def __init__(
+        self,
+        message: str = "Google Calendar authentication/authorization error",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
 
 
 class CalendarRateLimitError(CalendarTransportError):
     """Raised when Google Calendar rate limits (HTTP 429) are encountered."""
 
+    def __init__(
+        self,
+        message: str = "Google Calendar rate limit exceeded",
+        status_code: int | None = 429,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
+
 
 class CalendarApiError(CalendarTransportError):
     """Raised when Google Calendar API returns an unhandled error response."""
+
+    def __init__(
+        self,
+        message: str = "Google Calendar API error",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
+
+
+def _sanitize_calendar_transport_error(exc: Exception) -> str:
+    """Map transport/provider exceptions to bounded sanitized error messages.
+
+    Guarantees that raw provider error payloads, URLs, tokens, calendar IDs,
+    event IDs, and private details are never exposed in error messages.
+    """
+    status_code: int | None = getattr(exc, "status_code", None)
+    if status_code is None:
+        resp = getattr(exc, "resp", None)
+        if resp is not None:
+            status_code = getattr(resp, "status", None)
+
+    if status_code is None:
+        match = re.search(r"\b([45]\d\d)\b", str(exc))
+        if match:
+            try:
+                status_code = int(match.group(1))
+            except Exception:
+                status_code = None
+
+    code_suffix = f" (status {status_code})" if status_code is not None else ""
+
+    if isinstance(exc, CalendarAuthenticationError):
+        msg = f"Calendar authentication/authorization failed{code_suffix}"
+    elif isinstance(exc, CalendarRateLimitError):
+        msg = f"Calendar rate limit exceeded{code_suffix}"
+    elif isinstance(exc, CalendarPreconditionFailedError):
+        msg = f"Calendar event update conflict (ETag mismatch){code_suffix}"
+    elif isinstance(exc, CalendarEventNotFoundError):
+        msg = f"Calendar event not found{code_suffix}"
+    elif isinstance(exc, CalendarApiError):
+        msg = f"Calendar provider API error{code_suffix}"
+    elif isinstance(exc, CalendarTransportError):
+        msg = f"Calendar provider transport error{code_suffix}"
+    else:
+        msg = f"Unexpected calendar transport failure: {type(exc).__name__}"
+
+    return redact_text(msg)
 
 
 # ===========================================================================
@@ -113,8 +198,8 @@ class CalendarTransportEvent:
 
     def __repr__(self) -> str:
         return (
-            f"CalendarTransportEvent(id='***', summary='{self.summary}', "
-            f"start_time='{self.start_time}', all_day={self.all_day}, status='{self.status}')"
+            f"CalendarTransportEvent(id='***', summary='***', "
+            f"start_time='***', all_day={self.all_day}, status='{self.status}')"
         )
 
     def __str__(self) -> str:
@@ -234,12 +319,12 @@ class FakeGoogleCalendarTransport:
         key = (calendar_id, event_id)
         existing = self._events.get(key)
         if existing is None or existing.get("status") == "cancelled":
-            raise CalendarEventNotFoundError(f"Event '{event_id}' not found in calendar")
+            raise CalendarEventNotFoundError("Calendar event not found")
 
         current_etag = existing.get("etag")
         if if_match != current_etag:
             raise CalendarPreconditionFailedError(
-                f"ETag mismatch for event '{event_id}': expected {if_match}, actual {current_etag}"
+                "ETag mismatch: precondition check failed for calendar event"
             )
 
         self._etag_counter += 1
@@ -308,10 +393,21 @@ class GoogleApiClientCalendarTransport:
             if status_code == 404:
                 return None
             if status_code in (401, 403):
-                raise CalendarAuthenticationError(f"Google Calendar auth error: {exc}") from exc
+                raise CalendarAuthenticationError(
+                    f"Google Calendar auth error (status {status_code})",
+                    status_code=status_code,
+                ) from exc
             if status_code == 429:
-                raise CalendarRateLimitError(f"Google Calendar rate limit exceeded: {exc}") from exc
-            raise CalendarApiError(f"Google Calendar API get_event failed: {exc}") from exc
+                raise CalendarRateLimitError(
+                    "Google Calendar rate limit exceeded (status 429)",
+                    status_code=429,
+                ) from exc
+            if status_code is not None:
+                raise CalendarApiError(
+                    f"Google Calendar API get_event failed (status {status_code})",
+                    status_code=status_code,
+                ) from exc
+            raise CalendarApiError("Google Calendar API get_event failed") from exc
 
     def update_event(
         self,
@@ -334,16 +430,31 @@ class GoogleApiClientCalendarTransport:
         except Exception as exc:
             status_code = getattr(getattr(exc, "resp", None), "status", None)
             if status_code == 404:
-                raise CalendarEventNotFoundError(f"Event '{event_id}' not found") from exc
+                raise CalendarEventNotFoundError(
+                    "Calendar event not found (status 404)",
+                    status_code=404,
+                ) from exc
             if status_code == 412:
                 raise CalendarPreconditionFailedError(
-                    f"ETag mismatch for event '{event_id}'"
+                    "ETag mismatch: precondition check failed for calendar event (status 412)",
+                    status_code=412,
                 ) from exc
             if status_code in (401, 403):
-                raise CalendarAuthenticationError(f"Google Calendar auth error: {exc}") from exc
+                raise CalendarAuthenticationError(
+                    f"Google Calendar auth error (status {status_code})",
+                    status_code=status_code,
+                ) from exc
             if status_code == 429:
-                raise CalendarRateLimitError(f"Google Calendar rate limit exceeded: {exc}") from exc
-            raise CalendarApiError(f"Google Calendar API update_event failed: {exc}") from exc
+                raise CalendarRateLimitError(
+                    "Google Calendar rate limit exceeded (status 429)",
+                    status_code=429,
+                ) from exc
+            if status_code is not None:
+                raise CalendarApiError(
+                    f"Google Calendar API update_event failed (status {status_code})",
+                    status_code=status_code,
+                ) from exc
+            raise CalendarApiError("Google Calendar API update_event failed") from exc
 
 
 # ===========================================================================
@@ -363,8 +474,9 @@ class CalendarReadStatus(StrEnum):
 class CalendarEventObservation:
     """Normalized, sanitized observation of an event from Google Calendar.
 
-    Persists only the narrow fields StillDone requires.
-    Sensitive identifiers are masked in repr/str.
+    Persists only the narrow bounded fields StillDone requires.
+    Sensitive identifiers and private details are masked in repr/str.
+    Does NOT retain unrelated provider fields (attendees, description, etc.).
     Does NOT assert or imply VERIFIED or READY.
     """
 
@@ -377,12 +489,11 @@ class CalendarEventObservation:
     etag: str | None
     status: str
     observed_at: datetime
-    raw_event_payload: dict[str, Any]
 
     def __repr__(self) -> str:
         return (
             f"CalendarEventObservation(event_id='***', calendar_id='***', "
-            f"summary='{self.summary}', start_time='{self.start_time}', "
+            f"summary='***', start_time='***', "
             f"all_day={self.all_day}, status='{self.status}')"
         )
 
@@ -499,7 +610,7 @@ class GoogleCalendarReadAdapter:
         try:
             verify_demo_resource_isolation(validated, self._scope)
         except DemoIsolationError as exc:
-            logger.warning("Calendar demo isolation rejected: %s", exc)
+            logger.warning("Calendar demo isolation rejected: %s", type(exc).__name__)
             raise
 
         # Step 5: Exact Event ID Extraction (never match by summary or search)
@@ -515,15 +626,15 @@ class GoogleCalendarReadAdapter:
                 event_id=event_id,
             )
         except CalendarTransportError as exc:
-            logger.error("Transport error reading event: %s", exc)
+            logger.error("Transport error reading event: %s", type(exc).__name__)
             return CalendarReadResult(
                 status=CalendarReadStatus.PROVIDER_ERROR,
                 event_id=event_id,
-                error_message=str(exc),
+                error_message=_sanitize_calendar_transport_error(exc),
                 read_at=now,
             )
         except Exception as exc:
-            logger.error("Unexpected error reading event: %s", exc)
+            logger.error("Unexpected error reading event: %s", type(exc).__name__)
             return CalendarReadResult(
                 status=CalendarReadStatus.PROVIDER_ERROR,
                 event_id=event_id,
@@ -549,7 +660,6 @@ class GoogleCalendarReadAdapter:
             etag=transport_event.etag,
             status=transport_event.status,
             observed_at=now,
-            raw_event_payload=dict(transport_event.raw_resource),
         )
 
         return CalendarReadResult(
@@ -722,7 +832,7 @@ class GoogleCalendarUpdateAdapter:
         try:
             verify_demo_resource_isolation(validated, self._scope)
         except DemoIsolationError as exc:
-            logger.warning("Calendar demo isolation rejected for update: %s", exc)
+            logger.warning("Calendar demo isolation rejected for update: %s", type(exc).__name__)
             raise
 
         # Step 5: Authority Policy Evaluation (Fail-closed BEFORE any provider call)
@@ -743,16 +853,16 @@ class GoogleCalendarUpdateAdapter:
                 event_id=event_id,
             )
         except CalendarTransportError as exc:
-            logger.error("Transport error reading event for update: %s", exc)
+            logger.error("Transport error reading event for update: %s", type(exc).__name__)
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
                 writes_performed=0,
-                error_message=str(exc),
+                error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
         except Exception as exc:
-            logger.error("Unexpected error reading event for update: %s", exc)
+            logger.error("Unexpected error reading event for update: %s", type(exc).__name__)
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
@@ -766,7 +876,7 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.NOT_FOUND,
                 event_id=event_id,
                 writes_performed=0,
-                error_message=f"Event '{event_id}' not found on demo calendar",
+                error_message="Event not found on demo calendar",
                 updated_at=now,
             )
 
@@ -781,7 +891,6 @@ class GoogleCalendarUpdateAdapter:
             etag=current_transport_event.etag,
             status=current_transport_event.status,
             observed_at=now,
-            raw_event_payload=dict(current_transport_event.raw_resource),
         )
 
         # Step 8: Deterministic Idempotency Check
@@ -802,7 +911,7 @@ class GoogleCalendarUpdateAdapter:
 
         if already_matches:
             # Desired state is already true! Zero provider write performed.
-            logger.info("Calendar event '%s' already in desired state; skipping write.", event_id)
+            logger.info("Calendar event already in desired state; skipping write.")
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.NOOP_ALREADY_APPLIED,
                 event_id=event_id,
@@ -814,9 +923,7 @@ class GoogleCalendarUpdateAdapter:
 
         # Step 9: Prepare updated full event resource (preserving unrelated provider fields)
         if not current_transport_event.etag:
-            raise CalendarTargetError(
-                f"Cannot conditionally update event '{event_id}' without provider ETag"
-            )
+            raise CalendarTargetError("Cannot conditionally update event without provider ETag")
 
         raw_payload = dict(current_transport_event.raw_resource)
 
@@ -857,25 +964,25 @@ class GoogleCalendarUpdateAdapter:
                 send_updates="none",
             )
         except CalendarPreconditionFailedError as exc:
-            logger.warning("ETag precondition conflict updating event: %s", exc)
+            logger.warning("ETag precondition conflict updating event: %s", type(exc).__name__)
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.CONFLICT,
                 event_id=event_id,
                 writes_performed=0,
-                error_message=str(exc),
+                error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
         except CalendarTransportError as exc:
-            logger.error("Transport error executing event update: %s", exc)
+            logger.error("Transport error executing event update: %s", type(exc).__name__)
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
                 writes_performed=0,
-                error_message=str(exc),
+                error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
         except Exception as exc:
-            logger.error("Unexpected error executing event update: %s", exc)
+            logger.error("Unexpected error executing event update: %s", type(exc).__name__)
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
@@ -894,7 +1001,6 @@ class GoogleCalendarUpdateAdapter:
             etag=updated_transport_event.etag,
             status=updated_transport_event.status,
             observed_at=now,
-            raw_event_payload=dict(updated_transport_event.raw_resource),
         )
 
         return CalendarUpdateResult(
@@ -1061,7 +1167,7 @@ class GoogleCalendarReadbackVerifier:
                 status=CalendarReadbackStatus.NOT_FOUND,
                 event_id=event_id,
                 expected=expected,
-                error_message=f"Event '{event_id}' not found on calendar during read-back",
+                error_message="Event not found on calendar during read-back",
                 verified_at=now,
             )
 
