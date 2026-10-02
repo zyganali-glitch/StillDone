@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -24,14 +24,19 @@ from stilldone.action_policy import (
     ValidatedActionContract,
     validate_action_contract,
 )
+from stilldone.authority_policy import (
+    evaluate_authority,
+)
 from stilldone.demo_isolation import (
     DemoIsolationError,
     DemoResourceScope,
     verify_demo_resource_isolation,
 )
 from stilldone.domain.action import ActionContract, ActionType, ResourceKind
+from stilldone.domain.authority import ApprovalGrant
 
 logger = logging.getLogger(__name__)
+
 
 # ===========================================================================
 # Canonical Constants
@@ -546,4 +551,351 @@ class GoogleCalendarReadAdapter:
             event_id=event_id,
             observation=observation,
             read_at=now,
+        )
+
+
+# ===========================================================================
+# Datetime / Idempotency Normalization Helpers
+# ===========================================================================
+
+
+def _normalize_iso_time(time_str: str) -> tuple[int, datetime | None]:
+    """Parse time string into comparable form.
+
+    Returns (0, dt_utc) for datetime, (1, dt_date) for date, or (2, None) if unparseable.
+    """
+    try:
+        dt = datetime.fromisoformat(time_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return (0, dt.astimezone(UTC))
+    except Exception:
+        try:
+            d = date.fromisoformat(time_str)
+            return (1, datetime(d.year, d.month, d.day, tzinfo=UTC))
+        except Exception:
+            return (2, None)
+
+
+def _is_time_equal(t1: str, t2: str) -> bool:
+    """Deterministically check if two time strings represent the same point in time or date."""
+    if t1.strip() == t2.strip():
+        return True
+    kind1, dt1 = _normalize_iso_time(t1)
+    kind2, dt2 = _normalize_iso_time(t2)
+    if kind1 == kind2 and dt1 is not None and dt2 is not None:
+        return dt1 == dt2
+    return False
+
+
+# ===========================================================================
+# Normalized Update Models
+# ===========================================================================
+
+
+class CalendarUpdateStatus(StrEnum):
+    """Result status of a Calendar update operation."""
+
+    UPDATED = "UPDATED"
+    NOOP_ALREADY_APPLIED = "NOOP_ALREADY_APPLIED"
+    CONFLICT = "CONFLICT"
+    NOT_FOUND = "NOT_FOUND"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarUpdateResult:
+    """Result of a Google Calendar update attempt.
+
+    Contains writes_performed counter and observation.
+    Does NOT assert or imply VERIFIED or READY state.
+    """
+
+    status: CalendarUpdateStatus
+    event_id: str
+    writes_performed: int
+    observation: CalendarEventObservation | None = None
+    applied_parameters: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
+    updated_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+
+    def __repr__(self) -> str:
+        return (
+            f"CalendarUpdateResult(status={self.status.value}, "
+            f"event_id='***', writes_performed={self.writes_performed})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+# ===========================================================================
+# Google Calendar Bounded Update Adapter with Idempotency
+# ===========================================================================
+
+
+class GoogleCalendarUpdateAdapter:
+    """Bounded, fail-closed Google Calendar update adapter.
+
+    Enforces:
+    - Dedicated demo calendar scope (DemoResourceScope).
+    - P-04 action validation (ValidatedActionContract).
+    - P-04 authority evaluation with bound ApprovalGrant.
+    - Read-before-write against exact target event.
+    - Adapter-level idempotency strategy: checks if requested state is already true.
+      If so, returns NOOP_ALREADY_APPLIED with writes_performed=0.
+    - Conditional mutation using currently observed ETag with If-Match (never '*').
+    - Preserves unrelated valid event fields.
+    - Bounded parameters only: summary, start_time, all_day.
+    - Avoids attendee notification side effects (sendUpdates='none').
+    - Precondition conflict (412) handled gracefully without blind overwrite.
+    - Zero mission state mutation and zero READY/VERIFIED promotions.
+    """
+
+    def __init__(self, scope: DemoResourceScope, transport: CalendarTransport) -> None:
+        if not isinstance(scope, DemoResourceScope):
+            raise CalendarScopeError(
+                f"scope must be a DemoResourceScope instance, got {type(scope).__name__}"
+            )
+        cal_id_lower = scope.calendar_id.strip().lower()
+        if cal_id_lower in FORBIDDEN_CALENDAR_IDS:
+            raise CalendarScopeError(
+                f"Demo calendar scope cannot be '{scope.calendar_id}'. "
+                "Dedicated demo calendar required."
+            )
+        self._scope = scope
+        self._transport = transport
+
+    @property
+    def scope(self) -> DemoResourceScope:
+        """The bound demo resource scope."""
+        return self._scope
+
+    def update_event(
+        self,
+        action: ValidatedActionContract | ActionContract,
+        approval: ApprovalGrant | None = None,
+        at: datetime | None = None,
+    ) -> CalendarUpdateResult:
+        """Update an exact calendar event according to the canonical action contract.
+
+        Fails closed before any provider read/write if action validation, demo isolation,
+        or bound approval is missing or invalid.
+        """
+        # Step 1: Ensure ValidatedActionContract
+        if isinstance(action, ActionContract):
+            validated = validate_action_contract(action)
+        elif isinstance(action, ValidatedActionContract):
+            validated = action
+        else:
+            raise TypeError(
+                f"action must be ActionContract or ValidatedActionContract, "
+                f"got {type(action).__name__}"
+            )
+
+        # Step 2: Validate ActionType
+        if validated.action_type != ActionType.CALENDAR_UPDATE:
+            raise CalendarTargetError(
+                f"GoogleCalendarUpdateAdapter handles '{ActionType.CALENDAR_UPDATE.value}', "
+                f"got '{validated.action_type.value}'"
+            )
+
+        # Step 3: Validate Target System & ResourceKind
+        if validated.target.system != CANONICAL_CALENDAR_SYSTEM:
+            raise CalendarTargetError(
+                f"Target system must be '{CANONICAL_CALENDAR_SYSTEM}', "
+                f"got '{validated.target.system}'"
+            )
+        if validated.target.resource_kind != CANONICAL_CALENDAR_RESOURCE_KIND:
+            raise CalendarTargetError(
+                f"Target resource_kind must be '{CANONICAL_CALENDAR_RESOURCE_KIND.value}', "
+                f"got '{validated.target.resource_kind.value}'"
+            )
+
+        # Step 4: Strict Demo Isolation Check
+        try:
+            verify_demo_resource_isolation(validated, self._scope)
+        except DemoIsolationError as exc:
+            logger.warning("Calendar demo isolation rejected for update: %s", exc)
+            raise
+
+        # Step 5: Authority Policy Evaluation (Fail-closed BEFORE any provider call)
+        eval_at = at if at is not None else datetime.now(tz=UTC)
+        authority_decision = evaluate_authority(validated, approval=approval, at=eval_at)
+        authority_decision.raise_for_status()
+
+        # Step 6: Target Event ID
+        event_id = validated.target.resource_id
+        if not event_id or not event_id.strip():
+            raise CalendarTargetError("Target resource_id (event_id) must be non-empty")
+
+        # Step 7: Read-before-write
+        now = datetime.now(tz=UTC)
+        try:
+            current_transport_event = self._transport.get_event(
+                calendar_id=self._scope.calendar_id,
+                event_id=event_id,
+            )
+        except CalendarTransportError as exc:
+            logger.error("Transport error reading event for update: %s", exc)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.PROVIDER_ERROR,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=str(exc),
+                updated_at=now,
+            )
+        except Exception as exc:
+            logger.error("Unexpected error reading event for update: %s", exc)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.PROVIDER_ERROR,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=f"Unexpected transport failure: {type(exc).__name__}",
+                updated_at=now,
+            )
+
+        if current_transport_event is None or current_transport_event.status == "cancelled":
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.NOT_FOUND,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=f"Event '{event_id}' not found on demo calendar",
+                updated_at=now,
+            )
+
+        # Build current observation
+        current_obs = CalendarEventObservation(
+            event_id=current_transport_event.id,
+            calendar_id=self._scope.calendar_id,
+            summary=current_transport_event.summary,
+            start_time=current_transport_event.start_time,
+            end_time=current_transport_event.end_time,
+            all_day=current_transport_event.all_day,
+            etag=current_transport_event.etag,
+            status=current_transport_event.status,
+            observed_at=now,
+            raw_event_payload=dict(current_transport_event.raw_resource),
+        )
+
+        # Step 8: Deterministic Idempotency Check
+        params = validated.parameters.to_dict()
+        already_matches = True
+
+        if "summary" in params:
+            if current_obs.summary != params["summary"]:
+                already_matches = False
+
+        if "all_day" in params:
+            if current_obs.all_day != params["all_day"]:
+                already_matches = False
+
+        if "start_time" in params:
+            if not _is_time_equal(current_obs.start_time, str(params["start_time"])):
+                already_matches = False
+
+        if already_matches:
+            # Desired state is already true! Zero provider write performed.
+            logger.info("Calendar event '%s' already in desired state; skipping write.", event_id)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.NOOP_ALREADY_APPLIED,
+                event_id=event_id,
+                writes_performed=0,
+                observation=current_obs,
+                applied_parameters=dict(params),
+                updated_at=now,
+            )
+
+        # Step 9: Prepare updated full event resource (preserving unrelated provider fields)
+        if not current_transport_event.etag:
+            raise CalendarTargetError(
+                f"Cannot conditionally update event '{event_id}' without provider ETag"
+            )
+
+        raw_payload = dict(current_transport_event.raw_resource)
+
+        if "summary" in params:
+            raw_payload["summary"] = str(params["summary"])
+
+        new_all_day = bool(params.get("all_day", current_obs.all_day))
+        new_start = str(params.get("start_time", current_obs.start_time))
+
+        if new_all_day:
+            start_date = new_start.split("T")[0]
+            raw_payload["start"] = {"date": start_date}
+            raw_payload["end"] = {"date": start_date}
+        else:
+            raw_payload["start"] = {"dateTime": new_start}
+            try:
+                new_s_dt = datetime.fromisoformat(new_start)
+                if current_obs.end_time:
+                    orig_s_dt = datetime.fromisoformat(current_obs.start_time)
+                    orig_e_dt = datetime.fromisoformat(current_obs.end_time)
+                    duration = orig_e_dt - orig_s_dt
+                    if duration <= timedelta(0):
+                        duration = timedelta(minutes=30)
+                else:
+                    duration = timedelta(minutes=30)
+                new_e_dt = new_s_dt + duration
+                raw_payload["end"] = {"dateTime": new_e_dt.isoformat()}
+            except Exception:
+                raw_payload["end"] = {"dateTime": new_start}
+
+        # Step 10: Execute conditional update with observed ETag
+        try:
+            updated_transport_event = self._transport.update_event(
+                calendar_id=self._scope.calendar_id,
+                event_id=event_id,
+                payload=raw_payload,
+                if_match=current_transport_event.etag,
+                send_updates="none",
+            )
+        except CalendarPreconditionFailedError as exc:
+            logger.warning("ETag precondition conflict updating event: %s", exc)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.CONFLICT,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=str(exc),
+                updated_at=now,
+            )
+        except CalendarTransportError as exc:
+            logger.error("Transport error executing event update: %s", exc)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.PROVIDER_ERROR,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=str(exc),
+                updated_at=now,
+            )
+        except Exception as exc:
+            logger.error("Unexpected error executing event update: %s", exc)
+            return CalendarUpdateResult(
+                status=CalendarUpdateStatus.PROVIDER_ERROR,
+                event_id=event_id,
+                writes_performed=0,
+                error_message=f"Unexpected update failure: {type(exc).__name__}",
+                updated_at=now,
+            )
+
+        updated_obs = CalendarEventObservation(
+            event_id=updated_transport_event.id,
+            calendar_id=self._scope.calendar_id,
+            summary=updated_transport_event.summary,
+            start_time=updated_transport_event.start_time,
+            end_time=updated_transport_event.end_time,
+            all_day=updated_transport_event.all_day,
+            etag=updated_transport_event.etag,
+            status=updated_transport_event.status,
+            observed_at=now,
+            raw_event_payload=dict(updated_transport_event.raw_resource),
+        )
+
+        return CalendarUpdateResult(
+            status=CalendarUpdateStatus.UPDATED,
+            event_id=event_id,
+            writes_performed=1,
+            observation=updated_obs,
+            applied_parameters=dict(params),
+            updated_at=now,
         )
