@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — P-06.01 to P-06.07 independent QA PASS; P-06.08 LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)**
+Current repository state: **Phase P-06: IN PROGRESS — P-06.01 to P-06.07 independent QA PASS; P-06.08 REPAIRED — awaiting independent QA review (NOT PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -77,7 +77,7 @@ Preferred AWS target:
 P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
 
 Status:
-`LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
@@ -87,7 +87,11 @@ Notes:
 - P-06.05 received independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`).
 - P-06.06 received independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`).
 - P-06.07 received independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
-- P-06.08 live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API:
+- P-06.08 live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API (REPAIRED):
+  * Pre-final-run operator fixture preparation recorded: initial preflight probe observed missing event (`BLOCKED_MISSING_DEMO_EVENT`); Antigravity guided the human OPERATOR to manually create the synthetic demo event `Leave for school`; operator initially entered `2026-10-03 17:00`; preflight gate detected wrong current state (`BLOCKED_WRONG_CURRENT_STATE`); operator manually corrected fixture to canonical `2026-10-04 07:45` pre-state.
+  * Process deviation recorded: `OPERATOR_FIXTURE_PREPARATION_PROCESS_DEVIATION_RECORDED` (operator manual fixture setup within the session rather than returning to QA before fixture existence).
+  * Zero executor fixture mutations: Antigravity, StillDone, and canonical Calendar adapters executed strictly ZERO event creation mutations during fixture preparation.
+  * Final successful proof run call bounding: exactly 5 live API calls executed in the final run (1 calendar discovery, 1 preflight event discovery, 1 pre-write exact read, 1 conditional update mutation, 1 independent read-back).
   * Minimum least-privilege OAuth scopes requested: `https://www.googleapis.com/auth/calendar.calendarlist.readonly` and `https://www.googleapis.com/auth/calendar.events` (zero broad calendar write, zero tasks/gmail/profile/drive scopes).
   * Executed in ephemeral scratch environment outside repository using official `google-api-python-client` 2.201.0, `google-auth-oauthlib` 1.5.0, `google-auth-httplib2` 0.4.4.
   * Dedicated demo calendar discovery: 1 call to `calendarList.list` matching `StillDone Demo` summary exactly once; ID redacted in durable evidence as `[REDACTED_CALENDAR_ID]`; forbidden aliases (primary, default) rejected.
@@ -101,7 +105,7 @@ Notes:
   * Spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement).
   * Cleanup: ephemeral token/auth URL files deleted; client secrets file preserved outside repo in local Downloads; zero secrets/tokens committed.
 - Last independently VERIFIED contiguous SHA at P-06.08 start: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`.
-- P-06.08 status: `LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
+- P-06.08 status: `REPAIRED — awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
 - Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
 
 ## Phase P-04 Status
@@ -137,7 +141,7 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 - P-06.05 — independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`)
 - P-06.06 — independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`)
 - P-06.07 — independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`)
-- P-06.08 — LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.08 — REPAIRED — awaiting independent QA review (NOT PASS)
 
 Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
 
@@ -150,7 +154,7 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 Independent QA review of P-06.08 live Calendar update → read-back → VERIFIED proof.
 
 Status:
-`LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 

@@ -914,10 +914,14 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
 
 ### P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
-Status: LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED — awaiting independent QA review
 
 Acceptance:
-- live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API in dedicated ephemeral scratch environment (`google_p06_08_scratch`);
+- live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API in dedicated ephemeral scratch environment (`google_p06_08_scratch`) with documented fixture preparation provenance;
+- pre-final-run operator fixture preparation recorded: initial preflight probe observed missing event (`BLOCKED_MISSING_DEMO_EVENT`); Antigravity guided the human OPERATOR to manually create the synthetic demo event `Leave for school`; operator initially entered `2026-10-03 17:00`; preflight gate detected wrong current state (`BLOCKED_WRONG_CURRENT_STATE`); operator manually corrected fixture to canonical `2026-10-04 07:45` pre-state;
+- process deviation recorded: `OPERATOR_FIXTURE_PREPARATION_PROCESS_DEVIATION_RECORDED` (operator manual fixture setup within the session rather than returning to QA before fixture existence);
+- zero executor fixture mutations: Antigravity, StillDone, and canonical Calendar adapters executed strictly ZERO event creation mutations during fixture preparation;
+- final successful proof run call bounding: exactly 5 live API calls executed in the final run (1 calendar discovery, 1 preflight event discovery, 1 pre-write exact read, 1 conditional update mutation, 1 independent read-back);
 - minimum least-privilege OAuth scopes requested: `https://www.googleapis.com/auth/calendar.calendarlist.readonly` and `https://www.googleapis.com/auth/calendar.events` (zero broad calendar write, zero tasks/gmail/profile/drive scopes);
 - official SDK execution via `uv run --with google-api-python-client --with google-auth-oauthlib --with google-auth-httplib2` (`google-api-python-client==2.201.0`, `google-auth-oauthlib==1.5.0`, `google-auth-httplib2==0.4.4`);
 - zero dependencies added to `pyproject.toml` or `uv.lock`;
@@ -932,10 +936,10 @@ Acceptance:
 - spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement);
 - credential/token cleanup: ephemeral token and auth URL files deleted; client secrets file preserved outside repository in local Downloads; zero secrets/tokens committed;
 - durable evidence recorded in `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` as `RECORDED_LIVE` (original live provenance `LIVE_GOOGLE`);
-- note: Task live proof complete — awaiting independent QA review (NOT PASS). Do NOT self-award PASS. Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
+- note: Task live proof repaired — awaiting independent QA review (NOT PASS). Do NOT self-award PASS. Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
 
 Phase exit:
-two real mutable systems independently verified (P-06.08 live proof complete, awaiting independent QA review. Phase P-06 closure and Phase P-07 authorization pending independent QA review).
+two real mutable systems independently verified (P-06.08 live proof repaired, awaiting independent QA review. Phase P-06 closure and Phase P-07 authorization pending independent QA review).
 
 ---
 
