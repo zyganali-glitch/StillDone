@@ -22,7 +22,6 @@ Architectural invariants:
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -67,10 +66,6 @@ KNOWN_BEDROCK_STOP_REASONS: frozenset[str] = frozenset(
     }
 )
 
-# Safe alphanumeric pattern for AWS error codes to prevent reflective log injection
-SAFE_ERROR_CODE_REGEX: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
-
-
 # ===========================================================================
 # Exception Hierarchy
 # ===========================================================================
@@ -95,10 +90,10 @@ class BedrockTransportError(BedrockPlannerError):
         self,
         message: str = "Bedrock converse transport failed",
         *,
-        error_code: str | None = None,
+        classification: str = "BEDROCK_TRANSPORT_FAILURE",
     ) -> None:
         super().__init__(message)
-        self.error_code = error_code
+        self.classification = classification
         self.__cause__ = None
         self.__context__ = None
 
@@ -464,18 +459,7 @@ class BedrockPlannerAdapter:
         except Exception as exc:
             if isinstance(exc, BedrockPlannerError):
                 raise
-            code: str | None = None
-            if hasattr(exc, "response") and isinstance(exc.response, Mapping):
-                err_dict = exc.response.get("Error")
-                if isinstance(err_dict, Mapping):
-                    raw_code = err_dict.get("Code")
-                    if isinstance(raw_code, str) and SAFE_ERROR_CODE_REGEX.match(raw_code):
-                        code = raw_code
-            error_name = code if code is not None else type(exc).__name__
-            transport_err = BedrockTransportError(
-                f"Bedrock converse transport failed: {error_name}",
-                error_code=code,
-            )
+            transport_err = BedrockTransportError()
 
         if transport_err is not None:
             transport_err.__cause__ = None
@@ -524,9 +508,7 @@ class BedrockPlannerAdapter:
                 f"Converse message 'role' must be a string, got {type(role).__name__}"
             )
         if role != "assistant":
-            raise BedrockResponseEnvelopeError(
-                f"Converse message 'role' must be 'assistant', got {role!r}"
-            )
+            raise BedrockResponseEnvelopeError("Converse message 'role' must be 'assistant'")
 
         if "content" not in message:
             raise BedrockResponseEnvelopeError(
@@ -613,7 +595,7 @@ class BedrockPlannerAdapter:
                         raise BedrockUsageMetadataError(msg)
                     if val < 0:
                         raise BedrockUsageMetadataError(
-                            f"Usage field '{field_name}' cannot be negative, got {val}"
+                            f"Usage field '{field_name}' cannot be negative"
                         )
 
             usage = BedrockTokenUsage(

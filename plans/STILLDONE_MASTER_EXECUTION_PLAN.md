@@ -987,17 +987,18 @@ Acceptance:
 - schema guidance provided in system prompt text as guidance only, never as Bedrock native structured output `outputConfig`;
 - exact Converse request shape: modelId, system text, messages with user JSON, inferenceConfig (maxTokens, temperature); zero topP, tools, toolConfig, guardrails, or outputConfig;
 - untrusted Converse response envelope strictly validated:
-  * requires Mapping, output.message, role == 'assistant';
+  * requires Mapping, output.message, role == 'assistant' (fails closed with static error, zero raw role reflection);
   * complete content sequence inspected without dropping (non-text blocks like toolUse fail closed);
   * all text blocks concatenated in returned order, bounded by `MAX_PLANNER_JSON_BYTES`, and passed to deterministic parser;
   * stopReason validated against `ACCEPTED_STOP_REASON` ('end_turn'); diagnostic strings bounded to `KNOWN_BEDROCK_STOP_REASONS` with unrecognized strings sanitized to 'unrecognized';
 - mandatory deterministic boundary: raw combined response text checked against `MAX_PLANNER_JSON_BYTES` then passed directly to `parse_candidate_plan_for_input(planner_input, combined_text)`;
 - fail-closed typed exception hierarchy: `BedrockPlannerSettingsError`, `BedrockTransportError`, `BedrockResponseEnvelopeError`, `BedrockEmptyResponseError`, `BedrockStopReasonError`, `BedrockUsageMetadataError`, `BedrockPlanRejectionError`;
 - privacy minimization & exception suppression:
-  * raw underlying exceptions suppressed in transport and rejection paths (`__cause__ = None`, `__context__ = None`);
+  * raw underlying exceptions suppressed in transport and rejection paths (`__cause__ = None`, `__context__ = None`, raised with `from None`);
+  * `BedrockTransportError` uses static message "Bedrock converse transport failed" and static StillDone classification "BEDROCK_TRANSPORT_FAILURE"; raw provider Error.Code completely removed from reflection and storage;
   * `BedrockPlanRejectionError` stores only deterministic rejection class (`rejection_class`), discarding raw untrusted exception instances;
-  * zero leakage of hostile sentinels (action_type, target_ref, mission_id, model payload, AWS credentials, stopReason) into str(), repr(), causes, contexts, or formatted tracebacks;
-- 28 focused unit tests in `tests/planning/test_bedrock_adapter.py` passing covering all requirements with zero network calls;
+  * zero leakage of hostile sentinels (action_type, target_ref, mission_id, model payload, AWS credentials, stopReason, role, AWS Error.Code, key-shaped values) into str(), repr(), attributes, __dict__, causes, contexts, or formatted tracebacks;
+- 29 focused unit tests in `tests/planning/test_bedrock_adapter.py` passing covering all requirements with zero network calls;
 - 1262 total tests passing across entire repo;
 - live AWS execution: 0 control plane calls, 0 Bedrock inference calls, 0 Strands calls, 0 Google calls, 0 Open-Meteo calls, 0 remote MCP calls; personal spend delta: $0.00;
 - P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.

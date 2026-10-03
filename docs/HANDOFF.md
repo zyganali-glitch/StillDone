@@ -88,22 +88,29 @@ Notes:
   * `src/stilldone/planning/__init__.py`
   * `tests/planning/test_bedrock_adapter.py`
 - Consolidated repair details:
-  1. Defect 1 — Exception Chain Privacy:
-     - Suppressed raw underlying exceptions in transport and plan rejection paths.
-     - `BedrockPlanRejectionError` stores only `rejection_class: type[PlannerContractError] | None` and completely discards the untrusted exception instance.
-     - Explicitly sets `__cause__ = None` and `__context__ = None` and raises outside `except` blocks with `from None`.
-     - Sanitized AWS error codes via strict alphanumeric regex (`^[A-Za-z0-9_.-]{1,64}$`), discarding raw provider error messages.
-     - Verified zero leakage of hostile sentinels (action_type, target_ref, mission_id, model payload, AWS credential, stopReason) across `str()`, `repr()`, `__cause__`, `__context__`, and formatted tracebacks.
-  2. Defect 2 — Complete Converse Message Validation:
+  1. Defect 1 — Zero Raw Role Reflection:
      - Enforced `output.message.role` exists, is a string, and is strictly `"assistant"`.
+     - Non-assistant roles raise static bounded error `"Converse message 'role' must be 'assistant'"` with zero raw role reflection.
+     - Verified zero leakage of hostile role sentinels across `str()`, `repr()`, `__cause__`, `__context__`, and formatted tracebacks.
+  2. Defect 2 — Zero Provider Error.Code Reflection or Retention:
+     - Removed raw provider `Error.Code` reflection and storage from `BedrockTransportError` entirely.
+     - `BedrockTransportError` uses static message `"Bedrock converse transport failed"` and static internal classification `"BEDROCK_TRANSPORT_FAILURE"`.
+     - Zero raw provider codes, keys, or messages retained in public or private exception attributes.
+     - Removed `SAFE_ERROR_CODE_REGEX`.
+     - Verified adversarial hostile AWS error code and access-key-shaped sentinels appear nowhere in outer exception message, repr, attributes, `__dict__`, `__cause__`, `__context__`, or formatted tracebacks.
+  3. Exception Chain Privacy & Rejection Retention:
+     - Suppressed raw underlying exceptions in transport and plan rejection paths (`__cause__ = None`, `__context__ = None`, raised with `from None`).
+     - `BedrockPlanRejectionError` stores only `rejection_class: type[PlannerContractError] | None` and completely discards the untrusted exception instance.
+     - Verified zero leakage across full hostile sentinel matrix.
+  4. Complete Converse Message Validation:
      - Inspected complete `message.content` sequence (non-text blocks like toolUse fail closed).
      - Concatenated all text blocks in returned order, enforced `MAX_PLANNER_JSON_BYTES` on combined UTF-8 text, and passed combined text to `parse_candidate_plan_for_input` so trailing prose or multiple JSON objects fail closed.
-  3. Defect 3 — Temperature Stricter Bound:
+  5. Temperature Stricter Bound:
      - Enforced `0.0 <= temperature <= DEFAULT_TEMPERATURE (0.00001)`.
      - Values `> 0.00001` (e.g. 0.00002, 0.5, 1.0) and non-finite values (NaN, +/-inf) are strictly rejected.
-  4. Defect 4 — Finite Timeouts:
+  6. Finite Timeouts:
      - Enforced `math.isnan()` and `math.isinf()` rejection for `connect_timeout` and `read_timeout`.
-  5. Bounded StopReason Sanitization:
+  7. Bounded StopReason Sanitization:
      - Validated against `KNOWN_BEDROCK_STOP_REASONS`; unrecognized/arbitrary strings sanitized to `"unrecognized"`.
 - Official AWS truth re-verified:
   * Canonical model: `amazon.nova-micro-v1:0` in `us-east-1` (strictly enforced, no fallback model/region).

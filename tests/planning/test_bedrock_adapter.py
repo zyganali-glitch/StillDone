@@ -808,6 +808,33 @@ def test_message_role_validation() -> None:
     with pytest.raises(BedrockResponseEnvelopeError, match="must be a string"):
         BedrockPlannerAdapter(client=fake_client).plan(planner_input)
 
+    # Hostile role sentinel: non-assistant role rejected with static error without reflecting value
+    hostile_role_sentinel = "HOSTILE_ROLE_SECRET_SENTINEL_55555"
+    fake_client_hostile_role = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": hostile_role_sentinel,
+                    "content": [{"text": valid_text}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError) as exc_role_info:
+        BedrockPlannerAdapter(client=fake_client_hostile_role).plan(planner_input)
+    assert str(exc_role_info.value) == "Converse message 'role' must be 'assistant'"
+    assert (
+        repr(exc_role_info.value)
+        == "BedrockResponseEnvelopeError(\"Converse message 'role' must be 'assistant'\")"
+    )
+    assert exc_role_info.value.__cause__ is None
+    assert exc_role_info.value.__context__ is None
+    formatted_tb = "".join(traceback.format_exception(exc_role_info.value))
+    assert hostile_role_sentinel not in str(exc_role_info.value)
+    assert hostile_role_sentinel not in repr(exc_role_info.value)
+    assert hostile_role_sentinel not in formatted_tb
+
 
 def test_complete_content_sequence_validation() -> None:
     """Prove all content blocks are inspected, validated, and concatenated without dropping."""
@@ -1005,6 +1032,24 @@ def test_privacy_zero_leakage_in_exceptions() -> None:
             assert s not in err_str, f"Sentinel {s} leaked into str(exc): {err_str}"
             assert s not in err_repr, f"Sentinel {s} leaked into repr(exc): {err_repr}"
             assert s not in tb_str, f"Sentinel {s} leaked into traceback: {tb_str}"
+            if hasattr(exc, "__dict__"):
+                for attr_name, attr_val in exc.__dict__.items():
+                    assert s not in str(attr_name), (
+                        f"Sentinel {s} leaked into attr name {attr_name}"
+                    )
+                    assert s not in str(attr_val), (
+                        f"Sentinel {s} leaked into attr {attr_name}: {attr_val}"
+                    )
+            for attr_name in dir(exc):
+                if attr_name.startswith("__") and attr_name.endswith("__"):
+                    continue
+                try:
+                    attr_val = getattr(exc, attr_name)
+                    assert s not in str(attr_val), (
+                        f"Sentinel {s} leaked into attr {attr_name}: {attr_val}"
+                    )
+                except Exception:
+                    pass
 
     # Case 1: Hostile intent in planner_input causes deterministic plan rejection
     planner_input_1 = make_planner_input(f"Mission with {HOSTILE_INTENT_SENTINEL}")
@@ -1144,6 +1189,149 @@ def test_privacy_zero_leakage_in_exceptions() -> None:
         BedrockPlannerAdapter(client=stop_fake).plan(planner_input_2)
     assert "unrecognized" in str(exc_stop.value)
     _assert_zero_leakage(exc_stop.value, [HOSTILE_STOP_REASON_SENTINEL])
+
+    # Case 7: Hostile role in response envelope (never reflected)
+    hostile_role = "HOSTILE_ROLE_SECRET_SENTINEL_55555"
+    role_fake = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": hostile_role,
+                    "content": [{"text": "{}"}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError) as exc_role:
+        BedrockPlannerAdapter(client=role_fake).plan(planner_input_2)
+    assert str(exc_role.value) == "Converse message 'role' must be 'assistant'"
+    _assert_zero_leakage(exc_role.value, [hostile_role])
+
+    # Case 8: Provider transport error with hostile Error.Code (never reflected or stored)
+    class FakeBotocoreError(Exception):
+        def __init__(self, code: str, msg: str) -> None:
+            super().__init__(f"ClientError: {msg}")
+            self.response = {"Error": {"Code": code, "Message": msg}}
+
+    hostile_aws_code = "HOSTILE_AWS_SECRET_CODE_66666"
+    botocore_fake_1 = FakeBedrockConverseClient(
+        error=FakeBotocoreError(hostile_aws_code, "Hostile provider error message")
+    )
+    with pytest.raises(BedrockTransportError) as exc_botocore_1:
+        BedrockPlannerAdapter(client=botocore_fake_1).plan(planner_input_2)
+    assert str(exc_botocore_1.value) == "Bedrock converse transport failed"
+    assert exc_botocore_1.value.classification == "BEDROCK_TRANSPORT_FAILURE"
+    assert not hasattr(exc_botocore_1.value, "error_code")
+    _assert_zero_leakage(
+        exc_botocore_1.value,
+        [hostile_aws_code, "Hostile provider error message"],
+    )
+
+    # Case 9: Provider transport error with AWS-access-key-shaped Error.Code
+    hostile_key_shaped = "AKIAIOSFODNN7EXAMPLE"
+    botocore_fake_2 = FakeBedrockConverseClient(
+        error=FakeBotocoreError(hostile_key_shaped, "Another hostile message")
+    )
+    with pytest.raises(BedrockTransportError) as exc_botocore_2:
+        BedrockPlannerAdapter(client=botocore_fake_2).plan(planner_input_2)
+    assert str(exc_botocore_2.value) == "Bedrock converse transport failed"
+    assert exc_botocore_2.value.classification == "BEDROCK_TRANSPORT_FAILURE"
+    assert not hasattr(exc_botocore_2.value, "error_code")
+    _assert_zero_leakage(
+        exc_botocore_2.value,
+        [hostile_key_shaped, "Another hostile message"],
+    )
+
+
+def test_adversarial_error_code_and_role_privacy() -> None:
+    """Prove provider Error.Code and role sentinels never leak into any exception surface."""
+    planner_input = make_planner_input("Adversarial test")
+    valid_text = canonical_json(make_valid_plan_payload(planner_input.mission_id))
+
+    class FakeBotocoreClientError(Exception):
+        def __init__(self, code: str, message: str) -> None:
+            super().__init__(
+                f"An error occurred ({code}) when calling the Converse operation: {message}"
+            )
+            self.response = {"Error": {"Code": code, "Message": message}}
+
+    sentinels = [
+        "HOSTILE_AWS_SECRET_CODE_66666",
+        "AKIAIOSFODNN7EXAMPLE",
+    ]
+
+    for hostile_code in sentinels:
+        fake_client = FakeBedrockConverseClient(
+            error=FakeBotocoreClientError(
+                hostile_code,
+                f"Secret message containing {hostile_code}",
+            )
+        )
+        adapter = BedrockPlannerAdapter(client=fake_client)
+        with pytest.raises(BedrockTransportError) as exc_info:
+            adapter.plan(planner_input)
+
+        exc = exc_info.value
+
+        # 1. Outer exception message
+        assert str(exc) == "Bedrock converse transport failed"
+        assert hostile_code not in str(exc)
+
+        # 2. Repr
+        assert hostile_code not in repr(exc)
+
+        # 3. Attributes
+        for attr in dir(exc):
+            if attr.startswith("__") and attr.endswith("__"):
+                continue
+            try:
+                val = getattr(exc, attr)
+                assert hostile_code not in str(val), f"Leaked in attribute {attr}"
+            except Exception:
+                pass
+
+        # 4. __dict__
+        assert exc.__dict__ == {"classification": "BEDROCK_TRANSPORT_FAILURE"}
+        assert hostile_code not in str(exc.__dict__)
+
+        # 5. __cause__
+        assert exc.__cause__ is None
+
+        # 6. __context__
+        assert exc.__context__ is None
+
+        # 7. Formatted traceback
+        formatted_tb = "".join(traceback.format_exception(exc))
+        assert hostile_code not in formatted_tb
+
+        # 8. Classification is static StillDone classification; error_code attribute absent
+        assert exc.classification == "BEDROCK_TRANSPORT_FAILURE"
+        assert not hasattr(exc, "error_code")
+
+    # Hostile role sentinel
+    hostile_role = "HOSTILE_ROLE_SECRET_SENTINEL_55555"
+    fake_client_role = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": hostile_role,
+                    "content": [{"text": valid_text}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError) as exc_role_info:
+        BedrockPlannerAdapter(client=fake_client_role).plan(planner_input)
+
+    exc_role = exc_role_info.value
+    assert str(exc_role) == "Converse message 'role' must be 'assistant'"
+    assert hostile_role not in str(exc_role)
+    assert hostile_role not in repr(exc_role)
+    assert exc_role.__cause__ is None
+    assert exc_role.__context__ is None
+    assert hostile_role not in "".join(traceback.format_exception(exc_role))
 
 
 # ===========================================================================
