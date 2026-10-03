@@ -58,6 +58,8 @@ CANONICAL_TASKS_SYSTEM = "google_tasks"
 CANONICAL_TASK_RESOURCE_KIND = ResourceKind.TASK
 CANONICAL_TASK_LIST_RESOURCE_KIND = ResourceKind.TASK_LIST
 FORBIDDEN_TASK_LIST_IDS = frozenset({"@default", "default", "primary"})
+MAX_DUPLICATE_SCAN_PAGES = 5
+MAX_TASKS_PAGE_SIZE = 100
 
 # ===========================================================================
 # Adapter Exception Hierarchy
@@ -266,6 +268,7 @@ class TaskTransportItem:
     due: str | None = None
     deleted: bool = False
     hidden: bool = False
+    assigned: bool = False
     etag: str | None = None
     raw_resource: dict[str, Any] = field(default_factory=dict)
 
@@ -273,7 +276,7 @@ class TaskTransportItem:
         return (
             f"TaskTransportItem(id='***', title='***', "
             f"status='{self.status}', due={'***' if self.due else None}, "
-            f"deleted={self.deleted}, hidden={self.hidden})"
+            f"deleted={self.deleted}, hidden={self.hidden}, assigned={self.assigned})"
         )
 
     def __str__(self) -> str:
@@ -301,6 +304,7 @@ class TaskTransport(Protocol):
         show_completed: bool = False,
         show_deleted: bool = False,
         show_hidden: bool = False,
+        show_assigned: bool = False,
         max_results: int = 100,
         page_token: str | None = None,
     ) -> tuple[list[TaskTransportItem], str | None]:
@@ -344,6 +348,7 @@ class FakeGoogleTasksTransport:
         status: str = "needsAction",
         deleted: bool = False,
         hidden: bool = False,
+        assigned: bool = False,
         etag: str | None = None,
         extra_fields: dict[str, Any] | None = None,
     ) -> TaskTransportItem:
@@ -358,6 +363,7 @@ class FakeGoogleTasksTransport:
             "status": status,
             "deleted": deleted,
             "hidden": hidden,
+            "assigned": assigned,
         }
         if due:
             raw["due"] = due
@@ -414,6 +420,7 @@ class FakeGoogleTasksTransport:
         show_completed: bool = False,
         show_deleted: bool = False,
         show_hidden: bool = False,
+        show_assigned: bool = False,
         max_results: int = 100,
         page_token: str | None = None,
     ) -> tuple[list[TaskTransportItem], str | None]:
@@ -431,6 +438,8 @@ class FakeGoogleTasksTransport:
                 continue
             if not show_hidden and raw.get("hidden", False):
                 continue
+            if not show_assigned and bool(raw.get("assigned", False) or "assignmentInfo" in raw):
+                continue
             all_items.append(raw)
 
         start_idx = 0
@@ -447,6 +456,7 @@ class FakeGoogleTasksTransport:
 
     @staticmethod
     def _to_transport_item(raw: dict[str, Any]) -> TaskTransportItem:
+        is_assigned = bool(raw.get("assigned", False) or "assignmentInfo" in raw)
         return TaskTransportItem(
             id=raw.get("id", ""),
             title=raw.get("title", ""),
@@ -454,6 +464,7 @@ class FakeGoogleTasksTransport:
             due=raw.get("due"),
             deleted=bool(raw.get("deleted", False)),
             hidden=bool(raw.get("hidden", False)),
+            assigned=is_assigned,
             etag=raw.get("etag"),
             raw_resource=raw,
         )
@@ -536,6 +547,7 @@ class GoogleApiClientTasksTransport:
         show_completed: bool = False,
         show_deleted: bool = False,
         show_hidden: bool = False,
+        show_assigned: bool = False,
         max_results: int = 100,
         page_token: str | None = None,
     ) -> tuple[list[TaskTransportItem], str | None]:
@@ -546,7 +558,8 @@ class GoogleApiClientTasksTransport:
                 "showCompleted": show_completed,
                 "showDeleted": show_deleted,
                 "showHidden": show_hidden,
-                "maxResults": max_results,
+                "showAssigned": show_assigned,
+                "maxResults": min(max(1, max_results), 100),
             }
             if page_token is not None:
                 kwargs["pageToken"] = page_token
@@ -1054,6 +1067,12 @@ class GoogleTasksReadbackVerifier:
     def scope(self) -> DemoResourceScope:
         return self._read_adapter.scope
 
+    def __repr__(self) -> str:
+        return "GoogleTasksReadbackVerifier(scope_configured=True)"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     def verify_task_state(
         self,
         task_id: str,
@@ -1081,20 +1100,20 @@ class GoogleTasksReadbackVerifier:
 
         read_result = self._read_adapter.read_task(read_action, at=at)
 
-        evaluation_time = at or datetime.now(UTC)
+        verification_time = datetime.now(UTC)
 
         if read_result.status == TaskReadStatus.NOT_FOUND:
             return TaskReadbackResult(
                 status=TaskReadbackStatus.NOT_FOUND,
                 mismatches=("task not found",),
-                verified_at=evaluation_time,
+                verified_at=verification_time,
                 error_message=read_result.error_message,
             )
 
         if read_result.status == TaskReadStatus.PROVIDER_ERROR:
             return TaskReadbackResult(
                 status=TaskReadbackStatus.PROVIDER_ERROR,
-                verified_at=evaluation_time,
+                verified_at=verification_time,
                 error_message=read_result.error_message,
             )
 
@@ -1102,7 +1121,7 @@ class GoogleTasksReadbackVerifier:
         if obs is None:
             return TaskReadbackResult(
                 status=TaskReadbackStatus.PROVIDER_ERROR,
-                verified_at=evaluation_time,
+                verified_at=verification_time,
                 error_message="Read observation missing despite SUCCESS status",
             )
 
@@ -1118,14 +1137,14 @@ class GoogleTasksReadbackVerifier:
             return TaskReadbackResult(
                 status=TaskReadbackStatus.MISMATCH,
                 mismatches=tuple(mismatches),
-                verified_at=evaluation_time,
+                verified_at=verification_time,
                 observation=obs,
             )
 
         return TaskReadbackResult(
             status=TaskReadbackStatus.MATCH,
             mismatches=(),
-            verified_at=evaluation_time,
+            verified_at=verification_time,
             observation=obs,
         )
 
@@ -1186,13 +1205,24 @@ class GoogleTasksDuplicateDetector:
         self,
         scope: DemoResourceScope,
         transport: TaskTransport,
-        max_scan_pages: int = 5,
-        page_size: int = 100,
+        max_scan_pages: int = MAX_DUPLICATE_SCAN_PAGES,
+        page_size: int = MAX_TASKS_PAGE_SIZE,
     ) -> None:
         if not isinstance(scope, DemoResourceScope):
             raise TaskScopeError(f"scope must be DemoResourceScope, got {type(scope).__name__}")
         if scope.task_list_id.strip().lower() in FORBIDDEN_TASK_LIST_IDS:
             raise TaskScopeError("Dedicated demo task list required")
+        if not isinstance(max_scan_pages, int) or not (
+            1 <= max_scan_pages <= MAX_DUPLICATE_SCAN_PAGES
+        ):
+            raise ValueError(
+                f"max_scan_pages must be between 1 and {MAX_DUPLICATE_SCAN_PAGES}, "
+                f"got {max_scan_pages}"
+            )
+        if not isinstance(page_size, int) or not (1 <= page_size <= MAX_TASKS_PAGE_SIZE):
+            raise ValueError(
+                f"page_size must be between 1 and {MAX_TASKS_PAGE_SIZE}, got {page_size}"
+            )
         self._scope = scope
         self._transport = transport
         self._max_scan_pages = max_scan_pages
@@ -1201,6 +1231,15 @@ class GoogleTasksDuplicateDetector:
     @property
     def scope(self) -> DemoResourceScope:
         return self._scope
+
+    def __repr__(self) -> str:
+        return (
+            f"GoogleTasksDuplicateDetector(max_scan_pages={self._max_scan_pages}, "
+            f"page_size={self._page_size})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def detect_duplicates(
         self,
@@ -1215,7 +1254,6 @@ class GoogleTasksDuplicateDetector:
         pages_scanned = 0
         tasks_scanned = 0
         match_count = 0
-        evaluation_time = at or datetime.now(UTC)
 
         try:
             while pages_scanned < self._max_scan_pages:
@@ -1224,6 +1262,7 @@ class GoogleTasksDuplicateDetector:
                     show_completed=False,
                     show_deleted=False,
                     show_hidden=False,
+                    show_assigned=False,
                     max_results=self._page_size,
                     page_token=page_token,
                 )
@@ -1240,6 +1279,7 @@ class GoogleTasksDuplicateDetector:
 
                 if next_page_token is None:
                     # Completed full list scan
+                    scan_end_time = datetime.now(UTC)
                     if match_count == 1:
                         status = DuplicateDetectionStatus.UNIQUE_MATCH
                     elif match_count > 1:
@@ -1252,22 +1292,24 @@ class GoogleTasksDuplicateDetector:
                         match_count=match_count,
                         scanned_pages=pages_scanned,
                         scanned_tasks=tasks_scanned,
-                        evaluated_at=evaluation_time,
+                        evaluated_at=scan_end_time,
                     )
 
                 page_token = next_page_token
 
             # Exhausted scan bound without reaching end of list
+            scan_end_time = datetime.now(UTC)
             return DuplicateDetectionResult(
                 status=DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED,
                 match_count=match_count,
                 scanned_pages=pages_scanned,
                 scanned_tasks=tasks_scanned,
                 error_message="Duplicate scan pagination limit exceeded; cannot certify uniqueness",
-                evaluated_at=evaluation_time,
+                evaluated_at=scan_end_time,
             )
 
         except Exception as exc:
+            scan_end_time = datetime.now(UTC)
             error_msg = _sanitize_tasks_transport_error(exc)
             logger.warning("Tasks duplicate detector provider failure: %s", error_msg)
             return DuplicateDetectionResult(
@@ -1276,5 +1318,5 @@ class GoogleTasksDuplicateDetector:
                 scanned_pages=pages_scanned,
                 scanned_tasks=tasks_scanned,
                 error_message=error_msg,
-                evaluated_at=evaluation_time,
+                evaluated_at=scan_end_time,
             )
