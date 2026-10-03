@@ -73,6 +73,17 @@ from stilldone.planning.contracts import (
     validate_candidate_action_parameters,
     validate_candidate_plan_schema_locally,
 )
+from stilldone.planning.metadata import (
+    PLANNER_PROVIDER_AMAZON_BEDROCK,
+    PLANNER_RUNTIME_PAYLOAD_KEY,
+    PLANNER_RUNTIME_STRANDS,
+    PackageVersionError,
+    PlannerMetadataError,
+    PlannerRuntimeMetadata,
+    ReservedKeyCollisionError,
+    bind_planner_runtime_metadata,
+    create_planner_runtime_metadata,
+)
 from stilldone.planning.strands_agent import (
     StrandsEmptyResponseError,
     StrandsNonTextContentError,
@@ -161,4 +172,13 @@ __all__ = [
     "plan_with_strands",
     "validate_candidate_action_parameters",
     "validate_candidate_plan_schema_locally",
+    "PLANNER_PROVIDER_AMAZON_BEDROCK",
+    "PLANNER_RUNTIME_PAYLOAD_KEY",
+    "PLANNER_RUNTIME_STRANDS",
+    "PackageVersionError",
+    "PlannerMetadataError",
+    "PlannerRuntimeMetadata",
+    "ReservedKeyCollisionError",
+    "bind_planner_runtime_metadata",
+    "create_planner_runtime_metadata",
 ]
