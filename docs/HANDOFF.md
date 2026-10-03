@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — P-06.01 to P-06.06 independent QA PASS; P-06.07 LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)**
+Current repository state: **Phase P-06: IN PROGRESS — P-06.01 to P-06.07 independent QA PASS; P-06.08 LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,7 +74,7 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks
+P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
 
 Status:
 `LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`
@@ -86,22 +86,23 @@ Notes:
 - P-06.04 received independent QA PASS (Reviewed repair commit: `c95ccdd2f6396e284e09a0866795bed4764393ba`).
 - P-06.05 received independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`).
 - P-06.06 received independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`).
-- P-06.07 live write → read-back → VERIFIED slice proven against live Google Tasks API:
-  * Minimum least-privilege OAuth scope requested: `https://www.googleapis.com/auth/tasks` (zero calendar/gmail/profile/drive scopes).
+- P-06.07 received independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
+- P-06.08 live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API:
+  * Minimum least-privilege OAuth scopes requested: `https://www.googleapis.com/auth/calendar.calendarlist.readonly` and `https://www.googleapis.com/auth/calendar.events` (zero broad calendar write, zero tasks/gmail/profile/drive scopes).
   * Executed in ephemeral scratch environment outside repository using official `google-api-python-client` 2.201.0, `google-auth-oauthlib` 1.5.0, `google-auth-httplib2` 0.4.4.
-  * Dedicated demo list discovery: 1 call to `tasklists.list` matching `StillDone Demo` display name exactly once; ID redacted in durable evidence as `[REDACTED_TASKLIST_ID]`; forbidden aliases (@default, default, primary) rejected.
-  * Preflight duplicate gate: `GoogleTasksDuplicateDetector(max_scan_pages=1, page_size=100)` executed via 1 call to `tasks.list`; returned `DuplicateDetectionStatus.NO_MATCH` (0 matching active tasks, 0 tasks scanned).
-  * Single bounded mutation: `GoogleTasksCreateAdapter.create_task` executed via 1 call to `tasks.insert` with synthetic non-personal payload (`title="StillDone P-06.07 live proof - Pack backpacks"`, `due="2026-10-04"`); returned `TaskCreateStatus.CREATED` with `writes_performed=1`; task ID redacted as `[REDACTED_TASK_ID]`; strictly 0 retries.
-  * Intermediate state proven: recorded `StepEvidenceState.EXECUTED_UNVERIFIED`; explicitly verified `CREATED != VERIFIED`.
-  * Distinct independent read-back: `GoogleTasksReadbackVerifier.verify_task_state` executed via separate 1 call to `tasks.get`; create response payload was not reused; returned `TaskReadbackStatus.MATCH` with 0 mismatches; verified temporal ordering (`verified_at >= observed_at >= created_at`).
-  * Post-write duplicate gate: `GoogleTasksDuplicateDetector` re-scanned demo list via 1 call to `tasks.list`; returned `DuplicateDetectionStatus.UNIQUE_MATCH` (`match_count=1`).
-  * Deterministic predicate: conjunction of all 5 conditions evaluated to `True`; step evidence recorded as `StepEvidenceState.VERIFIED`.
+  * Dedicated demo calendar discovery: 1 call to `calendarList.list` matching `StillDone Demo` summary exactly once; ID redacted in durable evidence as `[REDACTED_CALENDAR_ID]`; forbidden aliases (primary, default) rejected.
+  * Preflight target event discovery: 1 call to `events.list` inside `StillDone Demo` matching `Leave for school` exactly once; confirmed pre-update start at 07:45 (`2026-10-04T07:45:00+01:00`); verified synthetic safety checks (0 attendees, no conferenceData, no recurrence); event ID redacted as `[REDACTED_EVENT_ID]`.
+  * Pre-write exact read & authority binding: bounded `ApprovalGrant` issued for `CALENDAR_UPDATE` (`AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`); `GoogleCalendarUpdateAdapter` performed pre-write `events.get` retrieving exact provider ETag.
+  * Single conditional mutation: `GoogleCalendarUpdateAdapter.update_event` executed via 1 call to `events.update` with `If-Match: <etag>` and `sendUpdates="none"`; desired start `07:30` (`2026-10-04T07:30:00+01:00`); preserved duration; returned `CalendarUpdateStatus.UPDATED` with `writes_performed=1`; strictly 0 retries.
+  * Intermediate state proven: recorded `StepEvidenceState.EXECUTED_UNVERIFIED`; explicitly verified `UPDATED != VERIFIED`.
+  * Distinct independent read-back: `GoogleCalendarReadbackVerifier.verify` executed via separate fresh `events.get`; update response payload was not reused; returned `CalendarReadbackStatus.MATCH` with 0 mismatches; verified temporal ordering (`verified_at >= observed_at >= updated_at`).
+  * Deterministic predicate: conjunction of all 4 conditions evaluated to `True`; step evidence recorded as `StepEvidenceState.VERIFIED`.
   * Mission state: mission `READY` was strictly NOT produced (step-level evidence only).
-  * Spend delta: `$0.00 USD` (courtesy quota; 0 paid resources, 0 billing enablement).
+  * Spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement).
   * Cleanup: ephemeral token/auth URL files deleted; client secrets file preserved outside repo in local Downloads; zero secrets/tokens committed.
-- Last independently VERIFIED contiguous SHA at P-06.07 start: `28803649b15386ef9a0acb493a614eec6107dc9f`.
-- P-06.07 status: `LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
-- P-06.08 remains: `PENDING / NOT AUTHORIZED`.
+- Last independently VERIFIED contiguous SHA at P-06.08 start: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`.
+- P-06.08 status: `LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
+- Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
 
 ## Phase P-04 Status
 
@@ -135,26 +136,27 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 - P-06.04 — independent QA PASS (Reviewed repair commit: `c95ccdd2f6396e284e09a0866795bed4764393ba`)
 - P-06.05 — independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`)
 - P-06.06 — independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`)
-- P-06.07 — LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
-- P-06.08 — PENDING / NOT AUTHORIZED
+- P-06.07 — independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`)
+- P-06.08 — LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
 
 Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
 
 ## Last independently VERIFIED contiguous SHA
 
-`28803649b15386ef9a0acb493a614eec6107dc9f`
+`7a6d0815d97aeea736293939f27a1a233e0f3bdc`
 
 ## Next exact task
 
-Independent QA review of P-06.07 live Tasks write → read-back → VERIFIED proof.
+Independent QA review of P-06.08 live Calendar update → read-back → VERIFIED proof.
 
 Status:
 `LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 
-Awaiting independent QA review of P-06.07.
-Do NOT begin P-06.08.
+Awaiting independent QA review of P-06.08.
+Do NOT self-close Phase P-06.
+Do NOT begin Phase P-07.
 
 
 ---

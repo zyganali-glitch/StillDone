@@ -893,7 +893,7 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`).
 
 ### P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks
-Status: LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`)
 
 Acceptance:
 - live write → read-back → VERIFIED slice proven against live Google Tasks API in dedicated ephemeral scratch environment (`google_p06_07_scratch`);
@@ -911,13 +911,31 @@ Acceptance:
 - spend delta: `$0.00 USD` (courtesy quota; 0 paid resources, 0 billing enablement);
 - credential/token cleanup: ephemeral token and auth URL files deleted; client secrets file preserved outside repository in local Downloads; zero secrets/tokens committed;
 - durable evidence recorded in `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md` as `RECORDED_LIVE` (original live provenance `LIVE_GOOGLE`);
-- note: Task live proof complete — awaiting independent QA review (NOT PASS). Do NOT self-award PASS.
+- note: Task closed with independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
 
 ### P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
-Status: PENDING / NOT AUTHORIZED
+Status: LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API in dedicated ephemeral scratch environment (`google_p06_08_scratch`);
+- minimum least-privilege OAuth scopes requested: `https://www.googleapis.com/auth/calendar.calendarlist.readonly` and `https://www.googleapis.com/auth/calendar.events` (zero broad calendar write, zero tasks/gmail/profile/drive scopes);
+- official SDK execution via `uv run --with google-api-python-client --with google-auth-oauthlib --with google-auth-httplib2` (`google-api-python-client==2.201.0`, `google-auth-oauthlib==1.5.0`, `google-auth-httplib2==0.4.4`);
+- zero dependencies added to `pyproject.toml` or `uv.lock`;
+- dedicated disposable demo calendar discovery: 1 call to `calendarList.list` matching `StillDone Demo` display name exactly once; ID redacted as `[REDACTED_CALENDAR_ID]`; forbidden aliases (primary, default) rejected;
+- preflight target event discovery & safety gate: 1 call to `events.list` inside `StillDone Demo` matching `Leave for school` exactly once; confirmed pre-update start at 07:45 (`2026-10-04T07:45:00+01:00`); verified synthetic safety checks (0 attendees, no conferenceData, no recurrence); event ID redacted as `[REDACTED_EVENT_ID]`;
+- pre-write exact read & authority binding: bounded `ApprovalGrant` issued for canonical `CALENDAR_UPDATE` (`AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`); `GoogleCalendarUpdateAdapter` performed pre-write `events.get` retrieving exact provider ETag;
+- single conditional mutation: `GoogleCalendarUpdateAdapter.update_event` executed via 1 call to `events.update` with `If-Match: <etag>` and `sendUpdates="none"`; desired start `07:30` (`2026-10-04T07:30:00+01:00`); preserved duration; returned `CalendarUpdateStatus.UPDATED` with `writes_performed=1`; strictly 0 retries;
+- intermediate state proven: recorded `StepEvidenceState.EXECUTED_UNVERIFIED`; explicitly verified `UPDATED != VERIFIED`;
+- distinct independent read-back: `GoogleCalendarReadbackVerifier.verify` executed via separate fresh 1 call to `events.get`; update response payload was not reused; returned `CalendarReadbackStatus.MATCH` with 0 mismatches; verified temporal ordering (`verified_at >= observed_at >= updated_at`);
+- deterministic predicate: conjunction of all 4 conditions evaluated to `True`; step evidence recorded as `StepEvidenceState.VERIFIED`;
+- mission state: mission `READY` was strictly NOT produced (step-level evidence only);
+- spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement);
+- credential/token cleanup: ephemeral token and auth URL files deleted; client secrets file preserved outside repository in local Downloads; zero secrets/tokens committed;
+- durable evidence recorded in `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` as `RECORDED_LIVE` (original live provenance `LIVE_GOOGLE`);
+- note: Task live proof complete — awaiting independent QA review (NOT PASS). Do NOT self-award PASS. Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
 
 Phase exit:
-two real mutable systems independently verified.
+two real mutable systems independently verified (P-06.08 live proof complete, awaiting independent QA review. Phase P-06 closure and Phase P-07 authorization pending independent QA review).
 
 ---
 
