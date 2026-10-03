@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -156,25 +156,46 @@ class TestDueNormalization:
         provider_fmt = format_due_for_provider(norm)
         assert provider_fmt == "2026-10-04T00:00:00.000Z"
 
-    def test_rfc3339_timestamp_normalization(self) -> None:
+    def test_rfc3339_z_accepted(self) -> None:
         norm = normalize_task_due("2026-10-04T15:30:00Z")
         assert norm == "2026-10-04"
+        norm_frac = normalize_task_due("2026-10-04T15:30:00.123456Z")
+        assert norm_frac == "2026-10-04"
         provider_fmt = format_due_for_provider(norm)
         assert provider_fmt == "2026-10-04T00:00:00.000Z"
 
-    def test_rfc3339_with_microseconds_and_offset(self) -> None:
-        norm = normalize_task_due("2026-10-04T23:59:59.123+03:00")
-        # Direct date extraction preserves requested calendar date without timezone day-shifting
-        assert norm == "2026-10-04"
+    def test_rfc3339_explicit_offset_accepted(self) -> None:
+        norm_pos = normalize_task_due("2026-10-04T23:59:59.123+03:00")
+        assert norm_pos == "2026-10-04"
+        norm_neg = normalize_task_due("2026-10-04T00:15:00-05:00")
+        assert norm_neg == "2026-10-04"
 
-    def test_provider_time_discard_semantics(self) -> None:
-        # User requested 2026-10-04 bare date
-        user_norm = normalize_task_due("2026-10-04")
-        # Provider stores and returns with T00:00:00.000Z
+    def test_timezone_less_datetime_rejected(self) -> None:
+        with pytest.raises(TaskDueFormatError, match="strict RFC3339 timestamp with timezone"):
+            normalize_task_due("2026-10-04T15:30:00")
+        with pytest.raises(TaskDueFormatError, match="strict RFC3339 timestamp with timezone"):
+            normalize_task_due("2026-10-04T15:30:00.500")
+
+    def test_compact_offset_rejected(self) -> None:
+        # Compact timezone offsets lacking colon (e.g. +0300) must be rejected
+        with pytest.raises(TaskDueFormatError, match="strict RFC3339 timestamp with timezone"):
+            normalize_task_due("2026-10-04T15:30:00+0300")
+        with pytest.raises(TaskDueFormatError, match="strict RFC3339 timestamp with timezone"):
+            normalize_task_due("2026-10-04T15:30:00-0500")
+
+    def test_provider_returned_midnight_normalizes_to_same_date(self) -> None:
+        # Provider returns RFC3339 UTC midnight
         provider_val = "2026-10-04T00:00:00.000Z"
         obs_norm = normalize_task_due(provider_val)
-        # Equality under date semantics
-        assert user_norm == obs_norm == "2026-10-04"
+        assert obs_norm == "2026-10-04"
+
+    def test_timezone_offset_never_shifts_canonical_requested_date(self) -> None:
+        # User requested date in late evening or early morning with large timezone offsets
+        # Must preserve requested calendar DATE directly without UTC day-shifting
+        norm_late = normalize_task_due("2026-10-04T23:59:00-08:00")
+        assert norm_late == "2026-10-04"
+        norm_early = normalize_task_due("2026-10-04T00:01:00+10:00")
+        assert norm_early == "2026-10-04"
 
     def test_malformed_due_fails_closed(self) -> None:
         with pytest.raises(TaskDueFormatError):
@@ -193,8 +214,18 @@ class TestDueNormalization:
         with pytest.raises(TaskDueFormatError):
             normalize_task_due("2026-13-01")
 
+        # Impossible time values
         with pytest.raises(TaskDueFormatError):
-            normalize_task_due("2026-10-04T99:99:99Z")
+            normalize_task_due("2026-10-04T25:00:00Z")
+
+        with pytest.raises(TaskDueFormatError):
+            normalize_task_due("2026-10-04T12:60:00Z")
+
+        with pytest.raises(TaskDueFormatError):
+            normalize_task_due("2026-10-04T12:00:00+25:00")
+
+        with pytest.raises(TaskDueFormatError):
+            normalize_task_due("2026-10-04T12:00:00+03:99")
 
 
 # ===========================================================================
@@ -311,6 +342,56 @@ class TestGoogleTasksReadAdapter:
         with pytest.raises(TaskTargetError):
             read_adapter.read_task(action)
 
+    def test_read_task_timestamps_runtime_owned_not_forged_by_authority_at(
+        self,
+        read_adapter: GoogleTasksReadAdapter,
+        fake_transport: FakeGoogleTasksTransport,
+    ) -> None:
+        fake_transport.seed_task(
+            task_list_id=DEMO_TASK_LIST_ID,
+            task_id="task_time_test",
+            title="Timestamp test task",
+        )
+        action = _make_task_read_contract(task_id="task_time_test")
+        historical_at = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        result = read_adapter.read_task(action, at=historical_at)
+        assert result.status == TaskReadStatus.MATCH
+        assert result.observation is not None
+        # Observed timestamps must be runtime-owned and not forged by historical caller `at`
+        assert result.observed_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.observation.observed_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.observed_at != historical_at
+        assert result.observation.observed_at != historical_at
+
+    def test_read_task_not_found_timestamp_runtime_owned(
+        self,
+        read_adapter: GoogleTasksReadAdapter,
+    ) -> None:
+        action = _make_task_read_contract(task_id="nonexistent_task")
+        historical_at = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        result = read_adapter.read_task(action, at=historical_at)
+        assert result.status == TaskReadStatus.NOT_FOUND
+        assert result.observed_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.observed_at != historical_at
+
+    def test_read_task_provider_error_timestamp_runtime_owned(
+        self,
+        read_adapter: GoogleTasksReadAdapter,
+    ) -> None:
+        action = _make_task_read_contract(task_id="task_err")
+        historical_at = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        with patch.object(
+            read_adapter._transport, "get_task", side_effect=Exception("Network fail")
+        ):
+            result = read_adapter.read_task(action, at=historical_at)
+
+        assert result.status == TaskReadStatus.PROVIDER_ERROR
+        assert result.observed_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.observed_at != historical_at
+
 
 # ===========================================================================
 # GoogleTasksCreateAdapter Tests
@@ -423,6 +504,34 @@ class TestGoogleTasksCreateAdapter:
         with pytest.raises(TaskDueFormatError):
             create_adapter.create_task(action)
         assert fake_transport.writes_count == 0
+
+    def test_create_task_created_at_runtime_owned_not_forged_by_authority_at(
+        self,
+        create_adapter: GoogleTasksCreateAdapter,
+    ) -> None:
+        action = _make_task_create_contract(parameters={"title": "Runtime time create task"})
+        historical_at = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        result = create_adapter.create_task(action, at=historical_at)
+        assert result.status == TaskCreateStatus.CREATED
+        assert result.created_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.created_at != historical_at
+
+    def test_create_task_provider_error_timestamp_runtime_owned(
+        self,
+        create_adapter: GoogleTasksCreateAdapter,
+    ) -> None:
+        action = _make_task_create_contract(parameters={"title": "Error create task"})
+        historical_at = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        with patch.object(
+            create_adapter._transport, "insert_task", side_effect=Exception("Insert fail")
+        ):
+            result = create_adapter.create_task(action, at=historical_at)
+
+        assert result.status == TaskCreateStatus.PROVIDER_ERROR
+        assert result.created_at > datetime(2026, 1, 1, tzinfo=UTC)
+        assert result.created_at != historical_at
 
 
 # ===========================================================================

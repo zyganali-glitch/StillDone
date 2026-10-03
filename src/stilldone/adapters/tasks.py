@@ -212,10 +212,16 @@ def normalize_task_due(due: str | None) -> str | None:
         except ValueError as err:
             raise TaskDueFormatError("Invalid calendar date in due parameter") from err
 
-    # 2. RFC 3339 timestamp format: YYYY-MM-DDTHH:MM:SS...
+    # 2. Strict RFC 3339 datetime format: YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)
+    # Datetime inputs MUST include Z or an explicit ±HH:MM offset. Timezone-less
+    # or compact (+HHMM) datetimes are strictly rejected.
     # Extracts the calendar date part (raw[:10]) directly to avoid timezone
     # shifting the user-intended calendar date, while verifying timestamp validity.
-    iso_pattern = r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:?\d{2})?$"
+    iso_pattern = (
+        r"^\d{4}-\d{2}-\d{2}[Tt]"
+        r"(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?"
+        r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"
+    )
     if re.fullmatch(iso_pattern, raw):
         date_part = raw[:10]
         try:
@@ -223,7 +229,7 @@ def normalize_task_due(due: str | None) -> str | None:
         except ValueError as err:
             raise TaskDueFormatError("Invalid calendar date in due timestamp") from err
 
-        # Validate time component syntax and values
+        # Validate time and timezone component syntax and values
         norm_time = raw.replace("Z", "+00:00").replace("z", "+00:00")
         try:
             datetime.fromisoformat(norm_time)
@@ -232,7 +238,10 @@ def normalize_task_due(due: str | None) -> str | None:
 
         return d.isoformat()
 
-    raise TaskDueFormatError("Task due date must be formatted as YYYY-MM-DD or RFC3339 timestamp")
+    raise TaskDueFormatError(
+        "Task due date must be formatted as bare YYYY-MM-DD "
+        "or strict RFC3339 timestamp with timezone"
+    )
 
 
 def format_due_for_provider(normalized_due: str | None) -> str | None:
@@ -729,18 +738,17 @@ class GoogleTasksReadAdapter:
         if decision.status != AuthorityDecisionStatus.AUTHORIZED_NO_APPROVAL_REQUIRED:
             raise TaskTargetError("TASK_READ authority evaluation failed")
 
-        evaluation_time = eval_time
-
         # Step 6: Exact Task Retrieval from Transport
         try:
             item = self._transport.get_task(
                 self._scope.task_list_id,
                 validated.target.resource_id,
             )
+            completion_time = datetime.now(UTC)
             if item is None or item.deleted:
                 return TaskReadResult(
                     status=TaskReadStatus.NOT_FOUND,
-                    observed_at=evaluation_time,
+                    observed_at=completion_time,
                 )
 
             norm_due = normalize_task_due(item.due)
@@ -753,20 +761,21 @@ class GoogleTasksReadAdapter:
                 deleted=item.deleted,
                 hidden=item.hidden,
                 etag=item.etag,
-                observed_at=evaluation_time,
+                observed_at=completion_time,
             )
             return TaskReadResult(
                 status=TaskReadStatus.MATCH,
                 observation=obs,
-                observed_at=evaluation_time,
+                observed_at=completion_time,
             )
         except Exception as exc:
+            completion_time = datetime.now(UTC)
             error_msg = _sanitize_tasks_transport_error(exc)
             logger.warning("Tasks read provider failure: %s", error_msg)
             return TaskReadResult(
                 status=TaskReadStatus.PROVIDER_ERROR,
                 error_message=error_msg,
-                observed_at=evaluation_time,
+                observed_at=completion_time,
             )
 
 
@@ -928,11 +937,10 @@ class GoogleTasksCreateAdapter:
         if normalized_due is not None:
             payload["due"] = format_due_for_provider(normalized_due)
 
-        execution_time = eval_time
-
         # Step 8: Execute Single Provider Mutation
         try:
             item = self._transport.insert_task(self._scope.task_list_id, payload)
+            completion_time = datetime.now(UTC)
             return TaskCreateResult(
                 status=TaskCreateStatus.CREATED,
                 task_id=item.id,
@@ -940,16 +948,17 @@ class GoogleTasksCreateAdapter:
                 title=item.title,
                 due=normalized_due,
                 writes_performed=1,
-                created_at=execution_time,
+                created_at=completion_time,
             )
         except Exception as exc:
+            completion_time = datetime.now(UTC)
             error_msg = _sanitize_tasks_transport_error(exc)
             logger.warning("Tasks create provider failure: %s", error_msg)
             return TaskCreateResult(
                 status=TaskCreateStatus.PROVIDER_ERROR,
                 writes_performed=0,
                 error_message=error_msg,
-                created_at=execution_time,
+                created_at=completion_time,
             )
 
 
