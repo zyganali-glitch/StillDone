@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 EXECUTOR_COMPLETED (awaiting independent QA review, NOT PASS)**
+Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 REPAIRED (awaiting independent QA review, NOT PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -77,16 +77,34 @@ Preferred AWS target:
 P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
 
 Status:
-`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
+`REPAIRED / awaiting independent QA review (NOT PASS)`
 
 Notes:
 - Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
 - P-07.01 received independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
 - Phase P-07 is IN PROGRESS.
-- P-07.02 implemented in bounded planning package:
+- P-07.02 consolidated repair applied across bounded planning package:
   * `src/stilldone/planning/bedrock.py`
   * `src/stilldone/planning/__init__.py`
   * `tests/planning/test_bedrock_adapter.py`
+- Consolidated repair details:
+  1. Defect 1 — Exception Chain Privacy:
+     - Suppressed raw underlying exceptions in transport and plan rejection paths.
+     - `BedrockPlanRejectionError` stores only `rejection_class: type[PlannerContractError] | None` and completely discards the untrusted exception instance.
+     - Explicitly sets `__cause__ = None` and `__context__ = None` and raises outside `except` blocks with `from None`.
+     - Sanitized AWS error codes via strict alphanumeric regex (`^[A-Za-z0-9_.-]{1,64}$`), discarding raw provider error messages.
+     - Verified zero leakage of hostile sentinels (action_type, target_ref, mission_id, model payload, AWS credential, stopReason) across `str()`, `repr()`, `__cause__`, `__context__`, and formatted tracebacks.
+  2. Defect 2 — Complete Converse Message Validation:
+     - Enforced `output.message.role` exists, is a string, and is strictly `"assistant"`.
+     - Inspected complete `message.content` sequence (non-text blocks like toolUse fail closed).
+     - Concatenated all text blocks in returned order, enforced `MAX_PLANNER_JSON_BYTES` on combined UTF-8 text, and passed combined text to `parse_candidate_plan_for_input` so trailing prose or multiple JSON objects fail closed.
+  3. Defect 3 — Temperature Stricter Bound:
+     - Enforced `0.0 <= temperature <= DEFAULT_TEMPERATURE (0.00001)`.
+     - Values `> 0.00001` (e.g. 0.00002, 0.5, 1.0) and non-finite values (NaN, +/-inf) are strictly rejected.
+  4. Defect 4 — Finite Timeouts:
+     - Enforced `math.isnan()` and `math.isinf()` rejection for `connect_timeout` and `read_timeout`.
+  5. Bounded StopReason Sanitization:
+     - Validated against `KNOWN_BEDROCK_STOP_REASONS`; unrecognized/arbitrary strings sanitized to `"unrecognized"`.
 - Official AWS truth re-verified:
   * Canonical model: `amazon.nova-micro-v1:0` in `us-east-1` (strictly enforced, no fallback model/region).
   * Nova Micro native Structured Outputs: NOT SUPPORTED.
@@ -94,34 +112,19 @@ Notes:
   * `pattern` is not in the documented supported subset.
   * StillDone schema canonical role: LOCAL DETERMINISTIC VALIDATION + MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION.
 - Immutable bounded planner settings:
-  * connect_timeout = 5.0s, read_timeout = 30.0s (positive, <= canonical max)
+  * connect_timeout = 5.0s, read_timeout = 30.0s (positive, finite, <= canonical max)
   * total_max_attempts = 1, retry_mode = 'standard' (zero automatic retries; botocore configured with total_max_attempts=1)
-  * maxTokens = 2048, temperature = 0.00001
+  * maxTokens = 2048, temperature = 0.00001 (can only become stricter)
 - Client construction and security boundary:
   * Production client service `bedrock-runtime` in `us-east-1`.
   * Instantiated lazily via standard AWS credential provider chain or injected via Protocol `BedrockConverseClient`.
   * Constructor strictly rejects AWS credentials (`access_key`, `secret_key`, `session_token`, `bearer_token`, `account_id`).
   * Tests never require real credentials (`AWS_EC2_METADATA_DISABLED="true"` prevents IMDS probes).
-- Prompt trust separation:
-  * StillDone-owned system instructions kept strictly separate from user mission input.
-  * `PlannerInput.intent` remains user message data; hostile intent cannot alter system authority.
-  * Schema guidance included in prompt text as guidance only, never as Bedrock native Structured Output configuration.
-- Exact Converse request shape:
-  * modelId, system text, messages with user JSON, inferenceConfig (maxTokens, temperature).
-  * No topP, no tools, no toolConfig, no guardrails, no outputConfig.
-- Model response extraction & deterministic validation:
-  * Untrusted provider response envelope strictly validated.
-  * Accepted stopReason must be `end_turn`.
-  * Enforces `MAX_PLANNER_JSON_BYTES` boundary before parsing.
-  * Mandatory boundary: invokes `parse_candidate_plan_for_input(planner_input, model_text)`.
-  * Preserves underlying deterministic P-07.01 rejection class in `cause` and `__cause__`.
-- Privacy minimization:
-  * Hostile sentinels in intent, model output, and transport are never leaked into exception strings or reprs.
 - Validation:
-  * Full test suite passing (26 focused Bedrock adapter tests, 208 P-07.01 contract tests, 1260 total tests passing).
+  * Full test suite passing (28 focused Bedrock adapter tests, 208 P-07.01 contract tests, 1262 total tests passing).
   * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
 - Last independently VERIFIED contiguous SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`.
-- P-07.02 status: `EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`. Do NOT self-award PASS.
+- P-07.02 status: `REPAIRED / awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
 - P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ## Phase P-04 Status

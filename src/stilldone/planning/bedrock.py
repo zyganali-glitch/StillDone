@@ -22,6 +22,7 @@ Architectural invariants:
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -54,6 +55,21 @@ DEFAULT_TEMPERATURE: float = 0.00001
 # The sole accepted terminal stop reason from Bedrock Converse for successful completion
 ACCEPTED_STOP_REASON: str = "end_turn"
 
+# Known canonical Bedrock Converse stop reasons safe for bounded diagnostic classification
+KNOWN_BEDROCK_STOP_REASONS: frozenset[str] = frozenset(
+    {
+        "end_turn",
+        "stop_sequence",
+        "max_tokens",
+        "content_filtered",
+        "tool_use",
+        "guardrail_intervened",
+    }
+)
+
+# Safe alphanumeric pattern for AWS error codes to prevent reflective log injection
+SAFE_ERROR_CODE_REGEX: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
 
 # ===========================================================================
 # Exception Hierarchy
@@ -69,7 +85,11 @@ class BedrockPlannerSettingsError(BedrockPlannerError, ValueError):
 
 
 class BedrockTransportError(BedrockPlannerError):
-    """Raised when AWS Bedrock transport fails. Sanitizes raw error details."""
+    """Raised when AWS Bedrock transport fails. Sanitizes raw error details.
+
+    Suppresses raw underlying exceptions to prevent credential, account ID,
+    request ID, or untrusted provider strings from leaking into tracebacks.
+    """
 
     def __init__(
         self,
@@ -79,6 +99,8 @@ class BedrockTransportError(BedrockPlannerError):
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
+        self.__cause__ = None
+        self.__context__ = None
 
 
 class BedrockResponseEnvelopeError(BedrockPlannerError, ValueError):
@@ -100,25 +122,22 @@ class BedrockUsageMetadataError(BedrockPlannerError, ValueError):
 class BedrockPlanRejectionError(BedrockPlannerError, PlannerContractError):
     """Raised when the candidate plan proposal is rejected by deterministic validation.
 
-    Preserves the underlying deterministic P-07.01 rejection class in `cause` and `__cause__`.
-    Never leaks untrusted model output text or user intent in the exception message.
+    Preserves the underlying deterministic P-07.01 rejection class in `rejection_class`.
+    Never stores the original untrusted exception instance or leaks untrusted model
+    output text, action types, targets, or mission intent into exception messages,
+    causes, or tracebacks.
     """
 
     def __init__(
         self,
         message: str = "Candidate plan proposal rejected by deterministic validation",
         *,
-        cause: PlannerContractError | None = None,
+        rejection_class: type[PlannerContractError] | None = None,
     ) -> None:
         super().__init__(message)
-        self.cause: PlannerContractError | None = cause
-        if cause is not None:
-            self.__cause__ = cause
-
-    @property
-    def rejection_class(self) -> type[PlannerContractError] | None:
-        """The underlying deterministic P-07.01 error class."""
-        return type(self.cause) if self.cause is not None else None
+        self.rejection_class: type[PlannerContractError] | None = rejection_class
+        self.__cause__ = None
+        self.__context__ = None
 
 
 # ===========================================================================
@@ -137,7 +156,7 @@ class BedrockPlannerSettings:
     - Exactly 1 total provider attempt (zero automatic retries)
     - Retry mode: standard
     - Max tokens: 0 < max_tokens <= 2048
-    - Temperature: 0.0 <= temp <= 1.0 (canonical: 0.00001)
+    - Temperature: 0.0 <= temp <= 0.00001 (canonical: 0.00001; may only become stricter)
     """
 
     region_name: str = DEFAULT_BEDROCK_REGION
@@ -163,6 +182,8 @@ class BedrockPlannerSettings:
 
         if type(self.connect_timeout) not in (float, int) or type(self.connect_timeout) is bool:
             raise BedrockPlannerSettingsError("connect_timeout must be a float or int, not bool")
+        if math.isnan(self.connect_timeout) or math.isinf(self.connect_timeout):
+            raise BedrockPlannerSettingsError("connect_timeout cannot be NaN or infinity")
         if self.connect_timeout <= 0:
             raise BedrockPlannerSettingsError(
                 f"connect_timeout must be positive, got {self.connect_timeout}"
@@ -176,6 +197,8 @@ class BedrockPlannerSettings:
 
         if type(self.read_timeout) not in (float, int) or type(self.read_timeout) is bool:
             raise BedrockPlannerSettingsError("read_timeout must be a float or int, not bool")
+        if math.isnan(self.read_timeout) or math.isinf(self.read_timeout):
+            raise BedrockPlannerSettingsError("read_timeout cannot be NaN or infinity")
         if self.read_timeout <= 0:
             raise BedrockPlannerSettingsError(
                 f"read_timeout must be positive, got {self.read_timeout}"
@@ -214,9 +237,9 @@ class BedrockPlannerSettings:
             raise BedrockPlannerSettingsError("temperature must be a float or int, not bool")
         if math.isnan(self.temperature) or math.isinf(self.temperature):
             raise BedrockPlannerSettingsError("temperature cannot be NaN or infinity")
-        if not (0.0 <= self.temperature <= 1.0):
+        if not (0.0 <= self.temperature <= DEFAULT_TEMPERATURE):
             raise BedrockPlannerSettingsError(
-                f"temperature must be between 0.0 and 1.0; got {self.temperature}"
+                f"temperature must be between 0.0 and {DEFAULT_TEMPERATURE}; got {self.temperature}"
             )
 
 
@@ -430,6 +453,7 @@ class BedrockPlannerAdapter:
         }
 
         # Exactly one call, zero retries
+        transport_err: BedrockTransportError | None = None
         try:
             response = client.converse(
                 modelId=self._settings.model_id,
@@ -440,16 +464,23 @@ class BedrockPlannerAdapter:
         except Exception as exc:
             if isinstance(exc, BedrockPlannerError):
                 raise
-            code = None
+            code: str | None = None
             if hasattr(exc, "response") and isinstance(exc.response, Mapping):
                 err_dict = exc.response.get("Error")
                 if isinstance(err_dict, Mapping):
-                    code = err_dict.get("Code")
-            error_name = str(code) if code else type(exc).__name__
-            raise BedrockTransportError(
+                    raw_code = err_dict.get("Code")
+                    if isinstance(raw_code, str) and SAFE_ERROR_CODE_REGEX.match(raw_code):
+                        code = raw_code
+            error_name = code if code is not None else type(exc).__name__
+            transport_err = BedrockTransportError(
                 f"Bedrock converse transport failed: {error_name}",
-                error_code=str(code) if code else None,
-            ) from exc
+                error_code=code,
+            )
+
+        if transport_err is not None:
+            transport_err.__cause__ = None
+            transport_err.__context__ = None
+            raise transport_err from None
 
         # Treat response as untrusted provider data
         return self._process_converse_response(planner_input, response)
@@ -483,8 +514,24 @@ class BedrockPlannerAdapter:
                 f"Converse response 'message' must be a Mapping, got {type(message).__name__}"
             )
 
+        if "role" not in message:
+            raise BedrockResponseEnvelopeError(
+                "Converse response 'message' missing required 'role' field"
+            )
+        role = message["role"]
+        if not isinstance(role, str):
+            raise BedrockResponseEnvelopeError(
+                f"Converse message 'role' must be a string, got {type(role).__name__}"
+            )
+        if role != "assistant":
+            raise BedrockResponseEnvelopeError(
+                f"Converse message 'role' must be 'assistant', got {role!r}"
+            )
+
         if "content" not in message:
-            raise BedrockResponseEnvelopeError("Converse message missing required 'content' field")
+            raise BedrockResponseEnvelopeError(
+                "Converse response 'message' missing required 'content' field"
+            )
         content = message["content"]
         if not isinstance(content, (list, tuple)):
             raise BedrockResponseEnvelopeError(
@@ -494,23 +541,28 @@ class BedrockPlannerAdapter:
         if len(content) == 0:
             raise BedrockEmptyResponseError("Converse message 'content' sequence is empty")
 
-        first_block = content[0]
-        if not isinstance(first_block, Mapping):
-            raise BedrockResponseEnvelopeError(
-                f"Converse content block must be a Mapping, got {type(first_block).__name__}"
-            )
+        # Inspect complete content sequence; reject non-text or unsupported blocks
+        text_parts: list[str] = []
+        for idx, block in enumerate(content):
+            if not isinstance(block, Mapping):
+                raise BedrockResponseEnvelopeError(
+                    f"Converse content block at index {idx} must be a Mapping, "
+                    f"got {type(block).__name__}"
+                )
+            if "text" not in block:
+                raise BedrockResponseEnvelopeError(
+                    f"Converse content block at index {idx} missing required 'text' field"
+                )
+            block_text = block["text"]
+            if not isinstance(block_text, str):
+                raise BedrockResponseEnvelopeError(
+                    f"Converse content 'text' at index {idx} must be a string, "
+                    f"got {type(block_text).__name__}"
+                )
+            text_parts.append(block_text)
 
-        if "text" not in first_block:
-            raise BedrockResponseEnvelopeError(
-                "Converse content block missing required 'text' field"
-            )
-        raw_text = first_block["text"]
-        if not isinstance(raw_text, str):
-            raise BedrockResponseEnvelopeError(
-                f"Converse content 'text' must be a string, got {type(raw_text).__name__}"
-            )
-
-        if not raw_text.strip():
+        combined_text = "".join(text_parts)
+        if not combined_text.strip():
             raise BedrockEmptyResponseError(
                 "Converse response contains empty or whitespace-only text"
             )
@@ -526,8 +578,11 @@ class BedrockPlannerAdapter:
             )
 
         if stop_reason != ACCEPTED_STOP_REASON:
+            clean_reason = (
+                stop_reason if stop_reason in KNOWN_BEDROCK_STOP_REASONS else "unrecognized"
+            )
             msg = (
-                f"Unacceptable Bedrock stop reason: {stop_reason!r}; "
+                f"Unacceptable Bedrock stop reason: {clean_reason!r}; "
                 f"expected {ACCEPTED_STOP_REASON!r}"
             )
             raise BedrockStopReasonError(msg)
@@ -567,30 +622,36 @@ class BedrockPlannerAdapter:
                 total_tokens=tot_tokens,
             )
 
-        # Enforce MAX_PLANNER_JSON_BYTES ceiling before deterministic parsing
-        raw_bytes_len = len(raw_text.encode("utf-8"))
+        # Enforce MAX_PLANNER_JSON_BYTES ceiling on combined UTF-8 text
+        raw_bytes_len = len(combined_text.encode("utf-8"))
         if raw_bytes_len > MAX_PLANNER_JSON_BYTES:
-            cause_err = OversizedJsonPayloadError(
-                f"Raw JSON payload size ({raw_bytes_len} bytes) exceeds limit"
-            )
             msg = (
                 "Candidate plan proposal rejected by deterministic validation: "
                 "OversizedJsonPayloadError"
             )
-            raise BedrockPlanRejectionError(msg, cause=cause_err)
+            err = BedrockPlanRejectionError(msg, rejection_class=OversizedJsonPayloadError)
+            err.__cause__ = None
+            err.__context__ = None
+            raise err from None
 
         # Invoke mandatory deterministic boundary
+        parsed_plan: CandidatePlanProposal | None = None
+        rejection_err: BedrockPlanRejectionError | None = None
         try:
-            plan = parse_candidate_plan_for_input(planner_input, raw_text)
+            parsed_plan = parse_candidate_plan_for_input(planner_input, combined_text)
         except PlannerContractError as exc:
-            msg = (
-                f"Candidate plan proposal rejected by deterministic validation: "
-                f"{type(exc).__name__}"
-            )
-            raise BedrockPlanRejectionError(msg, cause=exc) from exc
+            cls = type(exc)
+            msg = f"Candidate plan proposal rejected by deterministic validation: {cls.__name__}"
+            rejection_err = BedrockPlanRejectionError(msg, rejection_class=cls)
 
+        if rejection_err is not None:
+            rejection_err.__cause__ = None
+            rejection_err.__context__ = None
+            raise rejection_err from None
+
+        assert parsed_plan is not None
         return BedrockPlannerResult(
-            plan=plan,
+            plan=parsed_plan,
             stop_reason=stop_reason,
             usage=usage,
             model_id=self._settings.model_id,

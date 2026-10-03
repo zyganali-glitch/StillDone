@@ -37,6 +37,7 @@ from __future__ import annotations
 import ast
 import socket
 import sys
+import traceback
 from collections.abc import Generator, Mapping, Sequence
 from typing import Any
 
@@ -73,6 +74,8 @@ from stilldone.planning.contracts import (
     PlannerValueError,
     ProviderIdentifierInjectionError,
     SymbolicTargetRef,
+    UnknownActionTypeError,
+    UnknownSymbolicTargetError,
 )
 from stilldone.serialization import canonical_json
 
@@ -249,12 +252,27 @@ def test_settings_reject_region_mismatch() -> None:
 
 
 def test_settings_reject_weakened_timeouts() -> None:
-    """Prove timeouts cannot be weakened above canonical limits or non-positive."""
+    """Prove timeouts cannot be weakened above canonical limits, non-positive, NaN, or infinite."""
     with pytest.raises(BedrockPlannerSettingsError, match="connect_timeout must be positive"):
         BedrockPlannerSettings(connect_timeout=0.0)
 
     with pytest.raises(BedrockPlannerSettingsError, match="connect_timeout must be positive"):
         BedrockPlannerSettings(connect_timeout=-1.0)
+
+    with pytest.raises(
+        BedrockPlannerSettingsError, match="connect_timeout cannot be NaN or infinity"
+    ):
+        BedrockPlannerSettings(connect_timeout=float("nan"))
+
+    with pytest.raises(
+        BedrockPlannerSettingsError, match="connect_timeout cannot be NaN or infinity"
+    ):
+        BedrockPlannerSettings(connect_timeout=float("inf"))
+
+    with pytest.raises(
+        BedrockPlannerSettingsError, match="connect_timeout cannot be NaN or infinity"
+    ):
+        BedrockPlannerSettings(connect_timeout=float("-inf"))
 
     with pytest.raises(
         BedrockPlannerSettingsError, match="cannot exceed canonical maximum of 5.0s"
@@ -264,6 +282,18 @@ def test_settings_reject_weakened_timeouts() -> None:
     with pytest.raises(BedrockPlannerSettingsError, match="read_timeout must be positive"):
         BedrockPlannerSettings(read_timeout=0.0)
 
+    with pytest.raises(BedrockPlannerSettingsError, match="read_timeout must be positive"):
+        BedrockPlannerSettings(read_timeout=-1.0)
+
+    with pytest.raises(BedrockPlannerSettingsError, match="read_timeout cannot be NaN or infinity"):
+        BedrockPlannerSettings(read_timeout=float("nan"))
+
+    with pytest.raises(BedrockPlannerSettingsError, match="read_timeout cannot be NaN or infinity"):
+        BedrockPlannerSettings(read_timeout=float("inf"))
+
+    with pytest.raises(BedrockPlannerSettingsError, match="read_timeout cannot be NaN or infinity"):
+        BedrockPlannerSettings(read_timeout=float("-inf"))
+
     with pytest.raises(
         BedrockPlannerSettingsError, match="cannot exceed canonical maximum of 30.0s"
     ):
@@ -272,6 +302,9 @@ def test_settings_reject_weakened_timeouts() -> None:
     # Boolean passed for timeouts rejected
     with pytest.raises(BedrockPlannerSettingsError, match="not bool"):
         BedrockPlannerSettings(connect_timeout=True)
+
+    with pytest.raises(BedrockPlannerSettingsError, match="not bool"):
+        BedrockPlannerSettings(read_timeout=True)
 
 
 def test_settings_reject_retry_weakening() -> None:
@@ -296,7 +329,11 @@ def test_settings_reject_retry_weakening() -> None:
 
 
 def test_settings_reject_invalid_tokens_and_temperature() -> None:
-    """Prove max_tokens and temperature limits are enforced strictly."""
+    """Prove max_tokens and temperature limits are enforced strictly.
+
+    Temperature may ONLY become stricter (0.0 <= temp <= 0.00001).
+    Values > 0.00001 (e.g. 0.00002, 0.5, 1.0) are strictly rejected.
+    """
     with pytest.raises(BedrockPlannerSettingsError, match="max_tokens must be positive"):
         BedrockPlannerSettings(max_tokens=0)
 
@@ -305,18 +342,29 @@ def test_settings_reject_invalid_tokens_and_temperature() -> None:
     ):
         BedrockPlannerSettings(max_tokens=2049)
 
-    with pytest.raises(
-        BedrockPlannerSettingsError, match="temperature must be between 0.0 and 1.0"
-    ):
+    with pytest.raises(BedrockPlannerSettingsError, match="temperature must be between 0.0 and"):
         BedrockPlannerSettings(temperature=-0.01)
 
-    with pytest.raises(
-        BedrockPlannerSettingsError, match="temperature must be between 0.0 and 1.0"
-    ):
+    with pytest.raises(BedrockPlannerSettingsError, match="temperature must be between 0.0 and"):
+        BedrockPlannerSettings(temperature=0.00002)
+
+    with pytest.raises(BedrockPlannerSettingsError, match="temperature must be between 0.0 and"):
+        BedrockPlannerSettings(temperature=0.5)
+
+    with pytest.raises(BedrockPlannerSettingsError, match="temperature must be between 0.0 and"):
+        BedrockPlannerSettings(temperature=1.0)
+
+    with pytest.raises(BedrockPlannerSettingsError, match="temperature must be between 0.0 and"):
         BedrockPlannerSettings(temperature=1.01)
 
     with pytest.raises(BedrockPlannerSettingsError, match="cannot be NaN or infinity"):
         BedrockPlannerSettings(temperature=float("nan"))
+
+    with pytest.raises(BedrockPlannerSettingsError, match="cannot be NaN or infinity"):
+        BedrockPlannerSettings(temperature=float("inf"))
+
+    with pytest.raises(BedrockPlannerSettingsError, match="cannot be NaN or infinity"):
+        BedrockPlannerSettings(temperature=float("-inf"))
 
 
 def test_settings_allow_stricter_test_values() -> None:
@@ -502,8 +550,9 @@ def test_different_mission_uuid_fails_binding() -> None:
     with pytest.raises(BedrockPlanRejectionError) as exc_info:
         adapter.plan(planner_input)
 
-    assert issubclass(exc_info.value.rejection_class or type(None), PlannerMissionBindingError)
-    assert isinstance(exc_info.value.cause, PlannerMissionBindingError)
+    assert exc_info.value.rejection_class is PlannerMissionBindingError
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 def test_provider_identifier_injection_fails() -> None:
@@ -679,21 +728,27 @@ def test_missing_envelope_fields_fail() -> None:
 
     # Missing content
     fake_client = FakeBedrockConverseClient(
-        response={"output": {"message": {}}, "stopReason": "end_turn"}
+        response={"output": {"message": {"role": "assistant"}}, "stopReason": "end_turn"}
     )
     with pytest.raises(BedrockResponseEnvelopeError, match="missing required 'content'"):
         BedrockPlannerAdapter(client=fake_client).plan(planner_input)
 
     # Empty content list
     fake_client = FakeBedrockConverseClient(
-        response={"output": {"message": {"content": []}}, "stopReason": "end_turn"}
+        response={
+            "output": {"message": {"role": "assistant", "content": []}},
+            "stopReason": "end_turn",
+        }
     )
     with pytest.raises(BedrockEmptyResponseError, match="content.*empty"):
         BedrockPlannerAdapter(client=fake_client).plan(planner_input)
 
     # Missing text in block
     fake_client = FakeBedrockConverseClient(
-        response={"output": {"message": {"content": [{}]}}, "stopReason": "end_turn"}
+        response={
+            "output": {"message": {"role": "assistant", "content": [{}]}},
+            "stopReason": "end_turn",
+        }
     )
     with pytest.raises(BedrockResponseEnvelopeError, match="missing required 'text'"):
         BedrockPlannerAdapter(client=fake_client).plan(planner_input)
@@ -701,11 +756,168 @@ def test_missing_envelope_fields_fail() -> None:
     # Missing stopReason
     fake_client = FakeBedrockConverseClient(
         response={
-            "output": {"message": {"content": [{"text": "{}"}]}},
+            "output": {"message": {"role": "assistant", "content": [{"text": "{}"}]}},
         }
     )
     with pytest.raises(BedrockResponseEnvelopeError, match="missing required 'stopReason'"):
         BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+
+
+def test_message_role_validation() -> None:
+    """Prove message.role must exist and be exactly 'assistant'."""
+    planner_input = make_planner_input("Role validation test")
+    valid_text = canonical_json(make_valid_plan_payload(planner_input.mission_id))
+
+    # Missing role
+    fake_client = FakeBedrockConverseClient(
+        response={
+            "output": {"message": {"content": [{"text": valid_text}]}},
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="missing required 'role'"):
+        BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+
+    # Role is 'user'
+    fake_client = FakeBedrockConverseClient(
+        response={
+            "output": {"message": {"role": "user", "content": [{"text": valid_text}]}},
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="must be 'assistant'"):
+        BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+
+    # Role is 'system'
+    fake_client = FakeBedrockConverseClient(
+        response={
+            "output": {"message": {"role": "system", "content": [{"text": valid_text}]}},
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="must be 'assistant'"):
+        BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+
+    # Role is non-string
+    fake_client = FakeBedrockConverseClient(
+        response={
+            "output": {"message": {"role": 123, "content": [{"text": valid_text}]}},
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="must be a string"):
+        BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+
+
+def test_complete_content_sequence_validation() -> None:
+    """Prove all content blocks are inspected, validated, and concatenated without dropping."""
+    planner_input = make_planner_input("Content sequence test")
+    valid_payload = make_valid_plan_payload(planner_input.mission_id)
+    valid_text = canonical_json(valid_payload)
+
+    # Subtest 1: Valid plan split across multiple text blocks concatenates successfully
+    midpoint = len(valid_text) // 2
+    part1, part2 = valid_text[:midpoint], valid_text[midpoint:]
+    fake_client = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": part1}, {"text": part2}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    result = BedrockPlannerAdapter(client=fake_client).plan(planner_input)
+    assert result.plan.mission_id == planner_input.mission_id
+    assert len(result.plan.steps) == 3
+
+    # Subtest 2: First block valid JSON + second block hostile text fails closed
+    fake_client_hostile = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"text": valid_text},
+                        {"text": "TRAILING_HOSTILE_TEXT_INJECTION"},
+                    ],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_info:
+        BedrockPlannerAdapter(client=fake_client_hostile).plan(planner_input)
+    assert exc_info.value.rejection_class is PlannerValueError
+
+    # Subtest 3: Multiple text blocks forming two JSON objects fails closed
+    fake_client_multi_json = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"text": valid_text},
+                        {"text": valid_text},
+                    ],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_multi:
+        BedrockPlannerAdapter(client=fake_client_multi_json).plan(planner_input)
+    assert exc_multi.value.rejection_class is PlannerValueError
+
+    # Subtest 4: Non-text content block (e.g. toolUse) fails envelope validation
+    fake_client_tool = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"text": valid_text},
+                        {"toolUse": {"toolUseId": "tool_123", "name": "weather"}},
+                    ],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="missing required 'text'"):
+        BedrockPlannerAdapter(client=fake_client_tool).plan(planner_input)
+
+    # Subtest 5: Non-mapping content block fails envelope validation
+    fake_client_non_map = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": valid_text}, "raw_string_block"],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="must be a Mapping"):
+        BedrockPlannerAdapter(client=fake_client_non_map).plan(planner_input)
+
+    # Subtest 6: Content text non-string fails envelope validation
+    fake_client_non_str = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": 12345}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockResponseEnvelopeError, match="must be a string"):
+        BedrockPlannerAdapter(client=fake_client_non_str).plan(planner_input)
 
 
 def test_unacceptable_stop_reasons_fail() -> None:
@@ -716,7 +928,7 @@ def test_unacceptable_stop_reasons_fail() -> None:
     for bad_stop in ("max_tokens", "content_filtered", "guardrail_intervened", "tool_use"):
         fake_client = FakeBedrockConverseClient(
             response={
-                "output": {"message": {"content": [{"text": valid_text}]}},
+                "output": {"message": {"role": "assistant", "content": [{"text": valid_text}]}},
                 "stopReason": bad_stop,
             }
         )
@@ -738,7 +950,7 @@ def test_token_metadata_validation() -> None:
     # Negative tokens
     fake_client = FakeBedrockConverseClient(
         response={
-            "output": {"message": {"content": [{"text": valid_text}]}},
+            "output": {"message": {"role": "assistant", "content": [{"text": valid_text}]}},
             "stopReason": ACCEPTED_STOP_REASON,
             "usage": {"inputTokens": -1, "outputTokens": 10, "totalTokens": 9},
         }
@@ -749,7 +961,7 @@ def test_token_metadata_validation() -> None:
     # Boolean passed for token count
     fake_client = FakeBedrockConverseClient(
         response={
-            "output": {"message": {"content": [{"text": valid_text}]}},
+            "output": {"message": {"role": "assistant", "content": [{"text": valid_text}]}},
             "stopReason": ACCEPTED_STOP_REASON,
             "usage": {"inputTokens": True, "outputTokens": 10, "totalTokens": 10},
         }
@@ -760,7 +972,7 @@ def test_token_metadata_validation() -> None:
     # Missing usage entirely is tolerated (None)
     fake_client = FakeBedrockConverseClient(
         response={
-            "output": {"message": {"content": [{"text": valid_text}]}},
+            "output": {"message": {"role": "assistant", "content": [{"text": valid_text}]}},
             "stopReason": ACCEPTED_STOP_REASON,
         }
     )
@@ -774,14 +986,29 @@ def test_token_metadata_validation() -> None:
 
 
 def test_privacy_zero_leakage_in_exceptions() -> None:
-    """Prove hostile sentinels in intent, model output, and transport are NEVER leaked."""
+    """Prove hostile sentinels NEVER leak into str, repr, causes, contexts, or tracebacks."""
     HOSTILE_INTENT_SENTINEL = "HOSTILE_INTENT_SECRET_TOKEN_XYZ_98765"
     HOSTILE_MODEL_OUTPUT_SENTINEL = "HOSTILE_MODEL_SECRET_TOKEN_ABC_54321"
+    HOSTILE_ACTION_TYPE_SENTINEL = "HOSTILE_ACTION_TYPE_EXPLOIT_11111"
+    HOSTILE_TARGET_REF_SENTINEL = "HOSTILE_TARGET_REF_EXPLOIT_22222"
+    HOSTILE_MISSION_ID_SENTINEL = "HOSTILE_MISSION_ID_EXPLOIT_33333"
     HOSTILE_AWS_SENTINEL = "HOSTILE_AWS_KEY_SECRET_DEF_13579"
+    HOSTILE_STOP_REASON_SENTINEL = "HOSTILE_STOP_REASON_INJECTION_44444"
+
+    def _assert_zero_leakage(exc: Exception, sentinels: Sequence[str]) -> None:
+        err_str = str(exc)
+        err_repr = repr(exc)
+        tb_str = "".join(traceback.format_exception(exc))
+        assert exc.__cause__ is None, f"Expected __cause__ to be None, got {exc.__cause__!r}"
+        assert exc.__context__ is None, f"Expected __context__ to be None, got {exc.__context__!r}"
+        for s in sentinels:
+            assert s not in err_str, f"Sentinel {s} leaked into str(exc): {err_str}"
+            assert s not in err_repr, f"Sentinel {s} leaked into repr(exc): {err_repr}"
+            assert s not in tb_str, f"Sentinel {s} leaked into traceback: {tb_str}"
 
     # Case 1: Hostile intent in planner_input causes deterministic plan rejection
-    planner_input = make_planner_input(f"Mission with {HOSTILE_INTENT_SENTINEL}")
-    fake_client = FakeBedrockConverseClient(
+    planner_input_1 = make_planner_input(f"Mission with {HOSTILE_INTENT_SENTINEL}")
+    fake_client_1 = FakeBedrockConverseClient(
         response={
             "output": {
                 "message": {
@@ -792,32 +1019,131 @@ def test_privacy_zero_leakage_in_exceptions() -> None:
             "stopReason": ACCEPTED_STOP_REASON,
         }
     )
-    adapter = BedrockPlannerAdapter(client=fake_client)
+    with pytest.raises(BedrockPlanRejectionError) as exc_info_1:
+        BedrockPlannerAdapter(client=fake_client_1).plan(planner_input_1)
+    _assert_zero_leakage(exc_info_1.value, [HOSTILE_INTENT_SENTINEL, HOSTILE_MODEL_OUTPUT_SENTINEL])
 
-    with pytest.raises(BedrockPlanRejectionError) as exc_info:
-        adapter.plan(planner_input)
+    # Case 2: Hostile action_type in model proposal
+    planner_input_2 = make_planner_input("Normal mission")
+    bad_plan_action = {
+        "schema_version": "v1",
+        "mission_id": str(planner_input_2.mission_id),
+        "steps": [
+            {
+                "action_type": HOSTILE_ACTION_TYPE_SENTINEL,
+                "target_ref": SymbolicTargetRef.LOCAL_WEATHER.value,
+            }
+        ],
+    }
+    fake_client_2 = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": canonical_json(bad_plan_action)}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_info_2:
+        BedrockPlannerAdapter(client=fake_client_2).plan(planner_input_2)
+    assert exc_info_2.value.rejection_class is UnknownActionTypeError
+    _assert_zero_leakage(exc_info_2.value, [HOSTILE_ACTION_TYPE_SENTINEL])
 
-    err_str = str(exc_info.value)
-    err_repr = repr(exc_info.value)
-    assert HOSTILE_INTENT_SENTINEL not in err_str
-    assert HOSTILE_INTENT_SENTINEL not in err_repr
-    assert HOSTILE_MODEL_OUTPUT_SENTINEL not in err_str
-    assert HOSTILE_MODEL_OUTPUT_SENTINEL not in err_repr
+    # Case 3: Hostile target_ref in model proposal
+    bad_plan_target = {
+        "schema_version": "v1",
+        "mission_id": str(planner_input_2.mission_id),
+        "steps": [
+            {
+                "action_type": ActionType.WEATHER_READ.value,
+                "target_ref": HOSTILE_TARGET_REF_SENTINEL,
+            }
+        ],
+    }
+    fake_client_3 = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": canonical_json(bad_plan_target)}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_info_3:
+        BedrockPlannerAdapter(client=fake_client_3).plan(planner_input_2)
+    assert exc_info_3.value.rejection_class is UnknownSymbolicTargetError
+    _assert_zero_leakage(exc_info_3.value, [HOSTILE_TARGET_REF_SENTINEL])
 
-    # Case 2: Transport error with hostile AWS credential snippet
+    # Case 4: Hostile mission_id in model proposal (fails UUID validation with zero leakage)
+    bad_plan_mission = {
+        "schema_version": "v1",
+        "mission_id": HOSTILE_MISSION_ID_SENTINEL,
+        "steps": [],
+    }
+    fake_client_4 = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": canonical_json(bad_plan_mission)}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_info_4:
+        BedrockPlannerAdapter(client=fake_client_4).plan(planner_input_2)
+    assert exc_info_4.value.rejection_class is PlannerValueError
+    _assert_zero_leakage(exc_info_4.value, [HOSTILE_MISSION_ID_SENTINEL])
+
+    # Case 4b: Different valid UUID in model proposal fails with PlannerMissionBindingError
+    different_mid = MissionId.generate()
+    bad_plan_binding = make_valid_plan_payload(different_mid)
+    fake_client_4b = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": canonical_json(bad_plan_binding)}],
+                }
+            },
+            "stopReason": ACCEPTED_STOP_REASON,
+        }
+    )
+    with pytest.raises(BedrockPlanRejectionError) as exc_info_4b:
+        BedrockPlannerAdapter(client=fake_client_4b).plan(planner_input_2)
+    assert exc_info_4b.value.rejection_class is PlannerMissionBindingError
+    assert exc_info_4b.value.__cause__ is None
+    assert exc_info_4b.value.__context__ is None
+
+    # Case 5: Transport error with hostile AWS credential snippet
     transport_fake = FakeBedrockConverseClient(
         error=RuntimeError(f"Connection failed with credentials {HOSTILE_AWS_SENTINEL}")
     )
-    adapter_transport = BedrockPlannerAdapter(client=transport_fake)
-
     with pytest.raises(BedrockTransportError) as exc_transport:
-        adapter_transport.plan(planner_input)
+        BedrockPlannerAdapter(client=transport_fake).plan(planner_input_2)
+    _assert_zero_leakage(exc_transport.value, [HOSTILE_AWS_SENTINEL])
 
-    transport_str = str(exc_transport.value)
-    transport_repr = repr(exc_transport.value)
-    assert HOSTILE_AWS_SENTINEL not in transport_str
-    assert HOSTILE_AWS_SENTINEL not in transport_repr
-    assert HOSTILE_INTENT_SENTINEL not in transport_str
+    # Case 6: Unacceptable / hostile stopReason sanitized to 'unrecognized'
+    stop_fake = FakeBedrockConverseClient(
+        response={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "{}"}],
+                }
+            },
+            "stopReason": HOSTILE_STOP_REASON_SENTINEL,
+        }
+    )
+    with pytest.raises(BedrockStopReasonError) as exc_stop:
+        BedrockPlannerAdapter(client=stop_fake).plan(planner_input_2)
+    assert "unrecognized" in str(exc_stop.value)
+    _assert_zero_leakage(exc_stop.value, [HOSTILE_STOP_REASON_SENTINEL])
 
 
 # ===========================================================================
@@ -838,7 +1164,12 @@ def test_no_application_retries_on_failure() -> None:
     # Failure 2: Plan rejection
     fake_plan_fail = FakeBedrockConverseClient(
         response={
-            "output": {"message": {"content": [{"text": '{"bad": true}'}]}},
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": '{"bad": true}'}],
+                }
+            },
             "stopReason": ACCEPTED_STOP_REASON,
         }
     )
