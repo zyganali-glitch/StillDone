@@ -949,7 +949,7 @@ Goal:
 make required AWS intelligence materially useful without giving it fact authority.
 
 ### P-07.01 — Define strict planner input/output schema and supported action vocabulary
-Status: EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
+Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - bounded P-07 planning namespace created: `src/stilldone/planning/contracts.py`, `src/stilldone/planning/__init__.py`, `tests/planning/test_contracts.py`;
@@ -959,8 +959,11 @@ Acceptance:
 - bounded `SymbolicTargetRef` vocabulary preventing models from fabricating authoritative provider external IDs;
 - model authority strictly prohibited: prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection rejected;
 - parameter validation reuses canonical `ActionPolicy` facts without fabricating target IDs;
-- canonical JSON Schema generator `get_candidate_plan_json_schema()` with `additionalProperties=False` at every object boundary;
-- comprehensive test suite (`tests/planning/test_contracts.py`, 148 tests) passing all 20 gate requirements and hostile hallucination cases;
+- surgical repair applied to address 3 review findings:
+  1. Defect 1 — Action-Specific JSON Schema: `get_candidate_plan_json_schema()` generates `oneOf` per canonical ActionType enforcing exact ActionType const, compatible SymbolicTargetRef enums, required `title` on `task.create`, `minProperties: 1` on `calendar.update`, disallowed parameters on read actions, and `additionalProperties: False` at every boundary. Full accept/reject parity proven against `jsonschema`.
+  2. Defect 2 — Planner Input/Output Mission Binding: Added fail-closed `parse_candidate_plan_for_input(planner_input, model_output_json)` enforcing `plan.mission_id == planner_input.mission_id` (mismatch raises `PlannerMissionBindingError`). Model cannot redirect execution by echoing an alternate UUID.
+  3. Defect 3 — Raw Model JSON Byte Ceiling: Enforced `MAX_PLANNER_JSON_BYTES = 64 * 1024` (65,536 bytes) fail-closed with `OversizedJsonPayloadError` before `json.loads` in `CandidatePlanProposal.from_json`, `PlannerInput.from_json`, and `parse_candidate_plan_for_input`.
+- comprehensive test suite (`tests/planning/test_contracts.py`, 193 tests) passing all contract requirements, schema parity, mission binding, raw JSON bounds, and hostile hallucination cases; 1219 total tests passing repo-wide;
 - zero provider/model SDK imports in planner contract module; zero network/model execution; zero personal spend ($0.00);
 - P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 

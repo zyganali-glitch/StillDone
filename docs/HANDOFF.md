@@ -74,10 +74,10 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-07.01 — Define strict planner input/output schema and supported action vocabulary
+P-07.01 — Define strict planner input/output schema and supported action vocabulary (SURGICALLY REPAIRED)
 
 Status:
-`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
+`REPAIRED / awaiting independent QA review (NOT PASS)`
 
 Notes:
 - Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
@@ -89,14 +89,17 @@ Notes:
   * `src/stilldone/planning/contracts.py`
   * `src/stilldone/planning/__init__.py`
   * `tests/planning/test_contracts.py`
-- P-07.01 defines strict, immutable `PlannerInput`, `CandidatePlanProposal`, `CandidateActionProposal`, and `SymbolicTargetRef`.
+- P-07.01 Consolidated Bounded Surgical Repair addressed all 3 review findings:
+  1. Defect 1 — Action-Specific JSON Schema: `get_candidate_plan_json_schema()` generates `oneOf` per canonical ActionType enforcing exact ActionType const, compatible SymbolicTargetRef enums, required `title` on `task.create`, `minProperties: 1` on `calendar.update`, disallowed parameters on read actions, and `additionalProperties: False` at every boundary. Full accept/reject parity proven against `jsonschema`.
+  2. Defect 2 — Planner Input/Output Mission Binding: Added fail-closed `parse_candidate_plan_for_input(planner_input, model_output_json)` enforcing `plan.mission_id == planner_input.mission_id` (mismatch raises `PlannerMissionBindingError`). Model cannot redirect execution by echoing an alternate UUID.
+  3. Defect 3 — Raw Model JSON Byte Ceiling: Enforced `MAX_PLANNER_JSON_BYTES = 64 * 1024` (65,536 bytes) fail-closed with `OversizedJsonPayloadError` before `json.loads` in `CandidatePlanProposal.from_json`, `PlannerInput.from_json`, and `parse_candidate_plan_for_input`.
 - Exact five-action canonical vocabulary enforced (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); zero dynamic/model-added actions.
 - Zero fabricated provider IDs: strict deserialization rejects external identifiers (`calendar_id`, `event_id`, `task_list_id`, `task_id`, `resource_id`, `parent_id`).
 - Zero model authority: model prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection strictly rejected.
 - Parameter validation directly reuses canonical `ActionPolicy` facts without fabricating target IDs.
-- Full test suite passing (1174 tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
+- Full test suite passing (1219 tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
 - Last independently VERIFIED contiguous SHA at P-07.01 start remains: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`.
-- P-07.01 status: `EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`. Do NOT self-award PASS.
+- P-07.01 status: `REPAIRED / awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
 - P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ## Phase P-04 Status

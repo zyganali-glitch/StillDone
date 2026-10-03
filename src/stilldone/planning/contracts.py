@@ -57,6 +57,9 @@ MAX_INTENT_STRING_LENGTH: int = 1024
 MAX_EXPLANATION_STRING_LENGTH: int = 2048
 MAX_SYMBOLIC_TARGET_LENGTH: int = 64
 
+# Maximum raw JSON payload size allowed before decoding untrusted planner JSON (64 KiB)
+MAX_PLANNER_JSON_BYTES: int = 64 * 1024
+
 # Canonical Action Vocabulary: EXACTLY the five canonical ActionType members.
 PLANNER_ACTION_VOCABULARY: frozenset[ActionType] = frozenset(ActionType)
 assert len(PLANNER_ACTION_VOCABULARY) == 5, (
@@ -267,9 +270,29 @@ class DuplicateKeyError(PlannerValueError):
     """Raised when duplicate keys are encountered in JSON parsing."""
 
 
+class OversizedJsonPayloadError(PlannerValueError):
+    """Raised when raw JSON payload exceeds MAX_PLANNER_JSON_BYTES before decoding."""
+
+
+class PlannerMissionBindingError(PlannerValueError):
+    """Raised when candidate plan mission_id does not match planner_input.mission_id."""
+
+
 # ===========================================================================
-# JSON Helper: Duplicate Key Prevention
+# JSON Helper: Duplicate Key Prevention & Raw Payload Bounds
 # ===========================================================================
+
+
+def _validate_raw_json_payload(json_str: str) -> None:
+    """Strictly enforce raw JSON payload size ceiling before decoding."""
+    if type(json_str) is not str:
+        raise PlannerTypeError(f"json_str must be a string, got {type(json_str).__name__}")
+    encoded_len = len(json_str.encode("utf-8"))
+    if encoded_len > MAX_PLANNER_JSON_BYTES:
+        raise OversizedJsonPayloadError(
+            f"Raw JSON payload size ({encoded_len} bytes) exceeds maximum "
+            f"allowed limit of {MAX_PLANNER_JSON_BYTES} bytes"
+        )
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -526,9 +549,8 @@ class PlannerInput:
 
     @classmethod
     def from_json(cls, json_str: str) -> PlannerInput:
-        """Parse PlannerInput from JSON with duplicate key detection."""
-        if type(json_str) is not str:
-            raise PlannerTypeError(f"json_str must be a string, got {type(json_str).__name__}")
+        """Parse PlannerInput from JSON with raw size bounds and duplicate key detection."""
+        _validate_raw_json_payload(json_str)
         try:
             data = json.loads(json_str, object_pairs_hook=_reject_duplicate_json_keys)
         except json.JSONDecodeError as exc:
@@ -930,9 +952,11 @@ class CandidatePlanProposal:
 
     @classmethod
     def from_json(cls, json_str: str) -> CandidatePlanProposal:
-        """Parse CandidatePlanProposal from JSON with duplicate key detection."""
-        if type(json_str) is not str:
-            raise PlannerTypeError(f"json_str must be a string, got {type(json_str).__name__}")
+        """Parse CandidatePlanProposal from JSON.
+
+        Enforces raw size bounds and duplicate key detection.
+        """
+        _validate_raw_json_payload(json_str)
         try:
             data = json.loads(json_str, object_pairs_hook=_reject_duplicate_json_keys)
         except json.JSONDecodeError as exc:
@@ -941,19 +965,189 @@ class CandidatePlanProposal:
 
 
 # ===========================================================================
-# Canonical JSON Schema Generator
+# Bound Untrusted Model Plan Parsing
 # ===========================================================================
 
 
+def parse_candidate_plan_for_input(
+    planner_input: PlannerInput,
+    model_output_json: str,
+) -> CandidatePlanProposal:
+    """Parse untrusted model output JSON and strictly bind it to planner input.
+
+    Fails closed if:
+    - planner_input is not a PlannerInput instance;
+    - model_output_json is not a string;
+    - model_output_json exceeds MAX_PLANNER_JSON_BYTES;
+    - JSON is malformed or contains duplicate keys;
+    - candidate plan violates CandidatePlanProposal schema/bounds;
+    - plan.mission_id != planner_input.mission_id (raises PlannerMissionBindingError).
+
+    The model CANNOT redirect execution to another mission by returning a different UUID.
+    Never mutates state, never confers authority.
+    """
+    if not isinstance(planner_input, PlannerInput):
+        raise PlannerTypeError(
+            f"planner_input must be a PlannerInput instance, got {type(planner_input).__name__}"
+        )
+    if type(model_output_json) is not str:
+        raise PlannerTypeError(
+            f"model_output_json must be a string, got {type(model_output_json).__name__}"
+        )
+
+    # CandidatePlanProposal.from_json validates MAX_PLANNER_JSON_BYTES,
+    # duplicate keys, and all candidate plan structural invariants.
+    plan = CandidatePlanProposal.from_json(model_output_json)
+
+    if plan.mission_id != planner_input.mission_id:
+        raise PlannerMissionBindingError(
+            f"Candidate plan mission_id {str(plan.mission_id)!r} does not match "
+            f"planner input mission_id {str(planner_input.mission_id)!r}"
+        )
+
+    return plan
+
+
+# ===========================================================================
+# Canonical Parameter Schemas & JSON Schema Generation
+# ===========================================================================
+
+# Minimal private parameter schema metadata mapping for supported action parameters.
+# ActionPolicy defines supported parameter keys and string length bounds; this mapping
+# supplies JSON Schema primitive types (string vs boolean) for those exact parameter keys.
+_CANONICAL_PARAM_JSON_SCHEMAS: Mapping[str, dict[str, Any]] = types.MappingProxyType(
+    {
+        "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_PARAM_STRING_LENGTH,
+        },
+        "start_time": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_PARAM_STRING_LENGTH,
+        },
+        "all_day": {
+            "type": "boolean",
+        },
+        "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_PARAM_STRING_LENGTH,
+        },
+        "due": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_PARAM_STRING_LENGTH,
+        },
+    }
+)
+
+_ALL_SUPPORTED_PARAM_KEYS: frozenset[str] = frozenset.union(
+    *(policy.supported_parameters for policy in ACTION_POLICIES.values())
+)
+assert set(_CANONICAL_PARAM_JSON_SCHEMAS.keys()) == _ALL_SUPPORTED_PARAM_KEYS, (
+    "Parameter JSON schemas must exactly match union of canonical supported parameters"
+)
+
+
+def _build_action_proposal_json_schema(action_type: ActionType) -> dict[str, Any]:
+    """Build an action-specific JSON Schema branch for one canonical ActionType.
+
+    Derives strictly from:
+    - canonical ActionType value (exact const);
+    - ACTION_SYMBOLIC_TARGET_COMPATIBILITY[action_type] (compatible symbolic target enum);
+    - ACTION_POLICIES[action_type] (supported parameter names);
+    - canonical parameter presence and bound rules:
+      * read actions: parameters absent or strict empty object only (maxProperties=0);
+      * calendar.update: parameters required, minProperties=1, only supported fields;
+      * task.create: parameters required, title required, due optional.
+    """
+    policy = ACTION_POLICIES[action_type]
+    compatible_targets = sorted(
+        [t.value for t in ACTION_SYMBOLIC_TARGET_COMPATIBILITY[action_type]]
+    )
+
+    action_schema: dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action_type", "target_ref"],
+        "properties": {
+            "action_type": {
+                "type": "string",
+                "const": action_type.value,
+                "description": f"Exact canonical action type: {action_type.value}",
+            },
+            "target_ref": {
+                "type": "string",
+                "enum": compatible_targets,
+                "description": f"Compatible symbolic target references for {action_type.value}",
+            },
+            "explanation": {
+                "type": "string",
+                "maxLength": MAX_EXPLANATION_STRING_LENGTH,
+                "description": "Non-authoritative explanation/rationale",
+            },
+        },
+    }
+
+    if action_type in (
+        ActionType.CALENDAR_READ,
+        ActionType.TASK_READ,
+        ActionType.WEATHER_READ,
+    ):
+        action_schema["properties"]["parameters"] = {
+            "type": "object",
+            "maxProperties": 0,
+            "additionalProperties": False,
+            "description": f"Parameters absent or strict empty object only for {action_type.value}",
+        }
+    elif action_type == ActionType.CALENDAR_UPDATE:
+        action_schema["required"].append("parameters")
+        param_props = {
+            k: dict(_CANONICAL_PARAM_JSON_SCHEMAS[k]) for k in sorted(policy.supported_parameters)
+        }
+        action_schema["properties"]["parameters"] = {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": False,
+            "properties": param_props,
+            "description": "At least one supported update parameter is required",
+        }
+    elif action_type == ActionType.TASK_CREATE:
+        action_schema["required"].append("parameters")
+        param_props = {
+            k: dict(_CANONICAL_PARAM_JSON_SCHEMAS[k]) for k in sorted(policy.supported_parameters)
+        }
+        action_schema["properties"]["parameters"] = {
+            "type": "object",
+            "required": ["title"],
+            "additionalProperties": False,
+            "properties": param_props,
+            "description": "Task creation parameters requiring 'title'",
+        }
+    else:
+        raise ValueError(f"Unhandled action type: {action_type}")
+
+    return action_schema
+
+
 def get_candidate_plan_json_schema() -> dict[str, Any]:
-    """Generate canonical JSON Schema for candidate plan structured output.
+    """Generate action-specific JSON Schema for candidate plan structured output.
 
     Guarantees:
+    - steps.items uses oneOf with one mutually exclusive branch per canonical ActionType.
+    - Each action branch enforces exact ActionType const and compatible SymbolicTargetRef enums.
+    - Calendar read, task read, and weather read disallow parameters
+      (absent or strict empty object only).
+    - Calendar update requires at least one supported update parameter (minProperties=1).
+    - Task create requires title parameter (due optional, no other fields).
     - additionalProperties is False at every closed object boundary.
-    - ActionType and SymbolicTargetRef enums are exact and generated from canonical sources.
     - Explicit min/max bounds on arrays and strings.
     - Zero provider external identifier fields permitted.
-    - Single canonical source of truth (derived directly from Python contract types).
+    - ActionType, target compatibility, and parameter constraints derive from canonical sources.
+    - Parameter schemas are bounded by _CANONICAL_PARAM_JSON_SCHEMAS, which is asserted to
+      match the exact union of supported parameters from ACTION_POLICIES.
     """
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -978,58 +1172,10 @@ def get_candidate_plan_json_schema() -> dict[str, Any]:
                 "maxItems": MAX_PLAN_STEPS,
                 "description": "Ordered sequence of candidate action proposals",
                 "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["action_type", "target_ref"],
-                    "properties": {
-                        "action_type": {
-                            "type": "string",
-                            "enum": sorted([a.value for a in ActionType]),
-                            "description": "Canonical StillDone action type",
-                        },
-                        "target_ref": {
-                            "type": "string",
-                            "enum": sorted([t.value for t in SymbolicTargetRef]),
-                            "description": (
-                                "Bounded symbolic target reference (never raw provider IDs)"
-                            ),
-                        },
-                        "parameters": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "description": "Action parameter mapping conforming to policy",
-                            "properties": {
-                                "summary": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": MAX_PARAM_STRING_LENGTH,
-                                },
-                                "start_time": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": MAX_PARAM_STRING_LENGTH,
-                                },
-                                "all_day": {
-                                    "type": "boolean",
-                                },
-                                "title": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": MAX_PARAM_STRING_LENGTH,
-                                },
-                                "due": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": MAX_PARAM_STRING_LENGTH,
-                                },
-                            },
-                        },
-                        "explanation": {
-                            "type": "string",
-                            "maxLength": MAX_EXPLANATION_STRING_LENGTH,
-                            "description": "Non-authoritative explanation/rationale",
-                        },
-                    },
+                    "oneOf": [
+                        _build_action_proposal_json_schema(action_type)
+                        for action_type in sorted(ActionType, key=lambda a: a.value)
+                    ],
                 },
             },
             "explanation": {
@@ -1048,6 +1194,7 @@ __all__ = [
     "MAX_EXPLANATION_STRING_LENGTH",
     "MAX_INTENT_STRING_LENGTH",
     "MAX_PLAN_STEPS",
+    "MAX_PLANNER_JSON_BYTES",
     "MAX_SYMBOLIC_TARGET_LENGTH",
     "PLANNER_ACTION_VOCABULARY",
     "PLANNER_SCHEMA_VERSION",
@@ -1061,10 +1208,12 @@ __all__ = [
     "MissingRequiredFieldError",
     "ModelAuthorityInjectionError",
     "OversizedIntentError",
+    "OversizedJsonPayloadError",
     "OversizedPlanError",
     "OversizedStringError",
     "PlannerContractError",
     "PlannerInput",
+    "PlannerMissionBindingError",
     "PlannerTypeError",
     "PlannerValueError",
     "ProviderIdentifierInjectionError",
@@ -1074,5 +1223,6 @@ __all__ = [
     "UnknownSymbolicTargetError",
     "UnsupportedSchemaVersionError",
     "get_candidate_plan_json_schema",
+    "parse_candidate_plan_for_input",
     "validate_candidate_action_parameters",
 ]
