@@ -829,7 +829,7 @@ Acceptance:
 
 
 ### P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
-Status: REPAIRED — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Reviewed repair commit: `c95ccdd2f6396e284e09a0866795bed4764393ba`)
 
 Acceptance:
 - bounded Google Tasks read and create adapters implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadAdapter`, `GoogleTasksCreateAdapter`);
@@ -846,7 +846,7 @@ Acceptance:
 - comprehensive unit and adversarial tests in `tests/test_tasks_read_create_adapter.py` passing without network dependency.
 
 ### P-06.05 — Implement Tasks independent read-back verifier and duplicate detection
-Status: REPAIRED — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`)
 
 Acceptance:
 - Tasks-specific independent read-back verifier implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadbackVerifier`);
@@ -876,24 +876,26 @@ Acceptance:
 - target mismatch error message strictly generic without interpolating configured or supplied location ID;
 - authority policy: `READ_ONLY` class strictly enforced; unexpected `ApprovalGrant` fails closed with `UnexpectedApprovalGrantError`;
 - canonical endpoint lock: `OpenMeteoHttpTransport` strictly locked to canonical `https://api.open-meteo.com/v1/forecast`; rejects HTTP downgrade, SSRF, alternate ports, subdomains, credentials, and query/fragment injection;
+- endpoint validation error privacy: bounded generic error messages without reflecting attacker-controlled host, path, credentials, or query strings;
+- HTTP redirect escape forbidden: `_NoRedirectHandler` ensures HTTP 301, 302, 303, 307, 308 are never followed; exactly 1 request; zero second-host request; target URL never leaked into public output;
 - location privacy minimization: `WeatherLocationConfig` and `WeatherObservation` mask `location_id='***'` and coordinates in `__repr__` and `__str__`;
 - fail-closed strict provider schema validation: validates `current` and `current_units` blocks; all 5 variables (`time`, `temperature_2m`, `precipitation`, `weather_code`, `wind_speed_10m`) required; finite numeric checks (rejects NaN/inf/null/bool); all 4 units required; preserves `provider_valid_time`;
 - truthful observation timing: `observed_at` sampled strictly after provider response returns and schema validation completes; cannot be forged by caller `at`;
-- closed-world live provenance: only `OpenMeteoHttpTransport` over verified canonical endpoint may assert `LIVE_EXTERNAL`; custom/fake transports claiming `LIVE_EXTERNAL` fail closed;
+- closed-world live provenance: only exact canonical `OpenMeteoHttpTransport` (`type(transport) is OpenMeteoHttpTransport`) may assert `LIVE_EXTERNAL`; custom/fake/subclass transports claiming `LIVE_EXTERNAL` fail closed;
 - mandatory CC BY 4.0 provider attribution (`ProviderAttribution` with provider, license, notice text, URL);
 - pluggable transport boundary (`WeatherTransport` protocol):
   * `FakeOpenMeteoTransport` for deterministic testing with guaranteed `FIXTURE` provenance;
   * `OpenMeteoHttpTransport` for real HTTPS observation with guaranteed `LIVE_EXTERNAL` provenance;
-- bounded HTTP timeout (5.0s) and strict error sanitization preventing coordinate or URL leakage in error messages;
-- zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_REPAIR_EVIDENCE.md` as `RECORDED_LIVE`);
+- bounded HTTP timeout (`DEFAULT_HTTP_TIMEOUT_SECONDS=5.0`, `MAX_HTTP_TIMEOUT_SECONDS=10.0`, rejects bool, 0, negative, NaN, inf, >10.0) and strict error sanitization preventing coordinate or URL leakage in error messages;
+- zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md` as `RECORDED_LIVE`);
 - zero promotion invariant: observation success does NOT assert or imply VERIFIED or READY;
 - comprehensive unit and adversarial tests in `tests/test_weather_adapter.py` passing without network dependency.
 
 ### P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 Phase exit:
 two real mutable systems independently verified.

@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import json
 import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -33,6 +34,8 @@ from stilldone.adapters.weather import (
     CANONICAL_OPEN_METEO_ENDPOINT,
     CANONICAL_WEATHER_RESOURCE_KIND,
     CANONICAL_WEATHER_SYSTEM,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    MAX_HTTP_TIMEOUT_SECONDS,
     FakeOpenMeteoTransport,
     OpenMeteoHttpTransport,
     OpenMeteoObservationAdapter,
@@ -44,6 +47,7 @@ from stilldone.adapters.weather import (
     WeatherRateLimitError,
     WeatherReadResult,
     WeatherReadStatus,
+    WeatherRedirectError,
     WeatherTargetError,
     WeatherTimeoutError,
     WeatherTransport,
@@ -414,8 +418,8 @@ def test_observation_rejects_non_evidence_provenance() -> None:
 # ===========================================================================
 
 
-@patch("urllib.request.urlopen")
-def test_http_transport_sends_correct_params_and_headers(mock_urlopen: MagicMock) -> None:
+@patch.object(urllib.request.OpenerDirector, "open")
+def test_http_transport_sends_correct_params_and_headers(mock_open: MagicMock) -> None:
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.read.return_value = (
@@ -424,13 +428,13 @@ def test_http_transport_sends_correct_params_and_headers(mock_urlopen: MagicMock
         b'"weather_code": 1, "wind_speed_10m": 8.0}}'
     )
     mock_resp.__enter__.return_value = mock_resp
-    mock_urlopen.return_value = mock_resp
+    mock_open.return_value = mock_resp
 
     transport = OpenMeteoHttpTransport()
     res = transport.fetch_current_weather(52.52, 13.41, timezone="UTC")
 
-    assert mock_urlopen.call_count == 1
-    req = mock_urlopen.call_args[0][0]
+    assert mock_open.call_count == 1
+    req = mock_open.call_args[0][0]
     assert req.method == "GET"
     assert "latitude=52.520000" in req.full_url
     assert "longitude=13.410000" in req.full_url
@@ -445,17 +449,17 @@ def test_http_transport_sends_correct_params_and_headers(mock_urlopen: MagicMock
 # ===========================================================================
 
 
-@patch("urllib.request.urlopen")
-def test_http_transport_timeout_raises_weather_timeout_error(mock_urlopen: MagicMock) -> None:
-    mock_urlopen.side_effect = TimeoutError("Connection timed out")
+@patch.object(urllib.request.OpenerDirector, "open")
+def test_http_transport_timeout_raises_weather_timeout_error(mock_open: MagicMock) -> None:
+    mock_open.side_effect = TimeoutError("Connection timed out")
 
     transport = OpenMeteoHttpTransport()
     with pytest.raises(WeatherTimeoutError, match="Open-Meteo request timed out"):
         transport.fetch_current_weather(52.52, 13.41)
 
 
-@patch("urllib.request.urlopen")
-def test_http_transport_429_rate_limit(mock_urlopen: MagicMock) -> None:
+@patch.object(urllib.request.OpenerDirector, "open")
+def test_http_transport_429_rate_limit(mock_open: MagicMock) -> None:
     err = urllib.error.HTTPError(
         url="https://api.open-meteo.com/v1/forecast?secret=123",
         code=429,
@@ -463,7 +467,7 @@ def test_http_transport_429_rate_limit(mock_urlopen: MagicMock) -> None:
         hdrs=MagicMock(),
         fp=io.BytesIO(b"Rate limit exceeded"),
     )
-    mock_urlopen.side_effect = err
+    mock_open.side_effect = err
 
     transport = OpenMeteoHttpTransport()
     with pytest.raises(WeatherRateLimitError, match="rate limit exceeded") as exc_info:
@@ -548,15 +552,15 @@ class TestCanonicalEndpointValidation:
     @pytest.mark.parametrize(
         "bad_url,match_text",
         [
-            ("http://api.open-meteo.com/v1/forecast", "HTTPS scheme"),
-            ("https://attacker.com/v1/forecast", "api.open-meteo.com"),
-            ("https://api.open-meteo.com.attacker.com/v1/forecast", "api.open-meteo.com"),
-            ("https://sub.api.open-meteo.com/v1/forecast", "api.open-meteo.com"),
+            ("http://api.open-meteo.com/v1/forecast", "endpoint scheme"),
+            ("https://attacker.com/v1/forecast", "endpoint authority"),
+            ("https://api.open-meteo.com.attacker.com/v1/forecast", "endpoint authority"),
+            ("https://sub.api.open-meteo.com/v1/forecast", "endpoint authority"),
             ("https://user:pass@api.open-meteo.com/v1/forecast", "credentials"),
-            ("https://api.open-meteo.com:8443/v1/forecast", "alternate port"),
-            ("https://api.open-meteo.com/v2/forecast", "/v1/forecast"),
-            ("https://api.open-meteo.com/v1/forecast?injected=true", "query parameters"),
-            ("https://api.open-meteo.com/v1/forecast#frag", "fragments"),
+            ("https://api.open-meteo.com:8443/v1/forecast", "endpoint authority"),
+            ("https://api.open-meteo.com/v2/forecast", "endpoint path"),
+            ("https://api.open-meteo.com/v1/forecast?injected=true", "query or fragment"),
+            ("https://api.open-meteo.com/v1/forecast#frag", "query or fragment"),
             ("", "non-empty string"),
         ],
     )
@@ -788,6 +792,39 @@ class TestClosedWorldProvenance:
         transport = OpenMeteoHttpTransport()
         assert transport.provenance == EvidenceProvenance.LIVE_EXTERNAL
 
+    def test_subclass_claiming_live_external_fails_closed(self) -> None:
+        class FakeLiveSubclass(OpenMeteoHttpTransport):
+            def fetch_current_weather(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                return {
+                    "latitude": 52.52,
+                    "longitude": 13.41,
+                    "current_units": {"temperature_2m": "°C"},
+                    "current": {"time": "2026-10-03T10:00:00Z", "temperature_2m": 25.0},
+                }
+
+        fake_sub = FakeLiveSubclass()
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+
+        with pytest.raises(
+            WeatherConfigError,
+            match="Only verified OpenMeteoHttpTransport may assert LIVE_EXTERNAL provenance",
+        ):
+            OpenMeteoReadAdapter(config, fake_sub)
+
+    def test_subclass_bypassing_init_fails_closed_in_read_weather(self) -> None:
+        class FakeLiveSubclass(OpenMeteoHttpTransport):
+            def fetch_current_weather(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                return {}
+
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+        adapter = OpenMeteoReadAdapter(config, FakeOpenMeteoTransport())
+        object.__setattr__(adapter, "_transport", FakeLiveSubclass())
+
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+        assert "LIVE_EXTERNAL" in str(res.error_message)
+
     def test_custom_transport_claiming_live_external_fails_closed(self) -> None:
         class RogueTransport:
             @property
@@ -822,6 +859,269 @@ def test_live_weather_repair_evidence_document_exists_and_valid() -> None:
     assert "Open-Meteo" in content
     assert "CC BY 4.0" in content
     assert "$0.00" in content
+    assert "provider_valid_time" in content
+    assert "temperature_2m" in content
+    assert "wind_speed_10m" in content
+
+
+# ===========================================================================
+# 15. HTTP Redirect Escape Forbidden (P-06.06 Final Repair Defect 1)
+# ===========================================================================
+
+
+class TestHttpRedirectEscapeForbidden:
+    """Adversarial proof that OpenMeteoHttpTransport refuses all HTTP redirects.
+
+    Guarantees:
+    - 301, 302, 303, 307, 308 fail closed immediately.
+    - Exactly ONE request attempt to canonical endpoint; zero requests to hostile host.
+    - Target URL and host never leak into exceptions, str/repr, or logs.
+    - Typed WeatherRedirectError is raised.
+    - Adapter read_weather fails closed as PROVIDER_ERROR without observation.
+    """
+
+    @pytest.mark.parametrize("status_code", [301, 302, 303, 307, 308])
+    def test_redirect_codes_fail_closed_without_following(
+        self, status_code: int, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        hostile_target = "https://hostile.attacker.com/steal-credentials?leak=1"
+        transport = OpenMeteoHttpTransport()
+
+        mock_resp = MagicMock()
+        mock_resp.status = status_code
+        mock_resp.code = status_code
+        mock_resp.msg = "Redirect"
+        mock_resp.headers = {"Location": hostile_target}
+        mock_resp.info.return_value = mock_resp.headers
+        mock_resp.read.return_value = b""
+        mock_resp.fp = io.BytesIO(b"")
+
+        outbound_requests: list[str] = []
+
+        def fake_https_open(req: urllib.request.Request) -> Any:
+            outbound_requests.append(req.full_url)
+            return mock_resp
+
+        with patch.object(urllib.request.HTTPSHandler, "https_open", side_effect=fake_https_open):
+            with pytest.raises(WeatherRedirectError) as exc_info:
+                transport.fetch_current_weather(52.52, 13.41)
+
+        err = exc_info.value
+        assert err.status_code == status_code
+        assert isinstance(err, WeatherTransportError)
+
+        # 1. Canonical request was sent
+        assert len(outbound_requests) == 1
+        assert "api.open-meteo.com" in outbound_requests[0]
+
+        # 2. Hostile target was NEVER requested (zero second-host request)
+        assert hostile_target not in outbound_requests
+        assert not any("hostile.attacker.com" in url for url in outbound_requests)
+
+        # 3. Transport read count is exactly 1
+        assert transport.reads_count == 1
+
+        # 4. Hostile target URL does not appear in public error or log output
+        err_text = str(err)
+        err_repr = repr(err)
+        sanitized = _sanitize_weather_transport_error(err)
+
+        assert hostile_target not in err_text
+        assert "hostile.attacker.com" not in err_text
+        assert hostile_target not in err_repr
+        assert "hostile.attacker.com" not in err_repr
+        assert hostile_target not in sanitized
+        assert "hostile.attacker.com" not in sanitized
+        assert hostile_target not in caplog.text
+        assert "hostile.attacker.com" not in caplog.text
+
+    def test_adapter_read_weather_handles_redirect_fail_closed(self) -> None:
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+        transport = OpenMeteoHttpTransport()
+        adapter = OpenMeteoReadAdapter(config, transport)
+
+        hostile_target = "https://evil.external.host.example/exfiltrate"
+        mock_resp = MagicMock()
+        mock_resp.status = 302
+        mock_resp.code = 302
+        mock_resp.headers = {"Location": hostile_target}
+        mock_resp.info.return_value = mock_resp.headers
+        mock_resp.read.return_value = b""
+        mock_resp.fp = io.BytesIO(b"")
+
+        outbound_requests: list[str] = []
+
+        def fake_https_open(req: urllib.request.Request) -> Any:
+            outbound_requests.append(req.full_url)
+            return mock_resp
+
+        with patch.object(urllib.request.HTTPSHandler, "https_open", side_effect=fake_https_open):
+            result = adapter.read_weather(_make_weather_action())
+
+        assert result.status == WeatherReadStatus.PROVIDER_ERROR
+        assert result.observation is None
+        assert len(outbound_requests) == 1
+        assert "api.open-meteo.com" in outbound_requests[0]
+        assert not any("evil.external.host" in url for url in outbound_requests)
+        assert hostile_target not in str(result.error_message)
+
+
+# ===========================================================================
+# 16. Bounded Timeout Validation (P-06.06 Final Repair Defect 3)
+# ===========================================================================
+
+
+class TestHttpTransportTimeoutBounds:
+    def test_default_timeout_used_when_omitted(self) -> None:
+        transport = OpenMeteoHttpTransport()
+        assert transport.timeout_seconds == DEFAULT_HTTP_TIMEOUT_SECONDS
+        assert DEFAULT_HTTP_TIMEOUT_SECONDS <= MAX_HTTP_TIMEOUT_SECONDS
+
+    def test_valid_timeouts_accepted(self) -> None:
+        for valid_t in (0.1, 1.0, 5.0, MAX_HTTP_TIMEOUT_SECONDS, int(MAX_HTTP_TIMEOUT_SECONDS)):
+            transport = OpenMeteoHttpTransport(timeout_seconds=valid_t)
+            assert transport.timeout_seconds == float(valid_t)
+
+    @pytest.mark.parametrize(
+        "bad_timeout",
+        [
+            0,
+            0.0,
+            -1,
+            -5.0,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            MAX_HTTP_TIMEOUT_SECONDS + 0.0001,
+            MAX_HTTP_TIMEOUT_SECONDS + 1.0,
+            100.0,
+            True,  # bool must be rejected
+            False,  # bool must be rejected
+            "5.0",  # string rejected
+            None,  # None rejected
+            [5.0],  # list rejected
+        ],
+    )
+    def test_invalid_timeouts_fail_closed(self, bad_timeout: Any) -> None:
+        with pytest.raises(
+            WeatherConfigError, match="timeout_seconds must be a finite positive number"
+        ):
+            OpenMeteoHttpTransport(timeout_seconds=bad_timeout)
+
+    @patch.object(urllib.request.OpenerDirector, "open")
+    def test_production_request_uses_validated_timeout_exactly(self, mock_open: MagicMock) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = (
+            b'{"current_units": {"temperature_2m": "\xc2\xb0C", "precipitation": "mm", '
+            b'"weather_code": "wmo", "wind_speed_10m": "km/h"}, '
+            b'"current": {"time": "2026-10-03T10:00:00Z", "temperature_2m": 12.5, '
+            b'"precipitation": 0.0, "weather_code": 1, "wind_speed_10m": 8.0}}'
+        )
+        mock_resp.__enter__.return_value = mock_resp
+        mock_open.return_value = mock_resp
+
+        transport = OpenMeteoHttpTransport(timeout_seconds=7.5)
+        transport.fetch_current_weather(52.52, 13.41)
+
+        assert mock_open.call_count == 1
+        call_kwargs = mock_open.call_args[1]
+        assert call_kwargs.get("timeout") == 7.5
+
+
+# ===========================================================================
+# 17. Endpoint Validation Error Privacy & Hostile Sentinels (P-06.06 Final Repair Defect 4)
+# ===========================================================================
+
+
+class TestEndpointValidationErrorPrivacy:
+    SECRET_HOST = "SECRET-HOST-HOSTILE-99.COM"
+    SECRET_PATH = "/SECRET-EXPLOIT-PATH-88"
+    SECRET_QUERY = "secret_auth_token=SECRET-QUERY-TOKEN-77"
+    SECRET_USER = "SECRET-USER-66"
+    SECRET_PASS = "SECRET-PASS-55"
+
+    @pytest.mark.parametrize(
+        "bad_url,sentinel,expected_generic_reason",
+        [
+            (
+                f"https://{SECRET_HOST}/v1/forecast",
+                SECRET_HOST,
+                "Invalid Open-Meteo endpoint authority",
+            ),
+            (
+                f"https://api.open-meteo.com{SECRET_PATH}",
+                SECRET_PATH,
+                "Invalid Open-Meteo endpoint path",
+            ),
+            (
+                f"https://api.open-meteo.com/v1/forecast?{SECRET_QUERY}",
+                SECRET_QUERY,
+                "Open-Meteo endpoint must not contain query or fragment",
+            ),
+            (
+                f"https://api.open-meteo.com/v1/forecast#{SECRET_QUERY}",
+                SECRET_QUERY,
+                "Open-Meteo endpoint must not contain query or fragment",
+            ),
+            (
+                f"https://{SECRET_USER}:{SECRET_PASS}@api.open-meteo.com/v1/forecast",
+                SECRET_USER,
+                "Open-Meteo endpoint must not contain credentials",
+            ),
+            (
+                f"https://{SECRET_USER}:{SECRET_PASS}@api.open-meteo.com/v1/forecast",
+                SECRET_PASS,
+                "Open-Meteo endpoint must not contain credentials",
+            ),
+            (
+                "http://api.open-meteo.com/v1/forecast",
+                "http",
+                "Invalid Open-Meteo endpoint scheme",
+            ),
+        ],
+    )
+    def test_sentinels_never_appear_in_exception_repr_or_logs(
+        self,
+        bad_url: str,
+        sentinel: str,
+        expected_generic_reason: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with pytest.raises(WeatherTransportError) as exc_info:
+            validate_open_meteo_endpoint(bad_url)
+
+        err = exc_info.value
+        err_str = str(err)
+        err_repr = repr(err)
+
+        assert expected_generic_reason in err_str
+
+        if sentinel != "http":
+            assert sentinel not in err_str
+            assert sentinel not in err_repr
+            assert sentinel not in caplog.text
+            assert bad_url not in err_str
+            assert bad_url not in err_repr
+            assert bad_url not in caplog.text
+
+
+# ===========================================================================
+# 18. Live Weather Final Closure Evidence File Check
+# ===========================================================================
+
+
+def test_live_weather_final_closure_evidence_document_exists_and_valid() -> None:
+    from pathlib import Path
+
+    evidence_path = Path("docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md")
+    assert evidence_path.is_file(), "Live weather final closure evidence doc must exist"
+    content = evidence_path.read_text(encoding="utf-8")
+    assert "RECORDED_LIVE" in content
+    assert "Open-Meteo" in content
+    assert "CC BY 4.0" in content
+    assert "$0.00" in content
+    assert "_NoRedirectHandler" in content
     assert "provider_valid_time" in content
     assert "temperature_2m" in content
     assert "wind_speed_10m" in content

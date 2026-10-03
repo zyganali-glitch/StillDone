@@ -64,6 +64,7 @@ DEFAULT_OPEN_METEO_BASE_URL = CANONICAL_OPEN_METEO_ENDPOINT
 DEFAULT_OPEN_METEO_CURRENT_VARS = "temperature_2m,precipitation,weather_code,wind_speed_10m"
 DEFAULT_OPEN_METEO_USER_AGENT = "StillDone/1.0 (https://github.com/zyganali-glitch/StillDone)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 5.0
+MAX_HTTP_TIMEOUT_SECONDS = 10.0
 
 ATTRIBUTION_PROVIDER = "Open-Meteo"
 ATTRIBUTION_LICENSE = "CC BY 4.0"
@@ -104,6 +105,17 @@ class WeatherTransportError(WeatherAdapterError):
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class WeatherRedirectError(WeatherTransportError):
+    """Raised when Open-Meteo endpoint returns an HTTP redirect (3xx)."""
+
+    def __init__(
+        self,
+        message: str = "Open-Meteo endpoint redirect forbidden",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
 
 
 class WeatherRateLimitError(WeatherTransportError):
@@ -153,7 +165,9 @@ def _sanitize_weather_transport_error(exc: Exception) -> str:
 
     code_suffix = f" (status {status_code})" if status_code is not None else ""
 
-    if isinstance(exc, WeatherRateLimitError):
+    if isinstance(exc, WeatherRedirectError):
+        msg = f"Open-Meteo redirect forbidden{code_suffix}"
+    elif isinstance(exc, WeatherRateLimitError):
         msg = f"Open-Meteo rate limit exceeded{code_suffix}"
     elif isinstance(exc, WeatherTimeoutError):
         msg = "Open-Meteo request timed out"
@@ -172,6 +186,7 @@ def validate_open_meteo_endpoint(url: str) -> str:
 
     Fails closed against SSRF, protocol downgrade, credentials, alternate ports,
     subdomain/lookalike domains, and query/fragment injection.
+    Never reflects attacker-controlled input in exception text.
     """
     if not isinstance(url, str) or not url.strip():
         raise WeatherTransportError("Open-Meteo endpoint URL must be a non-empty string")
@@ -179,32 +194,19 @@ def validate_open_meteo_endpoint(url: str) -> str:
     parsed = urllib.parse.urlsplit(url)
 
     if parsed.scheme != "https":
-        raise WeatherTransportError(
-            f"Open-Meteo endpoint must use HTTPS scheme, got '{parsed.scheme}'"
-        )
+        raise WeatherTransportError("Invalid Open-Meteo endpoint scheme")
 
     if parsed.username or parsed.password:
-        raise WeatherTransportError("Open-Meteo endpoint must not include user credentials")
+        raise WeatherTransportError("Open-Meteo endpoint must not contain credentials")
 
-    if parsed.hostname != "api.open-meteo.com":
-        raise WeatherTransportError(
-            f"Open-Meteo endpoint host must be 'api.open-meteo.com', got '{parsed.hostname}'"
-        )
-
-    if parsed.port is not None:
-        raise WeatherTransportError(
-            f"Open-Meteo endpoint must not specify alternate port, got port {parsed.port}"
-        )
+    if parsed.hostname != "api.open-meteo.com" or parsed.port is not None:
+        raise WeatherTransportError("Invalid Open-Meteo endpoint authority")
 
     if parsed.path != "/v1/forecast":
-        raise WeatherTransportError(
-            f"Open-Meteo endpoint path must be '/v1/forecast', got '{parsed.path}'"
-        )
+        raise WeatherTransportError("Invalid Open-Meteo endpoint path")
 
     if parsed.query or parsed.fragment:
-        raise WeatherTransportError(
-            "Open-Meteo endpoint URL must not contain query parameters or fragments"
-        )
+        raise WeatherTransportError("Open-Meteo endpoint must not contain query or fragment")
 
     return url
 
@@ -422,12 +424,41 @@ class FakeOpenMeteoTransport:
         return self.canned_response
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuses all HTTP redirects to prevent SSRF and redirect escape."""
+
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        # Returning None instructs urllib not to follow the redirect.
+        return None
+
+    def http_error_301(self, req: Any, fp: Any, code: int, msg: str, headers: Any) -> Any:
+        raise WeatherRedirectError("Open-Meteo endpoint redirect forbidden", status_code=code)
+
+    http_error_302 = http_error_301
+    http_error_303 = http_error_301
+    http_error_307 = http_error_301
+    http_error_308 = http_error_301
+
+    def http_error_default(self, req: Any, fp: Any, code: int, msg: str, headers: Any) -> Any:
+        if 300 <= code < 400:
+            raise WeatherRedirectError("Open-Meteo endpoint redirect forbidden", status_code=code)
+        return None
+
+
 class OpenMeteoHttpTransport:
     """Production HTTP transport communicating with official Open-Meteo API.
 
     Guarantees EvidenceProvenance.LIVE_EXTERNAL.
     Locked to canonical Open-Meteo forecast API: https://api.open-meteo.com/v1/forecast
-    Strictly validates against SSRF, protocol downgrade, and alternate endpoints.
+    Strictly validates against SSRF, protocol downgrade, alternate endpoints, and HTTP redirects.
     Uses standard library urllib over HTTPS with bounded timeout and zero personal spend.
     Sanitizes all exceptions to prevent leaking coordinates or network details.
     """
@@ -439,8 +470,19 @@ class OpenMeteoHttpTransport:
         user_agent: str = DEFAULT_OPEN_METEO_USER_AGENT,
     ) -> None:
         self._endpoint = validate_open_meteo_endpoint(endpoint)
-        self._timeout_seconds = timeout_seconds
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+            or timeout_seconds > MAX_HTTP_TIMEOUT_SECONDS
+        ):
+            raise WeatherConfigError(
+                f"timeout_seconds must be a finite positive number <= {MAX_HTTP_TIMEOUT_SECONDS}"
+            )
+        self._timeout_seconds = float(timeout_seconds)
         self._user_agent = user_agent
+        self._opener = urllib.request.build_opener(_NoRedirectHandler())
         self.reads_count: int = 0
 
     @property
@@ -448,9 +490,22 @@ class OpenMeteoHttpTransport:
         return self._endpoint
 
     @property
+    def timeout_seconds(self) -> float:
+        return self._timeout_seconds
+
+    @property
     def provenance(self) -> EvidenceProvenance:
         """Real external HTTP transport strictly returns LIVE_EXTERNAL provenance."""
         return EvidenceProvenance.LIVE_EXTERNAL
+
+    def __repr__(self) -> str:
+        return (
+            f"OpenMeteoHttpTransport(endpoint='{self._endpoint}', "
+            f"timeout_seconds={self._timeout_seconds})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def fetch_current_weather(
         self,
@@ -480,7 +535,7 @@ class OpenMeteoHttpTransport:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout_seconds) as resp:
+            with self._opener.open(req, timeout=self._timeout_seconds) as resp:
                 status_code = resp.status
                 if status_code != 200:
                     raise WeatherApiError(
@@ -500,6 +555,11 @@ class OpenMeteoHttpTransport:
 
         except urllib.error.HTTPError as http_err:
             code = http_err.code
+            if 300 <= code < 400:
+                raise WeatherRedirectError(
+                    "Open-Meteo endpoint redirect forbidden",
+                    status_code=code,
+                ) from http_err
             if code == 429:
                 raise WeatherRateLimitError(
                     "Open-Meteo rate limit exceeded (status 429)",
@@ -559,9 +619,11 @@ class OpenMeteoReadAdapter:
             raise TypeError(
                 f"transport must implement WeatherTransport, got {type(transport).__name__}"
             )
-        # Closed-world provenance verification: only OpenMeteoHttpTransport can assert LIVE_EXTERNAL
-        if transport.provenance == EvidenceProvenance.LIVE_EXTERNAL and not isinstance(
-            transport, OpenMeteoHttpTransport
+        # Closed-world provenance verification:
+        # only exact canonical OpenMeteoHttpTransport can assert LIVE_EXTERNAL
+        if (
+            transport.provenance == EvidenceProvenance.LIVE_EXTERNAL
+            and type(transport) is not OpenMeteoHttpTransport
         ):
             raise WeatherConfigError(
                 "Only verified OpenMeteoHttpTransport may assert LIVE_EXTERNAL provenance"
@@ -663,8 +725,9 @@ class OpenMeteoReadAdapter:
             raise WeatherTargetError("WEATHER_READ authority evaluation failed")
 
         # Step 7: Transport execution with closed-world provenance and runtime timing
-        if self._transport.provenance == EvidenceProvenance.LIVE_EXTERNAL and not isinstance(
-            self._transport, OpenMeteoHttpTransport
+        if (
+            self._transport.provenance == EvidenceProvenance.LIVE_EXTERNAL
+            and type(self._transport) is not OpenMeteoHttpTransport
         ):
             obs_time = datetime.now(UTC)
             return WeatherReadResult(
