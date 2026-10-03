@@ -863,7 +863,23 @@ Acceptance:
 - comprehensive unit and adversarial tests in `tests/test_tasks_readback_verifier.py` passing without network dependency.
 
 ### P-06.06 — Implement Open-Meteo live observation adapter with attribution
-Status: PENDING
+Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- Open-Meteo weather observation adapter implemented in `src/stilldone/adapters/weather.py` (`OpenMeteoReadAdapter`, alias `OpenMeteoObservationAdapter`);
+- canonical P-04 `ActionType.WEATHER_READ` policy enforcement: `system="open_meteo"`, `resource_kind="weather_location"`, empty parameters required;
+- target semantics enforced: `parent_id` must be `None`; `resource_id` must match configured `location_id`;
+- authority policy: `READ_ONLY` class strictly enforced; unexpected `ApprovalGrant` fails closed with `UnexpectedApprovalGrantError`;
+- privacy minimization: `WeatherLocationConfig` masks geographic coordinates in `__repr__` and `__str__`; durable `WeatherObservation` omits coordinates;
+- mandatory CC BY 4.0 provider attribution (`ProviderAttribution` with provider, license, notice text, URL);
+- pluggable transport boundary (`WeatherTransport` protocol):
+  * `FakeOpenMeteoTransport` for deterministic testing with guaranteed `FIXTURE` provenance;
+  * `OpenMeteoHttpTransport` for real HTTPS observation with guaranteed `LIVE_EXTERNAL` provenance;
+- transport provenance is preserved and enforced; synthetic fakes cannot produce `LIVE_EXTERNAL` evidence;
+- bounded HTTP timeout (5.0s) and strict error sanitization preventing coordinate or URL leakage in error messages;
+- zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_EVIDENCE.md`);
+- zero promotion invariant: observation success does NOT assert or imply VERIFIED or READY;
+- comprehensive unit and adversarial tests in `tests/test_weather_adapter.py` passing without network dependency.
 
 ### P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks
 Status: PENDING
