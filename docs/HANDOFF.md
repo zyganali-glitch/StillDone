@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — P-06.01 to P-06.07 independent QA PASS; P-06.08 REPAIRED — awaiting independent QA review (NOT PASS)**
+Current repository state: **Phase P-07: IN PROGRESS — P-07.01 EXECUTOR_COMPLETED (awaiting independent QA review, NOT PASS); Phase P-06 CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,39 +74,30 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
+P-07.01 — Define strict planner input/output schema and supported action vocabulary
 
 Status:
-`REPAIRED — awaiting independent QA review (NOT PASS)`
+`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
 
 Notes:
-- P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
-- P-06.02 received independent QA PASS in commit `954420f91c94fb583886c17627be3e5f922a7241`.
-- P-06.03 received independent QA PASS in commit `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
-- P-06.04 received independent QA PASS (Reviewed repair commit: `c95ccdd2f6396e284e09a0866795bed4764393ba`).
-- P-06.05 received independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`).
-- P-06.06 received independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`).
-- P-06.07 received independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
-- P-06.08 live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API (REPAIRED):
-  * Pre-final-run operator fixture preparation recorded: initial preflight probe observed missing event (`BLOCKED_MISSING_DEMO_EVENT`); Antigravity guided the human OPERATOR to manually create the synthetic demo event `Leave for school`; operator initially entered `2026-10-03 17:00`; preflight gate detected wrong current state (`BLOCKED_WRONG_CURRENT_STATE`); operator manually corrected fixture to canonical `2026-10-04 07:45` pre-state.
-  * Process deviation recorded: `OPERATOR_FIXTURE_PREPARATION_PROCESS_DEVIATION_RECORDED` (operator manual fixture setup within the session rather than returning to QA before fixture existence).
-  * Zero executor fixture mutations: Antigravity, StillDone, and canonical Calendar adapters executed strictly ZERO event creation mutations during fixture preparation.
-  * Final successful proof run call bounding: exactly 5 live API calls executed in the final run (1 calendar discovery, 1 preflight event discovery, 1 pre-write exact read, 1 conditional update mutation, 1 independent read-back).
-  * Minimum least-privilege OAuth scopes requested: `https://www.googleapis.com/auth/calendar.calendarlist.readonly` and `https://www.googleapis.com/auth/calendar.events` (zero broad calendar write, zero tasks/gmail/profile/drive scopes).
-  * Executed in ephemeral scratch environment outside repository using official `google-api-python-client` 2.201.0, `google-auth-oauthlib` 1.5.0, `google-auth-httplib2` 0.4.4.
-  * Dedicated demo calendar discovery: 1 call to `calendarList.list` matching `StillDone Demo` summary exactly once; ID redacted in durable evidence as `[REDACTED_CALENDAR_ID]`; forbidden aliases (primary, default) rejected.
-  * Preflight target event discovery: 1 call to `events.list` inside `StillDone Demo` matching `Leave for school` exactly once; confirmed pre-update start at 07:45 (`2026-10-04T07:45:00+01:00`); verified synthetic safety checks (0 attendees, no conferenceData, no recurrence); event ID redacted as `[REDACTED_EVENT_ID]`.
-  * Pre-write exact read & authority binding: bounded `ApprovalGrant` issued for `CALENDAR_UPDATE` (`AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`); `GoogleCalendarUpdateAdapter` performed pre-write `events.get` retrieving exact provider ETag.
-  * Single conditional mutation: `GoogleCalendarUpdateAdapter.update_event` executed via 1 call to `events.update` with `If-Match: <etag>` and `sendUpdates="none"`; desired start `07:30` (`2026-10-04T07:30:00+01:00`); preserved duration; returned `CalendarUpdateStatus.UPDATED` with `writes_performed=1`; strictly 0 retries.
-  * Intermediate state proven: recorded `StepEvidenceState.EXECUTED_UNVERIFIED`; explicitly verified `UPDATED != VERIFIED`.
-  * Distinct independent read-back: `GoogleCalendarReadbackVerifier.verify` executed via separate fresh `events.get`; update response payload was not reused; returned `CalendarReadbackStatus.MATCH` with 0 mismatches; verified temporal ordering (`verified_at >= observed_at >= updated_at`).
-  * Deterministic predicate: conjunction of all 4 conditions evaluated to `True`; step evidence recorded as `StepEvidenceState.VERIFIED`.
-  * Mission state: mission `READY` was strictly NOT produced (step-level evidence only).
-  * Spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement).
-  * Cleanup: ephemeral token/auth URL files deleted; client secrets file preserved outside repo in local Downloads; zero secrets/tokens committed.
-- Last independently VERIFIED contiguous SHA at P-06.08 start: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`.
-- P-06.08 status: `REPAIRED — awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
-- Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
+- Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
+- P-06.01 through P-06.07 received independent QA PASS.
+- P-06.08 received independent QA PASS ✅ (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
+- The P-06.08 operator-fixture preparation history and `OPERATOR_FIXTURE_PREPARATION_PROCESS_DEVIATION_RECORDED` are canonical historical truth and preserved.
+- Phase P-07 is IN PROGRESS.
+- P-07.01 implemented in bounded planning package:
+  * `src/stilldone/planning/contracts.py`
+  * `src/stilldone/planning/__init__.py`
+  * `tests/planning/test_contracts.py`
+- P-07.01 defines strict, immutable `PlannerInput`, `CandidatePlanProposal`, `CandidateActionProposal`, and `SymbolicTargetRef`.
+- Exact five-action canonical vocabulary enforced (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); zero dynamic/model-added actions.
+- Zero fabricated provider IDs: strict deserialization rejects external identifiers (`calendar_id`, `event_id`, `task_list_id`, `task_id`, `resource_id`, `parent_id`).
+- Zero model authority: model prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection strictly rejected.
+- Parameter validation directly reuses canonical `ActionPolicy` facts without fabricating target IDs.
+- Full test suite passing (1174 tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
+- Last independently VERIFIED contiguous SHA at P-07.01 start remains: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`.
+- P-07.01 status: `EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`. Do NOT self-award PASS.
+- P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ## Phase P-04 Status
 
@@ -141,26 +132,37 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 - P-06.05 — independent QA PASS (Reviewed repair commit: `bf2b821c3ae65e9c44a30d9a327e0829db4f9c16`)
 - P-06.06 — independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`)
 - P-06.07 — independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`)
-- P-06.08 — REPAIRED — awaiting independent QA review (NOT PASS)
+- P-06.08 — PASS ✅ (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`)
+
+Phase P-06 is **CLOSED — independent QA PASS (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`)**.
+
+## Phase P-07 Status
+
+- P-07.01 — EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
+- P-07.02 — PENDING / NOT AUTHORIZED
+- P-07.03 — PENDING / NOT AUTHORIZED
+- P-07.04 — PENDING / NOT AUTHORIZED
+- P-07.05 — PENDING / NOT AUTHORIZED
+- P-07.06 — PENDING / NOT AUTHORIZED
 
 Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
 
 ## Last independently VERIFIED contiguous SHA
 
-`7a6d0815d97aeea736293939f27a1a233e0f3bdc`
+`e9ac7079780b31fa8b289c097546a34e27ba7c1c`
 
 ## Next exact task
 
-Independent QA review of P-06.08 live Calendar update → read-back → VERIFIED proof.
+Independent QA review of P-07.01 strict planner input/output schema and supported action vocabulary.
 
 Status:
-`REPAIRED — awaiting independent QA review (NOT PASS)`
+`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
 
 ## Next safe action
 
-Awaiting independent QA review of P-06.08.
-Do NOT self-close Phase P-06.
-Do NOT begin Phase P-07.
+Awaiting independent QA review of P-07.01.
+Do NOT self-award P-07.01 PASS.
+Do NOT begin Phase P-07.02 through P-07.06.
 
 
 ---

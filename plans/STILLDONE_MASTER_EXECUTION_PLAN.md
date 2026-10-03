@@ -914,7 +914,7 @@ Acceptance:
 - note: Task closed with independent QA PASS (Verified closure SHA: `7a6d0815d97aeea736293939f27a1a233e0f3bdc`).
 
 ### P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
-Status: REPAIRED — awaiting independent QA review
+Status: DONE — independent QA PASS (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`)
 
 Acceptance:
 - live Calendar update → read-back → VERIFIED slice proven against live Google Calendar API in dedicated ephemeral scratch environment (`google_p06_08_scratch`) with documented fixture preparation provenance;
@@ -936,10 +936,10 @@ Acceptance:
 - spend delta: `$0.00 USD` (standard courtesy quota; 0 paid resources, 0 billing enablement);
 - credential/token cleanup: ephemeral token and auth URL files deleted; client secrets file preserved outside repository in local Downloads; zero secrets/tokens committed;
 - durable evidence recorded in `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` as `RECORDED_LIVE` (original live provenance `LIVE_GOOGLE`);
-- note: Task live proof repaired — awaiting independent QA review (NOT PASS). Do NOT self-award PASS. Phase P-06 closure and Phase P-07 authorization remain pending independent QA review.
+- note: Task closed with independent QA PASS (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
 
 Phase exit:
-two real mutable systems independently verified (P-06.08 live proof repaired, awaiting independent QA review. Phase P-06 closure and Phase P-07 authorization pending independent QA review).
+two real mutable systems independently verified. Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
 
 ---
 
@@ -949,22 +949,35 @@ Goal:
 make required AWS intelligence materially useful without giving it fact authority.
 
 ### P-07.01 — Define strict planner input/output schema and supported action vocabulary
-Status: PENDING
+Status: EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
+
+Acceptance:
+- bounded P-07 planning namespace created: `src/stilldone/planning/contracts.py`, `src/stilldone/planning/__init__.py`, `tests/planning/test_contracts.py`;
+- exact canonical action vocabulary enforced (exactly 5 ActionType members: `calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`);
+- strict, immutable `PlannerInput` contract binding schema_version, mission_id, and bounded intent (max 1024 chars);
+- strict, immutable `CandidatePlanProposal` and `CandidateActionProposal` contracts with ordered step sequence (1 <= steps <= 10);
+- bounded `SymbolicTargetRef` vocabulary preventing models from fabricating authoritative provider external IDs;
+- model authority strictly prohibited: prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection rejected;
+- parameter validation reuses canonical `ActionPolicy` facts without fabricating target IDs;
+- canonical JSON Schema generator `get_candidate_plan_json_schema()` with `additionalProperties=False` at every object boundary;
+- comprehensive test suite (`tests/planning/test_contracts.py`, 148 tests) passing all 20 gate requirements and hostile hallucination cases;
+- zero provider/model SDK imports in planner contract module; zero network/model execution; zero personal spend ($0.00);
+- P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ### P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-07.03 — Implement real Strands planning agent using bounded tools/context
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-07.05 — Bind exact planner model/runtime/version metadata to evidence
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED
 
 Phase exit:
 AWS intelligence is genuine and bounded.
