@@ -812,7 +812,7 @@ Acceptance:
 - comprehensive unit tests in `tests/test_calendar_update_adapter.py` passing with zero live Google mutation.
 
 ### P-06.03 — Implement Calendar independent read-back verifier
-Status: REPAIRED — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Verified SHA: `f3f73ba7a236cbf57f271f2ad0622969269d180a`)
 
 Acceptance:
 - Calendar-specific independent read-back verifier implemented in `src/stilldone/adapters/calendar.py` (`GoogleCalendarReadbackVerifier`);
@@ -829,7 +829,20 @@ Acceptance:
 
 
 ### P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
-Status: PENDING
+Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- bounded Google Tasks read and create adapters implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadAdapter`, `GoogleTasksCreateAdapter`);
+- strictly restricted to configured dedicated demo task list ID (`DemoResourceScope`);
+- reuses P-04 action validation (`validate_action_contract`) and static demo isolation (`verify_demo_resource_isolation`);
+- fails closed on out-of-scope task list IDs (`TaskOutOfScopeError`), missing/unexpected parent containers, and strictly rejects '@default', 'default', 'primary' (`TaskScopeError`);
+- exact task identity required for reads; title matching as identity is strictly rejected;
+- strict due date normalization (`normalize_task_due`): date semantics with RFC3339 support; discards time without unexpected timezone-induced date shifting; malformed dates fail closed;
+- creates only top-level tasks in dedicated demo list; user-unrequested fields forbidden;
+- pluggable transport boundary (`TaskTransport` Protocol) with in-memory deterministic fake (`FakeGoogleTasksTransport`) and official client wrapper (`GoogleApiClientTasksTransport`);
+- normalized observation (`TaskObservation`) and result (`TaskReadResult`, `TaskCreateResult`) masking sensitive IDs, titles, due dates in repr/str;
+- single provider write attempt per create; zero retries; execution success does NOT imply VERIFIED or READY;
+- comprehensive unit and adversarial tests in `tests/test_tasks_read_create_adapter.py` passing without network dependency.
 
 ### P-06.05 — Implement Tasks independent read-back verifier and duplicate detection
 Status: PENDING

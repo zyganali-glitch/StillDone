@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — Calendar Adapter Batch (P-06.01, P-06.02, P-06.03) IMPLEMENTATION COMPLETE (awaiting independent QA)**
+Current repository state: **Phase P-06: IN PROGRESS — Tasks Read/Create Adapter (P-06.04) IMPLEMENTATION COMPLETE (awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,22 +74,24 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.03 — Implement Calendar independent read-back verifier (SURGICAL REPAIR)
+P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
 
 Status:
-`REPAIRED — awaiting independent QA review (NOT PASS)`
+`IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)`
 
 Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
 - P-06.02 received independent QA PASS in commit `954420f91c94fb583886c17627be3e5f922a7241`.
-- P-06.03 surgical repair completed:
-  1. Sanitized mismatch evidence: replaced leaky diagnostic strings with deterministic field mismatch tokens ("summary mismatch", "start_time mismatch", "all_day mismatch") ensuring zero private summary, start time, event ID, calendar ID, token, or provider URL material leaks.
-  2. Masked ExpectedCalendarState: implemented custom __repr__ and __str__ exposing boolean presence flags (`has_summary`, `has_start_time`, `has_all_day`) without disclosing private text or temporal values.
-  3. Corrected verification timestamp semantics: removed pre-read timestamp capture; `verified_at` is now sampled strictly after the independent provider read completes and evaluation finishes.
-  4. Comprehensive hostile adversarial sentinel tests added across all public diagnostic surfaces (mismatches, repr/str, expected repr/str, NOT_FOUND, hostile raw PROVIDER_ERROR, and logs).
-- Last independently VERIFIED contiguous SHA remains `cb63da879daae2b5baeb74816a26afe5167fdda2` (because P-06.03 commit on main is awaiting independent QA review).
-- P-06.04 remains PENDING / NOT AUTHORIZED.
-- Next safe action is independent QA review of this P-06.03 surgical repair.
+- P-06.03 received independent QA PASS in commit `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
+- P-06.04 implementation complete:
+  1. Implemented bounded Google Tasks read and create adapters in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadAdapter`, `GoogleTasksCreateAdapter`).
+  2. Bounded to configured dedicated demo task list (`DemoResourceScope`); strictly forbids `@default`, `default`, and `primary`.
+  3. Strict due date normalization helper (`normalize_task_due`): date semantics with RFC3339 support; discards time without unexpected timezone shifting; malformed dates fail closed.
+  4. Top-level task creation only with single write attempt and zero retry; execution success does not imply VERIFIED or READY.
+  5. Pluggable transport (`TaskTransport`) with in-memory deterministic fake (`FakeGoogleTasksTransport`) and client wrapper (`GoogleApiClientTasksTransport`).
+  6. Verified with 27 unit tests and 204 cross-boundary tests (`tests/test_tasks_read_create_adapter.py`).
+- Last independently VERIFIED contiguous SHA at batch start: `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
+- P-06.05 sequential implementation is next in the authorized batch.
 
 ## Phase P-04 Status
 
@@ -119,8 +121,8 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 
 - P-06.01 — independent QA PASS (Verified SHA: `50a4f1b3d34b85889f758587d7f23f5670cc0760`)
 - P-06.02 — independent QA PASS (Verified SHA: `954420f91c94fb583886c17627be3e5f922a7241`)
-- P-06.03 — REPAIRED — awaiting independent QA review (NOT PASS)
-- P-06.04 — PENDING / NOT AUTHORIZED
+- P-06.03 — independent QA PASS (Verified SHA: `f3f73ba7a236cbf57f271f2ad0622969269d180a`)
+- P-06.04 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
 - P-06.05 — PENDING
 - P-06.06 — PENDING
 - P-06.07 — PENDING
@@ -130,18 +132,18 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Last independently VERIFIED contiguous SHA
 
-`cb63da879daae2b5baeb74816a26afe5167fdda2`
+`f3f73ba7a236cbf57f271f2ad0622969269d180a`
 
 ## Next exact task
 
-`P-06.03 — Implement Calendar independent read-back verifier (SURGICAL REPAIR)`
+`P-06.05 — Implement Tasks independent read-back verifier and duplicate detection`
 
 Status:
-`REPAIRED — awaiting independent QA review (NOT PASS)`
+`PENDING`
 
 ## Next safe action
 
-Independent QA review of the P-06.03 repair. Do NOT begin P-06.04.
+Implement P-06.05 Tasks independent read-back verifier and duplicate detection.
 
 
 ---
