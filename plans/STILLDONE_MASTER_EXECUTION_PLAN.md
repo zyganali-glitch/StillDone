@@ -867,7 +867,7 @@ Acceptance:
 - comprehensive unit and adversarial tests in `tests/test_tasks_readback_verifier.py` passing without network dependency.
 
 ### P-06.06 — Implement Open-Meteo live observation adapter with attribution
-Status: REPAIRED — awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`)
 
 Acceptance:
 - Open-Meteo weather observation adapter implemented in `src/stilldone/adapters/weather.py` (`OpenMeteoReadAdapter`, alias `OpenMeteoObservationAdapter`);
@@ -889,10 +889,29 @@ Acceptance:
 - bounded HTTP timeout (`DEFAULT_HTTP_TIMEOUT_SECONDS=5.0`, `MAX_HTTP_TIMEOUT_SECONDS=10.0`, rejects bool, 0, negative, NaN, inf, >10.0) and strict error sanitization preventing coordinate or URL leakage in error messages;
 - zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md` as `RECORDED_LIVE`);
 - zero promotion invariant: observation success does NOT assert or imply VERIFIED or READY;
-- comprehensive unit and adversarial tests in `tests/test_weather_adapter.py` passing without network dependency.
+- comprehensive unit and adversarial tests in `tests/test_weather_adapter.py` passing without network dependency;
+- note: Task closed with independent QA PASS (Verified closure SHA: `28803649b15386ef9a0acb493a614eec6107dc9f`).
 
 ### P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks
-Status: PENDING / NOT AUTHORIZED
+Status: LIVE PROOF COMPLETE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- live write → read-back → VERIFIED slice proven against live Google Tasks API in dedicated ephemeral scratch environment (`google_p06_07_scratch`);
+- minimum least-privilege OAuth scope requested: `https://www.googleapis.com/auth/tasks` (zero calendar/gmail/profile/drive scopes);
+- official SDK execution via `uv run --with google-api-python-client --with google-auth-oauthlib --with google-auth-httplib2` (`google-api-python-client==2.201.0`, `google-auth-oauthlib==1.5.0`, `google-auth-httplib2==0.4.4`);
+- zero dependencies added to `pyproject.toml` or `uv.lock`;
+- dedicated disposable demo list discovery: 1 call to `tasklists.list` matching `StillDone Demo` display name exactly once; ID redacted as `[REDACTED_TASKLIST_ID]`; forbidden aliases (@default, default, primary) rejected;
+- preflight duplicate gate: `GoogleTasksDuplicateDetector(max_scan_pages=1, page_size=100)` executed via 1 call to `tasks.list`; returned `DuplicateDetectionStatus.NO_MATCH` (0 matching active tasks, 0 tasks scanned);
+- single bounded mutation: `GoogleTasksCreateAdapter.create_task` executed via 1 call to `tasks.insert` with synthetic demo payload (`title="StillDone P-06.07 live proof - Pack backpacks"`, `due="2026-10-04"`); returned `TaskCreateStatus.CREATED` with `writes_performed=1`; task ID redacted as `[REDACTED_TASK_ID]`; strictly 0 retries;
+- intermediate state proven: recorded `StepEvidenceState.EXECUTED_UNVERIFIED`; explicitly verified `CREATED != VERIFIED`;
+- distinct independent read-back: `GoogleTasksReadbackVerifier.verify_task_state` executed via separate 1 call to `tasks.get`; create response payload was not reused; returned `TaskReadbackStatus.MATCH` with 0 mismatches; verified temporal ordering (`verified_at >= observed_at >= created_at`);
+- post-write duplicate gate: `GoogleTasksDuplicateDetector` re-scanned demo list via 1 call to `tasks.list`; returned `DuplicateDetectionStatus.UNIQUE_MATCH` (`match_count=1`);
+- deterministic predicate: conjunction of all 5 conditions evaluated to `True`; step evidence recorded as `StepEvidenceState.VERIFIED`;
+- mission state: mission `READY` was strictly NOT produced (step-level evidence only);
+- spend delta: `$0.00 USD` (courtesy quota; 0 paid resources, 0 billing enablement);
+- credential/token cleanup: ephemeral token and auth URL files deleted; client secrets file preserved outside repository in local Downloads; zero secrets/tokens committed;
+- durable evidence recorded in `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md` as `RECORDED_LIVE` (original live provenance `LIVE_GOOGLE`);
+- note: Task live proof complete — awaiting independent QA review (NOT PASS). Do NOT self-award PASS.
 
 ### P-06.08 — Prove first live Calendar update → read-back → VERIFIED slice
 Status: PENDING / NOT AUTHORIZED
