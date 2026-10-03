@@ -73,6 +73,18 @@ from stilldone.planning.contracts import (
     validate_candidate_action_parameters,
     validate_candidate_plan_schema_locally,
 )
+from stilldone.planning.strands_agent import (
+    StrandsEmptyResponseError,
+    StrandsNonTextContentError,
+    StrandsPlannerConfigError,
+    StrandsPlannerError,
+    StrandsPlannerResult,
+    StrandsPlanRejectionError,
+    StrandsStopReasonError,
+    StrandsTransportError,
+    create_strands_bedrock_model,
+    plan_with_strands,
+)
 
 __all__ = [
     "ACCEPTED_STOP_REASON",
@@ -137,6 +149,16 @@ __all__ = [
     "format_user_message",
     "get_candidate_plan_json_schema",
     "parse_candidate_plan_for_input",
+    "StrandsEmptyResponseError",
+    "StrandsNonTextContentError",
+    "StrandsPlanRejectionError",
+    "StrandsPlannerConfigError",
+    "StrandsPlannerError",
+    "StrandsPlannerResult",
+    "StrandsStopReasonError",
+    "StrandsTransportError",
+    "create_strands_bedrock_model",
+    "plan_with_strands",
     "validate_candidate_action_parameters",
     "validate_candidate_plan_schema_locally",
 ]
