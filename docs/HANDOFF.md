@@ -118,8 +118,8 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 ## Phase P-06 Status
 
 - P-06.01 — independent QA PASS (Verified SHA: `50a4f1b3d34b85889f758587d7f23f5670cc0760`)
-- P-06.02 — REPAIRED — awaiting independent QA review (NOT PASS)
-- P-06.03 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.02 — independent QA PASS (Verified SHA: `954420f91c94fb583886c17627be3e5f922a7241`)
+- P-06.03 — REPAIRED — awaiting independent QA review (NOT PASS)
 - P-06.04 — PENDING / NOT AUTHORIZED
 - P-06.05 — PENDING
 - P-06.06 — PENDING
@@ -134,14 +134,14 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Next exact task
 
-`P-06.02 — Implement Google Calendar bounded update adapter with idempotency strategy`
+`P-06.03 — Implement Calendar independent read-back verifier (SURGICAL REPAIR)`
 
 Status:
 `REPAIRED — awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 
-Independent QA review of this P-06.02 surgical repair. Do NOT begin P-06.04.
+Independent QA review of the P-06.03 repair. Do NOT begin P-06.04.
 
 
 ---
