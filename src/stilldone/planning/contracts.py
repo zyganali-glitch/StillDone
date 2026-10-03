@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+import jsonschema  # type: ignore[import-untyped]
+
 from stilldone.action_policy import (
     ACTION_POLICIES,
     MAX_PARAM_STRING_LENGTH,
@@ -1014,18 +1016,22 @@ def parse_candidate_plan_for_input(
 
 # Minimal private parameter schema metadata mapping for supported action parameters.
 # ActionPolicy defines supported parameter keys and string length bounds; this mapping
-# supplies JSON Schema primitive types (string vs boolean) for those exact parameter keys.
+# supplies JSON Schema primitive types (string vs boolean) and non-blank pattern constraints
+# (requiring at least one non-whitespace character, \S) for semantic parity with the
+# deterministic parser's .strip() validation.
 _CANONICAL_PARAM_JSON_SCHEMAS: Mapping[str, dict[str, Any]] = types.MappingProxyType(
     {
         "summary": {
             "type": "string",
             "minLength": 1,
             "maxLength": MAX_PARAM_STRING_LENGTH,
+            "pattern": r"\S",
         },
         "start_time": {
             "type": "string",
             "minLength": 1,
             "maxLength": MAX_PARAM_STRING_LENGTH,
+            "pattern": r"\S",
         },
         "all_day": {
             "type": "boolean",
@@ -1034,11 +1040,13 @@ _CANONICAL_PARAM_JSON_SCHEMAS: Mapping[str, dict[str, Any]] = types.MappingProxy
             "type": "string",
             "minLength": 1,
             "maxLength": MAX_PARAM_STRING_LENGTH,
+            "pattern": r"\S",
         },
         "due": {
             "type": "string",
             "minLength": 1,
             "maxLength": MAX_PARAM_STRING_LENGTH,
+            "pattern": r"\S",
         },
     }
 )
@@ -1132,8 +1140,51 @@ def _build_action_proposal_json_schema(action_type: ActionType) -> dict[str, Any
     return action_schema
 
 
+# ---------------------------------------------------------------------------
+# Architecture Boundary Note: Local Schema vs. Bedrock Nova Micro Capability
+# ---------------------------------------------------------------------------
+# As of Phase P-07.01:
+# Canonical proven model: amazon.nova-micro-v1:0
+#
+# Current official Amazon Bedrock Nova Micro model card states:
+#   Structured outputs: NOT SUPPORTED
+#
+# Furthermore, Amazon Bedrock native structured outputs documentation exposes
+# a restricted JSON Schema Draft 2020-12 subset that explicitly does NOT support
+# string constraints such as minLength, maxLength, or patterns.
+#
+# StillDone's local contract schema uses constraints (minLength, maxLength, pattern,
+# format: "uuid", oneOf) that exceed native Bedrock structured-output subsets.
+#
+# Therefore, `get_candidate_plan_json_schema()` is NOT a claim that this schema
+# can be submitted directly as native Bedrock structured-output `outputConfig`
+# for Nova Micro.
+#
+# Its canonical architectural role is:
+#   1. LOCAL DETERMINISTIC VALIDATION: Enforcing strict structural boundaries
+#      via `validate_candidate_plan_schema_locally()`.
+#   2. MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION: Providing the model with an
+#      unambiguous structural specification in the prompt for bounded JSON text.
+#
+# In P-07.02, the Bedrock adapter will request bounded JSON text through Nova Micro's
+# actually supported API path (prompt/converse), treat returned text as untrusted,
+# and pass it through `parse_candidate_plan_for_input` for mandatory deterministic
+# validation. Model JSON is never trusted merely because it looks structured.
+# ---------------------------------------------------------------------------
+
+
 def get_candidate_plan_json_schema() -> dict[str, Any]:
     """Generate action-specific JSON Schema for candidate plan structured output.
+
+    Canonical role:
+    - LOCAL DETERMINISTIC VALIDATION (via validate_candidate_plan_schema_locally)
+    - MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION (in prompt text for model guidance)
+
+    NOTE: This schema is NOT submitted as native Bedrock structured-output outputConfig
+    because Amazon Nova Micro (amazon.nova-micro-v1:0) does not support native
+    structured outputs, and Bedrock's native structured output subset does not support
+    minLength, maxLength, or pattern constraints. The deterministic CandidatePlanProposal
+    parser remains the mandatory final authority.
 
     Guarantees:
     - steps.items uses oneOf with one mutually exclusive branch per canonical ActionType.
@@ -1144,6 +1195,9 @@ def get_candidate_plan_json_schema() -> dict[str, Any]:
     - Task create requires title parameter (due optional, no other fields).
     - additionalProperties is False at every closed object boundary.
     - Explicit min/max bounds on arrays and strings.
+    - Non-blank string patterns (pattern: r"\\S") ensuring semantic parity with
+      the deterministic parser.
+    - format: "uuid" on mission_id.
     - Zero provider external identifier fields permitted.
     - ActionType, target compatibility, and parameter constraints derive from canonical sources.
     - Parameter schemas are bounded by _CANONICAL_PARAM_JSON_SCHEMAS, which is asserted to
@@ -1187,6 +1241,32 @@ def get_candidate_plan_json_schema() -> dict[str, Any]:
     }
 
 
+def validate_candidate_plan_schema_locally(payload: Any) -> None:
+    """Validate a candidate plan payload against StillDone's JSON Schema locally.
+
+    Uses Draft202012Validator with explicit FormatChecker to enforce:
+    - structural JSON schema rules (types, closed object boundaries, oneOf step branches);
+    - non-blank string constraints (pattern: r"\\S");
+    - RFC-4122 UUID format checking for mission_id (format: "uuid");
+    - local bounds without network or provider execution.
+
+    Requirements:
+    - malformed mission UUID rejected at LOCAL schema boundary;
+    - valid canonical UUID accepted;
+    - deterministic CandidatePlanProposal parser remains final authority;
+    - no network/provider behavior.
+
+    Raises:
+        jsonschema.ValidationError: If payload violates the candidate plan schema.
+    """
+    schema = get_candidate_plan_json_schema()
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.FormatChecker(),
+    )
+    validator.validate(payload)
+
+
 __all__ = [
     "ACTION_SYMBOLIC_TARGET_COMPATIBILITY",
     "FORBIDDEN_AUTHORITY_AND_FACT_FIELDS",
@@ -1225,4 +1305,5 @@ __all__ = [
     "get_candidate_plan_json_schema",
     "parse_candidate_plan_for_input",
     "validate_candidate_action_parameters",
+    "validate_candidate_plan_schema_locally",
 ]

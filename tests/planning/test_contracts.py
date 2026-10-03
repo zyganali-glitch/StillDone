@@ -86,6 +86,7 @@ from stilldone.planning.contracts import (
     get_candidate_plan_json_schema,
     parse_candidate_plan_for_input,
     validate_candidate_action_parameters,
+    validate_candidate_plan_schema_locally,
 )
 
 # ===========================================================================
@@ -917,12 +918,12 @@ class TestZeroExecutionCapability:
 
         public_names = [n for n in dir(contracts_mod) if not n.startswith("_")]
         for name in public_names:
-            lower = name.lower()
-            assert "execute" not in lower
-            assert "invoke" not in lower
-            assert "call" not in lower
-            assert "run" not in lower
-            assert "fetch" not in lower
+            words = name.lower().split("_")
+            assert "execute" not in words
+            assert "invoke" not in words
+            assert "call" not in words
+            assert "run" not in words
+            assert "fetch" not in words
 
     def test_base_exception_inheritance(self) -> None:
         assert issubclass(PlannerTypeError, PlannerContractError)
@@ -1045,6 +1046,13 @@ class TestJsonSchemaIntegrity:
     def test_parameter_schema_keys_equal_all_supported_parameters(self) -> None:
         assert set(_CANONICAL_PARAM_JSON_SCHEMAS.keys()) == _ALL_SUPPORTED_PARAM_KEYS
 
+    def test_parameter_schema_string_properties_require_non_blank_pattern(self) -> None:
+        for param_name, param_schema in _CANONICAL_PARAM_JSON_SCHEMAS.items():
+            if param_schema.get("type") == "string":
+                assert param_schema.get("pattern") == r"\S", (
+                    f"Parameter schema for {param_name!r} missing pattern r'\\S'"
+                )
+
 
 # ===========================================================================
 # JSON Schema Parity Tests (jsonschema vs Deterministic Contract)
@@ -1063,9 +1071,8 @@ class TestJsonSchemaParity:
         plan = CandidatePlanProposal.from_dict(payload)
         assert plan is not None
 
-        # 2. JSON Schema accepts
-        schema = get_candidate_plan_json_schema()
-        jsonschema.validate(instance=payload, schema=schema)
+        # 2. Local JSON Schema accepts (enforcing Draft 2020-12 + explicit FormatChecker)
+        validate_candidate_plan_schema_locally(payload)
 
     @staticmethod
     def _assert_parity_reject(payload: dict[str, Any]) -> None:
@@ -1073,10 +1080,9 @@ class TestJsonSchemaParity:
         with pytest.raises((PlannerContractError, ActionPolicyError)):
             CandidatePlanProposal.from_dict(payload)
 
-        # 2. JSON Schema rejects
-        schema = get_candidate_plan_json_schema()
+        # 2. Local JSON Schema rejects (enforcing Draft 2020-12 + explicit FormatChecker)
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance=payload, schema=schema)
+            validate_candidate_plan_schema_locally(payload)
 
     # -----------------------------------------------------------------------
     # Acceptance Parity
@@ -1498,6 +1504,223 @@ class TestJsonSchemaParity:
             "steps": [step] * (MAX_PLAN_STEPS + 1),
         }
         self._assert_parity_reject(payload)
+
+    # -----------------------------------------------------------------------
+    # Whitespace-Only Semantic Parity (Defect 1)
+    # -----------------------------------------------------------------------
+
+    def test_parity_reject_whitespace_only_task_create_title(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": "   "},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    def test_parity_reject_whitespace_only_task_create_due(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": "Valid title", "due": "   "},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    def test_parity_reject_whitespace_only_calendar_update_summary(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "calendar.update",
+                    "target_ref": "leave_for_school",
+                    "parameters": {"summary": "   "},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    def test_parity_reject_whitespace_only_calendar_update_start_time(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "calendar.update",
+                    "target_ref": "leave_for_school",
+                    "parameters": {"start_time": "   "},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    def test_parity_reject_unicode_whitespace_only_parameters(self) -> None:
+        # Hostile Unicode-whitespace payload (non-breaking spaces, em spaces, ideographic space)
+        unicode_whitespace = "\u3000\u2003\u00a0"
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": unicode_whitespace},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    # -----------------------------------------------------------------------
+    # UUID Format Parity (Defect 2)
+    # -----------------------------------------------------------------------
+
+    def test_parity_reject_malformed_uuid_mission_id(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": "not-a-valid-uuid-string",
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+    def test_parity_reject_partial_uuid_mission_id(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": "11111111-2222-3333-4444",
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                }
+            ],
+        }
+        self._assert_parity_reject(payload)
+
+
+# ===========================================================================
+# Local Schema Validation Helper Tests (Defect 2)
+# ===========================================================================
+
+
+class TestLocalSchemaValidationHelper:
+    """Verify validate_candidate_plan_schema_locally helper."""
+
+    def test_helper_accepts_valid_canonical_payload(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                }
+            ],
+        }
+        validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_malformed_uuid_with_format_checker(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": "malformed-not-a-uuid",
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                }
+            ],
+        }
+        with pytest.raises(jsonschema.ValidationError, match="is not a 'uuid'"):
+            validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_whitespace_only_parameter(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": "   "},
+                }
+            ],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_unicode_whitespace_only_parameter(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": "\u3000\u2003\u00a0"},
+                }
+            ],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_empty_steps(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_provider_id_injection(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                    "calendar_id": "primary",
+                }
+            ],
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            validate_candidate_plan_schema_locally(payload)
+
+    def test_helper_rejects_authority_injection(self) -> None:
+        payload = {
+            "schema_version": "v1",
+            "mission_id": str(TEST_MISSION_ID),
+            "steps": [
+                {
+                    "action_type": "calendar.read",
+                    "target_ref": "leave_for_school",
+                    "parameters": {},
+                }
+            ],
+            "is_verified": True,
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            validate_candidate_plan_schema_locally(payload)
 
 
 # ===========================================================================

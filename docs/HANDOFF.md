@@ -89,15 +89,16 @@ Notes:
   * `src/stilldone/planning/contracts.py`
   * `src/stilldone/planning/__init__.py`
   * `tests/planning/test_contracts.py`
-- P-07.01 Consolidated Bounded Surgical Repair addressed all 3 review findings:
-  1. Defect 1 — Action-Specific JSON Schema: `get_candidate_plan_json_schema()` generates `oneOf` per canonical ActionType enforcing exact ActionType const, compatible SymbolicTargetRef enums, required `title` on `task.create`, `minProperties: 1` on `calendar.update`, disallowed parameters on read actions, and `additionalProperties: False` at every boundary. Full accept/reject parity proven against `jsonschema`.
-  2. Defect 2 — Planner Input/Output Mission Binding: Added fail-closed `parse_candidate_plan_for_input(planner_input, model_output_json)` enforcing `plan.mission_id == planner_input.mission_id` (mismatch raises `PlannerMissionBindingError`). Model cannot redirect execution by echoing an alternate UUID.
-  3. Defect 3 — Raw Model JSON Byte Ceiling: Enforced `MAX_PLANNER_JSON_BYTES = 64 * 1024` (65,536 bytes) fail-closed with `OversizedJsonPayloadError` before `json.loads` in `CandidatePlanProposal.from_json`, `PlannerInput.from_json`, and `parse_candidate_plan_for_input`.
+- P-07.01 Final Bounded Surgical Repair addressed all review findings:
+  1. Defect 1 — Local Schema / Parser Parity: Enforced non-blank pattern constraints (`pattern: r"\S"`) on all string parameters (`calendar.update.summary`, `calendar.update.start_time`, `task.create.title`, `task.create.due`) matching deterministic parser `.strip()` semantics. Parity rejection proven for whitespace-only strings and hostile Unicode whitespace (`"\u3000\u2003\u00a0"`).
+  2. Defect 2 — Explicit UUID Format Validation: Implemented local helper `validate_candidate_plan_schema_locally(payload)` using `Draft202012Validator` with explicit `FormatChecker()` to enforce `format: "uuid"` on `mission_id` at the local schema boundary. Parity tests updated from raw validate calls; malformed and partial UUIDs strictly rejected.
+  3. Defect 3 — Current Official AWS / Nova Micro Capability Truth: Recorded official Amazon Bedrock facts: Nova Micro (`amazon.nova-micro-v1:0`) does NOT support native structured outputs; Bedrock native structured-output documentation also restricts JSON Schema subsets and excludes `minLength`/`maxLength`/`pattern`. StillDone's schema canonical role is LOCAL DETERMINISTIC VALIDATION + MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION. In P-07.02, Bedrock adapter will request bounded JSON text via supported Converse/prompt API, treat returned text as untrusted, and validate deterministically via `parse_candidate_plan_for_input`.
+  4. Defect 4 — Historical Reporting Truth: Canonical history preserved (P-06.07 proved real Tasks mutation/readback; P-06.08 proved real Calendar mutation/readback). For P-07.01 specifically, live Google mutations: NOT_RUN.
 - Exact five-action canonical vocabulary enforced (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); zero dynamic/model-added actions.
 - Zero fabricated provider IDs: strict deserialization rejects external identifiers (`calendar_id`, `event_id`, `task_list_id`, `task_id`, `resource_id`, `parent_id`).
 - Zero model authority: model prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection strictly rejected.
 - Parameter validation directly reuses canonical `ActionPolicy` facts without fabricating target IDs.
-- Full test suite passing (1219 tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
+- Full test suite passing (208 contract tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
 - Last independently VERIFIED contiguous SHA at P-07.01 start remains: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`.
 - P-07.01 status: `REPAIRED / awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
 - P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.

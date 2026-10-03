@@ -42,6 +42,7 @@ from stilldone.planning.contracts import (
     get_candidate_plan_json_schema,
     parse_candidate_plan_for_input,
     validate_candidate_action_parameters,
+    validate_candidate_plan_schema_locally,
 )
 
 __all__ = [
@@ -82,4 +83,5 @@ __all__ = [
     "get_candidate_plan_json_schema",
     "parse_candidate_plan_for_input",
     "validate_candidate_action_parameters",
+    "validate_candidate_plan_schema_locally",
 ]
