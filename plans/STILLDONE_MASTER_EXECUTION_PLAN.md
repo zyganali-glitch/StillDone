@@ -1004,13 +1004,94 @@ Acceptance:
 - P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ### P-07.03 — Implement real Strands planning agent using bounded tools/context
-Status: PENDING / NOT AUTHORIZED
+Status: DONE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- bounded Strands planning agent implemented in `src/stilldone/planning/strands_agent.py`;
+- uses real official SDK classes: `strands.Agent` and `strands.models.BedrockModel` from pinned `strands-agents==1.57.2` (Apache-2.0);
+- production Bedrock model factory `create_strands_bedrock_model` enforces canonical P-07.02 settings: `model_id="amazon.nova-micro-v1:0"`, `region_name="us-east-1"`, `max_tokens=2048`, `temperature=0.00001`, `connect_timeout=5.0`, `read_timeout=30.0`, `total_max_attempts=1`, `retry_mode="standard"`, `streaming=False`;
+- fail-closed bounded Strands agent configuration: `tools=[]` (NOT `None`), `load_tools_from_directory=False`, `callback_handler=None` (disables printing), `retry_strategy=None` (disables SDK retry loop), `structured_output_model=None`, `context_manager=False`, `memory_manager=None`, `session_manager=None`, `storage=None`, `checkpointing=False`, `background_tasks=False`;
+- zero executable external tools: planning is non-authoritative; external mutations belong strictly to deterministic runtime;
+- one model turn maximum: `limits={"turns": 1}`, `streaming=False`, `use_native_token_count=False`;
+- strict stop reason: requires `end_turn`; all others (`limit_turns`, `max_tokens`, etc.) fail closed with `StrandsStopReasonError`;
+- clean context isolation: fresh `strands.Agent` constructed per mission invocation; zero cross-mission memory, history, or context bleed;
+- mandatory deterministic boundary: untrusted result inspected, combined UTF-8 text checked against `MAX_PLANNER_JSON_BYTES`, passed directly through `parse_candidate_plan_for_input(planner_input, combined_text)`;
+- returns typed immutable `StrandsPlannerResult` with `plan`, `stop_reason`, `model_id`, `region_name`; confers zero authority and does NOT create an EvidenceRecord or mission state promotion;
+- 32 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
 
 ### P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
-Status: PENDING / NOT AUTHORIZED
+Status: DONE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- planner rejection boundary in `src/stilldone/planning/strands_agent.py` catches `(PlannerContractError, ActionPolicyError)` and wraps into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances;
+- comprehensive adversarial rejection test suite in `tests/planning/test_rejection_hardening.py` (46 tests passing);
+- rejects all 36+ malformed, unsupported, over-broad, or authority-violating vectors:
+  1. malformed JSON syntax;
+  2. duplicate JSON keys;
+  3. unknown top-level fields;
+  4. unknown per-step fields;
+  5. unsupported sixth action;
+  6. aliases and case variants;
+  7. incompatible symbolic targets;
+  8. raw calendar_id;
+  9. raw event_id;
+  10. raw task_id;
+  11. provider resource ID in action parameters;
+  12. approval fields injection;
+  13. authority_class injection;
+  14. authorized=true injection;
+  15. verified=true injection;
+  16. ready=true injection;
+  17. lifecycle/state injection;
+  18. evidence/provenance injection;
+  19. malformed mission ID;
+  20. different valid mission ID;
+  21. unknown schema version;
+  22. zero plan steps;
+  23. more than MAX_PLAN_STEPS;
+  24. unsupported action parameters;
+  25. parameters on calendar.read;
+  26. parameters on task.read;
+  27. parameters on weather.read;
+  28. task.create without title;
+  29. calendar.update with empty parameters;
+  30. oversized strings;
+  31. oversized raw JSON;
+  32. trailing prose;
+  33. multiple JSON objects;
+  34. Markdown code fences;
+  35. Strands tool-use output;
+  36. hostile prompt / system override attempts;
+- exception shielding verified: zero raw hostile model strings leak into exception messages, reprs, causes, or tracebacks;
+- inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
 
 ### P-07.05 — Bind exact planner model/runtime/version metadata to evidence
-Status: PENDING / NOT AUTHORIZED
+Status: DONE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- planner runtime metadata contract implemented in `src/stilldone/planning/metadata.py`;
+- immutable frozen dataclass `PlannerRuntimeMetadata` binding all 16 required fields:
+  * planner_runtime: "strands"
+  * planner_provider: "amazon_bedrock"
+  * model_id: "amazon.nova-micro-v1:0"
+  * region_name: "us-east-1"
+  * strands_version: exact resolved installed version (e.g. 1.57.2)
+  * boto3_version: exact resolved installed version
+  * botocore_version: exact resolved installed version
+  * max_tokens: 2048
+  * temperature: 0.00001
+  * connect_timeout_seconds: 5.0
+  * read_timeout_seconds: 30.0
+  * total_max_attempts: 1
+  * tools_count: 0
+  * turns_limit: 1
+  * streaming: false
+  * schema_version: "v1"
+- `create_planner_runtime_metadata()` dynamically resolves installed package versions via `importlib.metadata` with fail-closed `PackageVersionError`;
+- `bind_planner_runtime_metadata(payload, metadata)` binds metadata under reserved `"planner_runtime"` key without mutating input payload;
+- payload binding strictly rejects non-dict payload (`TypeError`), non-metadata (`TypeError`), and key collision (`ReservedKeyCollisionError`);
+- deterministic evidence sensitivity: changing ANY of the 16 metadata fields produces a distinct `EvidenceId` SHA-256 hash;
+- 47 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
 Status: PENDING / NOT AUTHORIZED

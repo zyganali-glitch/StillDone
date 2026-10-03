@@ -74,65 +74,44 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
+P-07.03, P-07.04, P-07.05 — Bounded Three-Task Planning Batch:
+- P-07.03 — Implement real Strands planning agent using bounded tools/context
+- P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
+- P-07.05 — Bind exact planner model/runtime/version metadata to evidence
 
 Status:
-`REPAIRED / awaiting independent QA review (NOT PASS)`
+`COMPLETED / awaiting independent QA review (NOT PASS)`
 
 Notes:
 - Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
 - P-07.01 received independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
+- P-07.02 received independent QA PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`).
+- Last independently VERIFIED contiguous SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`.
 - Phase P-07 is IN PROGRESS.
-- P-07.02 consolidated repair applied across bounded planning package:
-  * `src/stilldone/planning/bedrock.py`
-  * `src/stilldone/planning/__init__.py`
-  * `tests/planning/test_bedrock_adapter.py`
-- Consolidated repair details:
-  1. Defect 1 — Zero Raw Role Reflection:
-     - Enforced `output.message.role` exists, is a string, and is strictly `"assistant"`.
-     - Non-assistant roles raise static bounded error `"Converse message 'role' must be 'assistant'"` with zero raw role reflection.
-     - Verified zero leakage of hostile role sentinels across `str()`, `repr()`, `__cause__`, `__context__`, and formatted tracebacks.
-  2. Defect 2 — Zero Provider Error.Code Reflection or Retention:
-     - Removed raw provider `Error.Code` reflection and storage from `BedrockTransportError` entirely.
-     - `BedrockTransportError` uses static message `"Bedrock converse transport failed"` and static internal classification `"BEDROCK_TRANSPORT_FAILURE"`.
-     - Zero raw provider codes, keys, or messages retained in public or private exception attributes.
-     - Removed `SAFE_ERROR_CODE_REGEX`.
-     - Verified adversarial hostile AWS error code and access-key-shaped sentinels appear nowhere in outer exception message, repr, attributes, `__dict__`, `__cause__`, `__context__`, or formatted tracebacks.
-  3. Exception Chain Privacy & Rejection Retention:
-     - Suppressed raw underlying exceptions in transport and plan rejection paths (`__cause__ = None`, `__context__ = None`, raised with `from None`).
-     - `BedrockPlanRejectionError` stores only `rejection_class: type[PlannerContractError] | None` and completely discards the untrusted exception instance.
-     - Verified zero leakage across full hostile sentinel matrix.
-  4. Complete Converse Message Validation:
-     - Inspected complete `message.content` sequence (non-text blocks like toolUse fail closed).
-     - Concatenated all text blocks in returned order, enforced `MAX_PLANNER_JSON_BYTES` on combined UTF-8 text, and passed combined text to `parse_candidate_plan_for_input` so trailing prose or multiple JSON objects fail closed.
-  5. Temperature Stricter Bound:
-     - Enforced `0.0 <= temperature <= DEFAULT_TEMPERATURE (0.00001)`.
-     - Values `> 0.00001` (e.g. 0.00002, 0.5, 1.0) and non-finite values (NaN, +/-inf) are strictly rejected.
-  6. Finite Timeouts:
-     - Enforced `math.isnan()` and `math.isinf()` rejection for `connect_timeout` and `read_timeout`.
-  7. Bounded StopReason Sanitization:
-     - Validated against `KNOWN_BEDROCK_STOP_REASONS`; unrecognized/arbitrary strings sanitized to `"unrecognized"`.
-- Official AWS truth re-verified:
-  * Canonical model: `amazon.nova-micro-v1:0` in `us-east-1` (strictly enforced, no fallback model/region).
-  * Nova Micro native Structured Outputs: NOT SUPPORTED.
-  * Bedrock structured-output docs explicitly list minLength/maxLength as unsupported.
-  * `pattern` is not in the documented supported subset.
-  * StillDone schema canonical role: LOCAL DETERMINISTIC VALIDATION + MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION.
-- Immutable bounded planner settings:
-  * connect_timeout = 5.0s, read_timeout = 30.0s (positive, finite, <= canonical max)
-  * total_max_attempts = 1, retry_mode = 'standard' (zero automatic retries; botocore configured with total_max_attempts=1)
-  * maxTokens = 2048, temperature = 0.00001 (can only become stricter)
-- Client construction and security boundary:
-  * Production client service `bedrock-runtime` in `us-east-1`.
-  * Instantiated lazily via standard AWS credential provider chain or injected via Protocol `BedrockConverseClient`.
-  * Constructor strictly rejects AWS credentials (`access_key`, `secret_key`, `session_token`, `bearer_token`, `account_id`).
-  * Tests never require real credentials (`AWS_EC2_METADATA_DISABLED="true"` prevents IMDS probes).
+- Bounded batch P-07.03 → P-07.04 → P-07.05 completed sequentially:
+  1. P-07.03 — Bounded Strands Planning Agent (`src/stilldone/planning/strands_agent.py`, `tests/planning/test_strands_agent.py`):
+     * Integrated real official `strands.Agent` and `BedrockModel` from `strands-agents==1.57.2` (Apache-2.0).
+     * Enforced fail-closed configuration: `tools=[]` (NOT `None`), `load_tools_from_directory=False`, `callback_handler=None`, `retry_strategy=None` (disables SDK retries), `structured_output_model=None`, `context_manager=False`, `memory_manager=None`, `session_manager=None`, `storage=None`, `checkpointing=False`, `background_tasks=False`.
+     * Zero executable external tools: planning is non-authoritative; external mutations belong strictly to deterministic runtime.
+     * Enforced single turn: `limits={"turns": 1}`, `streaming=False`, `use_native_token_count=False`.
+     * Strict stop reason: requires `end_turn`; all others (`limit_turns`, `max_tokens`, etc.) fail closed with `StrandsStopReasonError`.
+     * Context hygiene: fresh `strands.Agent` constructed per mission invocation; zero cross-mission memory, history, or context bleed.
+     * Mandatory deterministic boundary: untrusted result inspected, combined UTF-8 text checked against `MAX_PLANNER_JSON_BYTES`, passed directly through `parse_candidate_plan_for_input(planner_input, combined_text)`.
+     * 32 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
+  2. P-07.04 — Adversarial Rejection Hardening (`tests/planning/test_rejection_hardening.py`):
+     * Hardened Strands planner boundary in `src/stilldone/planning/strands_agent.py` to catch `(PlannerContractError, ActionPolicyError)` and wrap into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances.
+     * 46 tests passing covering 36+ adversarial vectors: malformed JSON, duplicate keys, unknown top-level/per-step fields, unsupported sixth action, aliases/case variants, incompatible symbolic targets, raw provider resource IDs (calendar_id, event_id, task_id), approval fields, authority_class, authorized/verified/ready injections, lifecycle/state injection, evidence injection, malformed mission ID, different valid mission ID, unknown schema version, zero steps, oversized steps, unsupported parameters, parameter injection on read-only actions, task.create without title, calendar.update empty parameters, oversized strings, oversized raw JSON, trailing prose, multiple JSON objects, Markdown fences, Strands tool use, hostile prompt injections.
+     * Inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
+  3. P-07.05 — Planner Runtime Metadata Evidence Binding (`src/stilldone/planning/metadata.py`, `tests/planning/test_planner_metadata.py`):
+     * Implemented frozen immutable `PlannerRuntimeMetadata` with all 16 required fields (`planner_runtime="strands"`, `planner_provider="amazon_bedrock"`, `model_id="amazon.nova-micro-v1:0"`, `region_name="us-east-1"`, `strands_version`, `boto3_version`, `botocore_version`, `max_tokens=2048`, `temperature=0.00001`, `connect_timeout_seconds=5.0`, `read_timeout_seconds=30.0`, `total_max_attempts=1`, `tools_count=0`, `turns_limit=1`, `streaming=False`, `schema_version="v1"`).
+     * `create_planner_runtime_metadata()` dynamically resolves installed package versions via `importlib.metadata`.
+     * `bind_planner_runtime_metadata(payload, metadata)` creates new dict under reserved `"planner_runtime"` key, does not mutate input, rejects non-dict, non-metadata, or collision (`ReservedKeyCollisionError`).
+     * Proven: changing ANY of the 16 metadata fields produces a distinct `EvidenceId` SHA-256 hash.
+     * 47 focused tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 - Validation:
-  * Full test suite passing (28 focused Bedrock adapter tests, 208 P-07.01 contract tests, 1262 total tests passing).
+  * Full validation suite (`scripts/validate.py`) passing: ruff format clean, ruff check clean, mypy clean (88 source files), 1388 tests passing.
   * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
-- Last independently VERIFIED contiguous SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`.
-- P-07.02 status: `REPAIRED / awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
-- P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
+- P-07.06 remains strictly PENDING / NOT AUTHORIZED.
 
 ## Phase P-04 Status
 
