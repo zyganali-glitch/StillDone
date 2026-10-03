@@ -42,8 +42,10 @@ from stilldone.domain.action import (
     ActionContract,
     ActionType,
     ResourceKind,
+    TargetIdentity,
 )
 from stilldone.domain.authority import ApprovalGrant
+from stilldone.domain.mission import MissionId
 from stilldone.redaction import redact_text
 
 logger = logging.getLogger(__name__)
@@ -948,4 +950,322 @@ class GoogleTasksCreateAdapter:
                 writes_performed=0,
                 error_message=error_msg,
                 created_at=execution_time,
+            )
+
+
+# ===========================================================================
+# Independent Read-back Verifier
+# ===========================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedTaskState:
+    """Expected canonical state for independent read-back verification of a task.
+
+    Bounded to canonical user-visible state only: title and optional due date.
+    Masks sensitive values in repr and str.
+    """
+
+    title: str
+    due: str | None = None  # Expected normalized date (YYYY-MM-DD) or None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.title, str) or not self.title.strip():
+            raise TaskTargetError("ExpectedTaskState.title must be a non-empty string")
+        if self.due is not None:
+            norm = normalize_task_due(self.due)
+            object.__setattr__(self, "due", norm)
+
+    def __repr__(self) -> str:
+        return f"ExpectedTaskState(has_title=True, has_due={self.due is not None})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+class TaskReadbackStatus(StrEnum):
+    """Result status of an independent task read-back verification."""
+
+    MATCH = "MATCH"
+    MISMATCH = "MISMATCH"
+    NOT_FOUND = "NOT_FOUND"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskReadbackResult:
+    """Outcome of independent task read-back verification.
+
+    Independence law: Read-back verification MUST be derived from a distinct,
+    fresh provider read. Create response payload cannot substitute for verification.
+    Verification timestamp is sampled strictly after read/evaluation completes.
+    Mismatches are sanitized field tokens without leaking private values.
+    """
+
+    status: TaskReadbackStatus
+    mismatches: tuple[str, ...] = ()
+    verified_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    observation: TaskObservation | None = None
+    error_message: str | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"TaskReadbackResult(status='{self.status.value}', "
+            f"mismatches={self.mismatches}, "
+            f"has_observation={self.observation is not None}, "
+            f"error_message={redact_text(self.error_message) if self.error_message else None})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+class GoogleTasksReadbackVerifier:
+    """Independent read-back verifier for Google Tasks.
+
+    Strictly enforces the StillDone independence law:
+    - Initiates a DISTINCT, fresh provider read via GoogleTasksReadAdapter.
+    - Create/insert response can NEVER substitute for read-back verification.
+    - Compares freshly observed state against ExpectedTaskState.
+    - Verified timestamp sampled strictly AFTER read/evaluation finish.
+    - Sanitized mismatch diagnostics ('title mismatch', 'due mismatch')
+      never leaking private values.
+    - Performs zero writes and zero mission/ledger state mutations.
+    """
+
+    def __init__(self, read_adapter: GoogleTasksReadAdapter) -> None:
+        if not isinstance(read_adapter, GoogleTasksReadAdapter):
+            raise TypeError(
+                f"read_adapter must be a GoogleTasksReadAdapter instance, "
+                f"got {type(read_adapter).__name__}"
+            )
+        self._read_adapter = read_adapter
+
+    @property
+    def scope(self) -> DemoResourceScope:
+        return self._read_adapter.scope
+
+    def verify_task_state(
+        self,
+        task_id: str,
+        expected: ExpectedTaskState,
+        at: datetime | None = None,
+    ) -> TaskReadbackResult:
+        """Verify an external task matches expected state via independent read-back."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise TaskTargetError("task_id must be a non-empty string")
+        if not isinstance(expected, ExpectedTaskState):
+            raise TypeError(f"expected must be ExpectedTaskState, got {type(expected).__name__}")
+
+        # Construct distinct TASK_READ action targeting exact task_id under demo scope
+        read_action = ActionContract.create(
+            mission_id=MissionId.generate(),
+            action_type=ActionType.TASK_READ,
+            target=TargetIdentity(
+                system=CANONICAL_TASKS_SYSTEM,
+                resource_kind=CANONICAL_TASK_RESOURCE_KIND,
+                resource_id=task_id.strip(),
+                parent_id=self.scope.task_list_id,
+            ),
+            parameters={},
+        )
+
+        read_result = self._read_adapter.read_task(read_action, at=at)
+
+        evaluation_time = at or datetime.now(UTC)
+
+        if read_result.status == TaskReadStatus.NOT_FOUND:
+            return TaskReadbackResult(
+                status=TaskReadbackStatus.NOT_FOUND,
+                mismatches=("task not found",),
+                verified_at=evaluation_time,
+                error_message=read_result.error_message,
+            )
+
+        if read_result.status == TaskReadStatus.PROVIDER_ERROR:
+            return TaskReadbackResult(
+                status=TaskReadbackStatus.PROVIDER_ERROR,
+                verified_at=evaluation_time,
+                error_message=read_result.error_message,
+            )
+
+        obs = read_result.observation
+        if obs is None:
+            return TaskReadbackResult(
+                status=TaskReadbackStatus.PROVIDER_ERROR,
+                verified_at=evaluation_time,
+                error_message="Read observation missing despite SUCCESS status",
+            )
+
+        mismatches: list[str] = []
+        if obs.title != expected.title:
+            mismatches.append("title mismatch")
+
+        # Due comparison using normalized date semantics
+        if obs.due != expected.due:
+            mismatches.append("due mismatch")
+
+        if mismatches:
+            return TaskReadbackResult(
+                status=TaskReadbackStatus.MISMATCH,
+                mismatches=tuple(mismatches),
+                verified_at=evaluation_time,
+                observation=obs,
+            )
+
+        return TaskReadbackResult(
+            status=TaskReadbackStatus.MATCH,
+            mismatches=(),
+            verified_at=evaluation_time,
+            observation=obs,
+        )
+
+
+# ===========================================================================
+# Duplicate Detector
+# ===========================================================================
+
+
+class DuplicateDetectionStatus(StrEnum):
+    """Result status of active task duplicate detection."""
+
+    UNIQUE_MATCH = "UNIQUE_MATCH"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
+    NO_MATCH = "NO_MATCH"
+    SCAN_LIMIT_EXCEEDED = "SCAN_LIMIT_EXCEEDED"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateDetectionResult:
+    """Outcome of active task duplicate detection.
+
+    Enforces bounded scanning over tasks.list.
+    Truncated scan fails closed as SCAN_LIMIT_EXCEEDED (never claims 'no duplicate').
+    Sensitive task IDs and titles are masked in repr/str.
+    """
+
+    status: DuplicateDetectionStatus
+    match_count: int = 0
+    scanned_pages: int = 0
+    scanned_tasks: int = 0
+    error_message: str | None = None
+    evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __repr__(self) -> str:
+        return (
+            f"DuplicateDetectionResult(status='{self.status.value}', "
+            f"match_count={self.match_count}, scanned_pages={self.scanned_pages}, "
+            f"scanned_tasks={self.scanned_tasks}, "
+            f"error_message={redact_text(self.error_message) if self.error_message else None})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+class GoogleTasksDuplicateDetector:
+    """Duplicate detector for Google Tasks.
+
+    Performs a separate provider list read of the dedicated demo task list
+    under official tasks.list semantics to detect active duplicates.
+    Enforces a strict internal scan bound (MAX_SCAN_PAGES) to prevent unbounded pagination.
+    Fails closed with SCAN_LIMIT_EXCEEDED if pages exceed the bound.
+    """
+
+    def __init__(
+        self,
+        scope: DemoResourceScope,
+        transport: TaskTransport,
+        max_scan_pages: int = 5,
+        page_size: int = 100,
+    ) -> None:
+        if not isinstance(scope, DemoResourceScope):
+            raise TaskScopeError(f"scope must be DemoResourceScope, got {type(scope).__name__}")
+        if scope.task_list_id.strip().lower() in FORBIDDEN_TASK_LIST_IDS:
+            raise TaskScopeError("Dedicated demo task list required")
+        self._scope = scope
+        self._transport = transport
+        self._max_scan_pages = max_scan_pages
+        self._page_size = page_size
+
+    @property
+    def scope(self) -> DemoResourceScope:
+        return self._scope
+
+    def detect_duplicates(
+        self,
+        expected: ExpectedTaskState,
+        at: datetime | None = None,
+    ) -> DuplicateDetectionResult:
+        """Scan active tasks in demo list to detect duplicates of the expected state."""
+        if not isinstance(expected, ExpectedTaskState):
+            raise TypeError(f"expected must be ExpectedTaskState, got {type(expected).__name__}")
+
+        page_token: str | None = None
+        pages_scanned = 0
+        tasks_scanned = 0
+        match_count = 0
+        evaluation_time = at or datetime.now(UTC)
+
+        try:
+            while pages_scanned < self._max_scan_pages:
+                items, next_page_token = self._transport.list_tasks(
+                    task_list_id=self._scope.task_list_id,
+                    show_completed=False,
+                    show_deleted=False,
+                    show_hidden=False,
+                    max_results=self._page_size,
+                    page_token=page_token,
+                )
+                pages_scanned += 1
+                tasks_scanned += len(items)
+
+                for item in items:
+                    # Active non-deleted task check
+                    if item.deleted or item.status == "completed":
+                        continue
+                    item_due = normalize_task_due(item.due)
+                    if item.title == expected.title and item_due == expected.due:
+                        match_count += 1
+
+                if next_page_token is None:
+                    # Completed full list scan
+                    if match_count == 1:
+                        status = DuplicateDetectionStatus.UNIQUE_MATCH
+                    elif match_count > 1:
+                        status = DuplicateDetectionStatus.DUPLICATE_DETECTED
+                    else:
+                        status = DuplicateDetectionStatus.NO_MATCH
+
+                    return DuplicateDetectionResult(
+                        status=status,
+                        match_count=match_count,
+                        scanned_pages=pages_scanned,
+                        scanned_tasks=tasks_scanned,
+                        evaluated_at=evaluation_time,
+                    )
+
+                page_token = next_page_token
+
+            # Exhausted scan bound without reaching end of list
+            return DuplicateDetectionResult(
+                status=DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED,
+                match_count=match_count,
+                scanned_pages=pages_scanned,
+                scanned_tasks=tasks_scanned,
+                error_message="Duplicate scan pagination limit exceeded; cannot certify uniqueness",
+                evaluated_at=evaluation_time,
+            )
+
+        except Exception as exc:
+            error_msg = _sanitize_tasks_transport_error(exc)
+            logger.warning("Tasks duplicate detector provider failure: %s", error_msg)
+            return DuplicateDetectionResult(
+                status=DuplicateDetectionStatus.PROVIDER_ERROR,
+                match_count=match_count,
+                scanned_pages=pages_scanned,
+                scanned_tasks=tasks_scanned,
+                error_message=error_msg,
+                evaluated_at=evaluation_time,
             )

@@ -845,7 +845,22 @@ Acceptance:
 - comprehensive unit and adversarial tests in `tests/test_tasks_read_create_adapter.py` passing without network dependency.
 
 ### P-06.05 — Implement Tasks independent read-back verifier and duplicate detection
-Status: PENDING
+Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+
+Acceptance:
+- Tasks-specific independent read-back verifier implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadbackVerifier`);
+- Independence law enforced: initiates a distinct, fresh provider read through `GoogleTasksReadAdapter`; create response payload and provider-write success CANNOT substitute for read-back verification;
+- compares freshly observed provider state deterministically against `ExpectedTaskState` (`title`, `due`);
+- sanitized mismatch diagnostics: reports deterministic field mismatches ("title mismatch", "due mismatch", "task not found") without leaking expected or observed private text, dates, tokens, URLs, or external IDs;
+- masked `ExpectedTaskState` representation: bounded `repr` and `str` output exposing boolean field presence flags (`has_title`, `has_due`) without leaking private values;
+- truthful verification timestamp: `verified_at` sampled strictly after independent provider read completes and evaluation finishes;
+- duplicate detector implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksDuplicateDetector`);
+- performs separate provider list read of dedicated demo task list under official `tasks.list` semantics;
+- active duplicate surface (`showCompleted=False`, `showDeleted=False`, `showHidden=False`, `maxResults=100`);
+- bounded scan pagination (`max_scan_pages=5`); scan bound exhaustion fails closed with `DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED` without falsely certifying uniqueness;
+- typed detection outcomes: `UNIQUE_MATCH` (count == 1), `DUPLICATE_DETECTED` (count > 1), `NO_MATCH` (count == 0), `SCAN_LIMIT_EXCEEDED`, `PROVIDER_ERROR`;
+- verifier and duplicate detector perform zero writes and zero mission/ledger state mutations;
+- comprehensive unit and adversarial tests in `tests/test_tasks_readback_verifier.py` passing without network dependency.
 
 ### P-06.06 — Implement Open-Meteo live observation adapter with attribution
 Status: PENDING

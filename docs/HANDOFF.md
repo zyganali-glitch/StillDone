@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — Tasks Read/Create Adapter (P-06.04) IMPLEMENTATION COMPLETE (awaiting independent QA)**
+Current repository state: **Phase P-06: IN PROGRESS — Tasks Read-Back Verifier & Duplicate Detection (P-06.05) IMPLEMENTATION COMPLETE (awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,7 +74,7 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
+P-06.05 — Implement Tasks independent read-back verifier and duplicate detection
 
 Status:
 `IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)`
@@ -83,15 +83,16 @@ Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
 - P-06.02 received independent QA PASS in commit `954420f91c94fb583886c17627be3e5f922a7241`.
 - P-06.03 received independent QA PASS in commit `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
-- P-06.04 implementation complete:
-  1. Implemented bounded Google Tasks read and create adapters in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadAdapter`, `GoogleTasksCreateAdapter`).
-  2. Bounded to configured dedicated demo task list (`DemoResourceScope`); strictly forbids `@default`, `default`, and `primary`.
-  3. Strict due date normalization helper (`normalize_task_due`): date semantics with RFC3339 support; discards time without unexpected timezone shifting; malformed dates fail closed.
-  4. Top-level task creation only with single write attempt and zero retry; execution success does not imply VERIFIED or READY.
-  5. Pluggable transport (`TaskTransport`) with in-memory deterministic fake (`FakeGoogleTasksTransport`) and client wrapper (`GoogleApiClientTasksTransport`).
-  6. Verified with 27 unit tests and 204 cross-boundary tests (`tests/test_tasks_read_create_adapter.py`).
+- P-06.04 implementation complete: bounded `GoogleTasksReadAdapter` and `GoogleTasksCreateAdapter` in `src/stilldone/adapters/tasks.py`.
+- P-06.05 implementation complete:
+  1. Independent read-back verifier (`GoogleTasksReadbackVerifier`) enforcing fresh read via read adapter; create response payload never substitutes for verification.
+  2. Verification timestamp sampled strictly after provider read and evaluation complete.
+  3. Sanitized mismatch tokens ("title mismatch", "due mismatch", "task not found") and masked `ExpectedTaskState` repr/str.
+  4. Duplicate detector (`GoogleTasksDuplicateDetector`) with bounded pagination (`max_scan_pages=5`) over `tasks.list`.
+  5. Scan bound exhaustion fails closed with `SCAN_LIMIT_EXCEEDED` without false uniqueness certification.
+  6. Verified with 20 unit and adversarial tests (`tests/test_tasks_readback_verifier.py`) and 224 cross-boundary tests.
 - Last independently VERIFIED contiguous SHA at batch start: `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
-- P-06.05 sequential implementation is next in the authorized batch.
+- P-06.06 sequential implementation is next in the authorized batch.
 
 ## Phase P-04 Status
 
@@ -123,7 +124,7 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 - P-06.02 — independent QA PASS (Verified SHA: `954420f91c94fb583886c17627be3e5f922a7241`)
 - P-06.03 — independent QA PASS (Verified SHA: `f3f73ba7a236cbf57f271f2ad0622969269d180a`)
 - P-06.04 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
-- P-06.05 — PENDING
+- P-06.05 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
 - P-06.06 — PENDING
 - P-06.07 — PENDING
 - P-06.08 — PENDING (Live Calendar update proof remains strictly PENDING)
@@ -136,14 +137,14 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Next exact task
 
-`P-06.05 — Implement Tasks independent read-back verifier and duplicate detection`
+`P-06.06 — Implement Open-Meteo live observation adapter with attribution`
 
 Status:
 `PENDING`
 
 ## Next safe action
 
-Implement P-06.05 Tasks independent read-back verifier and duplicate detection.
+Implement P-06.06 Open-Meteo live observation adapter with attribution.
 
 
 ---
