@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: IN PROGRESS — P-07.01 EXECUTOR_COMPLETED (awaiting independent QA review, NOT PASS); Phase P-06 CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`)**
+Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 EXECUTOR_COMPLETED (awaiting independent QA review, NOT PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,34 +74,55 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-07.01 — Define strict planner input/output schema and supported action vocabulary (SURGICALLY REPAIRED)
+P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
 
 Status:
-`REPAIRED / awaiting independent QA review (NOT PASS)`
+`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
 
 Notes:
 - Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
-- P-06.01 through P-06.07 received independent QA PASS.
-- P-06.08 received independent QA PASS ✅ (Verified closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
-- The P-06.08 operator-fixture preparation history and `OPERATOR_FIXTURE_PREPARATION_PROCESS_DEVIATION_RECORDED` are canonical historical truth and preserved.
+- P-07.01 received independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
 - Phase P-07 is IN PROGRESS.
-- P-07.01 implemented in bounded planning package:
-  * `src/stilldone/planning/contracts.py`
+- P-07.02 implemented in bounded planning package:
+  * `src/stilldone/planning/bedrock.py`
   * `src/stilldone/planning/__init__.py`
-  * `tests/planning/test_contracts.py`
-- P-07.01 Final Bounded Surgical Repair addressed all review findings:
-  1. Defect 1 — Local Schema / Parser Parity: Enforced non-blank pattern constraints (`pattern: r"\S"`) on all string parameters (`calendar.update.summary`, `calendar.update.start_time`, `task.create.title`, `task.create.due`) matching deterministic parser `.strip()` semantics. Parity rejection proven for whitespace-only strings and hostile Unicode whitespace (`"\u3000\u2003\u00a0"`).
-  2. Defect 2 — Explicit UUID Format Validation: Implemented local helper `validate_candidate_plan_schema_locally(payload)` using `Draft202012Validator` with explicit `FormatChecker()` to enforce `format: "uuid"` on `mission_id` at the local schema boundary. Parity tests updated from raw validate calls; malformed and partial UUIDs strictly rejected.
-  3. Defect 3 — Current Official AWS / Nova Micro Capability Truth: Recorded official Amazon Bedrock facts: Nova Micro (`amazon.nova-micro-v1:0`) does NOT support native structured outputs; Bedrock native structured-output documentation also restricts JSON Schema subsets and excludes `minLength`/`maxLength`/`pattern`. StillDone's schema canonical role is LOCAL DETERMINISTIC VALIDATION + MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION. In P-07.02, Bedrock adapter will request bounded JSON text via supported Converse/prompt API, treat returned text as untrusted, and validate deterministically via `parse_candidate_plan_for_input`.
-  4. Defect 4 — Historical Reporting Truth: Canonical history preserved (P-06.07 proved real Tasks mutation/readback; P-06.08 proved real Calendar mutation/readback). For P-07.01 specifically, live Google mutations: NOT_RUN.
-- Exact five-action canonical vocabulary enforced (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`); zero dynamic/model-added actions.
-- Zero fabricated provider IDs: strict deserialization rejects external identifiers (`calendar_id`, `event_id`, `task_list_id`, `task_id`, `resource_id`, `parent_id`).
-- Zero model authority: model prose ('approved', 'verified', 'ready') remains inert text with zero deterministic effect; authority and verification injection strictly rejected.
-- Parameter validation directly reuses canonical `ActionPolicy` facts without fabricating target IDs.
-- Full test suite passing (208 contract tests); zero provider/model SDK imports; zero network execution; zero personal spend ($0.00).
-- Last independently VERIFIED contiguous SHA at P-07.01 start remains: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`.
-- P-07.01 status: `REPAIRED / awaiting independent QA review (NOT PASS)`. Do NOT self-award PASS.
-- P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
+  * `tests/planning/test_bedrock_adapter.py`
+- Official AWS truth re-verified:
+  * Canonical model: `amazon.nova-micro-v1:0` in `us-east-1` (strictly enforced, no fallback model/region).
+  * Nova Micro native Structured Outputs: NOT SUPPORTED.
+  * Bedrock structured-output docs explicitly list minLength/maxLength as unsupported.
+  * `pattern` is not in the documented supported subset.
+  * StillDone schema canonical role: LOCAL DETERMINISTIC VALIDATION + MODEL PROMPT CONTRACT / OUTPUT DESCRIPTION.
+- Immutable bounded planner settings:
+  * connect_timeout = 5.0s, read_timeout = 30.0s (positive, <= canonical max)
+  * total_max_attempts = 1, retry_mode = 'standard' (zero automatic retries; botocore configured with total_max_attempts=1)
+  * maxTokens = 2048, temperature = 0.00001
+- Client construction and security boundary:
+  * Production client service `bedrock-runtime` in `us-east-1`.
+  * Instantiated lazily via standard AWS credential provider chain or injected via Protocol `BedrockConverseClient`.
+  * Constructor strictly rejects AWS credentials (`access_key`, `secret_key`, `session_token`, `bearer_token`, `account_id`).
+  * Tests never require real credentials (`AWS_EC2_METADATA_DISABLED="true"` prevents IMDS probes).
+- Prompt trust separation:
+  * StillDone-owned system instructions kept strictly separate from user mission input.
+  * `PlannerInput.intent` remains user message data; hostile intent cannot alter system authority.
+  * Schema guidance included in prompt text as guidance only, never as Bedrock native Structured Output configuration.
+- Exact Converse request shape:
+  * modelId, system text, messages with user JSON, inferenceConfig (maxTokens, temperature).
+  * No topP, no tools, no toolConfig, no guardrails, no outputConfig.
+- Model response extraction & deterministic validation:
+  * Untrusted provider response envelope strictly validated.
+  * Accepted stopReason must be `end_turn`.
+  * Enforces `MAX_PLANNER_JSON_BYTES` boundary before parsing.
+  * Mandatory boundary: invokes `parse_candidate_plan_for_input(planner_input, model_text)`.
+  * Preserves underlying deterministic P-07.01 rejection class in `cause` and `__cause__`.
+- Privacy minimization:
+  * Hostile sentinels in intent, model output, and transport are never leaked into exception strings or reprs.
+- Validation:
+  * Full test suite passing (26 focused Bedrock adapter tests, 208 P-07.01 contract tests, 1260 total tests passing).
+  * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
+- Last independently VERIFIED contiguous SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`.
+- P-07.02 status: `EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`. Do NOT self-award PASS.
+- P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ## Phase P-04 Status
 
@@ -142,8 +163,8 @@ Phase P-06 is **CLOSED — independent QA PASS (Verified closure SHA: `e9ac70797
 
 ## Phase P-07 Status
 
-- P-07.01 — EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
-- P-07.02 — PENDING / NOT AUTHORIZED
+- P-07.01 — PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`)
+- P-07.02 — EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
 - P-07.03 — PENDING / NOT AUTHORIZED
 - P-07.04 — PENDING / NOT AUTHORIZED
 - P-07.05 — PENDING / NOT AUTHORIZED
@@ -153,20 +174,20 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Last independently VERIFIED contiguous SHA
 
-`e9ac7079780b31fa8b289c097546a34e27ba7c1c`
+`efb84117463d9e2736e9ccfada926b942b6ee2c9`
 
 ## Next exact task
 
-Independent QA review of P-07.01 strict planner input/output schema and supported action vocabulary.
+Independent QA review of P-07.02 Bedrock planner adapter with exact timeout/token/retry settings.
 
 Status:
 `EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
 
 ## Next safe action
 
-Awaiting independent QA review of P-07.01.
-Do NOT self-award P-07.01 PASS.
-Do NOT begin Phase P-07.02 through P-07.06.
+Awaiting independent QA review of P-07.02.
+Do NOT self-award P-07.02 PASS.
+Do NOT begin Phase P-07.03 through P-07.06.
 
 
 ---

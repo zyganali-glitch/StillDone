@@ -949,7 +949,7 @@ Goal:
 make required AWS intelligence materially useful without giving it fact authority.
 
 ### P-07.01 — Define strict planner input/output schema and supported action vocabulary
-Status: REPAIRED / awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`)
 
 Acceptance:
 - bounded P-07 planning namespace created: `src/stilldone/planning/contracts.py`, `src/stilldone/planning/__init__.py`, `tests/planning/test_contracts.py`;
@@ -966,10 +966,33 @@ Acceptance:
   4. Defect 4 — Historical Reporting Truth: Canonical history preserved (P-06.07 proved real Tasks mutation/readback; P-06.08 proved real Calendar mutation/readback). For P-07.01 specifically, live Google mutations: NOT_RUN.
 - comprehensive test suite (`tests/planning/test_contracts.py`, 208 tests) passing all contract requirements, schema parity, mission binding, raw JSON bounds, and hostile hallucination cases;
 - zero provider/model SDK imports in planner contract module; zero network/model execution; zero personal spend ($0.00);
-- P-07.02 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
+- Task closed with independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
 
 ### P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
-Status: PENDING / NOT AUTHORIZED
+Status: EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
+
+Acceptance:
+- real Bedrock runtime adapter implemented in bounded package `src/stilldone/planning/bedrock.py`;
+- immutable bounded planner settings `BedrockPlannerSettings` enforcing canonical values:
+  * model_id: `amazon.nova-micro-v1:0` (strictly canonical, zero fallback model);
+  * region_name: `us-east-1` (strictly canonical, zero fallback region);
+  * connect_timeout: 5.0s, read_timeout: 30.0s (positive, <= canonical max);
+  * total_max_attempts: 1, retry_mode: 'standard' (zero automatic retries; botocore configured with total_max_attempts=1);
+  * max_tokens: 2048, temperature: 0.00001;
+- official AWS SDK production dependency `boto3>=1.35.0` (`boto3==1.43.108`, `botocore==1.43.108`) added to pyproject.toml / uv.lock;
+- typed Protocol `BedrockConverseClient` enables zero-network unit test injection;
+- production factory `create_bedrock_runtime_client` uses standard AWS credential provider chain without accepting credentials as arguments;
+- strict prompt trust separation: StillDone-owned system instructions kept separate from user mission input; `PlannerInput.intent` remains user message data; hostile intent cannot alter system authority;
+- Nova Micro native Structured Outputs: NOT SUPPORTED; Bedrock structured-output docs explicitly list minLength/maxLength as unsupported; `pattern` is not in the documented supported subset;
+- schema guidance provided in system prompt text as guidance only, never as Bedrock native structured output `outputConfig`;
+- exact Converse request shape: modelId, system text, messages with user JSON, inferenceConfig (maxTokens, temperature); zero topP, tools, toolConfig, guardrails, or outputConfig;
+- untrusted Converse response envelope strictly validated: requires Mapping, output.message, non-empty content block, non-blank text, and stopReason == 'end_turn';
+- mandatory deterministic boundary: raw response text checked against `MAX_PLANNER_JSON_BYTES` then passed directly to `parse_candidate_plan_for_input(planner_input, raw_text)`;
+- fail-closed typed exception hierarchy: `BedrockPlannerSettingsError`, `BedrockTransportError`, `BedrockResponseEnvelopeError`, `BedrockEmptyResponseError`, `BedrockStopReasonError`, `BedrockUsageMetadataError`, `BedrockPlanRejectionError` (preserves underlying P-07.01 rejection class in `cause` and `__cause__`);
+- privacy minimization: hostile sentinels in intent, model output, and transport are never leaked into exception strings or reprs;
+- 26 focused unit tests in `tests/planning/test_bedrock_adapter.py` passing covering all 29 test matrix requirements with zero network calls;
+- live AWS execution: 0 control plane calls, 0 Bedrock inference calls, 0 Strands calls, 0 Google calls, 0 Open-Meteo calls, 0 remote MCP calls; personal spend delta: $0.00;
+- P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
 
 ### P-07.03 — Implement real Strands planning agent using bounded tools/context
 Status: PENDING / NOT AUTHORIZED

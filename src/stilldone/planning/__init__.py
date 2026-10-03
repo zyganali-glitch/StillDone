@@ -1,9 +1,37 @@
 """StillDone Planning package.
 
 Defines planner contracts, candidate action proposals, symbolic target references,
-and strict deserialization boundaries for non-authoritative model output.
+strict deserialization boundaries for non-authoritative model output, and the
+production-capable Bedrock planner adapter.
 """
 
+from stilldone.planning.bedrock import (
+    ACCEPTED_STOP_REASON,
+    DEFAULT_BEDROCK_MODEL_ID,
+    DEFAULT_BEDROCK_REGION,
+    DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_READ_TIMEOUT_SECONDS,
+    DEFAULT_RETRY_MODE,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_TOTAL_MAX_ATTEMPTS,
+    BedrockConverseClient,
+    BedrockEmptyResponseError,
+    BedrockPlannerAdapter,
+    BedrockPlannerError,
+    BedrockPlannerResult,
+    BedrockPlannerSettings,
+    BedrockPlannerSettingsError,
+    BedrockPlanRejectionError,
+    BedrockResponseEnvelopeError,
+    BedrockStopReasonError,
+    BedrockTokenUsage,
+    BedrockTransportError,
+    BedrockUsageMetadataError,
+    build_bedrock_planner_system_prompt,
+    create_bedrock_runtime_client,
+    format_user_message,
+)
 from stilldone.planning.contracts import (
     ACTION_SYMBOLIC_TARGET_COMPATIBILITY,
     FORBIDDEN_AUTHORITY_AND_FACT_FIELDS,
@@ -46,7 +74,16 @@ from stilldone.planning.contracts import (
 )
 
 __all__ = [
+    "ACCEPTED_STOP_REASON",
     "ACTION_SYMBOLIC_TARGET_COMPATIBILITY",
+    "DEFAULT_BEDROCK_MODEL_ID",
+    "DEFAULT_BEDROCK_REGION",
+    "DEFAULT_CONNECT_TIMEOUT_SECONDS",
+    "DEFAULT_MAX_OUTPUT_TOKENS",
+    "DEFAULT_READ_TIMEOUT_SECONDS",
+    "DEFAULT_RETRY_MODE",
+    "DEFAULT_TEMPERATURE",
+    "DEFAULT_TOTAL_MAX_ATTEMPTS",
     "FORBIDDEN_AUTHORITY_AND_FACT_FIELDS",
     "FORBIDDEN_PROVIDER_ID_FIELDS",
     "MAX_EXPLANATION_STRING_LENGTH",
@@ -57,6 +94,19 @@ __all__ = [
     "PLANNER_ACTION_VOCABULARY",
     "PLANNER_SCHEMA_VERSION",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "BedrockConverseClient",
+    "BedrockEmptyResponseError",
+    "BedrockPlanRejectionError",
+    "BedrockPlannerAdapter",
+    "BedrockPlannerError",
+    "BedrockPlannerResult",
+    "BedrockPlannerSettings",
+    "BedrockPlannerSettingsError",
+    "BedrockResponseEnvelopeError",
+    "BedrockStopReasonError",
+    "BedrockTokenUsage",
+    "BedrockTransportError",
+    "BedrockUsageMetadataError",
     "CandidateActionProposal",
     "CandidatePlanProposal",
     "DuplicateKeyError",
@@ -80,6 +130,9 @@ __all__ = [
     "UnknownFieldPolicyError",
     "UnknownSymbolicTargetError",
     "UnsupportedSchemaVersionError",
+    "build_bedrock_planner_system_prompt",
+    "create_bedrock_runtime_client",
+    "format_user_message",
     "get_candidate_plan_json_schema",
     "parse_candidate_plan_for_input",
     "validate_candidate_action_parameters",
