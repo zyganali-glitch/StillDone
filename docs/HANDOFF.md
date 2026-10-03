@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-06: IN PROGRESS — Bounded Tasks & Weather Adapters Batch (P-06.04, P-06.05, P-06.06) IMPLEMENTATION COMPLETE (awaiting independent QA)**
+Current repository state: **Phase P-06: IN PROGRESS — Consolidated Surgical Repair Batch (P-06.04, P-06.05, P-06.06) REPAIRED (awaiting independent QA)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,29 +74,20 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-06.06 — Implement Open-Meteo live observation adapter with attribution
+Independent QA review of consolidated repair batch (P-06.04, P-06.05, P-06.06)
 
 Status:
-`IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 Notes:
 - P-06.01 received independent QA PASS in commit `50a4f1b3d34b85889f758587d7f23f5670cc0760`.
 - P-06.02 received independent QA PASS in commit `954420f91c94fb583886c17627be3e5f922a7241`.
 - P-06.03 received independent QA PASS in commit `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
-- P-06.04 implementation complete: bounded `GoogleTasksReadAdapter` and `GoogleTasksCreateAdapter` in `src/stilldone/adapters/tasks.py`.
-- P-06.05 implementation complete: `GoogleTasksReadbackVerifier` and `GoogleTasksDuplicateDetector` in `src/stilldone/adapters/tasks.py`.
-- P-06.06 implementation complete:
-  1. Open-Meteo observation adapter (`OpenMeteoReadAdapter`, alias `OpenMeteoObservationAdapter`) in `src/stilldone/adapters/weather.py`.
-  2. Canonical P-04 `ActionType.WEATHER_READ` policy enforced: `system="open_meteo"`, `resource_kind="weather_location"`, empty parameters.
-  3. Target semantics: `parent_id` is None, `resource_id` matches configured `location_id`.
-  4. Authority: `READ_ONLY` class strictly enforced; unexpected `ApprovalGrant` fails closed with `UnexpectedApprovalGrantError`.
-  5. Privacy minimization: `WeatherLocationConfig` masks coordinates in `__repr__` and `__str__`; durable `WeatherObservation` omits coordinates.
-  6. Mandatory CC BY 4.0 provider attribution (`ProviderAttribution` with provider, license, notice text, URL).
-  7. Pluggable transport boundary: `FakeOpenMeteoTransport` (`FIXTURE`) and `OpenMeteoHttpTransport` (`LIVE_EXTERNAL`).
-  8. Single bounded live call executed against public demo reference coordinates (Berlin 52.5200, 13.4050); status `MATCH`; provenance `LIVE_EXTERNAL`; spend delta `$0.00`; evidence recorded in `docs/P06_06_LIVE_WEATHER_EVIDENCE.md`.
-  9. Comprehensive unit test suite in `tests/test_weather_adapter.py` passing (30 tests). Full test suite: 951 tests passing.
+- P-06.04 repaired: `GoogleTasksReadAdapter` and `GoogleTasksCreateAdapter` hardened with strict RFC 3339 Section 5.6 due parsing and post-provider runtime timestamps.
+- P-06.05 repaired: `GoogleTasksReadbackVerifier` and `GoogleTasksDuplicateDetector` hardened with truthful runtime timestamps, bounded duplicate scan limits, assigned task exclusion, and hostile privacy sentinels.
+- P-06.06 repaired: `OpenMeteoReadAdapter` and `OpenMeteoHttpTransport` hardened with canonical endpoint lock (`https://api.open-meteo.com/v1/forecast`), location ID privacy masking, strict fail-closed provider schema validation, truthful observation timing, closed-world live provenance, single live call evidence (`docs/P06_06_LIVE_WEATHER_REPAIR_EVIDENCE.md`), and CC BY 4.0 attribution.
 - Last independently VERIFIED contiguous SHA at batch start: `f3f73ba7a236cbf57f271f2ad0622969269d180a`.
-- P-06.04, P-06.05, and P-06.06 sequential batch is complete and ready for independent QA review.
+- P-06.04, P-06.05, and P-06.06 sequential repair batch is complete and ready for independent QA review.
 
 ## Phase P-04 Status
 
@@ -127,11 +118,11 @@ Phase P-05 is **CLOSED — independent QA PASS (Verified closure SHA: `6503127af
 - P-06.01 — independent QA PASS (Verified SHA: `50a4f1b3d34b85889f758587d7f23f5670cc0760`)
 - P-06.02 — independent QA PASS (Verified SHA: `954420f91c94fb583886c17627be3e5f922a7241`)
 - P-06.03 — independent QA PASS (Verified SHA: `f3f73ba7a236cbf57f271f2ad0622969269d180a`)
-- P-06.04 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
-- P-06.05 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
-- P-06.06 — IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+- P-06.04 — REPAIRED — awaiting independent QA review (NOT PASS)
+- P-06.05 — REPAIRED — awaiting independent QA review (NOT PASS)
+- P-06.06 — REPAIRED — awaiting independent QA review (NOT PASS)
 - P-06.07 — PENDING / NOT AUTHORIZED
-- P-06.08 — PENDING (Live Calendar update proof remains strictly PENDING)
+- P-06.08 — PENDING / NOT AUTHORIZED
 
 Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
 
@@ -141,16 +132,14 @@ Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero
 
 ## Next exact task
 
-Independent QA review of bounded sequential batch (P-06.04, P-06.05, P-06.06)
-Followed by:
-`P-06.07 — Prove first live write → read-back → VERIFIED slice on Tasks` (PENDING / NOT AUTHORIZED)
+Independent QA review of consolidated repair batch (P-06.04, P-06.05, P-06.06)
 
 Status:
-`PENDING / NOT AUTHORIZED`
+`REPAIRED — awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 
-Awaiting independent QA review of the bounded P-06.04 → P-06.06 batch.
+Awaiting independent QA review of the repaired batch (P-06.04, P-06.05, P-06.06).
 Do NOT begin P-06.07 or P-06.08.
 
 

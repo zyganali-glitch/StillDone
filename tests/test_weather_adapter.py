@@ -16,6 +16,7 @@ Verifies:
 from __future__ import annotations
 
 import io
+import json
 import urllib.error
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +30,7 @@ from stilldone.adapters.weather import (
     ATTRIBUTION_PROVIDER,
     ATTRIBUTION_TEXT,
     ATTRIBUTION_URL,
+    CANONICAL_OPEN_METEO_ENDPOINT,
     CANONICAL_WEATHER_RESOURCE_KIND,
     CANONICAL_WEATHER_SYSTEM,
     FakeOpenMeteoTransport,
@@ -45,7 +47,9 @@ from stilldone.adapters.weather import (
     WeatherTargetError,
     WeatherTimeoutError,
     WeatherTransport,
+    WeatherTransportError,
     _sanitize_weather_transport_error,
+    validate_open_meteo_endpoint,
 )
 from stilldone.authority_policy import UnexpectedApprovalGrantError
 from stilldone.domain.action import (
@@ -139,10 +143,13 @@ def test_weather_location_config_masks_coordinates_in_repr_and_str() -> None:
     assert "2.3522" not in repr_str
     assert "latitude=***" in repr_str
     assert "longitude=***" in repr_str
-    assert "loc-secret-99" in repr_str
+    assert "loc-secret-99" not in repr_str
+    assert "location_id='***'" in repr_str
 
     assert "48.8566" not in str_val
     assert "2.3522" not in str_val
+    assert "loc-secret-99" not in str_val
+    assert "location_id='***'" in str_val
 
 
 def test_weather_observation_masks_details_in_repr_and_str() -> None:
@@ -158,7 +165,8 @@ def test_weather_observation_masks_details_in_repr_and_str() -> None:
         provenance=EvidenceProvenance.FIXTURE,
     )
     s = str(obs)
-    assert TEST_LOCATION_ID in s
+    assert TEST_LOCATION_ID not in s
+    assert "location_id='***'" in s
     assert "18.5" in s
     assert "FIXTURE" in s
     # Coordinates must NOT exist in the observation model
@@ -181,7 +189,9 @@ def test_target_resource_id_mismatch_raises_target_error() -> None:
     adapter = OpenMeteoReadAdapter(config, transport)
 
     action = _make_weather_action(location_id="loc-paris")
-    with pytest.raises(WeatherTargetError, match="does not match configured location_id"):
+    with pytest.raises(
+        WeatherTargetError, match="Target resource_id does not match configured location scope"
+    ):
         adapter.read_weather(action)
 
 
@@ -519,3 +529,299 @@ def test_observe_weather_alias_and_adapter_alias() -> None:
     assert res2.status == WeatherReadStatus.MATCH
     assert res1.observation is not None
     assert res2.observation is not None
+
+
+# ===========================================================================
+# 9. Endpoint Lock & SSRF / Downgrade Rejection (P-06.06 Repair Defect A)
+# ===========================================================================
+
+
+class TestCanonicalEndpointValidation:
+    def test_canonical_endpoint_accepted(self) -> None:
+        assert (
+            validate_open_meteo_endpoint(CANONICAL_OPEN_METEO_ENDPOINT)
+            == CANONICAL_OPEN_METEO_ENDPOINT
+        )
+        transport = OpenMeteoHttpTransport()
+        assert transport.endpoint == CANONICAL_OPEN_METEO_ENDPOINT
+
+    @pytest.mark.parametrize(
+        "bad_url,match_text",
+        [
+            ("http://api.open-meteo.com/v1/forecast", "HTTPS scheme"),
+            ("https://attacker.com/v1/forecast", "api.open-meteo.com"),
+            ("https://api.open-meteo.com.attacker.com/v1/forecast", "api.open-meteo.com"),
+            ("https://sub.api.open-meteo.com/v1/forecast", "api.open-meteo.com"),
+            ("https://user:pass@api.open-meteo.com/v1/forecast", "credentials"),
+            ("https://api.open-meteo.com:8443/v1/forecast", "alternate port"),
+            ("https://api.open-meteo.com/v2/forecast", "/v1/forecast"),
+            ("https://api.open-meteo.com/v1/forecast?injected=true", "query parameters"),
+            ("https://api.open-meteo.com/v1/forecast#frag", "fragments"),
+            ("", "non-empty string"),
+        ],
+    )
+    def test_invalid_endpoints_fail_closed(self, bad_url: str, match_text: str) -> None:
+        with pytest.raises(WeatherTransportError, match=match_text):
+            validate_open_meteo_endpoint(bad_url)
+
+        with pytest.raises(WeatherTransportError, match=match_text):
+            OpenMeteoHttpTransport(endpoint=bad_url)
+
+
+# ===========================================================================
+# 10. Location Privacy & Hostile Sentinels (P-06.06 Repair Defect B)
+# ===========================================================================
+
+
+class TestLocationPrivacyAndSentinels:
+    SENTINEL_LOCATION_ID = "SENTINEL_CLASSIFIED_LOCATION_ALPHA_42"
+
+    def test_sentinel_location_id_never_leaks_in_repr_or_str(self) -> None:
+        config = WeatherLocationConfig(
+            location_id=self.SENTINEL_LOCATION_ID,
+            latitude=52.52,
+            longitude=13.41,
+        )
+        assert self.SENTINEL_LOCATION_ID not in repr(config)
+        assert self.SENTINEL_LOCATION_ID not in str(config)
+        assert "location_id='***'" in repr(config)
+
+        obs = WeatherObservation(
+            location_id=self.SENTINEL_LOCATION_ID,
+            temperature_2m=20.0,
+            precipitation=0.0,
+            weather_code=0,
+            wind_speed_10m=5.0,
+            units={"temperature_2m": "°C"},
+            observed_at=datetime.now(UTC),
+            attribution=ProviderAttribution(),
+            provenance=EvidenceProvenance.FIXTURE,
+            provider_valid_time="2026-10-03T10:00:00Z",
+        )
+        assert self.SENTINEL_LOCATION_ID not in repr(obs)
+        assert self.SENTINEL_LOCATION_ID not in str(obs)
+        assert "location_id='***'" in repr(obs)
+
+    def test_target_mismatch_error_message_is_generic_without_leakage(self) -> None:
+        config = WeatherLocationConfig(
+            location_id=self.SENTINEL_LOCATION_ID,
+            latitude=52.52,
+            longitude=13.41,
+        )
+        transport = FakeOpenMeteoTransport()
+        adapter = OpenMeteoReadAdapter(config, transport)
+
+        hostile_supplied_id = "HOSTILE_SUPPLIED_TARGET_LOCATION_ID_99"
+        action = _make_weather_action(location_id=hostile_supplied_id)
+
+        with pytest.raises(WeatherTargetError) as exc_info:
+            adapter.read_weather(action)
+
+        err_msg = str(exc_info.value)
+        assert err_msg == "Target resource_id does not match configured location scope"
+        assert self.SENTINEL_LOCATION_ID not in err_msg
+        assert hostile_supplied_id not in err_msg
+
+
+# ===========================================================================
+# 11. Strict Provider Schema Validation (P-06.06 Repair Defect C)
+# ===========================================================================
+
+
+class TestStrictProviderSchemaValidation:
+    @pytest.fixture
+    def base_valid_canned(self) -> dict[str, Any]:
+        return {
+            "current_units": {
+                "temperature_2m": "°C",
+                "precipitation": "mm",
+                "weather_code": "wmo code",
+                "wind_speed_10m": "km/h",
+            },
+            "current": {
+                "time": "2026-10-03T10:00:00Z",
+                "temperature_2m": 16.5,
+                "precipitation": 0.2,
+                "weather_code": 2,
+                "wind_speed_10m": 11.0,
+            },
+        }
+
+    def test_missing_temperature_produces_provider_error(
+        self, base_valid_canned: dict[str, Any]
+    ) -> None:
+        canned = json.loads(json.dumps(base_valid_canned))
+        del canned["current"]["temperature_2m"]
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+        assert "temperature_2m" in str(res.error_message)
+
+    def test_missing_unit_produces_provider_error(self, base_valid_canned: dict[str, Any]) -> None:
+        canned = json.loads(json.dumps(base_valid_canned))
+        del canned["current_units"]["wind_speed_10m"]
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+        assert "wind_speed_10m" in str(res.error_message)
+
+    def test_nan_or_inf_produces_provider_error(self, base_valid_canned: dict[str, Any]) -> None:
+        for bad_val in (float("nan"), float("inf"), float("-inf")):
+            canned = json.loads(json.dumps(base_valid_canned))
+            canned["current"]["temperature_2m"] = bad_val
+            adapter = OpenMeteoReadAdapter(
+                WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+                FakeOpenMeteoTransport(canned),
+            )
+            res = adapter.read_weather(_make_weather_action())
+            assert res.status == WeatherReadStatus.PROVIDER_ERROR
+            assert res.observation is None
+
+    def test_null_field_produces_provider_error(self, base_valid_canned: dict[str, Any]) -> None:
+        canned = json.loads(json.dumps(base_valid_canned))
+        canned["current"]["precipitation"] = None
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+
+    def test_missing_current_units_produces_provider_error(
+        self, base_valid_canned: dict[str, Any]
+    ) -> None:
+        canned = json.loads(json.dumps(base_valid_canned))
+        del canned["current_units"]
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+
+    def test_invalid_time_format_produces_provider_error(
+        self, base_valid_canned: dict[str, Any]
+    ) -> None:
+        canned = json.loads(json.dumps(base_valid_canned))
+        canned["current"]["time"] = "not-a-valid-iso-timestamp"
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observation is None
+
+    def test_valid_payload_preserves_provider_valid_time(
+        self, base_valid_canned: dict[str, Any]
+    ) -> None:
+        adapter = OpenMeteoReadAdapter(
+            WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE),
+            FakeOpenMeteoTransport(base_valid_canned),
+        )
+        res = adapter.read_weather(_make_weather_action())
+        assert res.status == WeatherReadStatus.MATCH
+        assert res.observation is not None
+        assert res.observation.provider_valid_time == "2026-10-03T10:00:00Z"
+
+
+# ===========================================================================
+# 12. Truthful Observation Timing (P-06.06 Repair Defect D)
+# ===========================================================================
+
+
+class TestTruthfulObservationTiming:
+    PAST_AT = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+    FUTURE_AT = datetime(2099, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    def test_observed_at_runtime_owned_not_forged_by_caller_at(self) -> None:
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+        transport = FakeOpenMeteoTransport()
+        adapter = OpenMeteoReadAdapter(config, transport)
+
+        res_past = adapter.read_weather(_make_weather_action(), at=self.PAST_AT)
+        assert res_past.status == WeatherReadStatus.MATCH
+        assert res_past.observed_at != self.PAST_AT
+        assert res_past.observed_at.year >= 2026
+        assert res_past.observation is not None
+        assert res_past.observation.observed_at != self.PAST_AT
+        assert res_past.observation.observed_at.year >= 2026
+
+        res_future = adapter.read_weather(_make_weather_action(), at=self.FUTURE_AT)
+        assert res_future.status == WeatherReadStatus.MATCH
+        assert res_future.observed_at != self.FUTURE_AT
+        assert res_future.observed_at.year >= 2026
+
+    def test_provider_error_observed_at_runtime_owned(self) -> None:
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+        transport = FakeOpenMeteoTransport()
+        transport.simulate_error = RuntimeError("network outage")
+        adapter = OpenMeteoReadAdapter(config, transport)
+
+        res = adapter.read_weather(_make_weather_action(), at=self.PAST_AT)
+        assert res.status == WeatherReadStatus.PROVIDER_ERROR
+        assert res.observed_at != self.PAST_AT
+        assert res.observed_at.year >= 2026
+
+
+# ===========================================================================
+# 13. Closed-World Live Provenance (P-06.06 Repair Defect E)
+# ===========================================================================
+
+
+class TestClosedWorldProvenance:
+    def test_fake_transport_produces_fixture(self) -> None:
+        transport = FakeOpenMeteoTransport()
+        assert transport.provenance == EvidenceProvenance.FIXTURE
+
+    def test_http_transport_produces_live_external(self) -> None:
+        transport = OpenMeteoHttpTransport()
+        assert transport.provenance == EvidenceProvenance.LIVE_EXTERNAL
+
+    def test_custom_transport_claiming_live_external_fails_closed(self) -> None:
+        class RogueTransport:
+            @property
+            def provenance(self) -> EvidenceProvenance:
+                return EvidenceProvenance.LIVE_EXTERNAL
+
+            def fetch_current_weather(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                return {}
+
+        rogue = RogueTransport()
+        config = WeatherLocationConfig(TEST_LOCATION_ID, TEST_LATITUDE, TEST_LONGITUDE)
+
+        with pytest.raises(
+            WeatherConfigError,
+            match="Only verified OpenMeteoHttpTransport may assert LIVE_EXTERNAL provenance",
+        ):
+            OpenMeteoReadAdapter(config, rogue)
+
+
+# ===========================================================================
+# 14. Live Weather Repair Evidence File Check
+# ===========================================================================
+
+
+def test_live_weather_repair_evidence_document_exists_and_valid() -> None:
+    from pathlib import Path
+
+    evidence_path = Path("docs/P06_06_LIVE_WEATHER_REPAIR_EVIDENCE.md")
+    assert evidence_path.is_file(), "Live weather repair evidence doc must exist"
+    content = evidence_path.read_text(encoding="utf-8")
+    assert "RECORDED_LIVE" in content
+    assert "Open-Meteo" in content
+    assert "CC BY 4.0" in content
+    assert "$0.00" in content
+    assert "provider_valid_time" in content
+    assert "temperature_2m" in content
+    assert "wind_speed_10m" in content

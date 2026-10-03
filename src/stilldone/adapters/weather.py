@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,7 +59,8 @@ logger = logging.getLogger(__name__)
 CANONICAL_WEATHER_SYSTEM = "open_meteo"
 CANONICAL_WEATHER_RESOURCE_KIND = ResourceKind.WEATHER_LOCATION
 
-DEFAULT_OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
+CANONICAL_OPEN_METEO_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
+DEFAULT_OPEN_METEO_BASE_URL = CANONICAL_OPEN_METEO_ENDPOINT
 DEFAULT_OPEN_METEO_CURRENT_VARS = "temperature_2m,precipitation,weather_code,wind_speed_10m"
 DEFAULT_OPEN_METEO_USER_AGENT = "StillDone/1.0 (https://github.com/zyganali-glitch/StillDone)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 5.0
@@ -165,6 +167,48 @@ def _sanitize_weather_transport_error(exc: Exception) -> str:
     return redact_text(msg)
 
 
+def validate_open_meteo_endpoint(url: str) -> str:
+    """Validate that the URL is strictly the canonical Open-Meteo forecast endpoint.
+
+    Fails closed against SSRF, protocol downgrade, credentials, alternate ports,
+    subdomain/lookalike domains, and query/fragment injection.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise WeatherTransportError("Open-Meteo endpoint URL must be a non-empty string")
+
+    parsed = urllib.parse.urlsplit(url)
+
+    if parsed.scheme != "https":
+        raise WeatherTransportError(
+            f"Open-Meteo endpoint must use HTTPS scheme, got '{parsed.scheme}'"
+        )
+
+    if parsed.username or parsed.password:
+        raise WeatherTransportError("Open-Meteo endpoint must not include user credentials")
+
+    if parsed.hostname != "api.open-meteo.com":
+        raise WeatherTransportError(
+            f"Open-Meteo endpoint host must be 'api.open-meteo.com', got '{parsed.hostname}'"
+        )
+
+    if parsed.port is not None:
+        raise WeatherTransportError(
+            f"Open-Meteo endpoint must not specify alternate port, got port {parsed.port}"
+        )
+
+    if parsed.path != "/v1/forecast":
+        raise WeatherTransportError(
+            f"Open-Meteo endpoint path must be '/v1/forecast', got '{parsed.path}'"
+        )
+
+    if parsed.query or parsed.fragment:
+        raise WeatherTransportError(
+            "Open-Meteo endpoint URL must not contain query parameters or fragments"
+        )
+
+    return url
+
+
 # ===========================================================================
 # Configuration & Location Models
 # ===========================================================================
@@ -203,7 +247,7 @@ class WeatherLocationConfig:
 
     def __repr__(self) -> str:
         return (
-            f"WeatherLocationConfig(location_id='{self.location_id}', "
+            f"WeatherLocationConfig(location_id='***', "
             f"latitude=***, longitude=***, timezone='{self.timezone}')"
         )
 
@@ -231,19 +275,20 @@ class WeatherObservation:
     """Normalized, sanitized weather observation from Open-Meteo.
 
     Persists only bounded meteorological variables needed by StillDone.
-    Coordinates are omitted from the observation to enforce privacy minimization.
+    Coordinates and location_id are masked in repr/str to enforce privacy.
     Does NOT assert or imply VERIFIED or READY.
     """
 
     location_id: str
-    temperature_2m: float | None
-    precipitation: float | None
-    weather_code: int | None
-    wind_speed_10m: float | None
+    temperature_2m: float
+    precipitation: float
+    weather_code: int
+    wind_speed_10m: float
     units: dict[str, str]
     observed_at: datetime
     attribution: ProviderAttribution
     provenance: EvidenceProvenance
+    provider_valid_time: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, EvidenceProvenance):
@@ -259,9 +304,10 @@ class WeatherObservation:
 
     def __repr__(self) -> str:
         return (
-            f"WeatherObservation(location_id='{self.location_id}', "
+            f"WeatherObservation(location_id='***', "
             f"temperature_2m={self.temperature_2m}, precipitation={self.precipitation}, "
             f"weather_code={self.weather_code}, wind_speed_10m={self.wind_speed_10m}, "
+            f"provider_valid_time='{self.provider_valid_time}', "
             f"provenance='{self.provenance.value}')"
         )
 
@@ -380,20 +426,26 @@ class OpenMeteoHttpTransport:
     """Production HTTP transport communicating with official Open-Meteo API.
 
     Guarantees EvidenceProvenance.LIVE_EXTERNAL.
+    Locked to canonical Open-Meteo forecast API: https://api.open-meteo.com/v1/forecast
+    Strictly validates against SSRF, protocol downgrade, and alternate endpoints.
     Uses standard library urllib over HTTPS with bounded timeout and zero personal spend.
     Sanitizes all exceptions to prevent leaking coordinates or network details.
     """
 
     def __init__(
         self,
-        base_url: str = DEFAULT_OPEN_METEO_BASE_URL,
+        endpoint: str = CANONICAL_OPEN_METEO_ENDPOINT,
         timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
         user_agent: str = DEFAULT_OPEN_METEO_USER_AGENT,
     ) -> None:
-        self._base_url = base_url
+        self._endpoint = validate_open_meteo_endpoint(endpoint)
         self._timeout_seconds = timeout_seconds
         self._user_agent = user_agent
         self.reads_count: int = 0
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
 
     @property
     def provenance(self) -> EvidenceProvenance:
@@ -416,7 +468,7 @@ class OpenMeteoHttpTransport:
             "timezone": timezone,
         }
         query_string = urllib.parse.urlencode(params)
-        url = f"{self._base_url}?{query_string}"
+        url = f"{self._endpoint}?{query_string}"
 
         req = urllib.request.Request(
             url,
@@ -507,6 +559,13 @@ class OpenMeteoReadAdapter:
             raise TypeError(
                 f"transport must implement WeatherTransport, got {type(transport).__name__}"
             )
+        # Closed-world provenance verification: only OpenMeteoHttpTransport can assert LIVE_EXTERNAL
+        if transport.provenance == EvidenceProvenance.LIVE_EXTERNAL and not isinstance(
+            transport, OpenMeteoHttpTransport
+        ):
+            raise WeatherConfigError(
+                "Only verified OpenMeteoHttpTransport may assert LIVE_EXTERNAL provenance"
+            )
         self._config = config
         self._transport = transport
         self._scope = scope
@@ -574,16 +633,13 @@ class OpenMeteoReadAdapter:
                 f"got '{validated.target.resource_kind.value}'"
             )
 
-        # Step 4: Validate Target Identifiers
+        # Step 4: Validate Target Identifiers (Defect B: never format location_id)
         if validated.target.parent_id is not None:
             raise WeatherTargetError(
                 "Target parent_id must be None for weather location observations"
             )
         if validated.target.resource_id != self._config.location_id:
-            raise WeatherTargetError(
-                f"Target resource_id '{validated.target.resource_id}' does not match "
-                f"configured location_id '{self._config.location_id}'"
-            )
+            raise WeatherTargetError("Target resource_id does not match configured location scope")
 
         # Step 5: Demo isolation check
         dummy_scope = self._scope or DemoResourceScope(
@@ -606,8 +662,17 @@ class OpenMeteoReadAdapter:
         if decision.status != AuthorityDecisionStatus.AUTHORIZED_NO_APPROVAL_REQUIRED:
             raise WeatherTargetError("WEATHER_READ authority evaluation failed")
 
-        # Step 7: Transport execution
-        obs_time = datetime.now(UTC)
+        # Step 7: Transport execution with closed-world provenance and runtime timing
+        if self._transport.provenance == EvidenceProvenance.LIVE_EXTERNAL and not isinstance(
+            self._transport, OpenMeteoHttpTransport
+        ):
+            obs_time = datetime.now(UTC)
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Unauthorized LIVE_EXTERNAL provenance claim by non-HTTP transport",
+                observed_at=obs_time,
+            )
+
         try:
             raw_data = self._transport.fetch_current_weather(
                 latitude=self._config.latitude,
@@ -615,6 +680,7 @@ class OpenMeteoReadAdapter:
                 timezone=self._config.timezone,
             )
         except Exception as exc:
+            obs_time = datetime.now(UTC)
             sanitized_msg = _sanitize_weather_transport_error(exc)
             logger.warning("Weather transport failure: %s", sanitized_msg)
             return WeatherReadResult(
@@ -623,7 +689,16 @@ class OpenMeteoReadAdapter:
                 observed_at=obs_time,
             )
 
-        # Step 8: Parse and normalize weather variables
+        obs_time = datetime.now(UTC)
+
+        # Step 8: Strict schema validation (Defect C: fail closed on partial/malformed schema)
+        if not isinstance(raw_data, dict):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Provider response must be a JSON object",
+                observed_at=obs_time,
+            )
+
         current = raw_data.get("current")
         if not isinstance(current, dict):
             return WeatherReadResult(
@@ -632,35 +707,109 @@ class OpenMeteoReadAdapter:
                 observed_at=obs_time,
             )
 
-        raw_units = raw_data.get("current_units")
-        units: dict[str, str] = raw_units if isinstance(raw_units, dict) else {}
+        current_units = raw_data.get("current_units")
+        if not isinstance(current_units, dict):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Missing or invalid 'current_units' weather block from provider",
+                observed_at=obs_time,
+            )
 
-        def _parse_float(val: Any) -> float | None:
-            if val is None:
-                return None
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                return None
+        # Validate time ISO string
+        time_raw = current.get("time")
+        if not isinstance(time_raw, str) or not time_raw.strip():
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Missing or invalid 'time' in provider current weather",
+                observed_at=obs_time,
+            )
+        try:
+            datetime.fromisoformat(time_raw)
+        except (ValueError, TypeError):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Provider current 'time' is not a valid ISO-8601 string",
+                observed_at=obs_time,
+            )
 
-        def _parse_int(val: Any) -> int | None:
-            if val is None:
-                return None
-            try:
-                return int(val)
-            except (ValueError, TypeError):
-                return None
+        # Validate finite numeric variables
+        temp_raw = current.get("temperature_2m")
+        if (
+            temp_raw is None
+            or isinstance(temp_raw, bool)
+            or not isinstance(temp_raw, (int, float))
+            or not math.isfinite(temp_raw)
+        ):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Missing or non-finite 'temperature_2m' in provider current weather",
+                observed_at=obs_time,
+            )
+
+        precip_raw = current.get("precipitation")
+        if (
+            precip_raw is None
+            or isinstance(precip_raw, bool)
+            or not isinstance(precip_raw, (int, float))
+            or not math.isfinite(precip_raw)
+        ):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Missing or non-finite 'precipitation' in provider current weather",
+                observed_at=obs_time,
+            )
+
+        code_raw = current.get("weather_code")
+        if (
+            code_raw is None
+            or isinstance(code_raw, bool)
+            or not isinstance(code_raw, int)
+            or code_raw < 0
+        ):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message=(
+                    "Missing or invalid non-negative integer 'weather_code' "
+                    "in provider current weather"
+                ),
+                observed_at=obs_time,
+            )
+
+        wind_raw = current.get("wind_speed_10m")
+        if (
+            wind_raw is None
+            or isinstance(wind_raw, bool)
+            or not isinstance(wind_raw, (int, float))
+            or not math.isfinite(wind_raw)
+        ):
+            return WeatherReadResult(
+                status=WeatherReadStatus.PROVIDER_ERROR,
+                error_message="Missing or non-finite 'wind_speed_10m' in provider current weather",
+                observed_at=obs_time,
+            )
+
+        # Validate units for all 4 meteorological variables
+        required_unit_keys = ("temperature_2m", "precipitation", "weather_code", "wind_speed_10m")
+        for u_key in required_unit_keys:
+            u_val = current_units.get(u_key)
+            if not isinstance(u_val, str) or not u_val.strip():
+                return WeatherReadResult(
+                    status=WeatherReadStatus.PROVIDER_ERROR,
+                    error_message=f"Missing or invalid unit for '{u_key}' in current_units",
+                    observed_at=obs_time,
+                )
 
         observation = WeatherObservation(
             location_id=self._config.location_id,
-            temperature_2m=_parse_float(current.get("temperature_2m")),
-            precipitation=_parse_float(current.get("precipitation")),
-            weather_code=_parse_int(current.get("weather_code")),
-            wind_speed_10m=_parse_float(current.get("wind_speed_10m")),
-            units=units,
+            temperature_2m=float(temp_raw),
+            precipitation=float(precip_raw),
+            weather_code=int(code_raw),
+            wind_speed_10m=float(wind_raw),
+            units={k: str(v) for k, v in current_units.items()},
             observed_at=obs_time,
             attribution=ProviderAttribution(),
             provenance=self._transport.provenance,
+            provider_valid_time=time_raw,
         )
 
         return WeatherReadResult(

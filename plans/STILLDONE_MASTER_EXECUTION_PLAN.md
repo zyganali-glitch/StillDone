@@ -829,7 +829,7 @@ Acceptance:
 
 
 ### P-06.04 — Implement Google Tasks read/create adapter against dedicated demo list
-Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED — awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - bounded Google Tasks read and create adapters implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadAdapter`, `GoogleTasksCreateAdapter`);
@@ -837,7 +837,8 @@ Acceptance:
 - reuses P-04 action validation (`validate_action_contract`) and static demo isolation (`verify_demo_resource_isolation`);
 - fails closed on out-of-scope task list IDs (`TaskOutOfScopeError`), missing/unexpected parent containers, and strictly rejects '@default', 'default', 'primary' (`TaskScopeError`);
 - exact task identity required for reads; title matching as identity is strictly rejected;
-- strict due date normalization (`normalize_task_due`): date semantics with RFC3339 support; discards time without unexpected timezone-induced date shifting; malformed dates fail closed;
+- strict due date normalization (`normalize_task_due`): strict RFC 3339 Section 5.6 grammar enforced; bare `YYYY-MM-DD` and strict RFC 3339 datetimes accepted; timezone-less datetimes, compact offsets (+HHMM), and impossible dates/times fail closed; date-only semantics preserved without timezone shift;
+- truthful runtime timestamps: authority `at` parameter constrained solely to authority evaluation; observation and creation completion timestamps strictly sampled at runtime after provider interaction completes;
 - creates only top-level tasks in dedicated demo list; user-unrequested fields forbidden;
 - pluggable transport boundary (`TaskTransport` Protocol) with in-memory deterministic fake (`FakeGoogleTasksTransport`) and official client wrapper (`GoogleApiClientTasksTransport`);
 - normalized observation (`TaskObservation`) and result (`TaskReadResult`, `TaskCreateResult`) masking sensitive IDs, titles, due dates in repr/str;
@@ -845,7 +846,7 @@ Acceptance:
 - comprehensive unit and adversarial tests in `tests/test_tasks_read_create_adapter.py` passing without network dependency.
 
 ### P-06.05 — Implement Tasks independent read-back verifier and duplicate detection
-Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED — awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - Tasks-specific independent read-back verifier implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksReadbackVerifier`);
@@ -853,31 +854,38 @@ Acceptance:
 - compares freshly observed provider state deterministically against `ExpectedTaskState` (`title`, `due`);
 - sanitized mismatch diagnostics: reports deterministic field mismatches ("title mismatch", "due mismatch", "task not found") without leaking expected or observed private text, dates, tokens, URLs, or external IDs;
 - masked `ExpectedTaskState` representation: bounded `repr` and `str` output exposing boolean field presence flags (`has_title`, `has_due`) without leaking private values;
-- truthful verification timestamp: `verified_at` sampled strictly after independent provider read completes and evaluation finishes;
+- truthful verification timestamp: `verified_at` sampled strictly after independent provider read completes and evaluation finishes; verified_at is >= observation.observed_at and not caller-forgeable;
 - duplicate detector implemented in `src/stilldone/adapters/tasks.py` (`GoogleTasksDuplicateDetector`);
 - performs separate provider list read of dedicated demo task list under official `tasks.list` semantics;
-- active duplicate surface (`showCompleted=False`, `showDeleted=False`, `showHidden=False`, `maxResults=100`);
-- bounded scan pagination (`max_scan_pages=5`); scan bound exhaustion fails closed with `DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED` without falsely certifying uniqueness;
+- active duplicate surface (`showCompleted=False`, `showDeleted=False`, `showHidden=False`, `showAssigned=False`, `maxResults=100`);
+- assigned task exclusion: assigned tasks from Google Docs/Chat/Spaces are excluded and do not contaminate user personal task duplicate detection;
+- bounded scan pagination (`MAX_DUPLICATE_SCAN_PAGES=5`, `MAX_TASKS_PAGE_SIZE=100` enforced at construction and clamped at transport); scan bound exhaustion fails closed with `DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED` without falsely certifying uniqueness;
+- truthful duplicate timing: `evaluated_at` sampled strictly after transport pagination completes/fails;
+- hostile privacy sentinels enforced across repr, str, error messages, mismatches, and captured logs;
 - typed detection outcomes: `UNIQUE_MATCH` (count == 1), `DUPLICATE_DETECTED` (count > 1), `NO_MATCH` (count == 0), `SCAN_LIMIT_EXCEEDED`, `PROVIDER_ERROR`;
 - verifier and duplicate detector perform zero writes and zero mission/ledger state mutations;
 - comprehensive unit and adversarial tests in `tests/test_tasks_readback_verifier.py` passing without network dependency.
 
 ### P-06.06 — Implement Open-Meteo live observation adapter with attribution
-Status: IMPLEMENTATION COMPLETE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED — awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - Open-Meteo weather observation adapter implemented in `src/stilldone/adapters/weather.py` (`OpenMeteoReadAdapter`, alias `OpenMeteoObservationAdapter`);
 - canonical P-04 `ActionType.WEATHER_READ` policy enforcement: `system="open_meteo"`, `resource_kind="weather_location"`, empty parameters required;
 - target semantics enforced: `parent_id` must be `None`; `resource_id` must match configured `location_id`;
+- target mismatch error message strictly generic without interpolating configured or supplied location ID;
 - authority policy: `READ_ONLY` class strictly enforced; unexpected `ApprovalGrant` fails closed with `UnexpectedApprovalGrantError`;
-- privacy minimization: `WeatherLocationConfig` masks geographic coordinates in `__repr__` and `__str__`; durable `WeatherObservation` omits coordinates;
+- canonical endpoint lock: `OpenMeteoHttpTransport` strictly locked to canonical `https://api.open-meteo.com/v1/forecast`; rejects HTTP downgrade, SSRF, alternate ports, subdomains, credentials, and query/fragment injection;
+- location privacy minimization: `WeatherLocationConfig` and `WeatherObservation` mask `location_id='***'` and coordinates in `__repr__` and `__str__`;
+- fail-closed strict provider schema validation: validates `current` and `current_units` blocks; all 5 variables (`time`, `temperature_2m`, `precipitation`, `weather_code`, `wind_speed_10m`) required; finite numeric checks (rejects NaN/inf/null/bool); all 4 units required; preserves `provider_valid_time`;
+- truthful observation timing: `observed_at` sampled strictly after provider response returns and schema validation completes; cannot be forged by caller `at`;
+- closed-world live provenance: only `OpenMeteoHttpTransport` over verified canonical endpoint may assert `LIVE_EXTERNAL`; custom/fake transports claiming `LIVE_EXTERNAL` fail closed;
 - mandatory CC BY 4.0 provider attribution (`ProviderAttribution` with provider, license, notice text, URL);
 - pluggable transport boundary (`WeatherTransport` protocol):
   * `FakeOpenMeteoTransport` for deterministic testing with guaranteed `FIXTURE` provenance;
   * `OpenMeteoHttpTransport` for real HTTPS observation with guaranteed `LIVE_EXTERNAL` provenance;
-- transport provenance is preserved and enforced; synthetic fakes cannot produce `LIVE_EXTERNAL` evidence;
 - bounded HTTP timeout (5.0s) and strict error sanitization preventing coordinate or URL leakage in error messages;
-- zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_EVIDENCE.md`);
+- zero personal spend ($0.00): free non-commercial Open-Meteo tier (single bounded live observation verified in `docs/P06_06_LIVE_WEATHER_REPAIR_EVIDENCE.md` as `RECORDED_LIVE`);
 - zero promotion invariant: observation success does NOT assert or imply VERIFIED or READY;
 - comprehensive unit and adversarial tests in `tests/test_weather_adapter.py` passing without network dependency.
 
