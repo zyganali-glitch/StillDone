@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from stilldone.action_policy import ActionPolicyError
 from stilldone.planning.bedrock import (
     ACCEPTED_STOP_REASON,
     KNOWN_BEDROCK_STOP_REASONS,
@@ -99,10 +100,10 @@ class StrandsPlanRejectionError(StrandsPlannerError, PlannerContractError):
         self,
         message: str = "Candidate plan proposal rejected by deterministic validation",
         *,
-        rejection_class: type[PlannerContractError] | None = None,
+        rejection_class: type[Exception] | None = None,
     ) -> None:
         super().__init__(message)
-        self.rejection_class: type[PlannerContractError] | None = rejection_class
+        self.rejection_class: type[Exception] | None = rejection_class
         self.__cause__ = None
         self.__context__ = None
 
@@ -378,7 +379,7 @@ def _process_strands_result(
     rejection_err: StrandsPlanRejectionError | None = None
     try:
         parsed_plan = parse_candidate_plan_for_input(planner_input, combined_text)
-    except PlannerContractError as exc:
+    except (PlannerContractError, ActionPolicyError) as exc:
         cls = type(exc)
         msg = f"Candidate plan proposal rejected by deterministic validation: {cls.__name__}"
         rejection_err = StrandsPlanRejectionError(msg, rejection_class=cls)
