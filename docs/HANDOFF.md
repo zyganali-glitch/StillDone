@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 CLOSED (independent QA PASS ✅, Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`); P-07.03, P-07.04, P-07.05 REPAIRED (awaiting independent QA review, NOT PASS)**
+Current repository state: **Phase P-07: EXECUTED — P-07.01 through P-07.05 CLOSED (independent QA PASS ✅, Verified closure SHA: `d879c07c4ded1510af9b60c2113a9cb6508812af`); P-07.06 EXECUTED (awaiting independent QA review)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,13 +74,13 @@ Preferred AWS target:
 
 ## Current exact task
 
-P-07.03, P-07.04, P-07.05 — Bounded Three-Task Planning Batch:
-- P-07.03 — Implement real Strands planning agent using bounded tools/context
-- P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
-- P-07.05 — Bind exact planner model/runtime/version metadata to evidence
+P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
 
 Status:
-`REPAIRED / awaiting independent QA review (NOT PASS)`
+`EXECUTED / awaiting independent QA review`
+
+Next Task (P-08):
+`PENDING / NOT AUTHORIZED / NOT_RUN — DO NOT BEGIN P-08.`
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -118,8 +118,14 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
 
 - Validation:
   * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 1016 tests).
-  * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
-- P-07.06 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN.
+- P-07.06 Execution:
+  * Exactly 1 live Bedrock inference executed via bounded Strands planner (`amazon.nova-micro-v1:0` in `us-east-1`).
+  * Model output strictly crossed deterministic contract boundary (`parse_candidate_plan_for_input`).
+  * Negative control proved model necessity (fails closed without model output).
+  * Evidence recorded in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
+  * Personal spend delta strictly $0.00 (promotional credit active).
+  * Phase P-07 is EXECUTED — awaiting independent QA review.
+- Next Phase P-08 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN. DO NOT BEGIN P-08.
 
 ## Phase P-04 Status
 

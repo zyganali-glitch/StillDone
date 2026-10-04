@@ -1123,10 +1123,22 @@ Acceptance:
 - 88 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
-Status: PENDING / NOT AUTHORIZED / NOT_RUN
+Status: EXECUTED / awaiting independent QA
+
+Acceptance:
+- live preflight and authorization verified against `amazon.nova-micro-v1:0` in `us-east-1` with short-lived session;
+- explicit operator cost gate approved prior to any model inference invocation;
+- executed exactly 1 live Bedrock inference via real bounded Strands planner (`plan_with_strands`) with zero retries, zero fallback, zero tool executions (`tools=[]`), and single turn limit (`limits={"turns": 1}`);
+- natural-language mission intent (`"Check today's calendar events and create a task to review project roadmap"`) successfully compiled into valid `CandidatePlanProposal`;
+- model output strictly crossed deterministic contract ingress (`parse_candidate_plan_for_input`);
+- attached runtime metadata validated with 18 canonical fields;
+- model owns zero ActionId, zero EvidenceId, zero ApprovalGrant, zero execution truth, zero predicate truth, zero VERIFIED/READY promotion;
+- negative control proved model necessity: suppressing model output fails closed immediately without producing a valid plan for the same intent (zero additional live calls);
+- personal spend delta strictly $0.00 (promotional credit active; estimated cost < $0.00005);
+- comprehensive live evidence captured in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
 
 Phase exit:
-AWS intelligence is genuine and bounded.
+Phase P-07 is EXECUTED — awaiting independent QA (AWS intelligence is genuine and bounded).
 
 ---
 
