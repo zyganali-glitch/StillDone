@@ -102,7 +102,7 @@ class PlannerRuntimeMetadata:
     All values are runtime-owned deterministic truth.
     The model MUST NOT supply or override any of these values.
 
-    Required metadata fields:
+    Required stored metadata fields (18 canonical fields):
     - planner_runtime: "strands"
     - planner_provider: "amazon_bedrock"
     - model_id: "amazon.nova-micro-v1:0"
@@ -121,7 +121,9 @@ class PlannerRuntimeMetadata:
     - strands_sdk_retries: false
     - turns_limit: 1
     - tool_names: ()
-    - tools_count: 0
+
+    Derived read-only properties:
+    - tools_count: len(tool_names) (single source of tool-count truth)
     """
 
     planner_runtime: str
@@ -142,7 +144,6 @@ class PlannerRuntimeMetadata:
     strands_sdk_retries: bool
     turns_limit: int
     tool_names: tuple[str, ...]
-    tools_count: int
 
     def __post_init__(self) -> None:
         """Validate metadata field types and invariants."""
@@ -185,6 +186,8 @@ class PlannerRuntimeMetadata:
             raise ValueError("temperature cannot be NaN or infinity")
         if self.temperature < 0.0:
             raise ValueError(f"temperature cannot be negative, got {self.temperature}")
+        if self.temperature > 1.0:
+            raise ValueError(f"temperature cannot exceed 1.0, got {self.temperature}")
 
         if (
             type(self.connect_timeout_seconds) not in (float, int)
@@ -246,16 +249,11 @@ class PlannerRuntimeMetadata:
         # Normalize tool_names to tuple
         if isinstance(self.tool_names, list):
             object.__setattr__(self, "tool_names", tuple(self.tool_names))
-        if type(self.tools_count) is not int or type(self.tools_count) is bool:
-            raise TypeError(f"tools_count must be an int, got {type(self.tools_count).__name__}")
-        if self.tools_count < 0:
-            raise ValueError(f"tools_count cannot be negative, got {self.tools_count}")
-        if self.tools_count != len(self.tool_names):
-            msg = (
-                f"tools_count ({self.tools_count}) must equal "
-                f"len(tool_names) ({len(self.tool_names)})"
-            )
-            raise ValueError(msg)
+
+    @property
+    def tools_count(self) -> int:
+        """Derived tool count matching len(tool_names); single source of truth."""
+        return len(self.tool_names)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to a deterministic serializable dictionary."""
@@ -278,7 +276,6 @@ class PlannerRuntimeMetadata:
             "strands_sdk_retries": self.strands_sdk_retries,
             "turns_limit": self.turns_limit,
             "tool_names": list(self.tool_names),
-            "tools_count": self.tools_count,
         }
 
 
@@ -320,7 +317,6 @@ def create_planner_runtime_metadata(
         strands_sdk_retries=False,
         turns_limit=1,
         tool_names=(),
-        tools_count=0,
     )
 
 

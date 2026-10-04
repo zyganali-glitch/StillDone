@@ -107,9 +107,10 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
    * Unknown sibling key tests (unknown sibling beside valid text, hostile sibling key, hostile sibling value, future unknown block type) all fail closed with zero reflection.
    * Full adversarial privacy matrix across hostile action_type, target_ref, malformed mission_id, final message role, unknown stop reason, unknown content sibling, and malformed model output.
 3. P-07.05 Runtime Metadata & Evidence Record Binding (`src/stilldone/planning/metadata.py`, `tests/planning/test_planner_metadata.py`):
-   * Strict finite numerics on `PlannerRuntimeMetadata` direct construction: rejects `bool`, `NaN`, `+inf`, `-inf`, and invalid ranges for `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_tokens`, `total_max_attempts`, `turns_limit`, and `tools_count`.
+   * Strict finite numerics and bounds on `PlannerRuntimeMetadata` direct construction: enforces closed interval `0.0 <= temperature <= 1.0` (accepts 0.0, 1.0, 0.00001; rejects < 0.0, > 1.0, bool, NaN, ±inf), positive finite timeouts (`connect_timeout_seconds > 0.0`, `read_timeout_seconds > 0.0`), positive integers (`max_tokens > 0`, `total_max_attempts > 0`, `turns_limit > 0`), and strictly typed `tool_names` tuple.
+   * Single source of truth for tool counts: 18 canonical stored fields; `tools_count` is exposed as a derived read-only property matching `len(tool_names)`.
    * Production factory `create_planner_runtime_metadata(settings)` has zero version overrides; package versions derive strictly from `importlib.metadata`.
-   * Real `EvidenceRecord.create(...)` 19-field sensitivity: parameterized proof that changing ANY of the 19 metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical.
+   * Real `EvidenceRecord.create(...)` 18-field sensitivity: parameterized proof that changing ANY of the 18 serialized metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical; no companion or coupled fields modified.
    * Same inputs produce identical `EvidenceRecord.evidence_id`.
    * Strengthened ActionId provenance proof: caller provides canonical `ActionId`; metadata helpers accept payload/metadata only and have zero ActionId API; prove `create_planner_runtime_metadata` and `bind_planner_runtime_metadata` create no ActionId.
    * Verified zero fabricated `ActionId` or planner pseudo-actions.

@@ -2,14 +2,15 @@
 
 Verifies:
 - PlannerRuntimeMetadata is an immutable frozen dataclass.
-- All 19 required metadata fields are present and strictly typed.
+- All 18 canonical stored metadata fields are present and strictly typed.
+- tools_count is a derived read-only property matching len(tool_names).
 - Package versions are resolved deterministically from installed environment.
 - Missing package raises PackageVersionError.
 - bind_planner_runtime_metadata creates a new dict under "planner_runtime".
 - Original payload is deep-detached and never mutated.
 - Key collision on "planner_runtime" raises ReservedKeyCollisionError.
 - Metadata binds cleanly into a REAL EvidenceRecord.create(...).
-- Changing ANY of the 19 metadata fields produces a distinct EvidenceId.
+- Changing ANY of the 18 serialized metadata fields produces a distinct EvidenceId.
 - No fabricated ActionId or planner pseudo action exists.
 - Zero network calls during metadata creation or binding.
 """
@@ -125,7 +126,7 @@ class TestPlannerRuntimeMetadata:
         with pytest.raises(FrozenInstanceError):
             sample_metadata.model_id = "other-model"  # type: ignore[misc]
 
-    def test_all_19_required_fields_present_and_correct(
+    def test_all_18_required_fields_present_and_correct(
         self, sample_metadata: PlannerRuntimeMetadata
     ) -> None:
         assert sample_metadata.planner_runtime == "strands"
@@ -149,9 +150,10 @@ class TestPlannerRuntimeMetadata:
         assert sample_metadata.strands_sdk_retries is False
         assert sample_metadata.turns_limit == 1
         assert sample_metadata.tool_names == ()
+        # Derived property verification:
         assert sample_metadata.tools_count == 0
 
-    def test_to_dict_contains_all_19_fields(self, sample_metadata: PlannerRuntimeMetadata) -> None:
+    def test_to_dict_contains_all_18_fields(self, sample_metadata: PlannerRuntimeMetadata) -> None:
         d = sample_metadata.to_dict()
         assert isinstance(d, dict)
         expected_keys = {
@@ -173,9 +175,84 @@ class TestPlannerRuntimeMetadata:
             "strands_sdk_retries",
             "turns_limit",
             "tool_names",
-            "tools_count",
         }
         assert set(d.keys()) == expected_keys
+        assert len(d) == 18
+
+    def test_tools_count_is_derived_read_only_property(
+        self, sample_metadata: PlannerRuntimeMetadata
+    ) -> None:
+        """Prove tools_count is a derived read-only property matching len(tool_names)."""
+        assert sample_metadata.tools_count == 0
+        assert sample_metadata.tools_count == len(sample_metadata.tool_names)
+
+        # Non-empty tool_names
+        kwargs = sample_metadata.to_dict()
+        kwargs["tool_names"] = ("calendar.read", "tasks.read")
+        meta = PlannerRuntimeMetadata(**kwargs)
+        assert meta.tools_count == 2
+        assert meta.tools_count == len(meta.tool_names)
+
+        # Read-only property cannot be set
+        with pytest.raises(AttributeError):
+            meta.tools_count = 5  # type: ignore[misc]
+
+        # tools_count is not accepted as an independent constructor kwarg
+        kwargs_with_tools_count = sample_metadata.to_dict()
+        kwargs_with_tools_count["tools_count"] = 0
+        with pytest.raises(TypeError):
+            PlannerRuntimeMetadata(**kwargs_with_tools_count)
+
+    def test_temperature_boundary_contracts(self, sample_metadata: PlannerRuntimeMetadata) -> None:
+        """Prove PlannerRuntimeMetadata direct construction enforces 0.0 <= temperature <= 1.0.
+
+        Required:
+        - 0.0 accepted;
+        - 1.0 accepted;
+        - current canonical 0.00001 accepted;
+        - any value < 0.0 rejected;
+        - any value > 1.0 rejected (specifically 1.000001 and 2.0);
+        - bool rejected;
+        - NaN rejected;
+        - +inf rejected;
+        - -inf rejected.
+        """
+        base = sample_metadata.to_dict()
+
+        # Accepted boundaries
+        for valid_temp in (0.0, 1.0, 0.00001, 0.5):
+            kwargs = dict(base)
+            kwargs["temperature"] = valid_temp
+            meta = PlannerRuntimeMetadata(**kwargs)
+            assert meta.temperature == valid_temp
+
+        # Explicit direct-contract tests: rejected out-of-range (> 1.0)
+        for high_temp in (1.000001, 2.0, 100.0):
+            kwargs = dict(base)
+            kwargs["temperature"] = high_temp
+            with pytest.raises(ValueError, match="temperature cannot exceed 1.0"):
+                PlannerRuntimeMetadata(**kwargs)
+
+        # Rejected negative (< 0.0)
+        for neg_temp in (-0.00001, -1.0, -100.0):
+            kwargs = dict(base)
+            kwargs["temperature"] = neg_temp
+            with pytest.raises(ValueError, match="temperature cannot be negative"):
+                PlannerRuntimeMetadata(**kwargs)
+
+        # Rejected non-numeric / bool
+        for non_num in (True, False):
+            kwargs = dict(base)
+            kwargs["temperature"] = non_num
+            with pytest.raises(TypeError, match="temperature must be a float or int"):
+                PlannerRuntimeMetadata(**kwargs)
+
+        # Rejected non-finite (NaN, inf)
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            kwargs = dict(base)
+            kwargs["temperature"] = non_finite
+            with pytest.raises(ValueError, match="temperature cannot be NaN or infinity"):
+                PlannerRuntimeMetadata(**kwargs)
 
     @pytest.mark.parametrize(
         ("field", "bad_value"),
@@ -198,7 +275,6 @@ class TestPlannerRuntimeMetadata:
             ("strands_sdk_retries", "false"),
             ("turns_limit", "1"),
             ("tool_names", "not-a-tuple"),
-            ("tools_count", "0"),
         ],
     )
     def test_field_type_validation_fails_closed(
@@ -218,6 +294,8 @@ class TestPlannerRuntimeMetadata:
             ("temperature", float("inf"), ValueError),
             ("temperature", float("-inf"), ValueError),
             ("temperature", -0.001, ValueError),
+            ("temperature", 1.000001, ValueError),
+            ("temperature", 2.0, ValueError),
             ("connect_timeout_seconds", True, TypeError),
             ("connect_timeout_seconds", False, TypeError),
             ("connect_timeout_seconds", float("nan"), ValueError),
@@ -241,8 +319,6 @@ class TestPlannerRuntimeMetadata:
             ("turns_limit", True, TypeError),
             ("turns_limit", 0, ValueError),
             ("turns_limit", -1, ValueError),
-            ("tools_count", True, TypeError),
-            ("tools_count", -1, ValueError),
         ],
     )
     def test_strict_finite_numerics_and_ranges_fail_closed(
@@ -549,10 +625,9 @@ class TestEvidenceHashingSensitivity:
             ("strands_sdk_retries", True),
             ("turns_limit", 2),
             ("tool_names", ("injected_tool",)),
-            ("tools_count", 1),
         ],
     )
-    def test_changing_any_of_19_metadata_fields_changes_real_evidence_record_id(
+    def test_changing_any_of_18_metadata_fields_changes_real_evidence_record_id(
         self,
         mission_id: MissionId,
         action_id: ActionId,
@@ -562,9 +637,11 @@ class TestEvidenceHashingSensitivity:
         field: str,
         modified_value: Any,
     ) -> None:
-        """Prove that each of the 19 metadata fields produces a distinct EvidenceRecord.evidence_id.
+        """Prove that each of the 18 serialized metadata fields produces a distinct
+        EvidenceRecord.evidence_id.
 
         Uses REAL EvidenceRecord.create(...) instances with identical caller mission/action/origin.
+        Crucially, EXACTLY ONE field is varied; no companion or coupled fields are modified.
         """
         # 1. Base bound payload and record
         bound_base = bind_planner_runtime_metadata(base_payload, base_meta)
@@ -575,16 +652,9 @@ class TestEvidenceHashingSensitivity:
             payload=bound_base,
         )
 
-        # 2. Synthetic modified metadata
+        # 2. Synthetic modified metadata - exactly ONE field modified
         kwargs = base_meta.to_dict()
-        if field == "tool_names":
-            kwargs["tool_names"] = modified_value
-            kwargs["tools_count"] = len(modified_value)
-        elif field == "tools_count":
-            kwargs["tools_count"] = modified_value
-            kwargs["tool_names"] = tuple(f"tool_{i}" for i in range(modified_value))
-        else:
-            kwargs[field] = modified_value
+        kwargs[field] = modified_value
 
         modified_meta = PlannerRuntimeMetadata(**kwargs)
 

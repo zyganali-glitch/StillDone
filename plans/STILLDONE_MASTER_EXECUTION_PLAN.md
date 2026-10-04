@@ -1091,7 +1091,7 @@ Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - planner runtime metadata contract implemented in `src/stilldone/planning/metadata.py`;
-- immutable frozen dataclass `PlannerRuntimeMetadata` binding all 19 strictly typed fields:
+- immutable frozen dataclass `PlannerRuntimeMetadata` with 18 canonical stored fields + derived read-only `tools_count` property (`len(tool_names)` single source of truth):
   * planner_runtime: "strands"
   * planner_provider: "amazon_bedrock"
   * model_id: "amazon.nova-micro-v1:0"
@@ -1110,13 +1110,12 @@ Acceptance:
   * strands_sdk_retries: false
   * turns_limit: 1
   * tool_names: ()
-  * tools_count: 0
-- strict finite numerics enforced in `PlannerRuntimeMetadata.__post_init__`: rejects `bool`, `NaN`, `+inf`, `-inf`, and invalid ranges for `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_tokens`, `total_max_attempts`, `turns_limit`, and `tools_count`;
+- strict finite numerics and bounds enforced in `PlannerRuntimeMetadata.__post_init__`: enforces closed interval `0.0 <= temperature <= 1.0` (accepts 0.0, 1.0, 0.00001; rejects < 0.0, > 1.0, bool, NaN, ±inf), positive finite timeouts (`connect_timeout_seconds > 0.0`, `read_timeout_seconds > 0.0`), positive integers (`max_tokens > 0`, `total_max_attempts > 0`, `turns_limit > 0`), and strictly typed `tool_names` tuple;
 - runtime-owned factory `create_planner_runtime_metadata(settings)` derives metadata strictly from validated `BedrockPlannerSettings` and installed packages via `importlib.metadata`; zero version override parameters in production factory;
 - `bind_planner_runtime_metadata(payload, metadata)` binds metadata under reserved `"planner_runtime"` key, deep-detaching payload via `copy.deepcopy` without mutating input payload;
 - payload binding strictly rejects non-dict payload (`TypeError`), non-metadata (`TypeError`), and key collision (`ReservedKeyCollisionError`);
 - proved metadata binding inside REAL `EvidenceRecord.create(...)`;
-- real `EvidenceRecord.create(...)` 19-field sensitivity: parameterized proof that changing ANY of the 19 metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical;
+- real `EvidenceRecord.create(...)` 18-field sensitivity: parameterized proof that changing ANY of the 18 serialized metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical; no companion or coupled fields modified;
 - same inputs produce identical `EvidenceRecord.evidence_id`;
 - strengthened ActionId provenance proof: caller provides canonical `ActionId`; metadata helpers accept payload/metadata only and have zero ActionId API; prove `create_planner_runtime_metadata` and `bind_planner_runtime_metadata` create no ActionId;
 - verified zero fabricated `ActionId` or planner pseudo-actions;
