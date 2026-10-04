@@ -68,6 +68,10 @@ jobs:
         run: |
           uv run --project runtimes/strands_planner python -c "import importlib.metadata; s = importlib.metadata.version('strands-agents'); m = importlib.metadata.version('mcp'); assert s == '1.57.2', f'Expected strands-agents 1.57.2, got {s}'; parts = [int(p) for p in m.split('.')[:2]]; assert parts < [2, 2], f'Expected transitive mcp < 2.2, got {m}'; print(f'Strands version verified: {s}, Transitive MCP: {m}')"
 
+      - name: Production planner import smoke (independent of pytest)
+        run: |
+          PYTHONPATH=src uv run --project runtimes/strands_planner python -c "import stilldone; from stilldone.planning.strands_agent import plan_with_strands; from stilldone.planning.metadata import create_planner_runtime_metadata; print('Planner production imports verified successfully')"
+
       - name: Static type check (Planner sources & tests)
         run: uv run --project runtimes/strands_planner mypy src/stilldone/planning src/stilldone/domain tests/planning tests/domain
 

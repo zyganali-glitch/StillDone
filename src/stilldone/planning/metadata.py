@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import importlib.metadata
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -171,26 +172,57 @@ class PlannerRuntimeMetadata:
             raise TypeError(
                 f"botocore_version must be a str, got {type(self.botocore_version).__name__}"
             )
-        if type(self.max_tokens) is not int:
+        if type(self.max_tokens) is not int or type(self.max_tokens) is bool:
             raise TypeError(f"max_tokens must be an int, got {type(self.max_tokens).__name__}")
-        if not isinstance(self.temperature, (int, float)):
-            raise TypeError(f"temperature must be a float, got {type(self.temperature).__name__}")
-        if not isinstance(self.connect_timeout_seconds, (int, float)):
-            msg = (
-                f"connect_timeout_seconds must be a float, "
+        if self.max_tokens <= 0:
+            raise ValueError(f"max_tokens must be positive, got {self.max_tokens}")
+
+        if type(self.temperature) not in (float, int) or type(self.temperature) is bool:
+            raise TypeError(
+                f"temperature must be a float or int, got {type(self.temperature).__name__}"
+            )
+        if math.isnan(self.temperature) or math.isinf(self.temperature):
+            raise ValueError("temperature cannot be NaN or infinity")
+        if self.temperature < 0.0:
+            raise ValueError(f"temperature cannot be negative, got {self.temperature}")
+
+        if (
+            type(self.connect_timeout_seconds) not in (float, int)
+            or type(self.connect_timeout_seconds) is bool
+        ):
+            raise TypeError(
+                f"connect_timeout_seconds must be a float or int, "
                 f"got {type(self.connect_timeout_seconds).__name__}"
             )
-            raise TypeError(msg)
-        if not isinstance(self.read_timeout_seconds, (int, float)):
-            msg = (
-                f"read_timeout_seconds must be a float, "
+        if math.isnan(self.connect_timeout_seconds) or math.isinf(self.connect_timeout_seconds):
+            raise ValueError("connect_timeout_seconds cannot be NaN or infinity")
+        if self.connect_timeout_seconds <= 0.0:
+            raise ValueError(
+                f"connect_timeout_seconds must be positive, got {self.connect_timeout_seconds}"
+            )
+
+        if (
+            type(self.read_timeout_seconds) not in (float, int)
+            or type(self.read_timeout_seconds) is bool
+        ):
+            raise TypeError(
+                f"read_timeout_seconds must be a float or int, "
                 f"got {type(self.read_timeout_seconds).__name__}"
             )
-            raise TypeError(msg)
-        if type(self.total_max_attempts) is not int:
+        if math.isnan(self.read_timeout_seconds) or math.isinf(self.read_timeout_seconds):
+            raise ValueError("read_timeout_seconds cannot be NaN or infinity")
+        if self.read_timeout_seconds <= 0.0:
+            raise ValueError(
+                f"read_timeout_seconds must be positive, got {self.read_timeout_seconds}"
+            )
+
+        if type(self.total_max_attempts) is not int or type(self.total_max_attempts) is bool:
             raise TypeError(
                 f"total_max_attempts must be an int, got {type(self.total_max_attempts).__name__}"
             )
+        if self.total_max_attempts <= 0:
+            raise ValueError(f"total_max_attempts must be positive, got {self.total_max_attempts}")
+
         if type(self.retry_mode) is not str:
             raise TypeError(f"retry_mode must be a str, got {type(self.retry_mode).__name__}")
         if type(self.streaming) is not bool:
@@ -199,8 +231,11 @@ class PlannerRuntimeMetadata:
             raise TypeError(
                 f"strands_sdk_retries must be a bool, got {type(self.strands_sdk_retries).__name__}"
             )
-        if type(self.turns_limit) is not int:
+        if type(self.turns_limit) is not int or type(self.turns_limit) is bool:
             raise TypeError(f"turns_limit must be an int, got {type(self.turns_limit).__name__}")
+        if self.turns_limit <= 0:
+            raise ValueError(f"turns_limit must be positive, got {self.turns_limit}")
+
         if not isinstance(self.tool_names, (list, tuple)):
             raise TypeError(
                 f"tool_names must be a tuple of str, got {type(self.tool_names).__name__}"
@@ -211,8 +246,10 @@ class PlannerRuntimeMetadata:
         # Normalize tool_names to tuple
         if isinstance(self.tool_names, list):
             object.__setattr__(self, "tool_names", tuple(self.tool_names))
-        if type(self.tools_count) is not int:
+        if type(self.tools_count) is not int or type(self.tools_count) is bool:
             raise TypeError(f"tools_count must be an int, got {type(self.tools_count).__name__}")
+        if self.tools_count < 0:
+            raise ValueError(f"tools_count cannot be negative, got {self.tools_count}")
         if self.tools_count != len(self.tool_names):
             msg = (
                 f"tools_count ({self.tools_count}) must equal "
@@ -247,14 +284,11 @@ class PlannerRuntimeMetadata:
 
 def create_planner_runtime_metadata(
     settings: BedrockPlannerSettings | None = None,
-    *,
-    _strands_version: str | None = None,
-    _boto3_version: str | None = None,
-    _botocore_version: str | None = None,
 ) -> PlannerRuntimeMetadata:
     """Create PlannerRuntimeMetadata from runtime-owned settings and installed versions.
 
     Derives strictly from validated BedrockPlannerSettings and installed package versions.
+    Production version truth comes ONLY from importlib.metadata.
     The model MUST NOT supply or override metadata.
     """
     from stilldone.planning.bedrock import BedrockPlannerSettings
@@ -263,17 +297,9 @@ def create_planner_runtime_metadata(
     if not isinstance(cfg, BedrockPlannerSettings):
         raise TypeError(f"settings must be BedrockPlannerSettings, got {type(cfg).__name__}")
 
-    resolved_strands = (
-        _strands_version
-        if _strands_version is not None
-        else _get_installed_version("strands-agents")
-    )
-    resolved_boto3 = (
-        _boto3_version if _boto3_version is not None else _get_installed_version("boto3")
-    )
-    resolved_botocore = (
-        _botocore_version if _botocore_version is not None else _get_installed_version("botocore")
-    )
+    resolved_strands = _get_installed_version("strands-agents")
+    resolved_boto3 = _get_installed_version("boto3")
+    resolved_botocore = _get_installed_version("botocore")
 
     return PlannerRuntimeMetadata(
         planner_runtime=PLANNER_RUNTIME_STRANDS,

@@ -127,9 +127,17 @@ class StrandsPlannerResult:
 
     plan: CandidatePlanProposal
     stop_reason: str
-    model_id: str
-    region_name: str
     metadata: PlannerRuntimeMetadata
+
+    @property
+    def model_id(self) -> str:
+        """Convenience accessor deriving directly from metadata truth."""
+        return self.metadata.model_id
+
+    @property
+    def region_name(self) -> str:
+        """Convenience accessor deriving directly from metadata truth."""
+        return self.metadata.region_name
 
 
 # ===========================================================================
@@ -199,7 +207,6 @@ def plan_with_strands(
     *,
     settings: BedrockPlannerSettings | None = None,
     _model_override: Any = None,
-    _metadata_override: PlannerRuntimeMetadata | None = None,
 ) -> StrandsPlannerResult:
     """Execute a bounded Strands planning invocation for a single mission.
 
@@ -220,8 +227,6 @@ def plan_with_strands(
         settings: Optional BedrockPlannerSettings override (defaults to canonical).
         _model_override: For testing only. If provided, used instead of real
             BedrockModel. Must NOT be used in production.
-        _metadata_override: For testing only. If provided, used instead of deriving
-            from installed package metadata.
 
     Returns:
         StrandsPlannerResult with validated plan and runtime metadata.
@@ -243,11 +248,8 @@ def plan_with_strands(
 
     cfg = settings or BedrockPlannerSettings()
 
-    # Runtime metadata derived from validated Bedrock settings and installed versions
-    if _metadata_override is not None:
-        metadata = _metadata_override
-    else:
-        metadata = create_planner_runtime_metadata(cfg)
+    # Runtime metadata derived strictly from validated Bedrock settings and installed versions
+    metadata = create_planner_runtime_metadata(cfg)
 
     # Create a fresh model for this invocation (or use test override)
     if _model_override is not None:
@@ -331,8 +333,8 @@ def plan_with_strands(
 def _process_strands_result(
     planner_input: PlannerInput,
     result: Any,
-    settings: BedrockPlannerSettings,
-    metadata: PlannerRuntimeMetadata,
+    settings: BedrockPlannerSettings | None = None,
+    metadata: PlannerRuntimeMetadata | None = None,
 ) -> StrandsPlannerResult:
     """Process and validate a Strands AgentResult.
 
@@ -342,27 +344,30 @@ def _process_strands_result(
     - Envelope checks: no interrupts, no structured_output, no checkpoints
     - stop_reason must be "end_turn"
     - Canonical final result.message required (no messages fallback, no str fallback)
-    - Message role must be "assistant"
-    - Text-only complete final message
+    - Message role must be "assistant" (never reflects raw role)
+    - Text-only complete final message (fails closed if content block has unknown sibling keys)
     - Combined text must pass MAX_PLANNER_JSON_BYTES check
     - Must cross parse_candidate_plan_for_input
     """
+    if metadata is None:
+        metadata = create_planner_runtime_metadata(settings)
+
     if result is None:
-        raise StrandsEmptyResponseError("Strands agent returned None result")
+        raise StrandsEmptyResponseError("Strands agent returned None result") from None
 
     # Reject AgentResult envelope attacks
     if hasattr(result, "interrupts") and result.interrupts:
         raise StrandsNonTextContentError(
             "Strands agent result contains interrupts; interactive interrupts are rejected"
-        )
+        ) from None
     if hasattr(result, "structured_output") and result.structured_output is not None:
         raise StrandsNonTextContentError(
             "Strands agent result contains structured_output; structured output model is disabled"
-        )
+        ) from None
     if hasattr(result, "checkpoint") and result.checkpoint is not None:
         raise StrandsNonTextContentError(
             "Strands agent result contains checkpoint; checkpointing is disabled"
-        )
+        ) from None
 
     # Extract stop_reason from result
     stop_reason: str | None = None
@@ -372,10 +377,10 @@ def _process_strands_result(
         stop_reason = result.metrics.stop_reason
 
     if stop_reason is None:
-        raise StrandsStopReasonError("Strands agent result missing stop_reason")
+        raise StrandsStopReasonError("Strands agent result missing stop_reason") from None
 
     if not isinstance(stop_reason, str):
-        raise StrandsStopReasonError("Strands agent stop_reason must be a string")
+        raise StrandsStopReasonError("Strands agent stop_reason must be a string") from None
 
     if stop_reason != ACCEPTED_STOP_REASON:
         clean_reason = (
@@ -385,16 +390,18 @@ def _process_strands_result(
         )
         raise StrandsStopReasonError(
             f"Unacceptable Strands stop reason: {clean_reason!r}; expected {ACCEPTED_STOP_REASON!r}"
-        )
+        ) from None
 
     # Require canonical final result.message.
     # NO historical messages fallback, NO str(result) fallback.
     if not hasattr(result, "message") or result.message is None:
-        raise StrandsEmptyResponseError("Strands agent result missing canonical 'message'")
+        raise StrandsEmptyResponseError(
+            "Strands agent result missing canonical 'message'"
+        ) from None
 
     message = result.message
 
-    # Require role == 'assistant'
+    # Require role == 'assistant' (static error, never reflects raw observed value)
     role: str | None = None
     if isinstance(message, dict):
         role = message.get("role")
@@ -404,9 +411,7 @@ def _process_strands_result(
         role = message.get("role")
 
     if not isinstance(role, str) or role != "assistant":
-        raise StrandsEmptyResponseError(
-            f"Strands result message role must be 'assistant', got {role!r}"
-        )
+        raise StrandsEmptyResponseError("Strands result message role must be 'assistant'") from None
 
     # Extract content from message
     content: Any = None
@@ -418,7 +423,7 @@ def _process_strands_result(
         content = message.get("content")
 
     if content is None:
-        raise StrandsEmptyResponseError("Strands result message has no content")
+        raise StrandsEmptyResponseError("Strands result message has no content") from None
 
     # Text-only complete final message extraction
     text_parts: list[str] = []
@@ -431,55 +436,39 @@ def _process_strands_result(
                 continue
 
             if not isinstance(block, dict):
-                msg = (
+                raise StrandsNonTextContentError(
                     f"Strands content block at index {idx} has unsupported type "
                     f"{type(block).__name__}"
-                )
-                raise StrandsNonTextContentError(msg)
+                ) from None
 
-            # Check for non-text block types or sibling non-text fields
-            if any(
-                k in block
-                for k in (
-                    "toolUse",
-                    "toolResult",
-                    "reasoning",
-                    "document",
-                    "image",
-                    "video",
-                    "audio",
-                    "citationsContent",
-                )
-            ):
+            # Canonical text-block shape: exactly set(block.keys()) == {"text"}
+            # Unknown sibling keys or non-text block types fail closed without reflecting values.
+            if set(block.keys()) != {"text"}:
                 raise StrandsNonTextContentError(
-                    f"Strands content block at index {idx} contains non-text content "
-                    "which is not accepted for planner text extraction"
-                )
+                    f"Strands content block at index {idx} contains non-text or unrecognized keys"
+                ) from None
 
-            if "text" in block:
-                block_text = block["text"]
-                if not isinstance(block_text, str):
-                    raise StrandsNonTextContentError(
-                        f"Strands content 'text' at index {idx} must be a string, "
-                        f"got {type(block_text).__name__}"
-                    )
-                text_parts.append(block_text)
-            else:
+            block_text = block["text"]
+            if not isinstance(block_text, str):
                 raise StrandsNonTextContentError(
-                    f"Strands content block at index {idx} missing 'text' field"
-                )
+                    f"Strands content 'text' at index {idx} must be a string, "
+                    f"got {type(block_text).__name__}"
+                ) from None
+            text_parts.append(block_text)
     else:
         raise StrandsEmptyResponseError(
             f"Strands result content must be a string or list, got {type(content).__name__}"
-        )
+        ) from None
 
     if not text_parts:
-        raise StrandsEmptyResponseError("No text blocks found in Strands result content")
+        raise StrandsEmptyResponseError("No text blocks found in Strands result content") from None
 
     combined_text = "".join(text_parts)
 
     if not combined_text.strip():
-        raise StrandsEmptyResponseError("Strands agent returned empty or whitespace-only text")
+        raise StrandsEmptyResponseError(
+            "Strands agent returned empty or whitespace-only text"
+        ) from None
 
     # Enforce MAX_PLANNER_JSON_BYTES ceiling
     raw_bytes_len = len(combined_text.encode("utf-8"))
@@ -488,10 +477,10 @@ def _process_strands_result(
             "Candidate plan proposal rejected by deterministic validation: "
             "OversizedJsonPayloadError"
         )
-        err = StrandsPlanRejectionError(msg, rejection_class=OversizedJsonPayloadError)
-        err.__cause__ = None
-        err.__context__ = None
-        raise err from None
+        oversized_err = StrandsPlanRejectionError(msg, rejection_class=OversizedJsonPayloadError)
+        oversized_err.__cause__ = None
+        oversized_err.__context__ = None
+        raise oversized_err from None
 
     # Invoke mandatory deterministic boundary
     parsed_plan: CandidatePlanProposal | None = None
@@ -512,8 +501,6 @@ def _process_strands_result(
     return StrandsPlannerResult(
         plan=parsed_plan,
         stop_reason=stop_reason,
-        model_id=settings.model_id,
-        region_name=settings.region_name,
         metadata=metadata,
     )
 

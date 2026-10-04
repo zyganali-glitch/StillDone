@@ -1028,17 +1028,21 @@ Acceptance:
   * requires canonical final `result.message` (disallows historical message fallback);
   * requires `role == "assistant"` (fails closed with `StrandsResponseEnvelopeError`);
   * fails closed on unexpected interrupts, `structured_output`, and `checkpoint`;
-  * requires text-only complete final message (fails on sibling non-text fields/blocks);
+  * requires text-only complete final message (`set(block.keys()) == {"text"}` strictly enforced; unknown sibling keys fail closed with zero reflection);
+  * enforces message `role == "assistant"` with static bounded error (never reflects raw role);
+  * stores single source of metadata truth in `StrandsPlannerResult` (`plan`, `stop_reason`, `metadata`, with `model_id` and `region_name` as read-only properties deriving from `metadata`);
+  * removes `_metadata_override` from `plan_with_strands`;
+  * establishes production planner import/runtime contract via `PYTHONPATH=src uv run --project runtimes/strands_planner python ...`;
 - mandatory deterministic boundary: untrusted result inspected, combined UTF-8 text checked against `MAX_PLANNER_JSON_BYTES`, passed directly through `parse_candidate_plan_for_input(planner_input, combined_text)`;
-- returns typed immutable `StrandsPlannerResult` with `plan`, `stop_reason`, `model_id`, `region_name`, and bound `metadata`; confers zero authority and does NOT create an EvidenceRecord or mission state promotion;
-- 32 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
+- returns typed immutable `StrandsPlannerResult`; confers zero authority and does NOT create an EvidenceRecord or mission state promotion;
+- 35 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
 
 ### P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
 Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - planner rejection boundary in `src/stilldone/planning/strands_agent.py` catches `(PlannerContractError, ActionPolicyError)` and wraps into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances;
-- comprehensive adversarial rejection test suite in `tests/planning/test_rejection_hardening.py` (56 tests passing);
+- comprehensive adversarial rejection test suite in `tests/planning/test_rejection_hardening.py` (72 tests passing);
 - rejects all 36+ malformed, unsupported, over-broad, or authority-violating vectors:
   1. malformed JSON syntax;
   2. duplicate JSON keys;
@@ -1076,7 +1080,9 @@ Acceptance:
   34. Markdown code fences;
   35. Strands tool-use output;
   36. hostile prompt / system override attempts;
-- added `TestAgentResultEnvelopeAttacks` (10 tests) covering AgentResult envelope attacks (missing message, non-assistant role, structured output, interrupts, checkpoint, empty content, etc.);
+- added `TestAgentResultEnvelopeAttacks` covering AgentResult envelope attacks (missing message, non-assistant role with `HOSTILE_ROLE_SECRET_SENTINEL_77777`, structured output, interrupts, checkpoint, empty content, etc.);
+- content block unknown sibling protection: unknown sibling key beside valid text, hostile sibling key, hostile sibling value, and future unknown block type all fail closed with zero reflection;
+- full adversarial privacy matrix across hostile action_type, target_ref, malformed mission_id, final message role, unknown stop reason, unknown content sibling, and malformed model output;
 - full exception privacy inspection: verifies `str`, `repr`, attributes, `__dict__`, `__cause__`, `__context__`, and formatted traceback contain zero raw hostile strings;
 - inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
 
@@ -1105,14 +1111,17 @@ Acceptance:
   * turns_limit: 1
   * tool_names: ()
   * tools_count: 0
-- runtime-owned factory `create_planner_runtime_metadata(settings)` derives metadata strictly from validated `BedrockPlannerSettings` and installed packages via `importlib.metadata`; rejects arbitrary model/version/runtime primitive overrides;
+- strict finite numerics enforced in `PlannerRuntimeMetadata.__post_init__`: rejects `bool`, `NaN`, `+inf`, `-inf`, and invalid ranges for `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_tokens`, `total_max_attempts`, `turns_limit`, and `tools_count`;
+- runtime-owned factory `create_planner_runtime_metadata(settings)` derives metadata strictly from validated `BedrockPlannerSettings` and installed packages via `importlib.metadata`; zero version override parameters in production factory;
 - `bind_planner_runtime_metadata(payload, metadata)` binds metadata under reserved `"planner_runtime"` key, deep-detaching payload via `copy.deepcopy` without mutating input payload;
 - payload binding strictly rejects non-dict payload (`TypeError`), non-metadata (`TypeError`), and key collision (`ReservedKeyCollisionError`);
 - proved metadata binding inside REAL `EvidenceRecord.create(...)`;
-- deterministic evidence sensitivity: changing ANY of the 19 metadata fields produces a distinct `EvidenceId` SHA-256 hash;
+- real `EvidenceRecord.create(...)` 19-field sensitivity: parameterized proof that changing ANY of the 19 metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical;
+- same inputs produce identical `EvidenceRecord.evidence_id`;
+- strengthened ActionId provenance proof: caller provides canonical `ActionId`; metadata helpers accept payload/metadata only and have zero ActionId API; prove `create_planner_runtime_metadata` and `bind_planner_runtime_metadata` create no ActionId;
 - verified zero fabricated `ActionId` or planner pseudo-actions;
 - verified no automatic ledger append;
-- 55 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
+- 88 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
 Status: PENDING / NOT AUTHORIZED / NOT_RUN

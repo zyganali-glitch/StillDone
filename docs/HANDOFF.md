@@ -94,26 +94,29 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
 1. P-07.03 Ingress Repair (`src/stilldone/planning/strands_agent.py`, `tests/planning/test_strands_agent.py`):
    * Completely eliminated `str(result)` fallback.
    * Required canonical final `result.message` (disallowed historical messages fallback).
-   * Enforced message `role == "assistant"`.
+   * Enforced static message `role == "assistant"` (never reflects raw observed role; zero sentinel leakage).
    * Failed closed on unexpected interrupts, `structured_output`, and `checkpoint`.
-   * Required text-only complete final message (fails on sibling non-text fields/blocks).
+   * Required text-only complete final message (`set(block.keys()) == {"text"}` strictly required; any unknown sibling keys fail closed with zero reflection).
    * Maintained `MAX_PLANNER_JSON_BYTES` and mandatory deterministic `parse_candidate_plan_for_input`.
-   * Attached runtime metadata into `StrandsPlannerResult`.
+   * Single source of metadata truth in `StrandsPlannerResult` (stores `plan`, `stop_reason`, `metadata`; `model_id` and `region_name` are read-only properties deriving strictly from `metadata`).
+   * Removed `_metadata_override` from `plan_with_strands`.
+   * Established production planner import/runtime contract via `PYTHONPATH=src uv run --project runtimes/strands_planner python ...` (smoke verified in CI and validator).
 2. P-07.04 Adversarial Rejection & Envelope Hardening (`tests/planning/test_rejection_hardening.py`):
    * Preserved existing 36+ adversarial test matrix.
-   * Added `TestAgentResultEnvelopeAttacks` (10 tests) covering AgentResult envelope corruption, non-assistant role, structured output, interrupts, etc.
-   * Enforced full exception privacy inspection (`str`, `repr`, attributes, `__dict__`, `__cause__`, `__context__`, formatted traceback).
+   * Hostile message role test with `HOSTILE_ROLE_SECRET_SENTINEL_77777` proves zero reflection across `str`, `repr`, attributes, `__dict__`, `__cause__`, `__context__`, and formatted traceback.
+   * Unknown sibling key tests (unknown sibling beside valid text, hostile sibling key, hostile sibling value, future unknown block type) all fail closed with zero reflection.
+   * Full adversarial privacy matrix across hostile action_type, target_ref, malformed mission_id, final message role, unknown stop reason, unknown content sibling, and malformed model output.
 3. P-07.05 Runtime Metadata & Evidence Record Binding (`src/stilldone/planning/metadata.py`, `tests/planning/test_planner_metadata.py`):
-   * Runtime-owned factory `create_planner_runtime_metadata(settings)` deriving strictly from validated `BedrockPlannerSettings` and installed versions.
-   * Expanded `PlannerRuntimeMetadata` to 19 strictly typed fields (`planner_runtime`, `planner_provider`, `model_id`, `region_name`, `schema_version`, `strands_version`, `boto3_version`, `botocore_version`, `max_tokens`, `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `total_max_attempts`, `retry_mode`, `streaming=false`, `strands_sdk_retries=false`, `turns_limit=1`, `tool_names=()`, `tools_count=0`).
-   * Deep-detaches bound payload via `copy.deepcopy`.
-   * Proved metadata binding inside REAL `EvidenceRecord.create(...)`.
-   * Proved `EvidenceId` SHA-256 sensitivity across all 19 metadata fields.
+   * Strict finite numerics on `PlannerRuntimeMetadata` direct construction: rejects `bool`, `NaN`, `+inf`, `-inf`, and invalid ranges for `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_tokens`, `total_max_attempts`, `turns_limit`, and `tools_count`.
+   * Production factory `create_planner_runtime_metadata(settings)` has zero version overrides; package versions derive strictly from `importlib.metadata`.
+   * Real `EvidenceRecord.create(...)` 19-field sensitivity: parameterized proof that changing ANY of the 19 metadata fields produces a distinct `EvidenceRecord.evidence_id` while keeping caller mission/action/origin identical.
+   * Same inputs produce identical `EvidenceRecord.evidence_id`.
+   * Strengthened ActionId provenance proof: caller provides canonical `ActionId`; metadata helpers accept payload/metadata only and have zero ActionId API; prove `create_planner_runtime_metadata` and `bind_planner_runtime_metadata` create no ActionId.
    * Verified zero fabricated `ActionId` or planner pseudo-actions.
    * Verified no automatic ledger append.
 
 - Validation:
-  * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 971 tests).
+  * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 1016 tests).
   * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
 - P-07.06 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN.
 

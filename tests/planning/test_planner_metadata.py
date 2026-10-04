@@ -209,6 +209,57 @@ class TestPlannerRuntimeMetadata:
         with pytest.raises(TypeError):
             PlannerRuntimeMetadata(**kwargs)
 
+    @pytest.mark.parametrize(
+        ("field", "bad_numeric", "expected_exc"),
+        [
+            ("temperature", True, TypeError),
+            ("temperature", False, TypeError),
+            ("temperature", float("nan"), ValueError),
+            ("temperature", float("inf"), ValueError),
+            ("temperature", float("-inf"), ValueError),
+            ("temperature", -0.001, ValueError),
+            ("connect_timeout_seconds", True, TypeError),
+            ("connect_timeout_seconds", False, TypeError),
+            ("connect_timeout_seconds", float("nan"), ValueError),
+            ("connect_timeout_seconds", float("inf"), ValueError),
+            ("connect_timeout_seconds", float("-inf"), ValueError),
+            ("connect_timeout_seconds", 0.0, ValueError),
+            ("connect_timeout_seconds", -5.0, ValueError),
+            ("read_timeout_seconds", True, TypeError),
+            ("read_timeout_seconds", False, TypeError),
+            ("read_timeout_seconds", float("nan"), ValueError),
+            ("read_timeout_seconds", float("inf"), ValueError),
+            ("read_timeout_seconds", float("-inf"), ValueError),
+            ("read_timeout_seconds", 0.0, ValueError),
+            ("read_timeout_seconds", -30.0, ValueError),
+            ("max_tokens", True, TypeError),
+            ("max_tokens", 0, ValueError),
+            ("max_tokens", -10, ValueError),
+            ("total_max_attempts", True, TypeError),
+            ("total_max_attempts", 0, ValueError),
+            ("total_max_attempts", -1, ValueError),
+            ("turns_limit", True, TypeError),
+            ("turns_limit", 0, ValueError),
+            ("turns_limit", -1, ValueError),
+            ("tools_count", True, TypeError),
+            ("tools_count", -1, ValueError),
+        ],
+    )
+    def test_strict_finite_numerics_and_ranges_fail_closed(
+        self,
+        sample_metadata: PlannerRuntimeMetadata,
+        field: str,
+        bad_numeric: Any,
+        expected_exc: type[Exception],
+    ) -> None:
+        """Prove PlannerRuntimeMetadata direct construction rejects bool,
+        NaN, inf, and invalid ranges.
+        """
+        kwargs = sample_metadata.to_dict()
+        kwargs[field] = bad_numeric
+        with pytest.raises(expected_exc):
+            PlannerRuntimeMetadata(**kwargs)
+
 
 # ===========================================================================
 # Unit Tests: create_planner_runtime_metadata Factory
@@ -351,8 +402,59 @@ class TestEvidenceRecordBinding:
         assert record.origin == origin
         assert record.payload[PLANNER_RUNTIME_PAYLOAD_KEY] == meta.to_dict()
 
-    def test_no_fabricated_action_id_or_planner_pseudo_action(self) -> None:
-        """Prove no fabricated ActionType or planner pseudo action exists in the codebase."""
+    def test_caller_action_id_provenance_and_no_planner_pseudo_action(self) -> None:
+        """Strengthen ActionId provenance proof:
+        - obtain legitimate caller-owned ActionId through canonical domain construction;
+        - metadata helpers accept payload/metadata only and have zero API for ActionId;
+        - prove bind_planner_runtime_metadata creates no ActionId;
+        - prove create_planner_runtime_metadata creates no ActionId;
+        - EvidenceRecord receives the existing ActionId from caller context;
+        - retain proof that no planner pseudo ActionType was introduced.
+        """
+        import inspect
+        from uuid import uuid4
+
+        # 1. Obtain legitimate caller-owned ActionId through canonical domain construction
+        caller_action_id = ActionId(str(uuid4()))
+        caller_mission_id = MissionId(str(uuid4()))
+        origin = EvidenceOrigin.local_execution()
+
+        # 2. Metadata helpers accept payload/metadata only (zero ActionId API)
+        meta_sig = inspect.signature(create_planner_runtime_metadata)
+        assert "action_id" not in meta_sig.parameters
+        assert "action" not in meta_sig.parameters
+
+        bind_sig = inspect.signature(bind_planner_runtime_metadata)
+        assert set(bind_sig.parameters.keys()) == {"payload", "metadata"}
+
+        # 3. Prove create_planner_runtime_metadata creates no ActionId
+        meta = create_planner_runtime_metadata()
+        assert not hasattr(meta, "action_id")
+        assert not hasattr(meta, "action_type")
+        assert not hasattr(meta, "action")
+
+        # 4. Prove bind_planner_runtime_metadata creates no ActionId
+        raw_payload = {"plan_summary": "Test workflow"}
+        bound_payload = bind_planner_runtime_metadata(raw_payload, meta)
+        assert "action_id" not in bound_payload
+        assert "action_id" not in bound_payload[PLANNER_RUNTIME_PAYLOAD_KEY]
+        assert not any(isinstance(v, ActionId) for v in bound_payload.values())
+        assert not any(
+            isinstance(v, ActionId) for v in bound_payload[PLANNER_RUNTIME_PAYLOAD_KEY].values()
+        )
+
+        # 5. EvidenceRecord receives existing ActionId from caller context
+        record = EvidenceRecord.create(
+            action_id=caller_action_id,
+            mission_id=caller_mission_id,
+            origin=origin,
+            payload=bound_payload,
+        )
+        assert record.action_id == caller_action_id
+        assert record.mission_id == caller_mission_id
+        assert record.origin == origin
+
+        # 6. Retain proof that no planner pseudo ActionType was introduced
         forbidden_names = {"PLANNER", "PLAN", "PLANNING", "MODEL_PLAN", "STRANDS_PLAN"}
         for action_type in ActionType:
             assert action_type.name not in forbidden_names
@@ -366,8 +468,24 @@ class TestEvidenceRecordBinding:
 
 class TestEvidenceHashingSensitivity:
     """Proves that changing ANY single field of PlannerRuntimeMetadata produces
-    a strictly different EvidenceId / SHA-256 hash when bound into EvidenceRecord.
+    a strictly different EvidenceId / SHA-256 hash when bound into REAL EvidenceRecord.create(...).
     """
+
+    @pytest.fixture
+    def mission_id(self) -> MissionId:
+        from uuid import uuid4
+
+        return MissionId(str(uuid4()))
+
+    @pytest.fixture
+    def action_id(self) -> ActionId:
+        from uuid import uuid4
+
+        return ActionId(str(uuid4()))
+
+    @pytest.fixture
+    def origin(self) -> EvidenceOrigin:
+        return EvidenceOrigin.local_execution()
 
     @pytest.fixture
     def base_payload(self) -> dict[str, Any]:
@@ -377,18 +495,38 @@ class TestEvidenceHashingSensitivity:
     def base_meta(self) -> PlannerRuntimeMetadata:
         return create_planner_runtime_metadata()
 
-    def test_baseline_evidence_id_deterministic(
-        self, base_payload: dict[str, Any], base_meta: PlannerRuntimeMetadata
+    def test_baseline_evidence_record_deterministic(
+        self,
+        mission_id: MissionId,
+        action_id: ActionId,
+        origin: EvidenceOrigin,
+        base_payload: dict[str, Any],
+        base_meta: PlannerRuntimeMetadata,
     ) -> None:
+        """Prove: same metadata + same origin + same payload + same mission/action relation
+        => same EvidenceRecord.evidence_id.
+        """
         bound1 = bind_planner_runtime_metadata(base_payload, base_meta)
         bound2 = bind_planner_runtime_metadata(base_payload, base_meta)
 
-        eid1 = compute_evidence_id(bound1)
-        eid2 = compute_evidence_id(bound2)
+        rec1 = EvidenceRecord.create(
+            action_id=action_id,
+            mission_id=mission_id,
+            origin=origin,
+            payload=bound1,
+        )
+        rec2 = EvidenceRecord.create(
+            action_id=action_id,
+            mission_id=mission_id,
+            origin=origin,
+            payload=bound2,
+        )
 
-        assert isinstance(eid1, EvidenceId)
-        assert eid1 == eid2
-        assert str(eid1) == str(eid2)
+        assert isinstance(rec1.evidence_id, EvidenceId)
+        assert rec1.evidence_id == rec2.evidence_id
+        assert str(rec1.evidence_id) == str(rec2.evidence_id)
+        assert rec1.origin == origin
+        assert rec1.origin.provenance.value == "LOCAL_EXECUTION"
 
     @pytest.mark.parametrize(
         ("field", "modified_value"),
@@ -414,17 +552,30 @@ class TestEvidenceHashingSensitivity:
             ("tools_count", 1),
         ],
     )
-    def test_changing_any_metadata_field_changes_evidence_hash(
+    def test_changing_any_of_19_metadata_fields_changes_real_evidence_record_id(
         self,
+        mission_id: MissionId,
+        action_id: ActionId,
+        origin: EvidenceOrigin,
         base_payload: dict[str, Any],
         base_meta: PlannerRuntimeMetadata,
         field: str,
         modified_value: Any,
     ) -> None:
-        """Prove that each of the 19 metadata fields is bound into the evidence hash."""
-        bound_base = bind_planner_runtime_metadata(base_payload, base_meta)
-        base_eid = compute_evidence_id(bound_base)
+        """Prove that each of the 19 metadata fields produces a distinct EvidenceRecord.evidence_id.
 
+        Uses REAL EvidenceRecord.create(...) instances with identical caller mission/action/origin.
+        """
+        # 1. Base bound payload and record
+        bound_base = bind_planner_runtime_metadata(base_payload, base_meta)
+        base_record = EvidenceRecord.create(
+            action_id=action_id,
+            mission_id=mission_id,
+            origin=origin,
+            payload=bound_base,
+        )
+
+        # 2. Synthetic modified metadata
         kwargs = base_meta.to_dict()
         if field == "tool_names":
             kwargs["tool_names"] = modified_value
@@ -437,13 +588,24 @@ class TestEvidenceHashingSensitivity:
 
         modified_meta = PlannerRuntimeMetadata(**kwargs)
 
+        # 3. Modified bound payload and record
         bound_modified = bind_planner_runtime_metadata(base_payload, modified_meta)
-        modified_eid = compute_evidence_id(bound_modified)
+        modified_record = EvidenceRecord.create(
+            action_id=action_id,
+            mission_id=mission_id,
+            origin=origin,
+            payload=bound_modified,
+        )
 
-        assert modified_eid != base_eid, (
-            f"EvidenceId did NOT change when field {field!r} was changed "
+        # 4. Assert EvidenceRecord.evidence_id strictly differs
+        assert base_record.evidence_id != modified_record.evidence_id, (
+            f"EvidenceRecord.evidence_id did NOT change when field {field!r} was changed "
             f"from {getattr(base_meta, field)!r} to {modified_value!r}"
         )
+        assert base_record.origin == origin
+        assert modified_record.origin == origin
+        assert base_record.origin.provenance.value == "LOCAL_EXECUTION"
+        assert modified_record.origin.provenance.value == "LOCAL_EXECUTION"
 
 
 # ===========================================================================

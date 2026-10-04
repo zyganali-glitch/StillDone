@@ -20,15 +20,16 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
-def run_step(name: str, cmd: list[str]) -> None:
+def run_step(name: str, cmd: list[str], env: dict[str, str] | None = None) -> None:
     print(f"=== Running: {name} ===")
     print(f"Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print(f"FAILED: {name} exited with code {result.returncode}", file=sys.stderr)
         sys.exit(result.returncode)
@@ -109,6 +110,27 @@ def validate_strands_planner() -> None:
         ),
     ]
     run_step("Strands Planner dependency truth assertion", check_versions_cmd)
+
+    planner_env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
+    smoke_cmd = [
+        "uv",
+        "run",
+        "--project",
+        str(planner_project),
+        "python",
+        "-c",
+        (
+            "import stilldone; "
+            "from stilldone.planning.strands_agent import plan_with_strands; "
+            "from stilldone.planning.metadata import create_planner_runtime_metadata; "
+            "print('Planner isolated runtime production imports verified successfully')"
+        ),
+    ]
+    run_step(
+        "Strands Planner production import smoke (independent of pytest)",
+        smoke_cmd,
+        env=planner_env,
+    )
 
     steps: list[tuple[str, list[str]]] = [
         (

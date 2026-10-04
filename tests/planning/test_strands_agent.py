@@ -536,3 +536,47 @@ class TestStrandsResultImmutableContract:
         assert res.metadata.turns_limit == 1
         assert res.metadata.tool_names == ()
         assert res.metadata.tools_count == 0
+
+    def test_single_source_of_metadata_truth_and_cannot_diverge(self) -> None:
+        """Defect 6: StrandsPlannerResult stores only plan, stop_reason, metadata.
+
+        model_id and region_name derive directly from metadata and cannot diverge.
+        """
+        import dataclasses
+
+        mid = MissionId(str(uuid4()))
+        events = _make_text_events(_make_valid_plan_json(str(mid)))
+        fake = _create_fake_model(events=events)
+        p_in = PlannerInput(mission_id=mid, intent="Check tasks")
+        res = plan_with_strands(p_in, _model_override=fake)
+
+        field_names = [f.name for f in dataclasses.fields(StrandsPlannerResult)]
+        assert field_names == ["plan", "stop_reason", "metadata"]
+
+        assert res.model_id == res.metadata.model_id
+        assert res.region_name == res.metadata.region_name
+
+        with pytest.raises(AttributeError):
+            res.model_id = "tampered-model"  # type: ignore[misc]
+
+        with pytest.raises(AttributeError):
+            res.region_name = "tampered-region"  # type: ignore[misc]
+
+    def test_plan_with_strands_rejects_metadata_override_parameter(self) -> None:
+        """Defect 5: plan_with_strands has no _metadata_override parameter.
+
+        Metadata derives strictly from validated settings and installed environment.
+        """
+        import inspect
+
+        sig = inspect.signature(plan_with_strands)
+        assert "_metadata_override" not in sig.parameters
+
+        mid = MissionId(str(uuid4()))
+        events = _make_text_events(_make_valid_plan_json(str(mid)))
+        fake = _create_fake_model(events=events)
+        p_in = PlannerInput(mission_id=mid, intent="Check tasks")
+
+        with pytest.raises(TypeError) as exc_info:
+            plan_with_strands(p_in, _model_override=fake, _metadata_override="fake")  # type: ignore[call-arg]
+        assert "unexpected keyword argument" in str(exc_info.value)

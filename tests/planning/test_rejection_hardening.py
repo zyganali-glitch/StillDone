@@ -45,6 +45,7 @@ from stilldone.planning.contracts import (
     ProviderIdentifierInjectionError,
     UnknownActionTypeError,
     UnknownFieldPolicyError,
+    UnknownSymbolicTargetError,
     UnsupportedSchemaVersionError,
 )
 from stilldone.planning.metadata import create_planner_runtime_metadata
@@ -826,6 +827,272 @@ class TestAgentResultEnvelopeAttacks:
         with pytest.raises(StrandsNonTextContentError) as exc_info:
             _process_strands_result(p_in, fake_result, settings, metadata)
         _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_hostile_role_secret_sentinel_never_reflected(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        """Defect 1: Never reflect raw Strands message role.
+        Assert zero occurrence of HOSTILE_ROLE_SECRET_SENTINEL_77777 across:
+        - str(exc)
+        - repr(exc)
+        - exc.__dict__
+        - custom attributes
+        - __cause__
+        - __context__
+        - traceback.format_exception()
+        """
+        hostile_sentinel = "HOSTILE_ROLE_SECRET_SENTINEL_77777"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {"role": hostile_sentinel, "content": '{"schema_version": "v1"}'},
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+
+        err = exc_info.value
+        _assert_exception_privacy(err, hostile_sentinel=hostile_sentinel)
+        assert hostile_sentinel not in str(err)
+        assert hostile_sentinel not in repr(err)
+        for _attr_name, attr_val in err.__dict__.items():
+            assert hostile_sentinel not in str(attr_val)
+        tb_str = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+        assert hostile_sentinel not in tb_str
+        assert "Strands result message role must be 'assistant'" in str(err)
+
+    def test_unknown_sibling_key_beside_valid_text_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        """Defect 2: Content block with unknown sibling key beside valid text must fail closed."""
+        sentinel_key = "futureSecretPayload"
+        sentinel_val = "HOSTILE_FUTURE_FIELD_88888"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": '{"schema_version": "v1"}',
+                            sentinel_key: sentinel_val,
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        err = exc_info.value
+        _assert_exception_privacy(err, hostile_sentinel=sentinel_key)
+        _assert_exception_privacy(err, hostile_sentinel=sentinel_val)
+
+    def test_hostile_sibling_key_fails_closed_without_reflection(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        """Defect 2: Hostile sibling key must fail closed with zero reflection."""
+        sentinel_key = "HOSTILE_SIBLING_KEY_99999"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": '{"schema_version": "v1"}',
+                            sentinel_key: "some_value",
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel_key)
+
+    def test_hostile_sibling_value_fails_closed_without_reflection(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        """Defect 2: Hostile sibling value must fail closed with zero reflection."""
+        sentinel_val = "HOSTILE_SIBLING_VALUE_SECRET_99998"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": '{"schema_version": "v1"}',
+                            "extra": sentinel_val,
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel_val)
+
+    def test_future_unknown_block_type_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        """Defect 2: Future-looking unknown block type (no text key) fails closed."""
+        sentinel_block_type = "FUTURE_QUANTUM_THOUGHT_BLOCK_99997"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            sentinel_block_type: {"subpayload": "data"},
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel_block_type)
+
+
+# ===========================================================================
+# P-07.04 Adversarial Privacy Matrix: Zero Raw Hostile Reflection
+# ===========================================================================
+
+
+class TestAdversarialPrivacyMatrix:
+    """Verifies that hostile action_type, target_ref, malformed mission_id,
+
+    final message role, unknown stop reason, unknown content sibling, and
+    malformed model output fail closed with ZERO raw hostile payload reflection
+    across str, repr, __dict__, custom attributes, __cause__, __context__,
+    and formatted tracebacks.
+    """
+
+    @pytest.fixture
+    def mission_id(self) -> MissionId:
+        return MissionId(str(uuid4()))
+
+    @pytest.fixture
+    def p_in(self, mission_id: MissionId) -> PlannerInput:
+        return PlannerInput(mission_id=mission_id, intent="Execute morning workflow")
+
+    @pytest.fixture
+    def settings(self) -> BedrockPlannerSettings:
+        return BedrockPlannerSettings()
+
+    @pytest.fixture
+    def metadata(self, settings: BedrockPlannerSettings) -> Any:
+        return create_planner_runtime_metadata(settings)
+
+    def test_hostile_action_type_privacy(self, p_in: PlannerInput) -> None:
+        sentinel = "HOSTILE_ACTION_TYPE_SECRET_11111"
+        text = (
+            f'{{"schema_version": "v1", "mission_id": "{p_in.mission_id}", '
+            f'"steps": [{{"action_type": "{sentinel}", "target_ref": "calendar_event"}}]}}'
+        )
+        _assert_plan_rejected(
+            p_in, text, expected_rejection_class=UnknownActionTypeError, hostile_sentinel=sentinel
+        )
+
+    def test_hostile_target_ref_privacy(self, p_in: PlannerInput) -> None:
+        sentinel = "HOSTILE_TARGET_REF_SECRET_22222"
+        text = (
+            f'{{"schema_version": "v1", "mission_id": "{p_in.mission_id}", '
+            f'"steps": [{{"action_type": "calendar.read", "target_ref": "{sentinel}"}}]}}'
+        )
+        _assert_plan_rejected(
+            p_in,
+            text,
+            expected_rejection_class=UnknownSymbolicTargetError,
+            hostile_sentinel=sentinel,
+        )
+
+    def test_hostile_malformed_mission_id_privacy(self, p_in: PlannerInput) -> None:
+        sentinel = "HOSTILE_MALFORMED_MISSION_ID_SECRET_33333"
+        text = (
+            f'{{"schema_version": "v1", "mission_id": "{sentinel}", '
+            f'"steps": [{{"action_type": "calendar.read", "target_ref": "calendar_event"}}]}}'
+        )
+        _assert_plan_rejected(
+            p_in, text, expected_rejection_class=PlannerValueError, hostile_sentinel=sentinel
+        )
+
+    def test_hostile_final_message_role_privacy(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "HOSTILE_ROLE_SECRET_SENTINEL_77777"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {"role": sentinel, "content": '{"schema_version": "v1"}'},
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_hostile_unknown_stop_reason_privacy(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "HOSTILE_STOP_REASON_SECRET_44444"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": sentinel,
+                "message": {"role": "assistant", "content": '{"schema_version": "v1"}'},
+            },
+        )()
+        with pytest.raises(StrandsStopReasonError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_hostile_unknown_content_sibling_privacy(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel_key = "HOSTILE_SIBLING_KEY_SECRET_55555"
+        sentinel_val = "HOSTILE_SIBLING_VALUE_SECRET_55556"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": '{"schema_version": "v1"}',
+                            sentinel_key: sentinel_val,
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel_key)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel_val)
+
+    def test_hostile_malformed_model_output_privacy(self, p_in: PlannerInput) -> None:
+        sentinel = "HOSTILE_MALFORMED_OUTPUT_SECRET_66666"
+        text = f"{{{sentinel}: not valid json at all ###"
+        _assert_plan_rejected(
+            p_in, text, expected_rejection_class=PlannerValueError, hostile_sentinel=sentinel
+        )
 
 
 # ===========================================================================
