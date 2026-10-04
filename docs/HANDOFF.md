@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 REPAIRED (awaiting independent QA review, NOT PASS)**
+Current repository state: **Phase P-07: IN PROGRESS — P-07.01 CLOSED (independent QA PASS ✅, Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`); P-07.02 CLOSED (independent QA PASS ✅, Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`); P-07.03, P-07.04, P-07.05 REPAIRED (awaiting independent QA review, NOT PASS)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -80,38 +80,42 @@ P-07.03, P-07.04, P-07.05 — Bounded Three-Task Planning Batch:
 - P-07.05 — Bind exact planner model/runtime/version metadata to evidence
 
 Status:
-`COMPLETED / awaiting independent QA review (NOT PASS)`
+`REPAIRED / awaiting independent QA review (NOT PASS)`
 
-Notes:
-- Phase P-06 is CLOSED — independent QA PASS (Verified phase-closure SHA: `e9ac7079780b31fa8b289c097546a34e27ba7c1c`).
-- P-07.01 received independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
-- P-07.02 received independent QA PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`).
-- Last independently VERIFIED contiguous SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`.
-- Phase P-07 is IN PROGRESS.
-- Bounded batch P-07.03 → P-07.04 → P-07.05 completed sequentially:
-  1. P-07.03 — Bounded Strands Planning Agent (`src/stilldone/planning/strands_agent.py`, `tests/planning/test_strands_agent.py`):
-     * Integrated real official `strands.Agent` and `BedrockModel` from `strands-agents==1.57.2` (Apache-2.0).
-     * Enforced fail-closed configuration: `tools=[]` (NOT `None`), `load_tools_from_directory=False`, `callback_handler=None`, `retry_strategy=None` (disables SDK retries), `structured_output_model=None`, `context_manager=False`, `memory_manager=None`, `session_manager=None`, `storage=None`, `checkpointing=False`, `background_tasks=False`.
-     * Zero executable external tools: planning is non-authoritative; external mutations belong strictly to deterministic runtime.
-     * Enforced single turn: `limits={"turns": 1}`, `streaming=False`, `use_native_token_count=False`.
-     * Strict stop reason: requires `end_turn`; all others (`limit_turns`, `max_tokens`, etc.) fail closed with `StrandsStopReasonError`.
-     * Context hygiene: fresh `strands.Agent` constructed per mission invocation; zero cross-mission memory, history, or context bleed.
-     * Mandatory deterministic boundary: untrusted result inspected, combined UTF-8 text checked against `MAX_PLANNER_JSON_BYTES`, passed directly through `parse_candidate_plan_for_input(planner_input, combined_text)`.
-     * 32 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
-  2. P-07.04 — Adversarial Rejection Hardening (`tests/planning/test_rejection_hardening.py`):
-     * Hardened Strands planner boundary in `src/stilldone/planning/strands_agent.py` to catch `(PlannerContractError, ActionPolicyError)` and wrap into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances.
-     * 46 tests passing covering 36+ adversarial vectors: malformed JSON, duplicate keys, unknown top-level/per-step fields, unsupported sixth action, aliases/case variants, incompatible symbolic targets, raw provider resource IDs (calendar_id, event_id, task_id), approval fields, authority_class, authorized/verified/ready injections, lifecycle/state injection, evidence injection, malformed mission ID, different valid mission ID, unknown schema version, zero steps, oversized steps, unsupported parameters, parameter injection on read-only actions, task.create without title, calendar.update empty parameters, oversized strings, oversized raw JSON, trailing prose, multiple JSON objects, Markdown fences, Strands tool use, hostile prompt injections.
-     * Inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
-  3. P-07.05 — Planner Runtime Metadata Evidence Binding (`src/stilldone/planning/metadata.py`, `tests/planning/test_planner_metadata.py`):
-     * Implemented frozen immutable `PlannerRuntimeMetadata` with all 16 required fields (`planner_runtime="strands"`, `planner_provider="amazon_bedrock"`, `model_id="amazon.nova-micro-v1:0"`, `region_name="us-east-1"`, `strands_version`, `boto3_version`, `botocore_version`, `max_tokens=2048`, `temperature=0.00001`, `connect_timeout_seconds=5.0`, `read_timeout_seconds=30.0`, `total_max_attempts=1`, `tools_count=0`, `turns_limit=1`, `streaming=False`, `schema_version="v1"`).
-     * `create_planner_runtime_metadata()` dynamically resolves installed package versions via `importlib.metadata`.
-     * `bind_planner_runtime_metadata(payload, metadata)` creates new dict under reserved `"planner_runtime"` key, does not mutate input, rejects non-dict, non-metadata, or collision (`ReservedKeyCollisionError`).
-     * Proven: changing ANY of the 16 metadata fields produces a distinct `EvidenceId` SHA-256 hash.
-     * 47 focused tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
+Architecture Truth — Dependency Isolation:
+- Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
+- Architectural Resolution: StillDone enforces two explicitly isolated dependency/runtime environments with zero resolver overrides (`override-dependencies` strictly prohibited):
+  1. StillDone Core / MCP Runtime (`pyproject.toml`, root `uv.lock`): Retains canonical `mcp>=2.2.0` (resolved `2.2.0`). Owns MCP server, deterministic runtime, calendar/tasks/weather adapters, evidence ledger, fact authority.
+  2. Strands Planner Runtime (`runtimes/strands_planner/pyproject.toml`, `runtimes/strands_planner/uv.lock`): Pins `strands-agents==1.57.2` with its official resolver-compatible transitive MCP (`mcp==2.1.1`). Owns non-authoritative plan proposal generation and planner metadata only (strictly zero execution, mutation, read-back, or fact authority).
+- Packaging Purity: ONE repository, ONE canonical source tree (`src/stilldone`). No duplicated business logic or duplicate planner contracts.
+- CI Split & Test Accounting: CI workflow (`.github/workflows/ci.yml`) and `scripts/validate.py` validate both environments (`validate-core-mcp` with 1263 tests and `validate-strands-planner` with 971 tests). 100% of canonical tests (41 test files) are accounted for across the test ownership matrix; zero tests omitted.
+
+Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
+1. P-07.03 Ingress Repair (`src/stilldone/planning/strands_agent.py`, `tests/planning/test_strands_agent.py`):
+   * Completely eliminated `str(result)` fallback.
+   * Required canonical final `result.message` (disallowed historical messages fallback).
+   * Enforced message `role == "assistant"`.
+   * Failed closed on unexpected interrupts, `structured_output`, and `checkpoint`.
+   * Required text-only complete final message (fails on sibling non-text fields/blocks).
+   * Maintained `MAX_PLANNER_JSON_BYTES` and mandatory deterministic `parse_candidate_plan_for_input`.
+   * Attached runtime metadata into `StrandsPlannerResult`.
+2. P-07.04 Adversarial Rejection & Envelope Hardening (`tests/planning/test_rejection_hardening.py`):
+   * Preserved existing 36+ adversarial test matrix.
+   * Added `TestAgentResultEnvelopeAttacks` (10 tests) covering AgentResult envelope corruption, non-assistant role, structured output, interrupts, etc.
+   * Enforced full exception privacy inspection (`str`, `repr`, attributes, `__dict__`, `__cause__`, `__context__`, formatted traceback).
+3. P-07.05 Runtime Metadata & Evidence Record Binding (`src/stilldone/planning/metadata.py`, `tests/planning/test_planner_metadata.py`):
+   * Runtime-owned factory `create_planner_runtime_metadata(settings)` deriving strictly from validated `BedrockPlannerSettings` and installed versions.
+   * Expanded `PlannerRuntimeMetadata` to 19 strictly typed fields (`planner_runtime`, `planner_provider`, `model_id`, `region_name`, `schema_version`, `strands_version`, `boto3_version`, `botocore_version`, `max_tokens`, `temperature`, `connect_timeout_seconds`, `read_timeout_seconds`, `total_max_attempts`, `retry_mode`, `streaming=false`, `strands_sdk_retries=false`, `turns_limit=1`, `tool_names=()`, `tools_count=0`).
+   * Deep-detaches bound payload via `copy.deepcopy`.
+   * Proved metadata binding inside REAL `EvidenceRecord.create(...)`.
+   * Proved `EvidenceId` SHA-256 sensitivity across all 19 metadata fields.
+   * Verified zero fabricated `ActionId` or planner pseudo-actions.
+   * Verified no automatic ledger append.
+
 - Validation:
-  * Full validation suite (`scripts/validate.py`) passing: ruff format clean, ruff check clean, mypy clean (88 source files), 1388 tests passing.
+  * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 971 tests).
   * Zero live AWS calls; zero Bedrock inferences; zero network calls in tests; personal spend delta: $0.00.
-- P-07.06 remains strictly PENDING / NOT AUTHORIZED.
+- P-07.06 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN.
 
 ## Phase P-04 Status
 
@@ -153,30 +157,30 @@ Phase P-06 is **CLOSED — independent QA PASS (Verified closure SHA: `e9ac70797
 ## Phase P-07 Status
 
 - P-07.01 — PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`)
-- P-07.02 — EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)
-- P-07.03 — PENDING / NOT AUTHORIZED
-- P-07.04 — PENDING / NOT AUTHORIZED
-- P-07.05 — PENDING / NOT AUTHORIZED
-- P-07.06 — PENDING / NOT AUTHORIZED
+- P-07.02 — PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`)
+- P-07.03 — REPAIRED / awaiting independent QA review (NOT PASS)
+- P-07.04 — REPAIRED / awaiting independent QA review (NOT PASS)
+- P-07.05 — REPAIRED / awaiting independent QA review (NOT PASS)
+- P-07.06 — PENDING / NOT AUTHORIZED / NOT_RUN
 
 Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
 
 ## Last independently VERIFIED contiguous SHA
 
-`efb84117463d9e2736e9ccfada926b942b6ee2c9`
+`b3d2842bb2cc7c7623f485dd870bc9de29c98181`
 
 ## Next exact task
 
-Independent QA review of P-07.02 Bedrock planner adapter with exact timeout/token/retry settings.
+Independent QA review of P-07.03, P-07.04, P-07.05 consolidated repair.
 
 Status:
-`EXECUTOR_COMPLETED / awaiting independent QA (NOT PASS)`
+`REPAIRED / awaiting independent QA review (NOT PASS)`
 
 ## Next safe action
 
-Awaiting independent QA review of P-07.02.
-Do NOT self-award P-07.02 PASS.
-Do NOT begin Phase P-07.03 through P-07.06.
+Awaiting independent QA review of P-07.03, P-07.04, and P-07.05.
+Do NOT self-award P-07.03, P-07.04, or P-07.05 PASS.
+Do NOT begin Phase P-07.06.
 
 
 ---

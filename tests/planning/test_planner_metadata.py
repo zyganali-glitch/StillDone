@@ -2,13 +2,15 @@
 
 Verifies:
 - PlannerRuntimeMetadata is an immutable frozen dataclass.
-- All 16 required metadata fields are present and strictly typed.
+- All 19 required metadata fields are present and strictly typed.
 - Package versions are resolved deterministically from installed environment.
 - Missing package raises PackageVersionError.
 - bind_planner_runtime_metadata creates a new dict under "planner_runtime".
-- Original payload is never mutated.
+- Original payload is deep-detached and never mutated.
 - Key collision on "planner_runtime" raises ReservedKeyCollisionError.
-- Changing ANY metadata field changes the computed EvidenceId.
+- Metadata binds cleanly into a REAL EvidenceRecord.create(...).
+- Changing ANY of the 19 metadata fields produces a distinct EvidenceId.
+- No fabricated ActionId or planner pseudo action exists.
 - Zero network calls during metadata creation or binding.
 """
 
@@ -23,16 +25,24 @@ from unittest.mock import patch
 
 import pytest
 
+from stilldone.application.ports.ledger_port import EvidenceRecord
+from stilldone.domain.action import ActionId, ActionType
+from stilldone.domain.mission import MissionId
+from stilldone.domain.provenance import EvidenceOrigin
 from stilldone.evidence import EvidenceId, compute_evidence_id
+from stilldone.planning.bedrock import BedrockPlannerSettings
 from stilldone.planning.metadata import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL_ID,
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_REGION_NAME,
+    DEFAULT_RETRY_MODE,
     DEFAULT_SCHEMA_VERSION,
+    DEFAULT_STRANDS_SDK_RETRIES,
     DEFAULT_STREAMING,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TOOL_NAMES,
     DEFAULT_TOOLS_COUNT,
     DEFAULT_TOTAL_MAX_ATTEMPTS,
     DEFAULT_TURNS_LIMIT,
@@ -115,13 +125,14 @@ class TestPlannerRuntimeMetadata:
         with pytest.raises(FrozenInstanceError):
             sample_metadata.model_id = "other-model"  # type: ignore[misc]
 
-    def test_all_16_required_fields_present_and_correct(
+    def test_all_19_required_fields_present_and_correct(
         self, sample_metadata: PlannerRuntimeMetadata
     ) -> None:
         assert sample_metadata.planner_runtime == "strands"
         assert sample_metadata.planner_provider == "amazon_bedrock"
         assert sample_metadata.model_id == "amazon.nova-micro-v1:0"
         assert sample_metadata.region_name == "us-east-1"
+        assert sample_metadata.schema_version == "v1"
         assert isinstance(sample_metadata.strands_version, str)
         assert len(sample_metadata.strands_version) > 0
         assert isinstance(sample_metadata.boto3_version, str)
@@ -133,12 +144,14 @@ class TestPlannerRuntimeMetadata:
         assert sample_metadata.connect_timeout_seconds == 5.0
         assert sample_metadata.read_timeout_seconds == 30.0
         assert sample_metadata.total_max_attempts == 1
-        assert sample_metadata.tools_count == 0
-        assert sample_metadata.turns_limit == 1
+        assert sample_metadata.retry_mode == "standard"
         assert sample_metadata.streaming is False
-        assert sample_metadata.schema_version == "v1"
+        assert sample_metadata.strands_sdk_retries is False
+        assert sample_metadata.turns_limit == 1
+        assert sample_metadata.tool_names == ()
+        assert sample_metadata.tools_count == 0
 
-    def test_to_dict_contains_all_16_fields(self, sample_metadata: PlannerRuntimeMetadata) -> None:
+    def test_to_dict_contains_all_19_fields(self, sample_metadata: PlannerRuntimeMetadata) -> None:
         d = sample_metadata.to_dict()
         assert isinstance(d, dict)
         expected_keys = {
@@ -146,6 +159,7 @@ class TestPlannerRuntimeMetadata:
             "planner_provider",
             "model_id",
             "region_name",
+            "schema_version",
             "strands_version",
             "boto3_version",
             "botocore_version",
@@ -154,10 +168,12 @@ class TestPlannerRuntimeMetadata:
             "connect_timeout_seconds",
             "read_timeout_seconds",
             "total_max_attempts",
-            "tools_count",
-            "turns_limit",
+            "retry_mode",
             "streaming",
-            "schema_version",
+            "strands_sdk_retries",
+            "turns_limit",
+            "tool_names",
+            "tools_count",
         }
         assert set(d.keys()) == expected_keys
 
@@ -168,6 +184,7 @@ class TestPlannerRuntimeMetadata:
             ("planner_provider", 456),
             ("model_id", None),
             ("region_name", ["us-east-1"]),
+            ("schema_version", 1),
             ("strands_version", 1.57),
             ("boto3_version", None),
             ("botocore_version", True),
@@ -176,10 +193,12 @@ class TestPlannerRuntimeMetadata:
             ("connect_timeout_seconds", "5s"),
             ("read_timeout_seconds", None),
             ("total_max_attempts", "1"),
-            ("tools_count", "0"),
-            ("turns_limit", "1"),
+            ("retry_mode", 123),
             ("streaming", "false"),
-            ("schema_version", 1),
+            ("strands_sdk_retries", "false"),
+            ("turns_limit", "1"),
+            ("tool_names", "not-a-tuple"),
+            ("tools_count", "0"),
         ],
     )
     def test_field_type_validation_fails_closed(
@@ -199,7 +218,7 @@ class TestPlannerRuntimeMetadata:
 class TestCreatePlannerRuntimeMetadata:
     """Verifies factory function behavior and defaults."""
 
-    def test_defaults_match_p07_02_constants(self) -> None:
+    def test_defaults_match_canonical_settings(self) -> None:
         meta = create_planner_runtime_metadata()
         assert meta.planner_runtime == PLANNER_RUNTIME_STRANDS
         assert meta.planner_provider == PLANNER_PROVIDER_AMAZON_BEDROCK
@@ -211,50 +230,38 @@ class TestCreatePlannerRuntimeMetadata:
         assert meta.connect_timeout_seconds == DEFAULT_CONNECT_TIMEOUT_SECONDS
         assert meta.read_timeout_seconds == DEFAULT_READ_TIMEOUT_SECONDS
         assert meta.total_max_attempts == DEFAULT_TOTAL_MAX_ATTEMPTS
-        assert meta.tools_count == DEFAULT_TOOLS_COUNT
-        assert meta.turns_limit == DEFAULT_TURNS_LIMIT
+        assert meta.retry_mode == DEFAULT_RETRY_MODE
         assert meta.streaming == DEFAULT_STREAMING
+        assert meta.strands_sdk_retries == DEFAULT_STRANDS_SDK_RETRIES
+        assert meta.turns_limit == DEFAULT_TURNS_LIMIT
+        assert meta.tool_names == DEFAULT_TOOL_NAMES
+        assert meta.tools_count == DEFAULT_TOOLS_COUNT
 
-    def test_custom_overrides_respected(self) -> None:
-        meta = create_planner_runtime_metadata(
-            model_id="custom.model-v1",
-            region_name="us-west-2",
-            schema_version="v2",
-            max_tokens=1024,
-            temperature=0.5,
-            connect_timeout_seconds=10.0,
-            read_timeout_seconds=60.0,
-            total_max_attempts=2,
-            tools_count=3,
-            turns_limit=5,
-            streaming=True,
-            strands_version="2.0.0",
-            boto3_version="1.35.0",
-            botocore_version="1.35.0",
+    def test_factory_derives_from_validated_bedrock_settings(self) -> None:
+        cfg = BedrockPlannerSettings(
+            model_id="amazon.nova-micro-v1:0",
+            region_name="us-east-1",
+            connect_timeout=3.0,
+            read_timeout=20.0,
         )
-        assert meta.model_id == "custom.model-v1"
-        assert meta.region_name == "us-west-2"
-        assert meta.schema_version == "v2"
-        assert meta.max_tokens == 1024
-        assert meta.temperature == 0.5
-        assert meta.connect_timeout_seconds == 10.0
-        assert meta.read_timeout_seconds == 60.0
-        assert meta.total_max_attempts == 2
-        assert meta.tools_count == 3
-        assert meta.turns_limit == 5
-        assert meta.streaming is True
-        assert meta.strands_version == "2.0.0"
-        assert meta.boto3_version == "1.35.0"
-        assert meta.botocore_version == "1.35.0"
+        meta = create_planner_runtime_metadata(cfg)
+        assert meta.connect_timeout_seconds == 3.0
+        assert meta.read_timeout_seconds == 20.0
+        assert meta.model_id == "amazon.nova-micro-v1:0"
+
+    def test_factory_rejects_invalid_settings_type(self) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            create_planner_runtime_metadata("not-settings")  # type: ignore[arg-type]
+        assert "settings must be BedrockPlannerSettings" in str(exc_info.value)
 
 
 # ===========================================================================
-# Unit Tests: Evidence Binding Surface
+# Unit Tests: Evidence Binding Surface & Deep Detachment
 # ===========================================================================
 
 
 class TestBindPlannerRuntimeMetadata:
-    """Verifies bind_planner_runtime_metadata immutability and collision rules."""
+    """Verifies bind_planner_runtime_metadata immutability, deep detachment, and collision rules."""
 
     @pytest.fixture
     def meta(self) -> PlannerRuntimeMetadata:
@@ -275,6 +282,21 @@ class TestBindPlannerRuntimeMetadata:
         assert bound["status"] == "PLANNED"
         assert PLANNER_RUNTIME_PAYLOAD_KEY in bound
         assert bound[PLANNER_RUNTIME_PAYLOAD_KEY] == meta.to_dict()
+
+    def test_bind_deep_detaches_nested_payload(self, meta: PlannerRuntimeMetadata) -> None:
+        original: dict[str, Any] = {
+            "mission_id": "test-mission",
+            "nested": {"param": "value", "list": [1, 2, 3]},
+        }
+        bound = bind_planner_runtime_metadata(original, meta)
+
+        # Mutate original nested objects
+        original["nested"]["param"] = "mutated_value"
+        original["nested"]["list"].append(4)
+
+        # Bound object must remain isolated and unaffected
+        assert bound["nested"]["param"] == "value"
+        assert bound["nested"]["list"] == [1, 2, 3]
 
     def test_bind_rejects_non_dict_payload(self, meta: PlannerRuntimeMetadata) -> None:
         with pytest.raises(TypeError) as exc_info:
@@ -298,13 +320,53 @@ class TestBindPlannerRuntimeMetadata:
 
 
 # ===========================================================================
+# EvidenceRecord Integration: Binding inside REAL EvidenceRecord.create(...)
+# ===========================================================================
+
+
+class TestEvidenceRecordBinding:
+    """Verifies that bound metadata integrates cleanly into a REAL EvidenceRecord.create(...)."""
+
+    def test_bind_inside_real_evidence_record(self) -> None:
+        from uuid import uuid4
+
+        meta = create_planner_runtime_metadata()
+        action_id = ActionId(str(uuid4()))
+        mission_id = MissionId(str(uuid4()))
+        origin = EvidenceOrigin.local_execution()
+        raw_payload = {"plan_summary": "Test morning workflow"}
+        bound_payload = bind_planner_runtime_metadata(raw_payload, meta)
+
+        record = EvidenceRecord.create(
+            action_id=action_id,
+            mission_id=mission_id,
+            origin=origin,
+            payload=bound_payload,
+        )
+
+        assert isinstance(record, EvidenceRecord)
+        assert isinstance(record.evidence_id, EvidenceId)
+        assert record.action_id == action_id
+        assert record.mission_id == mission_id
+        assert record.origin == origin
+        assert record.payload[PLANNER_RUNTIME_PAYLOAD_KEY] == meta.to_dict()
+
+    def test_no_fabricated_action_id_or_planner_pseudo_action(self) -> None:
+        """Prove no fabricated ActionType or planner pseudo action exists in the codebase."""
+        forbidden_names = {"PLANNER", "PLAN", "PLANNING", "MODEL_PLAN", "STRANDS_PLAN"}
+        for action_type in ActionType:
+            assert action_type.name not in forbidden_names
+            assert action_type.value not in forbidden_names
+
+
+# ===========================================================================
 # Deterministic Evidence Hashing Sensitivity: Changing Any Field Changes Hash
 # ===========================================================================
 
 
 class TestEvidenceHashingSensitivity:
     """Proves that changing ANY single field of PlannerRuntimeMetadata produces
-    a strictly different EvidenceId / SHA-256 hash.
+    a strictly different EvidenceId / SHA-256 hash when bound into EvidenceRecord.
     """
 
     @pytest.fixture
@@ -335,6 +397,7 @@ class TestEvidenceHashingSensitivity:
             ("planner_provider", "google_vertex"),
             ("model_id", "anthropic.claude-v2"),
             ("region_name", "eu-central-1"),
+            ("schema_version", "v2"),
             ("strands_version", "99.99.99"),
             ("boto3_version", "99.99.99"),
             ("botocore_version", "99.99.99"),
@@ -343,10 +406,12 @@ class TestEvidenceHashingSensitivity:
             ("connect_timeout_seconds", 10.0),
             ("read_timeout_seconds", 60.0),
             ("total_max_attempts", 3),
-            ("tools_count", 5),
-            ("turns_limit", 2),
+            ("retry_mode", "adaptive"),
             ("streaming", True),
-            ("schema_version", "v2"),
+            ("strands_sdk_retries", True),
+            ("turns_limit", 2),
+            ("tool_names", ("injected_tool",)),
+            ("tools_count", 1),
         ],
     )
     def test_changing_any_metadata_field_changes_evidence_hash(
@@ -356,12 +421,20 @@ class TestEvidenceHashingSensitivity:
         field: str,
         modified_value: Any,
     ) -> None:
-        """Prove that each of the 16 metadata fields is bound into the evidence hash."""
+        """Prove that each of the 19 metadata fields is bound into the evidence hash."""
         bound_base = bind_planner_runtime_metadata(base_payload, base_meta)
         base_eid = compute_evidence_id(bound_base)
 
         kwargs = base_meta.to_dict()
-        kwargs[field] = modified_value
+        if field == "tool_names":
+            kwargs["tool_names"] = modified_value
+            kwargs["tools_count"] = len(modified_value)
+        elif field == "tools_count":
+            kwargs["tools_count"] = modified_value
+            kwargs["tool_names"] = tuple(f"tool_{i}" for i in range(modified_value))
+        else:
+            kwargs[field] = modified_value
+
         modified_meta = PlannerRuntimeMetadata(**kwargs)
 
         bound_modified = bind_planner_runtime_metadata(base_payload, modified_meta)

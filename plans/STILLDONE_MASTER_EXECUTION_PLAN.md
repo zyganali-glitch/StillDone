@@ -969,7 +969,7 @@ Acceptance:
 - Task closed with independent QA PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`).
 
 ### P-07.02 — Implement real Bedrock planner adapter with exact timeout/token/retry settings
-Status: REPAIRED / awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`)
 
 Acceptance:
 - real Bedrock runtime adapter implemented in bounded package `src/stilldone/planning/bedrock.py`;
@@ -1001,30 +1001,44 @@ Acceptance:
 - 29 focused unit tests in `tests/planning/test_bedrock_adapter.py` passing covering all requirements with zero network calls;
 - 1262 total tests passing across entire repo;
 - live AWS execution: 0 control plane calls, 0 Bedrock inference calls, 0 Strands calls, 0 Google calls, 0 Open-Meteo calls, 0 remote MCP calls; personal spend delta: $0.00;
-- P-07.03 through P-07.06 remain strictly PENDING / NOT AUTHORIZED.
+- Task closed with independent QA PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`).
+
+### Architecture Truth — MCP vs. Strands Dependency Isolation
+- Verified Dependency Conflict: StillDone P-05 requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
+- Architectural Resolution: StillDone enforces two explicitly isolated dependency/runtime environments with zero resolver overrides (`override-dependencies` strictly prohibited):
+  1. StillDone Core / MCP Runtime (`pyproject.toml`, root `uv.lock`): Retains canonical `mcp>=2.2.0` (resolved `2.2.0`). Owns MCP server, deterministic runtime, calendar/tasks/weather adapters, evidence ledger, fact authority.
+  2. Strands Planner Runtime (`runtimes/strands_planner/pyproject.toml`, `runtimes/strands_planner/uv.lock`): Pins `strands-agents==1.57.2` with its official resolver-compatible transitive MCP (`mcp==2.1.1`). Owns non-authoritative plan proposal generation and planner metadata only (strictly zero execution, mutation, read-back, or fact authority).
+- Packaging Purity: ONE repository, ONE canonical source tree (`src/stilldone`). No duplicated business logic or duplicate planner contracts.
+- CI Split & Test Accounting: CI workflow (`.github/workflows/ci.yml`) and `scripts/validate.py` validate both environments (`validate-core-mcp` with 1263 tests and `validate-strands-planner` with 971 tests). 100% of canonical tests (41 test files) are accounted for across the test ownership matrix; zero tests omitted.
 
 ### P-07.03 — Implement real Strands planning agent using bounded tools/context
-Status: DONE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - bounded Strands planning agent implemented in `src/stilldone/planning/strands_agent.py`;
-- uses real official SDK classes: `strands.Agent` and `strands.models.BedrockModel` from pinned `strands-agents==1.57.2` (Apache-2.0);
+- isolated runtime environment in `runtimes/strands_planner/` pins `strands-agents==1.57.2` with zero resolver overrides;
 - production Bedrock model factory `create_strands_bedrock_model` enforces canonical P-07.02 settings: `model_id="amazon.nova-micro-v1:0"`, `region_name="us-east-1"`, `max_tokens=2048`, `temperature=0.00001`, `connect_timeout=5.0`, `read_timeout=30.0`, `total_max_attempts=1`, `retry_mode="standard"`, `streaming=False`;
 - fail-closed bounded Strands agent configuration: `tools=[]` (NOT `None`), `load_tools_from_directory=False`, `callback_handler=None` (disables printing), `retry_strategy=None` (disables SDK retry loop), `structured_output_model=None`, `context_manager=False`, `memory_manager=None`, `session_manager=None`, `storage=None`, `checkpointing=False`, `background_tasks=False`;
 - zero executable external tools: planning is non-authoritative; external mutations belong strictly to deterministic runtime;
 - one model turn maximum: `limits={"turns": 1}`, `streaming=False`, `use_native_token_count=False`;
 - strict stop reason: requires `end_turn`; all others (`limit_turns`, `max_tokens`, etc.) fail closed with `StrandsStopReasonError`;
 - clean context isolation: fresh `strands.Agent` constructed per mission invocation; zero cross-mission memory, history, or context bleed;
+- Ingress Hardening:
+  * completely eliminated `str(result)` fallback;
+  * requires canonical final `result.message` (disallows historical message fallback);
+  * requires `role == "assistant"` (fails closed with `StrandsResponseEnvelopeError`);
+  * fails closed on unexpected interrupts, `structured_output`, and `checkpoint`;
+  * requires text-only complete final message (fails on sibling non-text fields/blocks);
 - mandatory deterministic boundary: untrusted result inspected, combined UTF-8 text checked against `MAX_PLANNER_JSON_BYTES`, passed directly through `parse_candidate_plan_for_input(planner_input, combined_text)`;
-- returns typed immutable `StrandsPlannerResult` with `plan`, `stop_reason`, `model_id`, `region_name`; confers zero authority and does NOT create an EvidenceRecord or mission state promotion;
+- returns typed immutable `StrandsPlannerResult` with `plan`, `stop_reason`, `model_id`, `region_name`, and bound `metadata`; confers zero authority and does NOT create an EvidenceRecord or mission state promotion;
 - 32 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
 
 ### P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
-Status: DONE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - planner rejection boundary in `src/stilldone/planning/strands_agent.py` catches `(PlannerContractError, ActionPolicyError)` and wraps into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances;
-- comprehensive adversarial rejection test suite in `tests/planning/test_rejection_hardening.py` (46 tests passing);
+- comprehensive adversarial rejection test suite in `tests/planning/test_rejection_hardening.py` (56 tests passing);
 - rejects all 36+ malformed, unsupported, over-broad, or authority-violating vectors:
   1. malformed JSON syntax;
   2. duplicate JSON keys;
@@ -1062,19 +1076,21 @@ Acceptance:
   34. Markdown code fences;
   35. Strands tool-use output;
   36. hostile prompt / system override attempts;
-- exception shielding verified: zero raw hostile model strings leak into exception messages, reprs, causes, or tracebacks;
+- added `TestAgentResultEnvelopeAttacks` (10 tests) covering AgentResult envelope attacks (missing message, non-assistant role, structured output, interrupts, checkpoint, empty content, etc.);
+- full exception privacy inspection: verifies `str`, `repr`, attributes, `__dict__`, `__cause__`, `__context__`, and formatted traceback contain zero raw hostile strings;
 - inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
 
 ### P-07.05 — Bind exact planner model/runtime/version metadata to evidence
-Status: DONE — awaiting independent QA review (NOT PASS)
+Status: REPAIRED / awaiting independent QA review (NOT PASS)
 
 Acceptance:
 - planner runtime metadata contract implemented in `src/stilldone/planning/metadata.py`;
-- immutable frozen dataclass `PlannerRuntimeMetadata` binding all 16 required fields:
+- immutable frozen dataclass `PlannerRuntimeMetadata` binding all 19 strictly typed fields:
   * planner_runtime: "strands"
   * planner_provider: "amazon_bedrock"
   * model_id: "amazon.nova-micro-v1:0"
   * region_name: "us-east-1"
+  * schema_version: "v1"
   * strands_version: exact resolved installed version (e.g. 1.57.2)
   * boto3_version: exact resolved installed version
   * botocore_version: exact resolved installed version
@@ -1083,18 +1099,23 @@ Acceptance:
   * connect_timeout_seconds: 5.0
   * read_timeout_seconds: 30.0
   * total_max_attempts: 1
-  * tools_count: 0
-  * turns_limit: 1
+  * retry_mode: "standard"
   * streaming: false
-  * schema_version: "v1"
-- `create_planner_runtime_metadata()` dynamically resolves installed package versions via `importlib.metadata` with fail-closed `PackageVersionError`;
-- `bind_planner_runtime_metadata(payload, metadata)` binds metadata under reserved `"planner_runtime"` key without mutating input payload;
+  * strands_sdk_retries: false
+  * turns_limit: 1
+  * tool_names: ()
+  * tools_count: 0
+- runtime-owned factory `create_planner_runtime_metadata(settings)` derives metadata strictly from validated `BedrockPlannerSettings` and installed packages via `importlib.metadata`; rejects arbitrary model/version/runtime primitive overrides;
+- `bind_planner_runtime_metadata(payload, metadata)` binds metadata under reserved `"planner_runtime"` key, deep-detaching payload via `copy.deepcopy` without mutating input payload;
 - payload binding strictly rejects non-dict payload (`TypeError`), non-metadata (`TypeError`), and key collision (`ReservedKeyCollisionError`);
-- deterministic evidence sensitivity: changing ANY of the 16 metadata fields produces a distinct `EvidenceId` SHA-256 hash;
-- 47 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
+- proved metadata binding inside REAL `EvidenceRecord.create(...)`;
+- deterministic evidence sensitivity: changing ANY of the 19 metadata fields produces a distinct `EvidenceId` SHA-256 hash;
+- verified zero fabricated `ActionId` or planner pseudo-actions;
+- verified no automatic ledger append;
+- 55 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
-Status: PENDING / NOT AUTHORIZED
+Status: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Phase exit:
 AWS intelligence is genuine and bounded.

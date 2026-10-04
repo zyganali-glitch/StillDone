@@ -7,7 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  validate:
+  validate-core-mcp:
+    name: Validate Core / MCP Runtime (mcp >= 2.2.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -22,7 +23,7 @@ jobs:
       - name: Set up Python 3.13
         run: uv python install 3.13
 
-      - name: Install dependencies strictly from lockfile
+      - name: Install dependencies strictly from root lockfile
         run: uv sync --frozen
 
       - name: Check code formatting
@@ -31,11 +32,48 @@ jobs:
       - name: Lint code
         run: uv run ruff check .
 
-      - name: Static type check
-        run: uv run mypy src tests
+      - name: Assert MCP version >= 2.2.0
+        run: |
+          uv run python -c "import importlib.metadata; v = importlib.metadata.version('mcp'); parts = [int(p) for p in v.split('.')[:2]]; assert parts >= [2, 2], f'Expected mcp >= 2.2.0, got {v}'; print(f'Core MCP version verified: {v}')"
 
-      - name: Run test suite
-        run: uv run pytest
+      - name: Static type check (Core sources & non-Strands tests)
+        run: uv run mypy src tests --exclude "tests[\\/]planning[\\/]test_(strands_agent|rejection_hardening|planner_metadata)\.py"
 
-      - name: Run cross-platform aggregate validator
-        run: uv run python scripts/validate.py
+      - name: Run Core / MCP test suite (P-02 through P-06, P-07.01-02)
+        run: uv run pytest --ignore=tests/planning/test_strands_agent.py --ignore=tests/planning/test_rejection_hardening.py --ignore=tests/planning/test_planner_metadata.py
+
+      - name: Run deterministic core validator
+        run: uv run python scripts/validate.py --core-only
+
+  validate-strands-planner:
+    name: Validate Strands Planner Runtime (strands-agents 1.57.2)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pinned uv version
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.11.28"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies strictly from planner lockfile
+        run: uv sync --frozen --project runtimes/strands_planner
+
+      - name: Assert Strands 1.57.2 and transitive MCP < 2.2
+        run: |
+          uv run --project runtimes/strands_planner python -c "import importlib.metadata; s = importlib.metadata.version('strands-agents'); m = importlib.metadata.version('mcp'); assert s == '1.57.2', f'Expected strands-agents 1.57.2, got {s}'; parts = [int(p) for p in m.split('.')[:2]]; assert parts < [2, 2], f'Expected transitive mcp < 2.2, got {m}'; print(f'Strands version verified: {s}, Transitive MCP: {m}')"
+
+      - name: Static type check (Planner sources & tests)
+        run: uv run --project runtimes/strands_planner mypy src/stilldone/planning src/stilldone/domain tests/planning tests/domain
+
+      - name: Run Strands planning & boundary protection test suites
+        run: |
+          uv run --project runtimes/strands_planner pytest tests/planning tests/domain tests/test_action_policy.py tests/test_authority_policy.py tests/test_capture.py tests/test_demo_isolation.py tests/test_endpoint_protection.py tests/test_evidence.py tests/test_ledger.py tests/test_phase_p03_adversarial.py tests/test_phase_p04_security_audit.py tests/test_receipt.py tests/test_redaction.py tests/test_serialization.py tests/test_smoke.py tests/test_transitions.py
+
+      - name: Run deterministic planner validator
+        run: uv run python scripts/validate.py --planner-only

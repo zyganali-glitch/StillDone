@@ -517,3 +517,22 @@ class TestStrandsResultImmutableContract:
         assert not hasattr(res, "ready")
         assert not hasattr(res, "approval_grant")
         assert not hasattr(res, "evidence_id")
+
+    def test_result_contains_runtime_metadata(self) -> None:
+        """StrandsPlannerResult binds invocation PlannerRuntimeMetadata."""
+        from stilldone.planning.metadata import PlannerRuntimeMetadata
+
+        mid = MissionId(str(uuid4()))
+        events = _make_text_events(_make_valid_plan_json(str(mid)))
+        fake = _create_fake_model(events=events)
+        p_in = PlannerInput(mission_id=mid, intent="Check tasks")
+        res = plan_with_strands(p_in, _model_override=fake)
+
+        assert isinstance(res.metadata, PlannerRuntimeMetadata)
+        assert res.metadata.planner_runtime == "strands"
+        assert res.metadata.planner_provider == "amazon_bedrock"
+        assert res.metadata.model_id == DEFAULT_BEDROCK_MODEL_ID
+        assert res.metadata.region_name == DEFAULT_BEDROCK_REGION
+        assert res.metadata.turns_limit == 1
+        assert res.metadata.tool_names == ()
+        assert res.metadata.tools_count == 0

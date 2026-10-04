@@ -2,14 +2,16 @@
 
 Verifies that all 36+ malformed, unsupported, over-broad, or authority-violating
 model outputs fail closed through plan_with_strands without leaking raw hostile
-values into exception messages, and verifies the inverse that explanation prose
-containing authority words remains inert without conferring authority or state.
+values into exception messages, causes, contexts, attributes, or tracebacks,
+tests AgentResult envelope attack vectors, and verifies the inverse that explanation
+prose containing authority words remains inert without conferring authority or state.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import traceback
 from collections.abc import AsyncIterable, Generator
 from typing import Any
 from uuid import uuid4
@@ -25,6 +27,7 @@ from stilldone.action_policy import (
     UnknownParameterError,
 )
 from stilldone.domain.mission import MissionId
+from stilldone.planning.bedrock import BedrockPlannerSettings
 from stilldone.planning.contracts import (
     MAX_EXPLANATION_STRING_LENGTH,
     MAX_PLAN_STEPS,
@@ -44,11 +47,14 @@ from stilldone.planning.contracts import (
     UnknownFieldPolicyError,
     UnsupportedSchemaVersionError,
 )
+from stilldone.planning.metadata import create_planner_runtime_metadata
 from stilldone.planning.strands_agent import (
+    StrandsEmptyResponseError,
     StrandsNonTextContentError,
     StrandsPlannerResult,
     StrandsPlanRejectionError,
     StrandsStopReasonError,
+    _process_strands_result,
     plan_with_strands,
 )
 
@@ -122,6 +128,26 @@ def _make_text_events(text: str, stop_reason: str = "end_turn") -> list[dict[str
     ]
 
 
+def _assert_exception_privacy(exc: BaseException, hostile_sentinel: str | None = None) -> None:
+    """Inspect complete exception privacy surface:
+    str, repr, attributes, __dict__, __cause__, __context__, formatted traceback.
+    """
+    assert exc.__cause__ is None, f"Exception __cause__ is not None: {exc.__cause__}"
+    assert exc.__context__ is None, f"Exception __context__ is not None: {exc.__context__}"
+
+    if hostile_sentinel is not None:
+        assert hostile_sentinel not in str(exc), "Hostile sentinel found in str(exc)"
+        assert hostile_sentinel not in repr(exc), "Hostile sentinel found in repr(exc)"
+        if hasattr(exc, "__dict__"):
+            for attr_name, attr_val in exc.__dict__.items():
+                assert hostile_sentinel not in str(attr_val), (
+                    f"Hostile sentinel found in exc.__dict__[{attr_name!r}]"
+                )
+        tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        tb_str = "".join(tb_lines)
+        assert hostile_sentinel not in tb_str, "Hostile sentinel found in formatted traceback"
+
+
 def _assert_plan_rejected(
     p_in: PlannerInput,
     model_output_text: str,
@@ -135,14 +161,10 @@ def _assert_plan_rejected(
         plan_with_strands(p_in, _model_override=fake)
 
     err = exc_info.value
-    assert err.__cause__ is None
-    assert err.__context__ is None
     if expected_rejection_class is not None:
         assert err.rejection_class is expected_rejection_class
 
-    if hostile_sentinel is not None:
-        assert hostile_sentinel not in str(err)
-        assert hostile_sentinel not in repr(err)
+    _assert_exception_privacy(err, hostile_sentinel=hostile_sentinel)
 
 
 # ===========================================================================
@@ -234,7 +256,6 @@ class TestAdversarialRejectionsThroughStrands:
 
     # 7. Incompatible symbolic target
     def test_07_incompatible_symbolic_target_fails_closed(self, p_in: PlannerInput) -> None:
-        # calendar_event is NOT compatible with weather.read
         text = (
             f'{{"schema_version": "v1", "mission_id": "{p_in.mission_id}", '
             f'"steps": [{{"action_type": "weather.read", "target_ref": "calendar_event"}}]}}'
@@ -546,6 +567,7 @@ class TestAdversarialRejectionsThroughStrands:
         with pytest.raises(StrandsPlanRejectionError) as exc_info:
             plan_with_strands(p_in, _model_override=fake)
         assert exc_info.value.rejection_class is OversizedJsonPayloadError
+        _assert_exception_privacy(exc_info.value)
 
     # 32. Trailing prose
     def test_32_trailing_prose_fails_closed(self, p_in: PlannerInput) -> None:
@@ -598,8 +620,9 @@ class TestAdversarialRejectionsThroughStrands:
             {"messageStop": {"stopReason": "end_turn"}},
         ]
         fake = _create_fake_model(events=events)
-        with pytest.raises((StrandsNonTextContentError, StrandsStopReasonError)):
+        with pytest.raises((StrandsNonTextContentError, StrandsStopReasonError)) as exc_info:
             plan_with_strands(p_in, _model_override=fake)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel="dangerous_shell")
 
     # 36. Hostile model text attempting system override
     def test_36_hostile_system_override_fails_closed(self, p_in: PlannerInput) -> None:
@@ -615,6 +638,194 @@ class TestAdversarialRejectionsThroughStrands:
             expected_rejection_class=UnknownFieldPolicyError,
             hostile_sentinel=sentinel,
         )
+
+
+# ===========================================================================
+# AgentResult Envelope Attack Tests (P-07.04 Defect Closure)
+# ===========================================================================
+
+
+class TestAgentResultEnvelopeAttacks:
+    """Verifies that AgentResult envelope tampering and non-standard payloads fail closed."""
+
+    @pytest.fixture
+    def mission_id(self) -> MissionId:
+        return MissionId(str(uuid4()))
+
+    @pytest.fixture
+    def p_in(self, mission_id: MissionId) -> PlannerInput:
+        return PlannerInput(mission_id=mission_id, intent="Plan morning commute")
+
+    @pytest.fixture
+    def settings(self) -> BedrockPlannerSettings:
+        return BedrockPlannerSettings()
+
+    @pytest.fixture
+    def metadata(self, settings: BedrockPlannerSettings) -> Any:
+        return create_planner_runtime_metadata(settings)
+
+    def test_envelope_attack_none_result_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, None, settings, metadata)
+        _assert_exception_privacy(exc_info.value)
+
+    def test_envelope_attack_interrupts_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "INTERRUPT_TAMPER_SECRET_111"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "interrupts": [{"interrupt_id": sentinel}],
+                "message": {"role": "assistant", "content": [{"text": "{}"}]},
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_envelope_attack_structured_output_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "STRUCTURED_OUTPUT_TAMPER_222"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "structured_output": {"pydantic_model": sentinel},
+                "message": {"role": "assistant", "content": [{"text": "{}"}]},
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_envelope_attack_checkpoint_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "CHECKPOINT_TAMPER_333"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "checkpoint": {"state": sentinel},
+                "message": {"role": "assistant", "content": [{"text": "{}"}]},
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_envelope_attack_missing_message_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value)
+
+    def test_envelope_attack_message_none_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": None,
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value)
+
+    @pytest.mark.parametrize("bad_role", ["user", "system", "tool", "other", ""])
+    def test_envelope_attack_message_non_assistant_role_fails_closed(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any, bad_role: str
+    ) -> None:
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {"role": bad_role, "content": "valid json"},
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value)
+
+    def test_envelope_attack_historical_messages_fallback_rejected(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        # Result has messages list with valid assistant response, but message is missing
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "messages": [{"role": "assistant", "content": '{"schema_version": "v1"}'}],
+            },
+        )()
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        assert "missing canonical 'message'" in str(exc_info.value)
+        _assert_exception_privacy(exc_info.value)
+
+    def test_envelope_attack_str_result_fallback_rejected(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "STR_RESULT_ATTACK_JSON"
+
+        class MaliciousResult:
+            stop_reason = "end_turn"
+            message = None
+
+            def __str__(self) -> str:
+                return (
+                    f'{{"schema_version": "v1", "mission_id": "{p_in.mission_id}", '
+                    f'"{sentinel}": 1}}'
+                )
+
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            _process_strands_result(p_in, MaliciousResult(), settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
+
+    def test_envelope_attack_non_text_sibling_fields_rejected(
+        self, p_in: PlannerInput, settings: BedrockPlannerSettings, metadata: Any
+    ) -> None:
+        sentinel = "SIBLING_TOOL_USE_ATTACK"
+        fake_result = type(
+            "FakeResult",
+            (),
+            {
+                "stop_reason": "end_turn",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": '{"schema_version": "v1"}',
+                            "toolUse": {"name": sentinel, "toolUseId": "id-1", "input": {}},
+                        }
+                    ],
+                },
+            },
+        )()
+        with pytest.raises(StrandsNonTextContentError) as exc_info:
+            _process_strands_result(p_in, fake_result, settings, metadata)
+        _assert_exception_privacy(exc_info.value, hostile_sentinel=sentinel)
 
 
 # ===========================================================================

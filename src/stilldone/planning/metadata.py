@@ -16,9 +16,13 @@ Architectural invariants:
 
 from __future__ import annotations
 
+import copy
 import importlib.metadata
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from stilldone.planning.bedrock import BedrockPlannerSettings
 
 # ===========================================================================
 # Planner Runtime Kind & Provider Vocabulary
@@ -39,9 +43,12 @@ DEFAULT_TEMPERATURE: float = 0.00001
 DEFAULT_CONNECT_TIMEOUT_SECONDS: float = 5.0
 DEFAULT_READ_TIMEOUT_SECONDS: float = 30.0
 DEFAULT_TOTAL_MAX_ATTEMPTS: int = 1
-DEFAULT_TOOLS_COUNT: int = 0
-DEFAULT_TURNS_LIMIT: int = 1
+DEFAULT_RETRY_MODE: str = "standard"
 DEFAULT_STREAMING: bool = False
+DEFAULT_STRANDS_SDK_RETRIES: bool = False
+DEFAULT_TURNS_LIMIT: int = 1
+DEFAULT_TOOL_NAMES: tuple[str, ...] = ()
+DEFAULT_TOOLS_COUNT: int = 0
 
 
 # ===========================================================================
@@ -94,11 +101,12 @@ class PlannerRuntimeMetadata:
     All values are runtime-owned deterministic truth.
     The model MUST NOT supply or override any of these values.
 
-    Required metadata fields (16 exact fields):
+    Required metadata fields:
     - planner_runtime: "strands"
     - planner_provider: "amazon_bedrock"
     - model_id: "amazon.nova-micro-v1:0"
     - region_name: "us-east-1"
+    - schema_version: "v1"
     - strands_version: exact resolved version (e.g. 1.57.2)
     - boto3_version: exact resolved version
     - botocore_version: exact resolved version
@@ -107,16 +115,19 @@ class PlannerRuntimeMetadata:
     - connect_timeout_seconds: 5.0
     - read_timeout_seconds: 30.0
     - total_max_attempts: 1
-    - tools_count: 0
-    - turns_limit: 1
+    - retry_mode: "standard"
     - streaming: false
-    - schema_version: "v1"
+    - strands_sdk_retries: false
+    - turns_limit: 1
+    - tool_names: ()
+    - tools_count: 0
     """
 
     planner_runtime: str
     planner_provider: str
     model_id: str
     region_name: str
+    schema_version: str
     strands_version: str
     boto3_version: str
     botocore_version: str
@@ -125,10 +136,12 @@ class PlannerRuntimeMetadata:
     connect_timeout_seconds: float
     read_timeout_seconds: float
     total_max_attempts: int
-    tools_count: int
-    turns_limit: int
+    retry_mode: str
     streaming: bool
-    schema_version: str
+    strands_sdk_retries: bool
+    turns_limit: int
+    tool_names: tuple[str, ...]
+    tools_count: int
 
     def __post_init__(self) -> None:
         """Validate metadata field types and invariants."""
@@ -144,6 +157,10 @@ class PlannerRuntimeMetadata:
             raise TypeError(f"model_id must be a str, got {type(self.model_id).__name__}")
         if type(self.region_name) is not str:
             raise TypeError(f"region_name must be a str, got {type(self.region_name).__name__}")
+        if type(self.schema_version) is not str:
+            raise TypeError(
+                f"schema_version must be a str, got {type(self.schema_version).__name__}"
+            )
         if type(self.strands_version) is not str:
             raise TypeError(
                 f"strands_version must be a str, got {type(self.strands_version).__name__}"
@@ -174,16 +191,34 @@ class PlannerRuntimeMetadata:
             raise TypeError(
                 f"total_max_attempts must be an int, got {type(self.total_max_attempts).__name__}"
             )
-        if type(self.tools_count) is not int:
-            raise TypeError(f"tools_count must be an int, got {type(self.tools_count).__name__}")
-        if type(self.turns_limit) is not int:
-            raise TypeError(f"turns_limit must be an int, got {type(self.turns_limit).__name__}")
+        if type(self.retry_mode) is not str:
+            raise TypeError(f"retry_mode must be a str, got {type(self.retry_mode).__name__}")
         if type(self.streaming) is not bool:
             raise TypeError(f"streaming must be a bool, got {type(self.streaming).__name__}")
-        if type(self.schema_version) is not str:
+        if type(self.strands_sdk_retries) is not bool:
             raise TypeError(
-                f"schema_version must be a str, got {type(self.schema_version).__name__}"
+                f"strands_sdk_retries must be a bool, got {type(self.strands_sdk_retries).__name__}"
             )
+        if type(self.turns_limit) is not int:
+            raise TypeError(f"turns_limit must be an int, got {type(self.turns_limit).__name__}")
+        if not isinstance(self.tool_names, (list, tuple)):
+            raise TypeError(
+                f"tool_names must be a tuple of str, got {type(self.tool_names).__name__}"
+            )
+        for tn in self.tool_names:
+            if not isinstance(tn, str):
+                raise TypeError(f"tool_names items must be str, got {type(tn).__name__}")
+        # Normalize tool_names to tuple
+        if isinstance(self.tool_names, list):
+            object.__setattr__(self, "tool_names", tuple(self.tool_names))
+        if type(self.tools_count) is not int:
+            raise TypeError(f"tools_count must be an int, got {type(self.tools_count).__name__}")
+        if self.tools_count != len(self.tool_names):
+            msg = (
+                f"tools_count ({self.tools_count}) must equal "
+                f"len(tool_names) ({len(self.tool_names)})"
+            )
+            raise ValueError(msg)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to a deterministic serializable dictionary."""
@@ -192,6 +227,7 @@ class PlannerRuntimeMetadata:
             "planner_provider": self.planner_provider,
             "model_id": self.model_id,
             "region_name": self.region_name,
+            "schema_version": self.schema_version,
             "strands_version": self.strands_version,
             "boto3_version": self.boto3_version,
             "botocore_version": self.botocore_version,
@@ -200,61 +236,65 @@ class PlannerRuntimeMetadata:
             "connect_timeout_seconds": self.connect_timeout_seconds,
             "read_timeout_seconds": self.read_timeout_seconds,
             "total_max_attempts": self.total_max_attempts,
-            "tools_count": self.tools_count,
-            "turns_limit": self.turns_limit,
+            "retry_mode": self.retry_mode,
             "streaming": self.streaming,
-            "schema_version": self.schema_version,
+            "strands_sdk_retries": self.strands_sdk_retries,
+            "turns_limit": self.turns_limit,
+            "tool_names": list(self.tool_names),
+            "tools_count": self.tools_count,
         }
 
 
 def create_planner_runtime_metadata(
+    settings: BedrockPlannerSettings | None = None,
     *,
-    model_id: str = DEFAULT_MODEL_ID,
-    region_name: str = DEFAULT_REGION_NAME,
-    schema_version: str = DEFAULT_SCHEMA_VERSION,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
-    temperature: float = DEFAULT_TEMPERATURE,
-    connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
-    read_timeout_seconds: float = DEFAULT_READ_TIMEOUT_SECONDS,
-    total_max_attempts: int = DEFAULT_TOTAL_MAX_ATTEMPTS,
-    tools_count: int = DEFAULT_TOOLS_COUNT,
-    turns_limit: int = DEFAULT_TURNS_LIMIT,
-    streaming: bool = DEFAULT_STREAMING,
-    strands_version: str | None = None,
-    boto3_version: str | None = None,
-    botocore_version: str | None = None,
+    _strands_version: str | None = None,
+    _boto3_version: str | None = None,
+    _botocore_version: str | None = None,
 ) -> PlannerRuntimeMetadata:
-    """Create PlannerRuntimeMetadata with runtime-resolved package versions.
+    """Create PlannerRuntimeMetadata from runtime-owned settings and installed versions.
 
-    Package versions are resolved deterministically via importlib.metadata
-    unless explicitly supplied (e.g. for testing version variations).
-    The model MUST NOT supply or override package versions.
+    Derives strictly from validated BedrockPlannerSettings and installed package versions.
+    The model MUST NOT supply or override metadata.
     """
+    from stilldone.planning.bedrock import BedrockPlannerSettings
+
+    cfg = settings if settings is not None else BedrockPlannerSettings()
+    if not isinstance(cfg, BedrockPlannerSettings):
+        raise TypeError(f"settings must be BedrockPlannerSettings, got {type(cfg).__name__}")
+
     resolved_strands = (
-        strands_version if strands_version is not None else _get_installed_version("strands-agents")
+        _strands_version
+        if _strands_version is not None
+        else _get_installed_version("strands-agents")
     )
-    resolved_boto3 = boto3_version if boto3_version is not None else _get_installed_version("boto3")
+    resolved_boto3 = (
+        _boto3_version if _boto3_version is not None else _get_installed_version("boto3")
+    )
     resolved_botocore = (
-        botocore_version if botocore_version is not None else _get_installed_version("botocore")
+        _botocore_version if _botocore_version is not None else _get_installed_version("botocore")
     )
 
     return PlannerRuntimeMetadata(
         planner_runtime=PLANNER_RUNTIME_STRANDS,
         planner_provider=PLANNER_PROVIDER_AMAZON_BEDROCK,
-        model_id=model_id,
-        region_name=region_name,
+        model_id=cfg.model_id,
+        region_name=cfg.region_name,
+        schema_version=DEFAULT_SCHEMA_VERSION,
         strands_version=resolved_strands,
         boto3_version=resolved_boto3,
         botocore_version=resolved_botocore,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        connect_timeout_seconds=connect_timeout_seconds,
-        read_timeout_seconds=read_timeout_seconds,
-        total_max_attempts=total_max_attempts,
-        tools_count=tools_count,
-        turns_limit=turns_limit,
-        streaming=streaming,
-        schema_version=schema_version,
+        max_tokens=cfg.max_tokens,
+        temperature=cfg.temperature,
+        connect_timeout_seconds=cfg.connect_timeout,
+        read_timeout_seconds=cfg.read_timeout,
+        total_max_attempts=cfg.total_max_attempts,
+        retry_mode=cfg.retry_mode,
+        streaming=False,
+        strands_sdk_retries=False,
+        turns_limit=1,
+        tool_names=(),
+        tools_count=0,
     )
 
 
@@ -270,7 +310,7 @@ def bind_planner_runtime_metadata(
     """Bind planner runtime metadata into an evidence payload.
 
     Creates a new dict with the metadata injected under the reserved
-    PLANNER_RUNTIME_PAYLOAD_KEY. The original payload is NOT mutated.
+    PLANNER_RUNTIME_PAYLOAD_KEY. The original payload is deeply isolated and NOT mutated.
 
     Fails closed if:
     - payload is not a dict
@@ -278,7 +318,7 @@ def bind_planner_runtime_metadata(
     - payload already contains the reserved key
 
     Returns:
-        New dict with planner_runtime metadata bound.
+        New deep-detached dict with planner_runtime metadata bound.
     """
     if not isinstance(payload, dict):
         raise TypeError(f"payload must be a dict, got {type(payload).__name__}")
@@ -293,8 +333,8 @@ def bind_planner_runtime_metadata(
             f"cannot overwrite existing planner runtime metadata"
         )
 
-    # Create a new dict — never mutate the input
-    result = dict(payload)
+    # Deep-detach bound payload
+    result = copy.deepcopy(payload)
     result[PLANNER_RUNTIME_PAYLOAD_KEY] = metadata.to_dict()
     return result
 
@@ -305,10 +345,13 @@ __all__ = [
     "DEFAULT_MODEL_ID",
     "DEFAULT_READ_TIMEOUT_SECONDS",
     "DEFAULT_REGION_NAME",
+    "DEFAULT_RETRY_MODE",
     "DEFAULT_SCHEMA_VERSION",
+    "DEFAULT_STRANDS_SDK_RETRIES",
     "DEFAULT_STREAMING",
     "DEFAULT_TEMPERATURE",
     "DEFAULT_TOOLS_COUNT",
+    "DEFAULT_TOOL_NAMES",
     "DEFAULT_TOTAL_MAX_ATTEMPTS",
     "DEFAULT_TURNS_LIMIT",
     "PLANNER_PROVIDER_AMAZON_BEDROCK",

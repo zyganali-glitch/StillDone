@@ -44,6 +44,10 @@ from stilldone.planning.contracts import (
     PlannerTypeError,
     parse_candidate_plan_for_input,
 )
+from stilldone.planning.metadata import (
+    PlannerRuntimeMetadata,
+    create_planner_runtime_metadata,
+)
 
 # ===========================================================================
 # Strands Agent Errors
@@ -125,6 +129,7 @@ class StrandsPlannerResult:
     stop_reason: str
     model_id: str
     region_name: str
+    metadata: PlannerRuntimeMetadata
 
 
 # ===========================================================================
@@ -194,6 +199,7 @@ def plan_with_strands(
     *,
     settings: BedrockPlannerSettings | None = None,
     _model_override: Any = None,
+    _metadata_override: PlannerRuntimeMetadata | None = None,
 ) -> StrandsPlannerResult:
     """Execute a bounded Strands planning invocation for a single mission.
 
@@ -214,16 +220,18 @@ def plan_with_strands(
         settings: Optional BedrockPlannerSettings override (defaults to canonical).
         _model_override: For testing only. If provided, used instead of real
             BedrockModel. Must NOT be used in production.
+        _metadata_override: For testing only. If provided, used instead of deriving
+            from installed package metadata.
 
     Returns:
-        StrandsPlannerResult with validated plan.
+        StrandsPlannerResult with validated plan and runtime metadata.
 
     Raises:
         PlannerTypeError: If planner_input is not a PlannerInput instance.
         StrandsTransportError: If the Strands Agent invocation fails.
         StrandsStopReasonError: If stop_reason is not "end_turn".
         StrandsEmptyResponseError: If the result contains no text.
-        StrandsNonTextContentError: If the result contains non-text blocks.
+        StrandsNonTextContentError: If the result contains non-text blocks or envelope violations.
         StrandsPlanRejectionError: If the plan fails deterministic validation.
     """
     from strands import Agent
@@ -234,6 +242,12 @@ def plan_with_strands(
         )
 
     cfg = settings or BedrockPlannerSettings()
+
+    # Runtime metadata derived from validated Bedrock settings and installed versions
+    if _metadata_override is not None:
+        metadata = _metadata_override
+    else:
+        metadata = create_planner_runtime_metadata(cfg)
 
     # Create a fresh model for this invocation (or use test override)
     if _model_override is not None:
@@ -311,26 +325,44 @@ def plan_with_strands(
         raise transport_err from None
 
     # Process the Strands AgentResult
-    return _process_strands_result(planner_input, result, cfg)
+    return _process_strands_result(planner_input, result, cfg, metadata)
 
 
 def _process_strands_result(
     planner_input: PlannerInput,
     result: Any,
     settings: BedrockPlannerSettings,
+    metadata: PlannerRuntimeMetadata,
 ) -> StrandsPlannerResult:
     """Process and validate a Strands AgentResult.
 
     Treats the result as untrusted runtime output.
 
     Requirements:
+    - Envelope checks: no interrupts, no structured_output, no checkpoints
     - stop_reason must be "end_turn"
-    - Must contain assistant message with text-only content
+    - Canonical final result.message required (no messages fallback, no str fallback)
+    - Message role must be "assistant"
+    - Text-only complete final message
     - Combined text must pass MAX_PLANNER_JSON_BYTES check
     - Must cross parse_candidate_plan_for_input
     """
     if result is None:
         raise StrandsEmptyResponseError("Strands agent returned None result")
+
+    # Reject AgentResult envelope attacks
+    if hasattr(result, "interrupts") and result.interrupts:
+        raise StrandsNonTextContentError(
+            "Strands agent result contains interrupts; interactive interrupts are rejected"
+        )
+    if hasattr(result, "structured_output") and result.structured_output is not None:
+        raise StrandsNonTextContentError(
+            "Strands agent result contains structured_output; structured output model is disabled"
+        )
+    if hasattr(result, "checkpoint") and result.checkpoint is not None:
+        raise StrandsNonTextContentError(
+            "Strands agent result contains checkpoint; checkpointing is disabled"
+        )
 
     # Extract stop_reason from result
     stop_reason: str | None = None
@@ -346,7 +378,6 @@ def _process_strands_result(
         raise StrandsStopReasonError("Strands agent stop_reason must be a string")
 
     if stop_reason != ACCEPTED_STOP_REASON:
-        # Sanitize unknown stop reasons
         clean_reason = (
             stop_reason
             if stop_reason in (KNOWN_BEDROCK_STOP_REASONS | _STRANDS_UNACCEPTABLE_STOP_REASONS)
@@ -356,8 +387,96 @@ def _process_strands_result(
             f"Unacceptable Strands stop reason: {clean_reason!r}; expected {ACCEPTED_STOP_REASON!r}"
         )
 
-    # Extract text from the result
-    combined_text = _extract_text_from_result(result)
+    # Require canonical final result.message.
+    # NO historical messages fallback, NO str(result) fallback.
+    if not hasattr(result, "message") or result.message is None:
+        raise StrandsEmptyResponseError("Strands agent result missing canonical 'message'")
+
+    message = result.message
+
+    # Require role == 'assistant'
+    role: str | None = None
+    if isinstance(message, dict):
+        role = message.get("role")
+    elif hasattr(message, "role"):
+        role = message.role
+    elif hasattr(message, "get") and callable(message.get):
+        role = message.get("role")
+
+    if not isinstance(role, str) or role != "assistant":
+        raise StrandsEmptyResponseError(
+            f"Strands result message role must be 'assistant', got {role!r}"
+        )
+
+    # Extract content from message
+    content: Any = None
+    if isinstance(message, dict):
+        content = message.get("content")
+    elif hasattr(message, "content"):
+        content = message.content
+    elif hasattr(message, "get") and callable(message.get):
+        content = message.get("content")
+
+    if content is None:
+        raise StrandsEmptyResponseError("Strands result message has no content")
+
+    # Text-only complete final message extraction
+    text_parts: list[str] = []
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, (list, tuple)):
+        for idx, block in enumerate(content):
+            if isinstance(block, str):
+                text_parts.append(block)
+                continue
+
+            if not isinstance(block, dict):
+                msg = (
+                    f"Strands content block at index {idx} has unsupported type "
+                    f"{type(block).__name__}"
+                )
+                raise StrandsNonTextContentError(msg)
+
+            # Check for non-text block types or sibling non-text fields
+            if any(
+                k in block
+                for k in (
+                    "toolUse",
+                    "toolResult",
+                    "reasoning",
+                    "document",
+                    "image",
+                    "video",
+                    "audio",
+                    "citationsContent",
+                )
+            ):
+                raise StrandsNonTextContentError(
+                    f"Strands content block at index {idx} contains non-text content "
+                    "which is not accepted for planner text extraction"
+                )
+
+            if "text" in block:
+                block_text = block["text"]
+                if not isinstance(block_text, str):
+                    raise StrandsNonTextContentError(
+                        f"Strands content 'text' at index {idx} must be a string, "
+                        f"got {type(block_text).__name__}"
+                    )
+                text_parts.append(block_text)
+            else:
+                raise StrandsNonTextContentError(
+                    f"Strands content block at index {idx} missing 'text' field"
+                )
+    else:
+        raise StrandsEmptyResponseError(
+            f"Strands result content must be a string or list, got {type(content).__name__}"
+        )
+
+    if not text_parts:
+        raise StrandsEmptyResponseError("No text blocks found in Strands result content")
+
+    combined_text = "".join(text_parts)
 
     if not combined_text.strip():
         raise StrandsEmptyResponseError("Strands agent returned empty or whitespace-only text")
@@ -395,92 +514,8 @@ def _process_strands_result(
         stop_reason=stop_reason,
         model_id=settings.model_id,
         region_name=settings.region_name,
+        metadata=metadata,
     )
-
-
-def _extract_text_from_result(result: Any) -> str:
-    """Extract text content from a Strands AgentResult.
-
-    Inspects the final message content deterministically.
-    Requires text-only content — rejects toolUse, toolResult,
-    reasoning, document, image, or any non-text blocks.
-    """
-    # Try to get the message from the result
-    message = None
-    if hasattr(result, "message"):
-        message = result.message
-    elif hasattr(result, "messages") and result.messages:
-        # Get the last assistant message
-        for msg in reversed(result.messages):
-            if isinstance(msg, dict) and msg.get("role") == "assistant":
-                message = msg
-                break
-
-    if message is None:
-        # Fall back to str(result) only if we can verify it's text-only
-        result_str = str(result)
-        if result_str:
-            return result_str
-        raise StrandsEmptyResponseError("Cannot extract message from Strands result")
-
-    # Extract content from the message
-    content: Any = None
-    if isinstance(message, dict):
-        content = message.get("content")
-    elif hasattr(message, "content"):
-        content = message.content
-
-    if content is None:
-        raise StrandsEmptyResponseError("Strands result message has no content")
-
-    if isinstance(content, str):
-        return content
-
-    if not isinstance(content, (list, tuple)):
-        raise StrandsEmptyResponseError(
-            f"Strands result content must be a string or list, got {type(content).__name__}"
-        )
-
-    # Inspect each content block — reject non-text blocks
-    text_parts: list[str] = []
-    for idx, block in enumerate(content):
-        if isinstance(block, str):
-            text_parts.append(block)
-            continue
-
-        if not isinstance(block, dict):
-            raise StrandsNonTextContentError(
-                f"Strands content block at index {idx} has unsupported type {type(block).__name__}"
-            )
-
-        # Only accept text blocks
-        if "text" in block:
-            block_text = block["text"]
-            if not isinstance(block_text, str):
-                raise StrandsNonTextContentError(
-                    f"Strands content 'text' at index {idx} must be a string, "
-                    f"got {type(block_text).__name__}"
-                )
-            text_parts.append(block_text)
-        elif "toolUse" in block or "toolResult" in block:
-            raise StrandsNonTextContentError(
-                f"Strands content block at index {idx} contains tool-use output "
-                "which is not accepted for planner text extraction"
-            )
-        elif any(k in block for k in ("reasoning", "document", "image", "video", "audio")):
-            raise StrandsNonTextContentError(
-                f"Strands content block at index {idx} contains non-text content "
-                "which is not accepted for planner text extraction"
-            )
-        else:
-            raise StrandsNonTextContentError(
-                f"Strands content block at index {idx} missing 'text' field"
-            )
-
-    if not text_parts:
-        raise StrandsEmptyResponseError("No text blocks found in Strands result content")
-
-    return "".join(text_parts)
 
 
 __all__ = [
