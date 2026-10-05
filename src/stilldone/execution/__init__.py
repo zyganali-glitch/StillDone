@@ -15,6 +15,16 @@ Submodules:
 
 from __future__ import annotations
 
+from stilldone.execution.attempts import (
+    create_execution_attempt,
+    record_calendar_read_result,
+    record_calendar_update_result,
+    record_provider_exception,
+    record_provider_result,
+    record_task_create_result,
+    record_task_read_result,
+    record_weather_read_result,
+)
 from stilldone.execution.compiler import compile_candidate_plan
 from stilldone.execution.contracts import (
     DependencyCycleError,
@@ -53,5 +63,13 @@ __all__ = [
     "TargetResolutionError",
     "UnsupportedActionError",
     "compile_candidate_plan",
+    "create_execution_attempt",
+    "record_calendar_read_result",
+    "record_calendar_update_result",
+    "record_provider_exception",
+    "record_provider_result",
+    "record_task_create_result",
+    "record_task_read_result",
+    "record_weather_read_result",
     "schedule_execution",
 ]

@@ -1160,7 +1160,7 @@ Status: IMPLEMENTED / awaiting independent QA
 Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.04 — Implement execution attempts and provider-result recording
-Status: PENDING (Authorized Batch P-08.01 → P-08.05)
+Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
 Status: PENDING (Authorized Batch P-08.01 → P-08.05)
