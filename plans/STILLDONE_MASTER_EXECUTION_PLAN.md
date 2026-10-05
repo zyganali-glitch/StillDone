@@ -1197,7 +1197,7 @@ Status: IMPLEMENTED (awaiting independent QA review)
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-09.07 — Add executor-success/readback-mismatch and stale-history tests
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 Phase exit:
 renewable completion exists.

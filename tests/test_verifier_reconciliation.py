@@ -48,6 +48,7 @@ from stilldone.verifier.freshness import (
     NaiveDatetimeError,
 )
 from stilldone.verifier.predicates import PredicateTruth
+from stilldone.verifier.readiness import compute_mission_readiness
 from stilldone.verifier.reconciliation import (
     HistoricalObservationSubstitutionError,
     PlannerReconciliationAuthorityError,
@@ -698,3 +699,296 @@ class TestReconciliationTransition:
         assert d["is_drifted"] is False
         assert d["explanation"] is None
         assert "reconciliation" in d
+
+
+# ===========================================================================
+# P-09.07 Adversarial Read-Back & Reconciliation Tests
+# ===========================================================================
+
+
+class TestAdversarialReadbackReconciliation:
+    """Verifies all 10 adversarial reconciliation and read-back scenarios."""
+
+    def test_01_executor_success_alone_cannot_produce_ready_or_still_true(self) -> None:
+        """Scenario 1: Executor success alone cannot produce READY/STILL_TRUE."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+
+        # compute_mission_readiness without verification requests cannot produce READY
+        det = compute_mission_readiness(
+            mission_id=mission_id,
+            predicates=[p],
+            at=T_EVAL,
+        )
+        assert det.is_ready is False
+        assert det.state != MissionState.READY
+
+        # An execution payload cannot substitute for verification facts in reconciliation
+        exec_payload = ProviderExecutionResult(
+            action_type=ActionType.CALENDAR_UPDATE,
+            success=True,
+            status_name="SUCCESS",
+        )
+        with pytest.raises(ExecutionPayloadSubstitutionError):
+            reconcile_mission_state(
+                mission_id=mission_id,
+                predicates=[p],
+                verification_requests={p.predicate_id: exec_payload},  # type: ignore[dict-item]
+                fresh_observations={},
+                at=T_EVAL,
+            )
+
+    def test_02_executor_success_with_readback_mismatch_produces_no_longer_true_and_drifted(
+        self,
+    ) -> None:
+        """Scenario 2: Executor success + readback mismatch -> NO_LONGER_TRUE / DRIFTED."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        # Read-back reveals that reality did not take the update (remains 'unconfirmed')
+        mismatched_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={"status": "unconfirmed"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: mismatched_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
+        assert reconciliation.is_still_true is False
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+
+    def test_03_readback_observation_missing_required_property_produces_no_longer_true_and_drifted(
+        self,
+    ) -> None:
+        """Scenario 3: Read-back observation missing required property -> NO_LONGER_TRUE."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        # Observation exists, but missing 'status' property
+        missing_prop_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={},  # 'status' missing
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: missing_prop_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+
+    def test_04_stale_fresh_observation_produces_stale_and_drifted(self) -> None:
+        """Scenario 4: Stale fresh observation (outside window) -> STALE / DRIFTED."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        # Observation is 10 minutes old (> 300s window)
+        stale_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: stale_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.STALE
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+
+    def test_05_observation_older_than_historical_verification_rejected_as_replay(self) -> None:
+        """Scenario 5: Observation older than historical observation -> rejected as replay."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        hist_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+        older_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST - timedelta(seconds=10),
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+
+        with pytest.raises(HistoricalObservationSubstitutionError) as exc_info:
+            reconcile_mission_state(
+                mission_id=mission_id,
+                predicates=[p],
+                verification_requests={p.predicate_id: req},
+                fresh_observations={p.predicate_id: older_obs},
+                historical_observations={p.predicate_id: hist_obs},
+                at=T_EVAL,
+            )
+        assert "is not strictly newer than historical observation" in str(exc_info.value)
+
+    def test_06_identical_observation_object_reused_as_fresh_rejected(self) -> None:
+        """Scenario 6: Identical observation object reused as fresh -> rejected."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+
+        with pytest.raises(HistoricalObservationSubstitutionError) as exc_info:
+            reconcile_mission_state(
+                mission_id=mission_id,
+                predicates=[p],
+                verification_requests={p.predicate_id: req},
+                fresh_observations={p.predicate_id: obs},
+                historical_observations={p.predicate_id: obs},
+                at=T_EVAL,
+            )
+        assert "Identical historical observation object reused" in str(exc_info.value)
+
+    def test_07_missing_observation_for_required_predicate_produces_incomplete_and_drifted(
+        self,
+    ) -> None:
+        """Scenario 7: Missing observation for required predicate -> INCOMPLETE / DRIFTED."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={},  # missing observation for required predicate
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.INCOMPLETE
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+
+    def test_08_non_ready_mission_attempted_reconciliation_transition_rejected(self) -> None:
+        """Scenario 8: Non-READY mission attempted reconciliation transition -> rejected."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+        fresh_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: fresh_obs},
+            at=T_EVAL,
+        )
+
+        with pytest.raises(ReconciliationLifecycleError):
+            apply_reconciliation_transition(
+                prior_state=MissionState.VERIFYING,
+                reconciliation=reconciliation,
+            )
+
+    def test_09_model_proposal_passed_as_reconciliation_proof_rejected(self) -> None:
+        """Scenario 9: Model proposal passed as reconciliation proof -> rejected."""
+        planner_input = PlannerInput(
+            mission_id=MissionId.generate(),
+            intent="Model hallucinating verification outcome",
+        )
+
+        with pytest.raises(PlannerReconciliationAuthorityError):
+            reconcile_mission_state(
+                mission_id=planner_input.mission_id,
+                predicates=[planner_input],  # type: ignore[list-item]
+                verification_requests={},
+                fresh_observations={},
+                at=T_EVAL,
+            )
+
+    def test_10_valid_fresh_readback_yields_still_true_and_remains_ready(
+        self,
+    ) -> None:
+        """Scenario 10: Valid fresh readback proving desired state -> STILL_TRUE / remains READY."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        hist_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+        fresh_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: fresh_obs},
+            historical_observations={p.predicate_id: hist_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.STILL_TRUE
+        assert reconciliation.is_still_true is True
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.READY
+        assert transition.is_drifted is False
+        assert transition.explanation is None
