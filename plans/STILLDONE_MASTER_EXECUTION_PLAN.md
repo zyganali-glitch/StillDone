@@ -1012,7 +1012,7 @@ Acceptance:
 - CI Split & Test Accounting: CI workflow (`.github/workflows/ci.yml`) and `scripts/validate.py` validate both environments (`validate-core-mcp` with 1263 tests and `validate-strands-planner` with 971 tests). 100% of canonical tests (41 test files) are accounted for across the test ownership matrix; zero tests omitted.
 
 ### P-07.03 — Implement real Strands planning agent using bounded tools/context
-Status: REPAIRED / awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`)
 
 Acceptance:
 - bounded Strands planning agent implemented in `src/stilldone/planning/strands_agent.py`;
@@ -1038,7 +1038,7 @@ Acceptance:
 - 35 focused tests in `tests/planning/test_strands_agent.py` passing with domain purity cleanups.
 
 ### P-07.04 — Reject malformed, unsupported, over-broad, or authority-violating model plans
-Status: REPAIRED / awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`)
 
 Acceptance:
 - planner rejection boundary in `src/stilldone/planning/strands_agent.py` catches `(PlannerContractError, ActionPolicyError)` and wraps into `StrandsPlanRejectionError` with `__cause__=None`, `__context__=None`, discarding untrusted exception instances;
@@ -1087,7 +1087,7 @@ Acceptance:
 - inverse proof verified: authority words ('approved', 'verified', 'ready', 'API succeeded') in `explanation` remain inert text conferring zero authority or state.
 
 ### P-07.05 — Bind exact planner model/runtime/version metadata to evidence
-Status: REPAIRED / awaiting independent QA review (NOT PASS)
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`)
 
 Acceptance:
 - planner runtime metadata contract implemented in `src/stilldone/planning/metadata.py`;
@@ -1123,7 +1123,7 @@ Acceptance:
 - 88 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
-Status: EXECUTED / awaiting independent QA review
+Status: DONE — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`)
 
 Acceptance:
 - exact committed source SHA bound: `ca56e54e2cbe70fa004523c5e750af9bc3f527b9` (Commit C verified before credential resolution and inference);
@@ -1141,7 +1141,7 @@ Acceptance:
 - comprehensive live evidence captured in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
 
 Phase exit:
-Phase P-07 is EXECUTED — awaiting independent QA review (AWS intelligence is genuine, bounded, exact-SHA proven).
+Phase P-07 is CLOSED — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`).
 
 ---
 
@@ -1151,22 +1151,22 @@ Goal:
 execute compiled plans without letting planner prose own truth.
 
 ### P-08.01 — Implement mission compiler from validated plan to immutable execution contract
-Status: PENDING
+Status: IN PROGRESS (Authorized Batch P-08.01 → P-08.05)
 
 ### P-08.02 — Implement deterministic action scheduler and dependency ordering
-Status: PENDING
+Status: PENDING (Authorized Batch P-08.01 → P-08.05)
 
 ### P-08.03 — Implement partial-failure preservation and per-step states
-Status: PENDING
+Status: PENDING (Authorized Batch P-08.01 → P-08.05)
 
 ### P-08.04 — Implement execution attempts and provider-result recording
-Status: PENDING
+Status: PENDING (Authorized Batch P-08.01 → P-08.05)
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
-Status: PENDING
+Status: PENDING (Authorized Batch P-08.01 → P-08.05)
 
 ### P-08.06 — Add mixed success/failure/not-run mission tests
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Phase exit:
 multi-step mission executes honestly.
