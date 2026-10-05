@@ -29,12 +29,20 @@ from stilldone.verifier.dispatch import (
     WeatherVerificationPort,
     create_verifier_dispatcher,
 )
+from stilldone.verifier.predicates import (
+    PredicateEvaluationResult,
+    PredicateTruth,
+    evaluate_predicate,
+    evaluate_predicates,
+)
 
 __all__ = [
     "CalendarVerificationPort",
     "ExecutionPayloadSubstitutionError",
     "MalformedObservationError",
     "MissingVerifierRouteError",
+    "PredicateEvaluationResult",
+    "PredicateTruth",
     "ReadAdapterPort",
     "TasksVerificationPort",
     "UnsupportedVerificationTargetError",
@@ -46,4 +54,6 @@ __all__ = [
     "VerifierTargetMismatchError",
     "WeatherVerificationPort",
     "create_verifier_dispatcher",
+    "evaluate_predicate",
+    "evaluate_predicates",
 ]
