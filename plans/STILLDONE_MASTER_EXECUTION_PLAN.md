@@ -1166,7 +1166,7 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-08.06 — Add mixed success/failure/not-run mission tests
-Status: IN_PROGRESS
+Status: IMPLEMENTED (awaiting independent QA phase closure)
 
 Phase exit:
 multi-step mission executes honestly.
@@ -1179,16 +1179,16 @@ Goal:
 make reality, not the executor, decide completion.
 
 ### P-09.01 — Implement verifier dispatch independent from execute result payload
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA phase closure)
 
 ### P-09.02 — Implement exact predicate evaluation for Calendar and Tasks
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA phase closure)
 
 ### P-09.03 — Implement freshness/stale evaluation
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA phase closure)
 
 ### P-09.04 — Implement deterministic mission readiness computation
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA phase closure)
 
 ### P-09.05 — Implement reconciliation of previously verified mission against fresh external state
 Status: PENDING
