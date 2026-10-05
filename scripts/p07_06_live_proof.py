@@ -42,16 +42,62 @@ from stilldone.planning.strands_agent import (  # noqa: E402
 )
 
 
-def get_source_sha() -> str:
-    """Return current git HEAD commit SHA."""
+def verify_source_sha_and_tree(expected_sha: str | None) -> str:
+    """Verify git working tree is clean and HEAD == origin/main == expected_sha.
+
+    Fails closed if expected_sha is missing/blank, working tree is dirty,
+    commit resolution fails, or any SHA mismatch is detected.
+    """
+    if not expected_sha or not expected_sha.strip():
+        raise RuntimeError(
+            "Missing expected source SHA. Live execution requires an explicit commit SHA."
+        )
+    expected_clean = expected_sha.strip()
+
     try:
-        return subprocess.check_output(
+        status_out = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo_root),
+            text=True,
+        ).strip()
+    except Exception as exc:
+        raise RuntimeError(f"Git command failed during tree status check: {exc}") from exc
+
+    if status_out:
+        raise RuntimeError(
+            "Git working tree is dirty. Live execution requires a clean working tree. "
+            f"Status: {status_out}"
+        )
+
+    try:
+        head_sha = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_root),
             text=True,
         ).strip()
-    except Exception:
-        return "UNKNOWN"
+    except Exception as exc:
+        raise RuntimeError(f"Git command failed resolving HEAD: {exc}") from exc
+
+    try:
+        origin_sha = subprocess.check_output(
+            ["git", "rev-parse", "origin/main"],
+            cwd=str(repo_root),
+            text=True,
+        ).strip()
+    except Exception as exc:
+        raise RuntimeError(f"Git command failed resolving origin/main: {exc}") from exc
+
+    if head_sha != origin_sha:
+        raise RuntimeError(
+            f"Git HEAD ({head_sha}) does not match origin/main ({origin_sha}). Aborting."
+        )
+
+    if head_sha != expected_clean:
+        raise RuntimeError(
+            f"Git HEAD ({head_sha}) does not match expected source SHA ({expected_clean})."
+        )
+
+    return head_sha
 
 
 def resolve_and_verify_temporary_credentials() -> dict[str, Any]:
@@ -60,8 +106,8 @@ def resolve_and_verify_temporary_credentials() -> dict[str, Any]:
     Fails closed unless credentials are demonstrably temporary session credentials.
     At minimum requires:
     - AWS_ACCESS_KEY_ID (must begin with 'ASIA' for STS temporary credentials)
-    - AWS_SECRET_ACCESS_KEY
-    - AWS_SESSION_TOKEN
+    - AWS_SECRET_ACCESS_KEY (non-empty)
+    - AWS_SESSION_TOKEN (non-empty)
 
     Inspects expiration information where available.
     Never logs credentials, never prints secrets.
@@ -103,23 +149,30 @@ def resolve_and_verify_temporary_credentials() -> dict[str, Any]:
     os.environ["AWS_REGION"] = "us-east-1"
 
     # Enforce temporary session credential requirements
-    if not access_key or not secret_key:
+    if not access_key:
         raise RuntimeError(
-            "Missing AWS credentials in environment. Short-lived session credentials required."
+            "Missing AWS_ACCESS_KEY_ID in environment. Short-lived session credentials required."
+        )
+
+    if not secret_key:
+        raise RuntimeError(
+            "Missing AWS_SECRET_ACCESS_KEY in environment. "
+            "Short-lived session credentials required."
         )
 
     if not session_token:
         raise RuntimeError(
-            "Missing AWS_SESSION_TOKEN. Long-lived static credentials are forbidden; "
-            "short-lived temporary session credentials are required."
+            "Missing AWS_SESSION_TOKEN in environment. Long-lived static credentials are "
+            "forbidden; short-lived temporary session credentials are required."
         )
 
     # In AWS STS, temporary credentials have an access key ID starting with ASIA.
-    # Long-lived IAM user access keys start with AKIA.
-    if access_key.startswith("AKIA"):
+    # Positively require ASIA prefix; fail closed on all other prefixes.
+    if not access_key.startswith("ASIA"):
+        prefix = access_key[:4] if len(access_key) >= 4 else "UNKNOWN"
         raise RuntimeError(
-            "Static long-lived IAM access key (AKIA...) detected. StillDone requires "
-            "temporary session credentials (ASIA...) with an active session token. Aborting."
+            f"Invalid AWS access key prefix ('{prefix}'). StillDone strictly requires "
+            "temporary session credentials starting with 'ASIA' with an active session token."
         )
 
     return {
@@ -231,11 +284,24 @@ def run_negative_control_proof(
 
 
 def run_live_proof(
-    operator_approval_ref: str | None = None,
+    operator_approval_ref: str,
+    expected_source_sha: str,
     credential_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute exactly ONE live Bedrock inference and the negative control proof."""
-    source_sha = get_source_sha()
+    if not operator_approval_ref or not operator_approval_ref.strip():
+        raise ValueError(
+            "Missing or empty operator_approval_ref. Live execution requires an explicit "
+            "approval reference."
+        )
+    if not expected_source_sha or not expected_source_sha.strip():
+        raise ValueError(
+            "Missing or empty expected_source_sha. Live execution requires an explicit "
+            "expected commit SHA."
+        )
+
+    validated_sha = expected_source_sha.strip()
+    approval_ref = operator_approval_ref.strip()
 
     # 1. Deterministic natural-language mission input
     mission_uuid = str(uuid.uuid4())
@@ -245,11 +311,10 @@ def run_live_proof(
 
     utc_start = datetime.now(UTC).isoformat()
     print(f"[*] Starting P-07.06 Live Bedrock inference at {utc_start}")
-    print(f"[*] Execution Source SHA: {source_sha}")
+    print(f"[*] Execution Source SHA: {validated_sha}")
     print(f"[*] Mission ID: {mission_uuid}")
     print(f"[*] Intent: {intent!r}")
-    if operator_approval_ref:
-        print(f"[*] Operator Approval Ref: {operator_approval_ref}")
+    print(f"[*] Operator Approval Ref: {approval_ref}")
 
     # 2. Real Strands Planner Invocation (EXACTLY 1 live call)
     settings = BedrockPlannerSettings()
@@ -296,26 +361,26 @@ def run_live_proof(
     control_facts = run_negative_control_proof(planner_input=planner_input, settings=settings)
     print(f"[*] Negative control confirmed: fails closed ({control_facts['caught_exception']})")
 
-    # Bounded cost and tool truth (Defects 5 & Cost Truth)
+    # Bounded cost and billing truth (Defect 4: runtime does not own billing truth)
     underlying_cost = "NOT_DETERMINISTICALLY_OBSERVED"
-    personal_spend_delta = "$0.00"
+    promotional_credit_status = "NOT_OBSERVED_BY_THIS_RUNTIME"
+    personal_spend_delta = "NOT_OBSERVED_BY_THIS_RUNTIME"
 
     evidence_facts = {
-        "execution_source_sha": source_sha,
+        "execution_source_sha": validated_sha,
         "timestamp_start_utc": utc_start,
         "timestamp_end_utc": utc_end,
         "task": "P-07.06",
         "provenance": "LIVE_AWS",
         "operator_approval": {
             "authorized_before_inference": True,
-            "operator_approval_ref": (
-                operator_approval_ref or "APPROVE P-07.06 REPAIR LIVE BEDROCK INFERENCE"
-            ),
+            "operator_approval_ref": approval_ref,
         },
         "credential_truth": credential_metadata
         or {
             "credential_mode": "temporary_session",
             "session_token_present": True,
+            "key_prefix": "ASIA",
         },
         "model_id": meta.model_id,
         "region_name": meta.region_name,
@@ -338,7 +403,7 @@ def run_live_proof(
         "metadata_fields_count": 18,
         "live_call_count": 1,
         "underlying_service_cost": underlying_cost,
-        "promotional_credit_status": "ACTIVE / CONFIRMED",
+        "promotional_credit_status": promotional_credit_status,
         "personal_spend_delta": personal_spend_delta,
         "tool_observation": {
             "agent_tools_configured": "[] (enforced by plan_with_strands and P-07.03 tests)",
@@ -375,13 +440,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--operator-approval-ref",
         type=str,
         default=None,
-        help="Exact operator approval string/timestamp reference",
+        help="Exact operator approval string/timestamp reference (required for live mode)",
+    )
+    parser.add_argument(
+        "--expected-source-sha",
+        type=str,
+        default=None,
+        help="Exact expected git commit SHA for execution (required for live mode)",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point enforcing hard approval and credential gates."""
+    """CLI entry point enforcing hard approval, SHA parity, and credential gates."""
     args = parse_args(argv)
 
     if not args.approve_live and not args.negative_control_only:
@@ -402,12 +473,53 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(control_facts, indent=2))
         return 0
 
-    # 1. Resolve and enforce short-lived session credentials
-    cred_meta = resolve_and_verify_temporary_credentials()
+    # Live mode checks:
+    # 1. Require explicit, non-empty operator approval ref
+    if not args.operator_approval_ref or not args.operator_approval_ref.strip():
+        print(
+            "ERROR: Live Bedrock inference requires an explicit operator approval reference "
+            "via '--operator-approval-ref <REF>'.\n"
+            "Execution aborted before credential resolution. Zero AWS/Bedrock calls made.",
+            file=sys.stderr,
+        )
+        return 2
 
-    # 2. Run live proof (1 call) + negative control (0 calls)
+    # 2. Require explicit, non-empty expected source SHA
+    if not args.expected_source_sha or not args.expected_source_sha.strip():
+        print(
+            "ERROR: Live Bedrock inference requires an explicit expected commit SHA "
+            "via '--expected-source-sha <SHA>'.\n"
+            "Execution aborted before credential resolution. Zero AWS/Bedrock calls made.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 3. Verify clean working tree and git SHA parity (HEAD == origin/main == expected_sha)
+    try:
+        validated_sha = verify_source_sha_and_tree(args.expected_source_sha)
+    except Exception as exc:
+        print(
+            f"ERROR: Git source verification failed: {exc}\n"
+            "Execution aborted before credential resolution. Zero AWS/Bedrock calls made.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 4. Resolve and enforce short-lived session credentials
+    try:
+        cred_meta = resolve_and_verify_temporary_credentials()
+    except Exception as exc:
+        print(
+            f"ERROR: AWS credential verification failed: {exc}\n"
+            "Execution aborted before inference. Zero AWS/Bedrock calls made.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 5. Run live proof (1 call) + negative control (0 calls)
     facts = run_live_proof(
-        operator_approval_ref=args.operator_approval_ref,
+        operator_approval_ref=args.operator_approval_ref.strip(),
+        expected_source_sha=validated_sha,
         credential_metadata=cred_meta,
     )
     print("\n[SUCCESS] P-07.06 Live Proof Completed Successfully!")

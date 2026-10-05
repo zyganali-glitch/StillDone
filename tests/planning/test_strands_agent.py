@@ -589,11 +589,11 @@ class TestStrandsResultImmutableContract:
 
 class TestLiveProofHarnessAndControl:
     """Verifies P-07.06 live proof harness, approval gate, credential enforcement,
-    and Strands-compatible negative control model contract.
+    clean working tree and exact SHA gate, and Strands-compatible negative control model contract.
     """
 
     def test_strands_compatible_non_producing_model_contract(self) -> None:
-        """Defect 1: Compatible negative control inherits from Strands Model,
+        """Compatible negative control inherits from Strands Model,
         enters normal Strands stream orchestration with zero network calls,
         and deterministic pipeline fails closed with StrandsEmptyResponseError.
         """
@@ -622,34 +622,6 @@ class TestLiveProofHarnessAndControl:
         assert control_model.stream_call_count == 1
         assert control_model.network_call_count == 0
 
-    def test_live_proof_gate_cli_requires_approval_flag(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Defect 2: Live proof CLI requires --approve-live. Without it,
-        exits non-zero BEFORE credential resolution with zero AWS calls.
-        """
-        import sys
-        from pathlib import Path
-
-        repo_root = Path(__file__).resolve().parent.parent.parent
-        if str(repo_root / "scripts") not in sys.path:
-            sys.path.insert(0, str(repo_root / "scripts"))
-        import p07_06_live_proof
-
-        # Ensure credentials resolution is NOT called
-        def forbid_credentials() -> Any:
-            raise AssertionError("Credentials resolution MUST NOT be called without approval flag")
-
-        monkeypatch.setattr(
-            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
-        )
-
-        exit_code = p07_06_live_proof.main([])
-        assert exit_code == 2
-
-        captured = capsys.readouterr()
-        assert "ERROR: Live Bedrock inference requires explicit operator approval" in captured.err
-
     def test_live_proof_negative_control_only_mode(self) -> None:
         """Live proof CLI --negative-control-only executes negative control with zero AWS calls."""
         import sys
@@ -663,9 +635,11 @@ class TestLiveProofHarnessAndControl:
         exit_code = p07_06_live_proof.main(["--negative-control-only"])
         assert exit_code == 0
 
-    def test_temporary_credentials_enforcement(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Defect 3: Live proof script strictly requires short-lived temporary session
-        credentials (ASIA... + AWS_SESSION_TOKEN). Static long-lived keys fail closed.
+    def test_cli_gate_without_flags_fails_closed_zero_aws_calls(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Defect 2: Live proof CLI without flags exits non-zero BEFORE credential resolution
+        with zero AWS calls.
         """
         import sys
         from pathlib import Path
@@ -675,37 +649,389 @@ class TestLiveProofHarnessAndControl:
             sys.path.insert(0, str(repo_root / "scripts"))
         import p07_06_live_proof
 
-        # Case 1: Missing all credentials -> fails closed
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
-        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        def forbid_credentials() -> Any:
+            raise AssertionError("Credentials resolution MUST NOT be called without approval flag")
+
+        monkeypatch.setattr(
+            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
+        )
+
+        exit_code = p07_06_live_proof.main([])
+        assert exit_code == 2
+
+        captured = capsys.readouterr()
+        assert "ERROR: Live Bedrock inference requires explicit operator approval" in captured.err
+
+    def test_cli_gate_approve_live_without_approval_ref_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Defect 2: --approve-live without --operator-approval-ref exits non-zero
+        BEFORE credential resolution.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        def forbid_credentials() -> Any:
+            raise AssertionError("Credentials resolution MUST NOT be called without approval ref")
+
+        monkeypatch.setattr(
+            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
+        )
+
+        exit_code = p07_06_live_proof.main(["--approve-live"])
+        assert exit_code == 2
+
+        captured = capsys.readouterr()
+        assert (
+            "ERROR: Live Bedrock inference requires an explicit operator approval reference"
+            in captured.err
+        )
+
+    def test_cli_gate_blank_approval_ref_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Defect 2: Whitespace/empty --operator-approval-ref exits non-zero
+        BEFORE credential resolution.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        def forbid_credentials() -> Any:
+            raise AssertionError(
+                "Credentials resolution MUST NOT be called with blank approval ref"
+            )
+
+        monkeypatch.setattr(
+            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
+        )
+
+        exit_code = p07_06_live_proof.main(["--approve-live", "--operator-approval-ref", "   "])
+        assert exit_code == 2
+
+        captured = capsys.readouterr()
+        assert (
+            "ERROR: Live Bedrock inference requires an explicit operator approval reference"
+            in captured.err
+        )
+
+    def test_cli_gate_missing_expected_sha_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Defect 3: --approve-live with approval ref but missing --expected-source-sha
+        exits non-zero.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        def forbid_credentials() -> Any:
+            raise AssertionError("Credentials resolution MUST NOT be called without expected SHA")
+
+        monkeypatch.setattr(
+            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
+        )
+
+        exit_code = p07_06_live_proof.main(
+            [
+                "--approve-live",
+                "--operator-approval-ref",
+                "APPROVE P-07.06 TEST",
+            ]
+        )
+        assert exit_code == 2
+
+        captured = capsys.readouterr()
+        assert (
+            "ERROR: Live Bedrock inference requires an explicit expected commit SHA" in captured.err
+        )
+
+    def test_cli_gate_valid_args_proceed_to_credential_gate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2 & 3: Valid flags pass argument and git checks and reach the credential gate."""
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        test_sha = "a" * 40
+        monkeypatch.setattr(
+            p07_06_live_proof, "verify_source_sha_and_tree", lambda expected: test_sha
+        )
+
+        class CredentialGateReached(Exception):
+            pass
+
+        def sentinel_credential_resolver() -> Any:
+            raise CredentialGateReached("Credential gate reached successfully before inference")
+
+        monkeypatch.setattr(
+            p07_06_live_proof,
+            "resolve_and_verify_temporary_credentials",
+            sentinel_credential_resolver,
+        )
+
+        exit_code = p07_06_live_proof.main(
+            [
+                "--approve-live",
+                "--operator-approval-ref",
+                "APPROVE P-07.06 TEST",
+                "--expected-source-sha",
+                test_sha,
+            ]
+        )
+        assert exit_code == 2  # Proves credentials gate was executed and error handled!
+
+    def test_run_live_proof_rejects_missing_or_blank_args(self) -> None:
+        """Defect 2 & 3: run_live_proof itself fails closed on missing or blank
+        approval ref or expected SHA.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        test_sha = "a" * 40
+        with pytest.raises(ValueError, match="Missing or empty operator_approval_ref"):
+            p07_06_live_proof.run_live_proof(
+                operator_approval_ref="",
+                expected_source_sha=test_sha,
+            )
+
+        with pytest.raises(ValueError, match="Missing or empty operator_approval_ref"):
+            p07_06_live_proof.run_live_proof(
+                operator_approval_ref="   ",
+                expected_source_sha=test_sha,
+            )
+
+        with pytest.raises(ValueError, match="Missing or empty expected_source_sha"):
+            p07_06_live_proof.run_live_proof(
+                operator_approval_ref="APPROVE P-07.06 TEST",
+                expected_source_sha="",
+            )
+
+        with pytest.raises(ValueError, match="Missing or empty expected_source_sha"):
+            p07_06_live_proof.run_live_proof(
+                operator_approval_ref="APPROVE P-07.06 TEST",
+                expected_source_sha="   ",
+            )
+
+    def test_verify_source_sha_and_tree_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Defect 3: Deterministic test matrix for verify_source_sha_and_tree():
+        1. Clean exact match -> accepted (returns sha)
+        2. Dirty tree -> rejected
+        3. HEAD mismatch -> rejected
+        4. origin/main mismatch -> rejected
+        5. Git command failure -> rejected
+        """
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        sha_a = "1" * 40
+        sha_b = "2" * 40
+
+        # Case 1: Clean exact match -> accepted
+        def mock_git_clean(cmd: list[str], **kwargs: Any) -> str:
+            if "status" in cmd:
+                return ""
+            if "HEAD" in cmd:
+                return sha_a
+            if "origin/main" in cmd:
+                return sha_a
+            raise RuntimeError(f"Unexpected git cmd: {cmd}")
+
+        monkeypatch.setattr(subprocess, "check_output", mock_git_clean)
+        result_sha = p07_06_live_proof.verify_source_sha_and_tree(sha_a)
+        assert result_sha == sha_a
+
+        # Case 2: Dirty tree -> rejected
+        def mock_git_dirty(cmd: list[str], **kwargs: Any) -> str:
+            if "status" in cmd:
+                return " M scripts/p07_06_live_proof.py"
+            return sha_a
+
+        monkeypatch.setattr(subprocess, "check_output", mock_git_dirty)
+        with pytest.raises(RuntimeError, match="Git working tree is dirty"):
+            p07_06_live_proof.verify_source_sha_and_tree(sha_a)
+
+        # Case 3: HEAD mismatch with expected SHA -> rejected
+        def mock_git_head_mismatch(cmd: list[str], **kwargs: Any) -> str:
+            if "status" in cmd:
+                return ""
+            if "HEAD" in cmd:
+                return sha_b
+            if "origin/main" in cmd:
+                return sha_b
+            return ""
+
+        monkeypatch.setattr(subprocess, "check_output", mock_git_head_mismatch)
+        with pytest.raises(RuntimeError, match="does not match expected source SHA"):
+            p07_06_live_proof.verify_source_sha_and_tree(sha_a)
+
+        # Case 4: HEAD mismatch with origin/main -> rejected
+        def mock_git_origin_mismatch(cmd: list[str], **kwargs: Any) -> str:
+            if "status" in cmd:
+                return ""
+            if "HEAD" in cmd:
+                return sha_a
+            if "origin/main" in cmd:
+                return sha_b
+            return ""
+
+        monkeypatch.setattr(subprocess, "check_output", mock_git_origin_mismatch)
+        with pytest.raises(RuntimeError, match="does not match origin/main"):
+            p07_06_live_proof.verify_source_sha_and_tree(sha_a)
+
+        # Case 5: Git command failure -> rejected
+        def mock_git_failure(cmd: list[str], **kwargs: Any) -> str:
+            raise subprocess.CalledProcessError(128, cmd, output="fatal: not a git repository")
+
+        monkeypatch.setattr(subprocess, "check_output", mock_git_failure)
+        with pytest.raises(RuntimeError, match="Git command failed"):
+            p07_06_live_proof.verify_source_sha_and_tree(sha_a)
+
+    def test_temporary_credentials_matrix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Defect 1: Deterministic test matrix for resolve_and_verify_temporary_credentials():
+        1. ASIA + secret + session token -> accepted
+        2. AKIA + secret + session token -> rejected
+        3. ZZZZ + secret + session token -> rejected
+        4. ASIA + secret + no session token -> rejected
+        5. ASIA + no secret + session token -> rejected
+        No secret values logged or leaked in output.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        # Prevent CLI fallback to aws configure export-credentials
         monkeypatch.setattr(p07_06_live_proof.shutil, "which", lambda cmd: None)
 
-        with pytest.raises(RuntimeError, match="Missing AWS credentials in environment"):
-            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        secret_val = "SECRET_VALUE_MUST_NOT_LEAK_999"
+        token_val = "SESSION_TOKEN_MUST_NOT_LEAK_888"
 
-        # Case 2: Static long-lived keys without session token -> fails closed
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
-
-        with pytest.raises(RuntimeError, match="Missing AWS_SESSION_TOKEN"):
-            p07_06_live_proof.resolve_and_verify_temporary_credentials()
-
-        # Case 3: Static AKIA key even if session token spoofed -> fails closed
-        monkeypatch.setenv("AWS_SESSION_TOKEN", "dummy_session_token")
-        with pytest.raises(RuntimeError, match="Static long-lived IAM access key"):
-            p07_06_live_proof.resolve_and_verify_temporary_credentials()
-
-        # Case 4: Legitimate temporary session credentials (ASIA... + session token) -> succeeds
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIATEMPORARY123456")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "temporary_secret_key_abcdef")
-        monkeypatch.setenv("AWS_SESSION_TOKEN", "valid_session_token_xyz")
+        # 1. ASIA + secret + session token -> accepted
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIAPOSITIVETEST1234")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secret_val)
+        monkeypatch.setenv("AWS_SESSION_TOKEN", token_val)
 
         meta = p07_06_live_proof.resolve_and_verify_temporary_credentials()
         assert meta["credential_mode"] == "temporary_session"
         assert meta["session_token_present"] is True
         assert meta["key_prefix"] == "ASIA"
-        # Secrets must NOT be returned or leaked
-        assert "temporary_secret_key_abcdef" not in str(meta)
-        assert "valid_session_token_xyz" not in str(meta)
+        assert secret_val not in str(meta)
+        assert token_val not in str(meta)
+
+        # 2. AKIA + secret + session token -> rejected
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIASTATICUSERKEY123")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secret_val)
+        monkeypatch.setenv("AWS_SESSION_TOKEN", token_val)
+
+        with pytest.raises(RuntimeError, match="Invalid AWS access key prefix.*AKIA") as exc_info:
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        assert secret_val not in str(exc_info.value)
+
+        # 3. ZZZZ + secret + session token -> rejected
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ZZZZCUSTOMPREFIX123")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secret_val)
+        monkeypatch.setenv("AWS_SESSION_TOKEN", token_val)
+
+        with pytest.raises(RuntimeError, match="Invalid AWS access key prefix.*ZZZZ") as exc_info:
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        assert secret_val not in str(exc_info.value)
+
+        # 4. ASIA + secret + no session token -> rejected
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIAPOSITIVETEST1234")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secret_val)
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+        with pytest.raises(RuntimeError, match="Missing AWS_SESSION_TOKEN") as exc_info:
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        assert secret_val not in str(exc_info.value)
+
+        # 5. ASIA + no secret + session token -> rejected
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIAPOSITIVETEST1234")
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.setenv("AWS_SESSION_TOKEN", token_val)
+
+        with pytest.raises(RuntimeError, match="Missing AWS_SECRET_ACCESS_KEY") as exc_info:
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        assert token_val not in str(exc_info.value)
+
+    def test_evidence_facts_billing_and_approval_truth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2 & 4: Evidence dictionary records exact supplied approval ref,
+        and records underlying cost and billing status as unobserved by runtime.
+        Zero hard-coded $0.00 spend or active credit assumed.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        real_plan_with_strands = p07_06_live_proof.plan_with_strands
+
+        def mock_plan(p_in: Any, settings: Any = None, **kwargs: Any) -> Any:
+            if "_model_override" in kwargs:
+                return real_plan_with_strands(p_in, settings=settings, **kwargs)
+            fake_json = _make_valid_plan_json(str(p_in.mission_id))
+            fake_model = _create_fake_model(events=_make_text_events(fake_json))
+            return real_plan_with_strands(p_in, settings=settings, _model_override=fake_model)
+
+        monkeypatch.setattr(p07_06_live_proof, "plan_with_strands", mock_plan)
+
+        approval_ref = "APPROVE P-07.06 DETERMINISTIC PROOF REF"
+        source_sha = "d" * 40
+
+        facts = p07_06_live_proof.run_live_proof(
+            operator_approval_ref=approval_ref,
+            expected_source_sha=source_sha,
+            credential_metadata={
+                "credential_mode": "temporary_session",
+                "session_token_present": True,
+                "key_prefix": "ASIA",
+                "expiration": "2026-10-05T12:00:00Z",
+            },
+        )
+
+        assert facts["execution_source_sha"] == source_sha
+        assert facts["operator_approval"]["operator_approval_ref"] == approval_ref
+        assert facts["operator_approval"]["authorized_before_inference"] is True
+        assert facts["underlying_service_cost"] == "NOT_DETERMINISTICALLY_OBSERVED"
+        assert facts["promotional_credit_status"] == "NOT_OBSERVED_BY_THIS_RUNTIME"
+        assert facts["personal_spend_delta"] == "NOT_OBSERVED_BY_THIS_RUNTIME"
+        assert facts["live_call_count"] == 1
+        assert facts["negative_control"]["negative_control_passed"] is True
