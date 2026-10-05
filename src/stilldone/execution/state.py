@@ -29,6 +29,7 @@ from stilldone.domain.mission import MissionId
 from stilldone.execution.contracts import (
     ExecutionContractTypeError,
     ExecutionContractValueError,
+    ExecutionDependencyError,
     ExecutionLineageError,
     ExecutionTransitionError,
     MissionExecutionContract,
@@ -363,8 +364,9 @@ class ExecutionStateTracker:
         """Check if action is safe to execute based on prerequisite statuses.
 
         Returns:
-            (True, None) if all prerequisites succeeded.
-            (False, failed_aid) if any prerequisite failed or was blocked.
+            (True, None) if all prerequisites succeeded (EXECUTION_SUCCEEDED).
+            (False, unsatisfied_prereq) if any prerequisite has not reached
+            EXECUTION_SUCCEEDED.
 
         Raises:
             ExecutionContractTypeError: If action_id is not an ActionId.
@@ -372,23 +374,25 @@ class ExecutionStateTracker:
         """
         self._require_known_action_id(action_id)
         prereqs = self._contract.dependencies.get(action_id, frozenset())
-        for prereq in prereqs:
-            prereq_status = self._records[prereq].status
-            if prereq_status in (
-                ActionExecutionStatus.EXECUTION_FAILED,
-                ActionExecutionStatus.BLOCKED,
-                ActionExecutionStatus.NOT_RUN,
-            ):
-                return False, prereq
+        for prereq in self._schedule.ordered_action_ids:
+            if prereq in prereqs:
+                if self._records[prereq].status != ActionExecutionStatus.EXECUTION_SUCCEEDED:
+                    return False, prereq
         return True, None
 
     def mark_in_progress(self, action_id: ActionId) -> None:
         """Mark action as currently in progress.
 
+        Enforces:
+        - action_id belongs to the contract/schedule.
+        - action is currently in NOT_RUN state.
+        - every prerequisite action has reached EXECUTION_SUCCEEDED.
+
         Raises:
             ExecutionContractTypeError: If action_id is not an ActionId.
             UnknownActionIdError: If action_id is not in contract.
             ExecutionTransitionError: If action is not in NOT_RUN state.
+            ExecutionDependencyError: If any prerequisite is not in EXECUTION_SUCCEEDED.
         """
         self._require_known_action_id(action_id)
         current = self._records[action_id].status
@@ -396,6 +400,15 @@ class ExecutionStateTracker:
             raise ExecutionTransitionError(
                 f"Cannot transition action {action_id} from {current.value} to IN_PROGRESS: "
                 f"only NOT_RUN actions can transition to IN_PROGRESS"
+            )
+        can_run, unsatisfied_prereq = self.can_execute(action_id)
+        if not can_run:
+            assert unsatisfied_prereq is not None
+            prereq_status = self._records[unsatisfied_prereq].status
+            raise ExecutionDependencyError(
+                f"Cannot transition action {action_id} to IN_PROGRESS: "
+                f"prerequisite action {unsatisfied_prereq} is in state {prereq_status.value} "
+                f"(must be EXECUTION_SUCCEEDED)"
             )
         self._records[action_id] = StepExecutionRecord(
             action_id=action_id,

@@ -75,6 +75,10 @@ class ExecutionTransitionError(ExecutionContractValueError):
     """Raised when an invalid step execution state transition is attempted."""
 
 
+class ExecutionDependencyError(ExecutionTransitionError):
+    """Raised when an action cannot transition because prerequisites are not satisfied."""
+
+
 class ExecutionLineageError(ExecutionContractValueError):
     """Raised when an execution attempt or provider result does not match action lineage."""
 

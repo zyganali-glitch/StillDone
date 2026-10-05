@@ -77,7 +77,7 @@ Preferred AWS target:
 Active batch: Phase P-08 Deterministic Mission Execution Engine (P-08.01 → P-08.05)
 
 Current exact task:
-Consolidated Execution-Truth Repair — P-08.03 → P-08.05 ONLY
+FINAL SURGICAL REPAIR — P-08.03 + P-08.05 ONLY
 
 Status:
 `REPAIRED / awaiting independent QA (NOT PASS)`
@@ -86,7 +86,7 @@ Phase P-08 Status:
 - P-08.01 — PASS (independent QA verified)
 - P-08.02 — PASS (independent QA verified)
 - P-08.03 — REPAIRED / awaiting independent QA
-- P-08.04 — REPAIRED / awaiting independent QA
+- P-08.04 — PASS (independent QA verified)
 - P-08.05 — REPAIRED / awaiting independent QA
 
 Remaining authorized tasks in batch:

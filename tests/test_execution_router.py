@@ -15,10 +15,12 @@ Validates that:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from stilldone.action_policy import ValidatedActionContract, validate_action_contract
 from stilldone.adapters.calendar import (
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
@@ -481,3 +483,205 @@ class TestRouterAttemptLineageEnforcement:
             handler.execute(validated, attempt=mismatched_attempt)
 
         assert calendar_fake.reads_count == 0
+
+
+def _build_handler_fixture(
+    handler_key: str,
+    demo_scope: DemoResourceScope,
+    calendar_fake: FakeGoogleCalendarTransport,
+    tasks_fake: FakeGoogleTasksTransport,
+    weather_fake: FakeOpenMeteoTransport,
+) -> tuple[ActionHandler, ValidatedActionContract, Callable[[], int]]:
+    mid = MissionId.generate()
+    aid = ActionId.generate()
+    count_fn: Callable[[], int]
+    if handler_key == "calendar_read":
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={},
+            action_id=aid,
+        )
+        handler: ActionHandler = CalendarReadHandler(
+            GoogleCalendarReadAdapter(demo_scope, calendar_fake)
+        )
+
+        def count_cal_read() -> int:
+            return calendar_fake.reads_count + calendar_fake.writes_count
+
+        count_fn = count_cal_read
+    elif handler_key == "calendar_update":
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={"summary": "New school departure"},
+            action_id=aid,
+        )
+        handler = CalendarUpdateHandler(GoogleCalendarUpdateAdapter(demo_scope, calendar_fake))
+
+        def count_cal_update() -> int:
+            return calendar_fake.reads_count + calendar_fake.writes_count
+
+        count_fn = count_cal_update
+    elif handler_key == "tasks_read":
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_READ,
+            target=TargetIdentity(
+                system="google_tasks",
+                resource_kind=ResourceKind.TASK,
+                resource_id="task-pack",
+                parent_id=demo_scope.task_list_id,
+            ),
+            parameters={},
+            action_id=aid,
+        )
+        handler = TasksReadHandler(GoogleTasksReadAdapter(demo_scope, tasks_fake))
+
+        def count_tasks_read() -> int:
+            return tasks_fake.reads_count + tasks_fake.writes_count
+
+        count_fn = count_tasks_read
+    elif handler_key == "tasks_create":
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=TargetIdentity(
+                system="google_tasks",
+                resource_kind=ResourceKind.TASK_LIST,
+                resource_id=demo_scope.task_list_id,
+                parent_id=None,
+            ),
+            parameters={"title": "Pack backpacks"},
+            action_id=aid,
+        )
+        handler = TasksCreateHandler(GoogleTasksCreateAdapter(demo_scope, tasks_fake))
+
+        def count_tasks_create() -> int:
+            return tasks_fake.reads_count + tasks_fake.writes_count
+
+        count_fn = count_tasks_create
+    elif handler_key == "weather_read":
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.WEATHER_READ,
+            target=TargetIdentity(
+                system="open_meteo",
+                resource_kind=ResourceKind.WEATHER_LOCATION,
+                resource_id="demo-loc",
+                parent_id=None,
+            ),
+            parameters={},
+            action_id=aid,
+        )
+        loc_cfg = WeatherLocationConfig(location_id="demo-loc", latitude=52.52, longitude=13.41)
+        handler = WeatherReadHandler(OpenMeteoReadAdapter(loc_cfg, weather_fake))
+
+        def count_weather_read() -> int:
+            return weather_fake.reads_count
+
+        count_fn = count_weather_read
+    else:
+        raise ValueError(f"Unknown handler key: {handler_key}")
+
+    validated = validate_action_contract(action)
+    return handler, validated, count_fn
+
+
+ALL_HANDLER_KEYS = [
+    "calendar_read",
+    "calendar_update",
+    "tasks_read",
+    "tasks_create",
+    "weather_read",
+]
+
+
+class TestConcreteHandlersDirectP08Guards:
+    """Defect 2: Concrete handlers must directly enforce P-08 attempt lineage and attempt_number==1.
+
+    Guarantees:
+    - attempt_number=2 fails closed with ExecutionContractValueError before transport invocation.
+    - mismatched action_id fails closed with RouterLineageError before transport invocation.
+    - non-ExecutionAttempt fails closed with ExecutionContractTypeError before transport invocation.
+    - Transport invocation count remains strictly 0.
+    - No ProviderExecutionResult is created.
+    """
+
+    @pytest.mark.parametrize("handler_key", ALL_HANDLER_KEYS)
+    def test_direct_handler_rejects_attempt_number_two(
+        self,
+        handler_key: str,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+        tasks_fake: FakeGoogleTasksTransport,
+        weather_fake: FakeOpenMeteoTransport,
+    ) -> None:
+        handler, validated, count_fn = _build_handler_fixture(
+            handler_key, demo_scope, calendar_fake, tasks_fake, weather_fake
+        )
+        attempt_2 = ExecutionAttempt.create(
+            action_id=validated.action_id,
+            idempotency_key=IdempotencyKey.generate(),
+            attempt_number=2,
+        )
+
+        with pytest.raises(ExecutionContractValueError, match="only allows attempt_number=1"):
+            handler.execute(validated, attempt=attempt_2)
+
+        # Transport invocation count strictly 0
+        assert count_fn() == 0
+
+    @pytest.mark.parametrize("handler_key", ALL_HANDLER_KEYS)
+    def test_direct_handler_rejects_mismatched_action_id(
+        self,
+        handler_key: str,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+        tasks_fake: FakeGoogleTasksTransport,
+        weather_fake: FakeOpenMeteoTransport,
+    ) -> None:
+        handler, validated, count_fn = _build_handler_fixture(
+            handler_key, demo_scope, calendar_fake, tasks_fake, weather_fake
+        )
+        foreign_aid = ActionId.generate()
+        mismatched_attempt = ExecutionAttempt.create(
+            action_id=foreign_aid,
+            idempotency_key=IdempotencyKey.generate(),
+            attempt_number=1,
+        )
+
+        with pytest.raises(RouterLineageError, match="does not match action.action_id"):
+            handler.execute(validated, attempt=mismatched_attempt)
+
+        assert count_fn() == 0
+
+    @pytest.mark.parametrize("handler_key", ALL_HANDLER_KEYS)
+    def test_direct_handler_rejects_non_execution_attempt(
+        self,
+        handler_key: str,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+        tasks_fake: FakeGoogleTasksTransport,
+        weather_fake: FakeOpenMeteoTransport,
+    ) -> None:
+        handler, validated, count_fn = _build_handler_fixture(
+            handler_key, demo_scope, calendar_fake, tasks_fake, weather_fake
+        )
+
+        with pytest.raises(ExecutionContractTypeError, match="attempt must be an ExecutionAttempt"):
+            handler.execute(validated, attempt="not-an-attempt")  # type: ignore[arg-type]
+
+        assert count_fn() == 0

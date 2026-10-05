@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from stilldone.action_policy import ValidatedActionContract, validate_action_contract
 from stilldone.adapters.calendar import (
@@ -108,6 +108,40 @@ class ActionHandler(Protocol):
 
 
 # ===========================================================================
+# Canonical Attempt and Lineage Validation Helper
+# ===========================================================================
+
+
+def _validate_p08_attempt_lineage(
+    action: ActionContract | ValidatedActionContract,
+    attempt: Any,
+) -> None:
+    """Validate attempt type, attempt_number == 1, and action lineage.
+
+    Enforces P-08 single-attempt execution boundary fail-closed before any
+    transport invocation.
+    """
+    if not isinstance(attempt, ExecutionAttempt):
+        raise ExecutionContractTypeError(
+            f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+        )
+    if isinstance(attempt.attempt_number, bool) or attempt.attempt_number != 1:
+        raise ExecutionContractValueError(
+            f"P-08 router only allows attempt_number=1, got {attempt.attempt_number}"
+        )
+    if not isinstance(action, (ActionContract, ValidatedActionContract)):
+        raise ExecutionContractTypeError(
+            f"action must be an ActionContract or ValidatedActionContract, "
+            f"got {type(action).__name__}"
+        )
+    if attempt.action_id != action.action_id:
+        raise RouterLineageError(
+            f"ExecutionAttempt action_id {attempt.action_id} does not match "
+            f"action.action_id {action.action_id}"
+        )
+
+
+# ===========================================================================
 # Concrete Handlers Wrapping Canonical Adapters
 # ===========================================================================
 
@@ -128,15 +162,7 @@ class CalendarReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
         try:
             raw_result = self._adapter.read_event(action)
             return record_calendar_read_result(raw_result)
@@ -160,15 +186,7 @@ class CalendarUpdateHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
         if approval is None:
             raise ActionAuthorityError(
                 "calendar.update requires a cryptographically bound ApprovalGrant"
@@ -196,15 +214,7 @@ class TasksReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
         try:
             raw_result = self._adapter.read_task(action, at=at)
             return record_task_read_result(raw_result)
@@ -228,15 +238,7 @@ class TasksCreateHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
         try:
             raw_result = self._adapter.create_task(action, at=at)
             return record_task_create_result(raw_result)
@@ -260,15 +262,7 @@ class WeatherReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
         try:
             raw_result = self._adapter.read_weather(action, at=at)
             return record_weather_read_result(raw_result)
@@ -344,23 +338,11 @@ class AdapterRouter:
         """
         # Enforce attempt type, attempt_number==1, and action<->attempt lineage
         # strictly BEFORE authority evaluation or execution
-        if not isinstance(attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
-            )
-        if isinstance(attempt.attempt_number, bool) or attempt.attempt_number != 1:
-            raise ExecutionContractValueError(
-                f"P-08 router only allows attempt_number=1, got {attempt.attempt_number}"
-            )
         if not isinstance(action, ActionContract):
             raise ExecutionContractTypeError(
                 f"action must be an ActionContract, got {type(action).__name__}"
             )
-        if attempt.action_id != action.action_id:
-            raise RouterLineageError(
-                f"ExecutionAttempt action_id {attempt.action_id} does not match "
-                f"action.action_id {action.action_id}"
-            )
+        _validate_p08_attempt_lineage(action, attempt)
 
         # Validate action contract
         validated = validate_action_contract(action)

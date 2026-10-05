@@ -28,6 +28,7 @@ from stilldone.execution.compiler import compile_candidate_plan
 from stilldone.execution.contracts import (
     ExecutionContractTypeError,
     ExecutionContractValueError,
+    ExecutionDependencyError,
     ExecutionLineageError,
     ExecutionTransitionError,
     MissionExecutionContract,
@@ -688,3 +689,233 @@ class TestActionProviderResultLineage:
                 attempt=att,
                 provider_result=None,
             )
+
+
+class TestPrerequisiteStateEnforcement:
+    """Defect 1 & 1B: Strict prerequisite state checking across can_execute and mark_in_progress.
+
+    Canonical law:
+    An action is executable ONLY if EVERY prerequisite is exactly EXECUTION_SUCCEEDED.
+    - NOT_RUN: cannot execute, mark_in_progress rejected.
+    - IN_PROGRESS: cannot execute, mark_in_progress rejected.
+    - EXECUTION_FAILED: cannot execute, mark_in_progress rejected.
+    - BLOCKED: cannot execute, mark_in_progress rejected.
+    - EXECUTION_SUCCEEDED: allowed to execute, mark_in_progress allowed.
+    No mutation on rejection.
+    Root action with no dependencies: NOT_RUN -> IN_PROGRESS allowed.
+    """
+
+    def test_prerequisite_not_run_rejects_can_execute_and_mark_in_progress(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0, a1, _ = schedule.ordered_action_ids
+
+        # a1 depends on a0. a0 is NOT_RUN.
+        can_run, unsatisfied = tracker.can_execute(a1)
+        assert can_run is False
+        assert unsatisfied == a0
+
+        # mark_in_progress(a1) fails closed with ExecutionDependencyError
+        with pytest.raises(ExecutionDependencyError, match="must be EXECUTION_SUCCEEDED"):
+            tracker.mark_in_progress(a1)
+
+        # Zero mutation: a1 remains strictly NOT_RUN
+        snapshot = tracker.snapshot()
+        rec_a1 = snapshot.step_records[a1]
+        assert rec_a1.status == ActionExecutionStatus.NOT_RUN
+        assert rec_a1.attempt is None
+        assert rec_a1.provider_result is None
+        assert rec_a1.blocked_by is None
+
+    def test_prerequisite_in_progress_rejects_can_execute_and_mark_in_progress(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0, a1, _ = schedule.ordered_action_ids
+
+        # Root action a0 transitions cleanly to IN_PROGRESS
+        tracker.mark_in_progress(a0)
+        assert tracker.snapshot().step_records[a0].status == ActionExecutionStatus.IN_PROGRESS
+
+        # a1 depends on a0. a0 is IN_PROGRESS (NOT satisfied).
+        can_run, unsatisfied = tracker.can_execute(a1)
+        assert can_run is False
+        assert unsatisfied == a0
+
+        # mark_in_progress(a1) fails closed with ExecutionDependencyError
+        with pytest.raises(ExecutionDependencyError, match="must be EXECUTION_SUCCEEDED"):
+            tracker.mark_in_progress(a1)
+
+        # Zero mutation: a1 remains strictly NOT_RUN
+        snapshot = tracker.snapshot()
+        rec_a1 = snapshot.step_records[a1]
+        assert rec_a1.status == ActionExecutionStatus.NOT_RUN
+        assert rec_a1.attempt is None
+        assert rec_a1.provider_result is None
+        assert rec_a1.blocked_by is None
+
+    def test_prerequisite_failed_rejects_can_execute_and_mark_in_progress(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0, a1, _ = schedule.ordered_action_ids
+
+        tracker.mark_in_progress(a0)
+        att0 = ExecutionAttempt.create(action_id=a0, idempotency_key=IdempotencyKey.generate())
+        tracker.record_failure(a0, att0, None, error_message="Step 0 failed")
+
+        # a0 is EXECUTION_FAILED. a1 was marked BLOCKED by record_failure.
+        can_run, unsatisfied = tracker.can_execute(a1)
+        assert can_run is False
+        assert unsatisfied == a0
+
+        # mark_in_progress(a1) must reject (a1 is BLOCKED, not NOT_RUN)
+        with pytest.raises(ExecutionTransitionError, match="only NOT_RUN actions"):
+            tracker.mark_in_progress(a1)
+
+        # Zero mutation: a1 remains BLOCKED
+        assert tracker.snapshot().step_records[a1].status == ActionExecutionStatus.BLOCKED
+
+    def test_prerequisite_blocked_rejects_can_execute_and_mark_in_progress(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0, a1, a2 = schedule.ordered_action_ids
+
+        # Fail a0, causing a1 to be BLOCKED and a2 to be BLOCKED
+        tracker.mark_in_progress(a0)
+        att0 = ExecutionAttempt.create(action_id=a0, idempotency_key=IdempotencyKey.generate())
+        tracker.record_failure(a0, att0, None, error_message="Step 0 failed")
+
+        # a2 depends on a1. a1 is BLOCKED.
+        can_run, unsatisfied = tracker.can_execute(a2)
+        assert can_run is False
+        assert unsatisfied in (a0, a1)
+
+        # mark_in_progress(a2) rejected
+        with pytest.raises(ExecutionTransitionError, match="only NOT_RUN actions"):
+            tracker.mark_in_progress(a2)
+
+        assert tracker.snapshot().step_records[a2].status == ActionExecutionStatus.BLOCKED
+
+    def test_prerequisite_succeeded_permits_can_execute_and_mark_in_progress(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0, a1, _ = schedule.ordered_action_ids
+
+        tracker.mark_in_progress(a0)
+        att0 = ExecutionAttempt.create(action_id=a0, idempotency_key=IdempotencyKey.generate())
+        res0 = ProviderExecutionResult(ActionType.CALENDAR_READ, True, "OK")
+        tracker.record_success(a0, att0, res0)
+
+        # a0 is EXECUTION_SUCCEEDED. a1 can execute!
+        can_run, unsatisfied = tracker.can_execute(a1)
+        assert can_run is True
+        assert unsatisfied is None
+
+        # mark_in_progress(a1) succeeds!
+        tracker.mark_in_progress(a1)
+        assert tracker.snapshot().step_records[a1].status == ActionExecutionStatus.IN_PROGRESS
+
+    def test_root_action_with_no_dependencies_allowed(
+        self, three_step_contract: MissionExecutionContract
+    ) -> None:
+        schedule = schedule_execution(three_step_contract)
+        tracker = ExecutionStateTracker(three_step_contract, schedule)
+        a0 = schedule.ordered_action_ids[0]
+
+        can_run, unsatisfied = tracker.can_execute(a0)
+        assert can_run is True
+        assert unsatisfied is None
+
+        tracker.mark_in_progress(a0)
+        assert tracker.snapshot().step_records[a0].status == ActionExecutionStatus.IN_PROGRESS
+
+    def test_multi_prerequisite_all_states_must_be_succeeded(
+        self, resolver: SymbolicTargetResolver
+    ) -> None:
+        mid = MissionId.generate()
+        p = CandidatePlanProposal.create(
+            mission_id=mid,
+            steps=[
+                CandidateActionProposal.create(
+                    action_type=ActionType.CALENDAR_READ,
+                    target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+                ),
+                CandidateActionProposal.create(
+                    action_type=ActionType.WEATHER_READ,
+                    target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                ),
+                CandidateActionProposal.create(
+                    action_type=ActionType.TASK_CREATE,
+                    target_ref=SymbolicTargetRef.TASK_LIST,
+                    parameters={"title": "Pack bags"},
+                ),
+            ],
+        )
+        compiled = compile_candidate_plan(p, resolver)
+        a, b, c = [act.action_id for act in compiled.actions]
+
+        # Multi-dependency: C depends on both A and B!
+        multi_deps = {
+            a: frozenset(),
+            b: frozenset(),
+            c: frozenset({a, b}),
+        }
+        contract = MissionExecutionContract(
+            mission_id=mid,
+            actions=compiled.actions,
+            dependencies=multi_deps,
+        )
+        schedule = schedule_execution(contract)
+        tracker = ExecutionStateTracker(contract, schedule)
+
+        # 1. Neither A nor B succeeded -> C rejected
+        can_run, unsatisfied = tracker.can_execute(c)
+        assert can_run is False
+        assert unsatisfied in (a, b)
+        with pytest.raises(ExecutionDependencyError):
+            tracker.mark_in_progress(c)
+        assert tracker.snapshot().step_records[c].status == ActionExecutionStatus.NOT_RUN
+
+        # 2. A succeeds, B is NOT_RUN -> C rejected
+        tracker.mark_in_progress(a)
+        att_a = ExecutionAttempt.create(action_id=a, idempotency_key=IdempotencyKey.generate())
+        tracker.record_success(
+            a, att_a, ProviderExecutionResult(ActionType.CALENDAR_READ, True, "OK")
+        )
+
+        can_run, unsatisfied = tracker.can_execute(c)
+        assert can_run is False
+        assert unsatisfied == b
+        with pytest.raises(ExecutionDependencyError, match="must be EXECUTION_SUCCEEDED"):
+            tracker.mark_in_progress(c)
+        assert tracker.snapshot().step_records[c].status == ActionExecutionStatus.NOT_RUN
+
+        # 3. B is IN_PROGRESS -> C rejected
+        tracker.mark_in_progress(b)
+        can_run, unsatisfied = tracker.can_execute(c)
+        assert can_run is False
+        assert unsatisfied == b
+        with pytest.raises(ExecutionDependencyError, match="must be EXECUTION_SUCCEEDED"):
+            tracker.mark_in_progress(c)
+        assert tracker.snapshot().step_records[c].status == ActionExecutionStatus.NOT_RUN
+
+        # 4. B succeeds -> C now executable!
+        att_b = ExecutionAttempt.create(action_id=b, idempotency_key=IdempotencyKey.generate())
+        tracker.record_success(
+            b, att_b, ProviderExecutionResult(ActionType.WEATHER_READ, True, "OK")
+        )
+
+        can_run, unsatisfied = tracker.can_execute(c)
+        assert can_run is True
+        assert unsatisfied is None
+        tracker.mark_in_progress(c)
+        assert tracker.snapshot().step_records[c].status == ActionExecutionStatus.IN_PROGRESS

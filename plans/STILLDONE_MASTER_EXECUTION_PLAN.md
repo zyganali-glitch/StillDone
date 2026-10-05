@@ -1160,7 +1160,7 @@ Status: PASS (independent QA verified)
 Status: REPAIRED / awaiting independent QA
 
 ### P-08.04 — Implement execution attempts and provider-result recording
-Status: REPAIRED / awaiting independent QA
+Status: PASS (independent QA verified)
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
 Status: REPAIRED / awaiting independent QA
