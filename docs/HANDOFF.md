@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅, Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`) | Phase P-08: IN PROGRESS (Authorized Batch P-08.01 → P-08.05)**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅, Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`) | Phase P-08: IN PROGRESS (Authorized Batch P-08.06 + P-09.01 → P-09.04)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,29 +74,28 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Phase P-08 Deterministic Mission Execution Engine (P-08.01 → P-08.05)
+Active batch: Bounded Five-Task Batch (P-08.06 + P-09.01 → P-09.04)
 
 Current exact task:
-FINAL SURGICAL REPAIR — P-08.03 + P-08.05 ONLY
+P-08.06 — Add mixed success/failure/not-run mission tests
 
 Status:
-`REPAIRED / awaiting independent QA (NOT PASS)`
+`IN_PROGRESS`
 
 Phase P-08 Status:
-- P-08.01 — PASS (independent QA verified)
-- P-08.02 — PASS (independent QA verified)
-- P-08.03 — REPAIRED / awaiting independent QA
-- P-08.04 — PASS (independent QA verified)
-- P-08.05 — REPAIRED / awaiting independent QA
+- P-08.01 — PASS ✅ (independent QA verified)
+- P-08.02 — PASS ✅ (independent QA verified)
+- P-08.03 — PASS ✅ (independent QA verified)
+- P-08.04 — PASS ✅ (independent QA verified)
+- P-08.05 — PASS ✅ (independent QA verified)
+- P-08.06 — IN_PROGRESS (authorized in current batch)
 
-Remaining authorized tasks in batch:
-- None (Authorized Batch P-08.01 → P-08.05 consolidated repair completed; awaiting independent QA)
-
-P-08.06:
-`PENDING / NOT AUTHORIZED / NOT_RUN`
-
-P-09 and later:
-`PENDING / NOT AUTHORIZED / NOT_RUN`
+Phase P-09 Status:
+- P-09.01 — PENDING (authorized in current batch)
+- P-09.02 — PENDING (authorized in current batch)
+- P-09.03 — PENDING (authorized in current batch)
+- P-09.04 — PENDING (authorized in current batch)
+- P-09.05+ — PENDING / NOT AUTHORIZED / NOT_RUN
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -146,7 +145,7 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
   * Cost truth & billing separation: proof runtime emitted `underlying_service_cost="NOT_DETERMINISTICALLY_OBSERVED"`, `promotional_credit_status="NOT_OBSERVED_BY_THIS_RUNTIME"`, `personal_spend_delta="NOT_OBSERVED_BY_THIS_RUNTIME"`; separate operator/account observation confirms active promotional credit and $0.00 personal spend.
   * Evidence recorded in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
   * Phase P-07 is CLOSED — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`).
-- Phase P-08 active authorized batch: P-08.01 → P-08.05 (P-08.06 remains PENDING / NOT AUTHORIZED / NOT_RUN).
+- Phase P-08 active authorized batch: P-08.06 + P-09.01 → P-09.04 (P-09.05+ remains PENDING / NOT AUTHORIZED / NOT_RUN).
 
 ## Phase P-04 Status
 
@@ -187,31 +186,33 @@ Phase P-06 is **CLOSED — independent QA PASS (Verified closure SHA: `e9ac70797
 
 ## Phase P-07 Status
 
+Phase P-07 is **CLOSED — independent QA PASS ✅ (Verified closure SHA: `794eec0a7617f16e1c5f008c232fcba0ace852d1`)**.
 - P-07.01 — PASS ✅ (Verified closure SHA: `efb84117463d9e2736e9ccfada926b942b6ee2c9`)
 - P-07.02 — PASS ✅ (Verified closure SHA: `b3d2842bb2cc7c7623f485dd870bc9de29c98181`)
-- P-07.03 — REPAIRED / awaiting independent QA review (NOT PASS)
-- P-07.04 — REPAIRED / awaiting independent QA review (NOT PASS)
-- P-07.05 — REPAIRED / awaiting independent QA review (NOT PASS)
-- P-07.06 — PENDING / NOT AUTHORIZED / NOT_RUN
+- P-07.03 — PASS ✅
+- P-07.04 — PASS ✅
+- P-07.05 — PASS ✅
+- P-07.06 — PASS ✅
 
-Optional read-only live smoke test: `NOT_RUN` (no stored local credentials; zero personal spend).
+## Phase P-08 Status
+
+- P-08.01 — PASS ✅
+- P-08.02 — PASS ✅
+- P-08.03 — PASS ✅
+- P-08.04 — PASS ✅
+- P-08.05 — PASS ✅
+- P-08.06 — IN_PROGRESS (authorized in current batch)
 
 ## Last independently VERIFIED contiguous SHA
 
-`b3d2842bb2cc7c7623f485dd870bc9de29c98181`
+`6bccb93fa64336198d6719a68ab835f6cd101c67`
 
 ## Next exact task
 
-Independent QA review of P-07.03, P-07.04, P-07.05 consolidated repair.
+P-08.06 — Add mixed success/failure/not-run mission tests
 
-Status:
-`REPAIRED / awaiting independent QA review (NOT PASS)`
-
-## Next safe action
-
-Awaiting independent QA review of P-07.03, P-07.04, and P-07.05.
-Do NOT self-award P-07.03, P-07.04, or P-07.05 PASS.
-Do NOT begin Phase P-07.06.
+Authorized batch:
+P-08.06 + P-09.01 → P-09.04
 
 
 ---

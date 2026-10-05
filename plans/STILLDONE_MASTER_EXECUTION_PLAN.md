@@ -1157,16 +1157,16 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-08.03 — Implement partial-failure preservation and per-step states
-Status: REPAIRED / awaiting independent QA
+Status: PASS (independent QA verified)
 
 ### P-08.04 — Implement execution attempts and provider-result recording
 Status: PASS (independent QA verified)
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
-Status: REPAIRED / awaiting independent QA
+Status: PASS (independent QA verified)
 
 ### P-08.06 — Add mixed success/failure/not-run mission tests
-Status: PENDING / NOT AUTHORIZED / NOT_RUN
+Status: IN_PROGRESS
 
 Phase exit:
 multi-step mission executes honestly.
