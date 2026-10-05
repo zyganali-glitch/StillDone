@@ -67,6 +67,18 @@ class DependencyCycleError(ExecutionContractError, ValueError):
     """Raised when a cycle is detected in the action dependency graph."""
 
 
+class UnknownActionIdError(ExecutionContractValueError):
+    """Raised when an ActionId is not recognized in the execution contract or schedule."""
+
+
+class ExecutionTransitionError(ExecutionContractValueError):
+    """Raised when an invalid step execution state transition is attempted."""
+
+
+class ExecutionLineageError(ExecutionContractValueError):
+    """Raised when an execution attempt or provider result does not match action lineage."""
+
+
 # ===========================================================================
 # Deterministic Symbolic Target Resolver
 # ===========================================================================

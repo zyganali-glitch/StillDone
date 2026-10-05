@@ -23,13 +23,16 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from stilldone.domain.action import ActionId, ActionType
+from stilldone.domain.action import ActionContract, ActionId, ActionType
 from stilldone.domain.execution import ExecutionAttempt
 from stilldone.domain.mission import MissionId
 from stilldone.execution.contracts import (
     ExecutionContractTypeError,
     ExecutionContractValueError,
+    ExecutionLineageError,
+    ExecutionTransitionError,
     MissionExecutionContract,
+    UnknownActionIdError,
 )
 from stilldone.execution.scheduler import ExecutionSchedule
 from stilldone.redaction import redact_text
@@ -136,22 +139,17 @@ class StepExecutionRecord:
                 f"status must be an ActionExecutionStatus, got {type(self.status).__name__}"
             )
 
-        if self.status == ActionExecutionStatus.NOT_RUN:
-            if self.attempt is not None:
-                raise ExecutionContractValueError("NOT_RUN step cannot have an attempt")
-            if self.provider_result is not None:
-                raise ExecutionContractValueError("NOT_RUN step cannot have a provider_result")
-
-        if self.status == ActionExecutionStatus.BLOCKED:
-            if self.attempt is not None:
-                raise ExecutionContractValueError("BLOCKED step cannot have an attempt")
-            if self.provider_result is not None:
-                raise ExecutionContractValueError("BLOCKED step cannot have a provider_result")
-
-        if self.attempt is not None and not isinstance(self.attempt, ExecutionAttempt):
-            raise ExecutionContractTypeError(
-                f"attempt must be an ExecutionAttempt or None, got {type(self.attempt).__name__}"
-            )
+        if self.attempt is not None:
+            if not isinstance(self.attempt, ExecutionAttempt):
+                raise ExecutionContractTypeError(
+                    f"attempt must be an ExecutionAttempt or None, "
+                    f"got {type(self.attempt).__name__}"
+                )
+            if self.attempt.action_id != self.action_id:
+                raise ExecutionLineageError(
+                    f"ExecutionAttempt action_id {self.attempt.action_id} does not match "
+                    f"StepExecutionRecord action_id {self.action_id}"
+                )
 
         if self.provider_result is not None and not isinstance(
             self.provider_result, ProviderExecutionResult
@@ -165,6 +163,50 @@ class StepExecutionRecord:
             raise ExecutionContractTypeError(
                 f"blocked_by must be an ActionId or None, got {type(self.blocked_by).__name__}"
             )
+
+        if self.status == ActionExecutionStatus.NOT_RUN:
+            if self.attempt is not None:
+                raise ExecutionContractValueError("NOT_RUN step cannot have an attempt")
+            if self.provider_result is not None:
+                raise ExecutionContractValueError("NOT_RUN step cannot have a provider_result")
+            if self.blocked_by is not None:
+                raise ExecutionContractValueError("NOT_RUN step cannot have blocked_by")
+
+        elif self.status == ActionExecutionStatus.IN_PROGRESS:
+            if self.provider_result is not None:
+                raise ExecutionContractValueError("IN_PROGRESS step cannot have a provider_result")
+            if self.blocked_by is not None:
+                raise ExecutionContractValueError("IN_PROGRESS step cannot have blocked_by")
+
+        elif self.status == ActionExecutionStatus.BLOCKED:
+            if self.attempt is not None:
+                raise ExecutionContractValueError("BLOCKED step cannot have an attempt")
+            if self.provider_result is not None:
+                raise ExecutionContractValueError("BLOCKED step cannot have a provider_result")
+            if self.blocked_by is None:
+                raise ExecutionContractValueError("BLOCKED step must have blocked_by")
+
+        elif self.status == ActionExecutionStatus.EXECUTION_SUCCEEDED:
+            if self.attempt is None:
+                raise ExecutionContractValueError("EXECUTION_SUCCEEDED step requires an attempt")
+            if self.provider_result is None:
+                raise ExecutionContractValueError(
+                    "EXECUTION_SUCCEEDED step requires a provider_result"
+                )
+            if not self.provider_result.success:
+                raise ExecutionContractValueError(
+                    "EXECUTION_SUCCEEDED step cannot have provider_result with success=False"
+                )
+            if self.blocked_by is not None:
+                raise ExecutionContractValueError("EXECUTION_SUCCEEDED step cannot have blocked_by")
+
+        elif self.status == ActionExecutionStatus.EXECUTION_FAILED:
+            if self.provider_result is not None and self.provider_result.success:
+                raise ExecutionContractValueError(
+                    "EXECUTION_FAILED step cannot have provider_result with success=True"
+                )
+            if self.blocked_by is not None:
+                raise ExecutionContractValueError("EXECUTION_FAILED step cannot have blocked_by")
 
         if self.error_message is not None:
             if not isinstance(self.error_message, str):
@@ -238,8 +280,12 @@ class MissionExecutionRecord:
 
     def get_status(self, action_id: ActionId) -> ActionExecutionStatus:
         """Get status of a specific action."""
+        if not isinstance(action_id, ActionId):
+            raise ExecutionContractTypeError(
+                f"action_id must be an ActionId, got {type(action_id).__name__}"
+            )
         if action_id not in self.step_records:
-            raise ExecutionContractValueError(f"Action {action_id} not in execution record")
+            raise UnknownActionIdError(f"Action {action_id} not in execution record")
         return self.step_records[action_id].status
 
 
@@ -253,9 +299,20 @@ class ExecutionStateTracker:
 
     Enforces:
     - Initial state: all actions are NOT_RUN.
-    - An action can only execute if all its prerequisites succeeded.
+    - All queries and mutations validate that ActionId belongs to the contract/schedule.
+    - Unknown ActionId fails closed with UnknownActionIdError.
+    - Action can only execute if all its prerequisites succeeded.
+    - Transitions are strictly monotonic and validated against legal transition matrix:
+        NOT_RUN -> IN_PROGRESS
+        IN_PROGRESS -> EXECUTION_SUCCEEDED
+        IN_PROGRESS -> EXECUTION_FAILED
+        NOT_RUN -> BLOCKED
+    - Terminal states (EXECUTION_SUCCEEDED, EXECUTION_FAILED, BLOCKED) cannot transition.
+    - Repeated same-terminal writes fail closed.
     - If a prerequisite fails, downstream dependents are marked BLOCKED.
     - Independent actions remain eligible to run.
+    - Lineage: ExecutionAttempt.action_id must match target ActionId.
+    - Lineage: ProviderExecutionResult.action_type must match target ActionType.
     """
 
     def __init__(
@@ -270,8 +327,18 @@ class ExecutionStateTracker:
         if contract.mission_id != schedule.mission_id:
             raise ExecutionContractValueError("Contract and schedule mission_ids must match")
 
+        contract_aids = frozenset(act.action_id for act in contract.actions)
+        schedule_aids = frozenset(schedule.ordered_action_ids)
+        if schedule_aids != contract_aids:
+            raise ExecutionContractValueError(
+                "Schedule action IDs must exactly match contract action IDs"
+            )
+
         self._contract = contract
         self._schedule = schedule
+        self._actions_by_id: dict[ActionId, ActionContract] = {
+            act.action_id: act for act in contract.actions
+        }
         self._records: dict[ActionId, StepExecutionRecord] = {
             aid: StepExecutionRecord(
                 action_id=aid,
@@ -280,13 +347,30 @@ class ExecutionStateTracker:
             for aid in schedule.ordered_action_ids
         }
 
+    def _require_known_action_id(self, action_id: ActionId) -> None:
+        """Validate that action_id is an ActionId and belongs to the contract."""
+        if not isinstance(action_id, ActionId):
+            raise ExecutionContractTypeError(
+                f"action_id must be an ActionId, got {type(action_id).__name__}"
+            )
+        if action_id not in self._records:
+            raise UnknownActionIdError(
+                f"ActionId {action_id} does not belong to mission contract "
+                f"{self._contract.mission_id}"
+            )
+
     def can_execute(self, action_id: ActionId) -> tuple[bool, ActionId | None]:
         """Check if action is safe to execute based on prerequisite statuses.
 
         Returns:
             (True, None) if all prerequisites succeeded.
             (False, failed_aid) if any prerequisite failed or was blocked.
+
+        Raises:
+            ExecutionContractTypeError: If action_id is not an ActionId.
+            UnknownActionIdError: If action_id is not in contract.
         """
+        self._require_known_action_id(action_id)
         prereqs = self._contract.dependencies.get(action_id, frozenset())
         for prereq in prereqs:
             prereq_status = self._records[prereq].status
@@ -299,7 +383,20 @@ class ExecutionStateTracker:
         return True, None
 
     def mark_in_progress(self, action_id: ActionId) -> None:
-        """Mark action as currently in progress."""
+        """Mark action as currently in progress.
+
+        Raises:
+            ExecutionContractTypeError: If action_id is not an ActionId.
+            UnknownActionIdError: If action_id is not in contract.
+            ExecutionTransitionError: If action is not in NOT_RUN state.
+        """
+        self._require_known_action_id(action_id)
+        current = self._records[action_id].status
+        if current != ActionExecutionStatus.NOT_RUN:
+            raise ExecutionTransitionError(
+                f"Cannot transition action {action_id} from {current.value} to IN_PROGRESS: "
+                f"only NOT_RUN actions can transition to IN_PROGRESS"
+            )
         self._records[action_id] = StepExecutionRecord(
             action_id=action_id,
             status=ActionExecutionStatus.IN_PROGRESS,
@@ -311,7 +408,46 @@ class ExecutionStateTracker:
         attempt: ExecutionAttempt,
         provider_result: ProviderExecutionResult,
     ) -> None:
-        """Record successful execution of an action."""
+        """Record successful execution of an action.
+
+        Raises:
+            ExecutionContractTypeError: If arguments are of invalid types.
+            UnknownActionIdError: If action_id is not in contract.
+            ExecutionTransitionError: If action is not in IN_PROGRESS state.
+            ExecutionLineageError: If attempt or provider_result does not match action.
+            ExecutionContractValueError: If provider_result.success is not True.
+        """
+        self._require_known_action_id(action_id)
+        current = self._records[action_id].status
+        if current != ActionExecutionStatus.IN_PROGRESS:
+            raise ExecutionTransitionError(
+                f"Cannot transition action {action_id} from {current.value} to "
+                f"EXECUTION_SUCCEEDED: action must be in IN_PROGRESS state"
+            )
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action_id:
+            raise ExecutionLineageError(
+                f"attempt.action_id {attempt.action_id} does not match action_id {action_id}"
+            )
+        if not isinstance(provider_result, ProviderExecutionResult):
+            raise ExecutionContractTypeError(
+                f"provider_result must be a ProviderExecutionResult, "
+                f"got {type(provider_result).__name__}"
+            )
+        expected_action_type = self._actions_by_id[action_id].action_type
+        if provider_result.action_type != expected_action_type:
+            raise ExecutionLineageError(
+                f"provider_result action_type {provider_result.action_type.value} does not match "
+                f"expected action_type {expected_action_type.value}"
+            )
+        if not provider_result.success:
+            raise ExecutionContractValueError(
+                "record_success requires provider_result.success to be True"
+            )
+
         self._records[action_id] = StepExecutionRecord(
             action_id=action_id,
             status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
@@ -326,7 +462,50 @@ class ExecutionStateTracker:
         provider_result: ProviderExecutionResult | None,
         error_message: str,
     ) -> None:
-        """Record failed execution of an action and block its dependents."""
+        """Record failed execution of an action and block its dependents.
+
+        Raises:
+            ExecutionContractTypeError: If arguments are of invalid types.
+            UnknownActionIdError: If action_id is not in contract.
+            ExecutionTransitionError: If action is not in IN_PROGRESS state.
+            ExecutionLineageError: If attempt or provider_result does not match action.
+            ExecutionContractValueError: If provider_result.success is True or
+                error_message is invalid.
+        """
+        self._require_known_action_id(action_id)
+        current = self._records[action_id].status
+        if current != ActionExecutionStatus.IN_PROGRESS:
+            raise ExecutionTransitionError(
+                f"Cannot transition action {action_id} from {current.value} to "
+                f"EXECUTION_FAILED: action must be in IN_PROGRESS state"
+            )
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action_id:
+            raise ExecutionLineageError(
+                f"attempt.action_id {attempt.action_id} does not match action_id {action_id}"
+            )
+        expected_action_type = self._actions_by_id[action_id].action_type
+        if provider_result is not None:
+            if not isinstance(provider_result, ProviderExecutionResult):
+                raise ExecutionContractTypeError(
+                    f"provider_result must be a ProviderExecutionResult or None, "
+                    f"got {type(provider_result).__name__}"
+                )
+            if provider_result.action_type != expected_action_type:
+                raise ExecutionLineageError(
+                    f"provider_result action_type {provider_result.action_type.value} "
+                    f"does not match expected action_type {expected_action_type.value}"
+                )
+            if provider_result.success:
+                raise ExecutionContractValueError(
+                    "record_failure requires provider_result.success to be False when provided"
+                )
+        if not isinstance(error_message, str) or not error_message.strip():
+            raise ExecutionContractValueError("error_message must be a non-empty string")
+
         self._records[action_id] = StepExecutionRecord(
             action_id=action_id,
             status=ActionExecutionStatus.EXECUTION_FAILED,
@@ -343,7 +522,29 @@ class ExecutionStateTracker:
         blocked_by: ActionId,
         reason: str | None = None,
     ) -> None:
-        """Explicitly record action as blocked by a failed prerequisite."""
+        """Explicitly record action as blocked by a failed prerequisite.
+
+        Raises:
+            ExecutionContractTypeError: If action_id or blocked_by is not an ActionId.
+            UnknownActionIdError: If action_id or blocked_by is not in contract.
+            ExecutionTransitionError: If action is not in NOT_RUN state.
+        """
+        self._require_known_action_id(action_id)
+        if not isinstance(blocked_by, ActionId):
+            raise ExecutionContractTypeError(
+                f"blocked_by must be an ActionId, got {type(blocked_by).__name__}"
+            )
+        if blocked_by not in self._records:
+            raise UnknownActionIdError(
+                f"blocked_by ActionId {blocked_by} does not belong to mission contract "
+                f"{self._contract.mission_id}"
+            )
+        current = self._records[action_id].status
+        if current != ActionExecutionStatus.NOT_RUN:
+            raise ExecutionTransitionError(
+                f"Cannot transition action {action_id} from {current.value} to BLOCKED: "
+                f"only NOT_RUN actions can transition to BLOCKED"
+            )
         msg = reason or f"Blocked by failed prerequisite action {blocked_by}"
         self._records[action_id] = StepExecutionRecord(
             action_id=action_id,

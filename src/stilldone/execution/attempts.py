@@ -38,6 +38,8 @@ from stilldone.domain.action import ActionId, ActionType
 from stilldone.domain.execution import AttemptId, ExecutionAttempt, IdempotencyKey
 from stilldone.execution.contracts import (
     ExecutionContractTypeError,
+    ExecutionContractValueError,
+    ExecutionLineageError,
 )
 from stilldone.execution.state import ProviderExecutionResult
 from stilldone.redaction import redact_text
@@ -56,16 +58,28 @@ def create_execution_attempt(
     Args:
         action_id: Canonical ActionId.
         idempotency_key: Runtime-owned IdempotencyKey (generated if None).
-        attempt_number: 1-based attempt number (defaults to 1; P-08 does not retry).
+        attempt_number: 1-based attempt number (strictly 1 in P-08; no retry loops).
         started_at: Timestamp when attempt started (defaults to now UTC).
         attempt_id: Canonical AttemptId (generated if None).
 
     Returns:
         Canonical ExecutionAttempt.
+
+    Raises:
+        ExecutionContractTypeError: If action_id is not an ActionId or attempt_number is not an int.
+        ExecutionContractValueError: If attempt_number != 1.
     """
     if not isinstance(action_id, ActionId):
         raise ExecutionContractTypeError(
             f"action_id must be an ActionId, got {type(action_id).__name__}"
+        )
+    if isinstance(attempt_number, bool) or not isinstance(attempt_number, int):
+        raise ExecutionContractTypeError(
+            f"attempt_number must be an int, got {type(attempt_number).__name__}"
+        )
+    if attempt_number != 1:
+        raise ExecutionContractValueError(
+            f"P-08 execution attempts only allow attempt_number=1, got {attempt_number}"
         )
 
     ikey = idempotency_key or IdempotencyKey.generate()
@@ -222,20 +236,50 @@ def record_provider_result(
 ) -> ProviderExecutionResult:
     """Generic dispatcher recording a provider result into a canonical ProviderExecutionResult.
 
-    Fails closed on unknown result types.
+    Fails closed on mismatched action types or unsupported result types.
     """
-    if isinstance(raw_result, CalendarReadResult):
-        return record_calendar_read_result(raw_result)
-    if isinstance(raw_result, CalendarUpdateResult):
-        return record_calendar_update_result(raw_result)
-    if isinstance(raw_result, TaskReadResult):
-        return record_task_read_result(raw_result)
-    if isinstance(raw_result, TaskCreateResult):
-        return record_task_create_result(raw_result)
-    if isinstance(raw_result, WeatherReadResult):
-        return record_weather_read_result(raw_result)
+    if not isinstance(action_type, ActionType):
+        raise ExecutionContractTypeError(
+            f"action_type must be an ActionType, got {type(action_type).__name__}"
+        )
+
     if isinstance(raw_result, Exception):
         return record_provider_exception(action_type, raw_result)
+
+    if isinstance(raw_result, CalendarReadResult):
+        if action_type != ActionType.CALENDAR_READ:
+            raise ExecutionLineageError(
+                f"CalendarReadResult does not match action_type {action_type.value}"
+            )
+        return record_calendar_read_result(raw_result)
+
+    if isinstance(raw_result, CalendarUpdateResult):
+        if action_type != ActionType.CALENDAR_UPDATE:
+            raise ExecutionLineageError(
+                f"CalendarUpdateResult does not match action_type {action_type.value}"
+            )
+        return record_calendar_update_result(raw_result)
+
+    if isinstance(raw_result, TaskReadResult):
+        if action_type != ActionType.TASK_READ:
+            raise ExecutionLineageError(
+                f"TaskReadResult does not match action_type {action_type.value}"
+            )
+        return record_task_read_result(raw_result)
+
+    if isinstance(raw_result, TaskCreateResult):
+        if action_type != ActionType.TASK_CREATE:
+            raise ExecutionLineageError(
+                f"TaskCreateResult does not match action_type {action_type.value}"
+            )
+        return record_task_create_result(raw_result)
+
+    if isinstance(raw_result, WeatherReadResult):
+        if action_type != ActionType.WEATHER_READ:
+            raise ExecutionLineageError(
+                f"WeatherReadResult does not match action_type {action_type.value}"
+            )
+        return record_weather_read_result(raw_result)
 
     raise ExecutionContractTypeError(
         f"Unsupported raw provider result type: {type(raw_result).__name__}"

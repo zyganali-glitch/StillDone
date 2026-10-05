@@ -1151,19 +1151,19 @@ Goal:
 execute compiled plans without letting planner prose own truth.
 
 ### P-08.01 — Implement mission compiler from validated plan to immutable execution contract
-Status: IMPLEMENTED / awaiting independent QA
+Status: PASS (independent QA verified)
 
 ### P-08.02 — Implement deterministic action scheduler and dependency ordering
-Status: IMPLEMENTED / awaiting independent QA
+Status: PASS (independent QA verified)
 
 ### P-08.03 — Implement partial-failure preservation and per-step states
-Status: IMPLEMENTED / awaiting independent QA
+Status: REPAIRED / awaiting independent QA
 
 ### P-08.04 — Implement execution attempts and provider-result recording
-Status: IMPLEMENTED / awaiting independent QA
+Status: REPAIRED / awaiting independent QA
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
-Status: IMPLEMENTED / awaiting independent QA
+Status: REPAIRED / awaiting independent QA
 
 ### P-08.06 — Add mixed success/failure/not-run mission tests
 Status: PENDING / NOT AUTHORIZED / NOT_RUN

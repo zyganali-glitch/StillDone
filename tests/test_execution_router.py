@@ -43,8 +43,13 @@ from stilldone.domain.action import (
     TargetIdentity,
 )
 from stilldone.domain.authority import ApprovalGrant, AuthorityClass
+from stilldone.domain.execution import ExecutionAttempt, IdempotencyKey
 from stilldone.domain.mission import MissionId
 from stilldone.execution.attempts import create_execution_attempt
+from stilldone.execution.contracts import (
+    ExecutionContractTypeError,
+    ExecutionContractValueError,
+)
 from stilldone.execution.router import (
     ActionAuthorityError,
     ActionHandler,
@@ -53,6 +58,7 @@ from stilldone.execution.router import (
     CalendarUpdateHandler,
     MissingAdapterRouteError,
     RouterError,
+    RouterLineageError,
     TasksCreateHandler,
     TasksReadHandler,
     WeatherReadHandler,
@@ -346,3 +352,132 @@ class TestAuthorityPolicyEnforcement:
         assert result.success is True
         assert result.status_name == "UPDATED"
         assert result.writes_performed == 1
+
+
+class TestRouterAttemptLineageEnforcement:
+    """Defect 7: Router must bind ExecutionAttempt to ActionContract and fail closed."""
+
+    def test_mismatched_attempt_action_id_fails_closed_before_transport(
+        self,
+        test_router: AdapterRouter,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+    ) -> None:
+        """Action A + Attempt B fails closed immediately without calling transport."""
+        mid = MissionId.generate()
+        aid_a = ActionId.generate()
+        aid_b = ActionId.generate()
+
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={},
+            action_id=aid_a,
+        )
+        # Attempt is bound to aid_b instead of aid_a!
+        mismatched_attempt = create_execution_attempt(aid_b)
+
+        with pytest.raises(RouterLineageError, match="does not match action.action_id"):
+            test_router.execute(action, attempt=mismatched_attempt)
+
+        # Assert transport invocation count remains strictly zero
+        assert calendar_fake.reads_count == 0
+        assert calendar_fake.writes_count == 0
+
+    def test_malformed_non_execution_attempt_rejected(
+        self,
+        test_router: AdapterRouter,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+    ) -> None:
+        mid = MissionId.generate()
+        aid = ActionId.generate()
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={},
+            action_id=aid,
+        )
+
+        with pytest.raises(ExecutionContractTypeError, match="attempt must be an ExecutionAttempt"):
+            test_router.execute(action, attempt="not-an-attempt")  # type: ignore[arg-type]
+
+        assert calendar_fake.reads_count == 0
+
+    def test_attempt_number_greater_than_one_rejected_at_router_boundary(
+        self,
+        test_router: AdapterRouter,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+    ) -> None:
+        mid = MissionId.generate()
+        aid = ActionId.generate()
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={},
+            action_id=aid,
+        )
+        # Create domain ExecutionAttempt with attempt_number=2 directly
+        attempt = ExecutionAttempt.create(
+            action_id=aid,
+            idempotency_key=IdempotencyKey.generate(),
+            attempt_number=2,
+        )
+
+        with pytest.raises(ExecutionContractValueError, match="only allows attempt_number=1"):
+            test_router.execute(action, attempt=attempt)
+
+        assert calendar_fake.reads_count == 0
+
+    def test_direct_handler_rejects_mismatched_attempt(
+        self,
+        demo_scope: DemoResourceScope,
+        calendar_fake: FakeGoogleCalendarTransport,
+    ) -> None:
+        from stilldone.action_policy import validate_action_contract
+
+        cal_read = GoogleCalendarReadAdapter(demo_scope, calendar_fake)
+        handler = CalendarReadHandler(cal_read)
+
+        mid = MissionId.generate()
+        aid_a = ActionId.generate()
+        aid_b = ActionId.generate()
+
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-school",
+                parent_id=demo_scope.calendar_id,
+            ),
+            parameters={},
+            action_id=aid_a,
+        )
+        validated = validate_action_contract(action)
+        mismatched_attempt = create_execution_attempt(aid_b)
+
+        with pytest.raises(RouterLineageError, match="does not match action.action_id"):
+            handler.execute(validated, attempt=mismatched_attempt)
+
+        assert calendar_fake.reads_count == 0

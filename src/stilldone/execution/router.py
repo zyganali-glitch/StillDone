@@ -59,6 +59,8 @@ from stilldone.execution.attempts import (
 from stilldone.execution.contracts import (
     ExecutionContractError,
     ExecutionContractTypeError,
+    ExecutionContractValueError,
+    ExecutionLineageError,
 )
 from stilldone.execution.state import ProviderExecutionResult
 
@@ -81,6 +83,10 @@ class MissingAdapterRouteError(RouterError, KeyError):
 
 class ActionAuthorityError(RouterError):
     """Raised when an action cannot execute due to authority policy rejection."""
+
+
+class RouterLineageError(RouterError, ExecutionLineageError):
+    """Raised when an execution attempt does not match the target action."""
 
 
 # ===========================================================================
@@ -122,6 +128,15 @@ class CalendarReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
         try:
             raw_result = self._adapter.read_event(action)
             return record_calendar_read_result(raw_result)
@@ -145,6 +160,15 @@ class CalendarUpdateHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
         if approval is None:
             raise ActionAuthorityError(
                 "calendar.update requires a cryptographically bound ApprovalGrant"
@@ -172,6 +196,15 @@ class TasksReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
         try:
             raw_result = self._adapter.read_task(action, at=at)
             return record_task_read_result(raw_result)
@@ -195,6 +228,15 @@ class TasksCreateHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
         try:
             raw_result = self._adapter.create_task(action, at=at)
             return record_task_create_result(raw_result)
@@ -218,6 +260,15 @@ class WeatherReadHandler:
         approval: ApprovalGrant | None = None,
         at: datetime | None = None,
     ) -> ProviderExecutionResult:
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
         try:
             raw_result = self._adapter.read_weather(action, at=at)
             return record_weather_read_result(raw_result)
@@ -284,10 +335,33 @@ class AdapterRouter:
             ProviderExecutionResult preserving execution facts.
 
         Raises:
+            ExecutionContractTypeError: If action or attempt has invalid type.
+            ExecutionContractValueError: If attempt_number != 1.
+            RouterLineageError: If attempt.action_id does not match action.action_id.
             UnsupportedActionRouteError: If action_type is unsupported.
             MissingAdapterRouteError: If no adapter is registered for action_type.
             ActionAuthorityError: If authority policy rejects execution.
         """
+        # Enforce attempt type, attempt_number==1, and action<->attempt lineage
+        # strictly BEFORE authority evaluation or execution
+        if not isinstance(attempt, ExecutionAttempt):
+            raise ExecutionContractTypeError(
+                f"attempt must be an ExecutionAttempt, got {type(attempt).__name__}"
+            )
+        if isinstance(attempt.attempt_number, bool) or attempt.attempt_number != 1:
+            raise ExecutionContractValueError(
+                f"P-08 router only allows attempt_number=1, got {attempt.attempt_number}"
+            )
+        if not isinstance(action, ActionContract):
+            raise ExecutionContractTypeError(
+                f"action must be an ActionContract, got {type(action).__name__}"
+            )
+        if attempt.action_id != action.action_id:
+            raise RouterLineageError(
+                f"ExecutionAttempt action_id {attempt.action_id} does not match "
+                f"action.action_id {action.action_id}"
+            )
+
         # Validate action contract
         validated = validate_action_contract(action)
 
