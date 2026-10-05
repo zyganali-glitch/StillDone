@@ -1213,7 +1213,7 @@ survive ambiguous network failures without duplicate real-world effects.
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.02 — Implement bounded exponential retry and retry classification
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
 Status: PENDING

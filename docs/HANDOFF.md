@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.04 (PASS ✅) | Active batch: P-09.05 → P-09.07 + P-10.01 → P-10.02 | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.04 (PASS ✅), P-09.05 → P-09.07 (IMPLEMENTED) | Phase P-10: P-10.01 → P-10.02 (IMPLEMENTED) | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -87,10 +87,12 @@ Status:
 - P-00 through P-07: CLOSED — independent QA PASS ✅
 - Phase P-08: CLOSED (independent QA PASS ✅)
 - P-09.01 → P-09.04: PASS ✅ (independent QA verified)
+- P-09.05 → P-09.07 + P-10.01 → P-10.02: IMPLEMENTED (awaiting independent QA review)
+- P-10.03+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
 Starting remote SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
-Next exact task: P-10.02 (Implement bounded exponential retry and retry classification)
+Next exact task: P-10.03 (Implement read-before-retry / verify-after-timeout behavior where appropriate)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

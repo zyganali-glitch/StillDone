@@ -218,7 +218,7 @@ class TestIdempotencyKeyDerivation:
             parameters={},
         )
         with pytest.raises(TypeError):
-            derive_idempotency_key(action, attempt_number=True)  # type: ignore[arg-type]
+            derive_idempotency_key(action, attempt_number=True)
         with pytest.raises(ValueError):
             derive_idempotency_key(action, attempt_number=0)
         with pytest.raises(ValueError):
