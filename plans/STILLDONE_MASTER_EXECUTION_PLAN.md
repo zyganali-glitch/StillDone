@@ -1210,7 +1210,7 @@ Goal:
 survive ambiguous network failures without duplicate real-world effects.
 
 ### P-10.01 — Freeze idempotency strategy per supported mutation
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.02 — Implement bounded exponential retry and retry classification
 Status: PENDING
