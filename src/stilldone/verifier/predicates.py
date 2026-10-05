@@ -16,6 +16,7 @@ Strict Laws:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -184,6 +185,12 @@ def _evaluate_operator(
     if isinstance(observed_value, bool) and not isinstance(expected_value, bool):
         return False
 
+    # Reject non-finite floats fail-closed for all comparisons
+    if isinstance(observed_value, float) and not math.isfinite(observed_value):
+        return False
+    if isinstance(expected_value, float) and not math.isfinite(expected_value):
+        return False
+
     if operator == PredicateOperator.EQUALS:
         return bool(observed_value == expected_value)
 
@@ -203,16 +210,18 @@ def _evaluate_operator(
             return False
 
         if isinstance(observed_value, (int, float)) and isinstance(expected_value, (int, float)):
-            num_obs = float(observed_value)
-            num_exp = float(expected_value)
+            # Exact native numeric comparison:
+            # - int vs int: exact native integer comparison (arbitrary precision)
+            # - int vs float / float vs int: Python compares exact without int coercion
+            # - float vs float: exact finite IEEE 754 float comparison
             if operator == PredicateOperator.LESS_THAN:
-                return num_obs < num_exp
+                return observed_value < expected_value
             if operator == PredicateOperator.LESS_THAN_OR_EQUAL:
-                return num_obs <= num_exp
+                return observed_value <= expected_value
             if operator == PredicateOperator.GREATER_THAN:
-                return num_obs > num_exp
+                return observed_value > expected_value
             if operator == PredicateOperator.GREATER_THAN_OR_EQUAL:
-                return num_obs >= num_exp
+                return observed_value >= expected_value
 
         elif isinstance(observed_value, str) and isinstance(expected_value, str):
             if operator == PredicateOperator.LESS_THAN:
@@ -288,11 +297,8 @@ def evaluate_predicate(
                 subject=predicate.subject,
                 operator=predicate.operator,
                 expected_value=predicate.expected_value,
-                observed_value=str(observation.target),
-                reason=(
-                    f"Target identity mismatch: expected {expected_target}, "
-                    f"got {observation.target}"
-                ),
+                observed_value=None,
+                reason="Target identity mismatch",
                 evaluated_at=eval_time,
             )
 
@@ -305,7 +311,7 @@ def evaluate_predicate(
                 subject=predicate.subject,
                 operator=predicate.operator,
                 expected_value=predicate.expected_value,
-                observed_value=False,
+                observed_value=None,
                 reason="Object independently observed as non-existent (matches DOES_NOT_EXIST)",
                 evaluated_at=eval_time,
             )
@@ -332,7 +338,7 @@ def evaluate_predicate(
                 operator=predicate.operator,
                 expected_value=predicate.expected_value,
                 observed_value=None,
-                reason=f"Subject {predicate.subject!r} absent from observation",
+                reason=f"Required observation property absent for subject '{predicate.subject}'",
                 evaluated_at=eval_time,
             )
         return PredicateEvaluationResult(
@@ -342,7 +348,7 @@ def evaluate_predicate(
             operator=predicate.operator,
             expected_value=predicate.expected_value,
             observed_value=None,
-            reason=f"Subject {predicate.subject!r} not found in observation properties",
+            reason=f"Required observation property absent for subject '{predicate.subject}'",
             evaluated_at=eval_time,
         )
 
@@ -350,15 +356,9 @@ def evaluate_predicate(
     passed = _evaluate_operator(predicate.operator, observed_value, predicate.expected_value)
     truth = PredicateTruth.TRUE if passed else PredicateTruth.FALSE
     if passed:
-        reason = (
-            f"Exact match: {predicate.subject} {predicate.operator.value} "
-            f"{predicate.expected_value!r}"
-        )
+        reason = f"Exact predicate match for subject '{predicate.subject}'"
     else:
-        reason = (
-            f"Mismatch: expected {predicate.subject} {predicate.operator.value} "
-            f"{predicate.expected_value!r}, got {observed_value!r}"
-        )
+        reason = f"Exact predicate mismatch for subject '{predicate.subject}'"
 
     return PredicateEvaluationResult(
         predicate_id=predicate.predicate_id,
@@ -366,7 +366,7 @@ def evaluate_predicate(
         subject=predicate.subject,
         operator=predicate.operator,
         expected_value=predicate.expected_value,
-        observed_value=observed_value,
+        observed_value=None,
         reason=reason,
         evaluated_at=eval_time,
     )

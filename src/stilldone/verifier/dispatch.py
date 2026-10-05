@@ -87,16 +87,11 @@ class CalendarVerificationPort:
 
     def read(self, request: VerificationRequest) -> VerificationObservation:
         # Validate request target
-        if request.target.system != "google_calendar":
-            raise VerifierTargetMismatchError(
-                f"CalendarVerificationPort expects google_calendar system, "
-                f"got {request.target.system!r}"
-            )
-        if request.target.resource_kind != ResourceKind.CALENDAR_EVENT:
-            raise VerifierTargetMismatchError(
-                f"CalendarVerificationPort expects CALENDAR_EVENT resource_kind, "
-                f"got {request.target.resource_kind.value!r}"
-            )
+        if (
+            request.target.system != "google_calendar"
+            or request.target.resource_kind != ResourceKind.CALENDAR_EVENT
+        ):
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
 
         # Formulate independent read action
         read_action = ActionContract.create(
@@ -106,10 +101,14 @@ class CalendarVerificationPort:
             parameters={},
         )
 
+        read_failed = False
         try:
             result = self._adapter.read_event(read_action)
-        except Exception as exc:
-            raise VerifierReadError(f"Calendar read-back failed: {exc}") from exc
+        except Exception:
+            read_failed = True
+
+        if read_failed:
+            raise VerifierReadError("Calendar provider error during read-back")
 
         # Determine provenance from transport
         provenance = (
@@ -146,8 +145,7 @@ class CalendarVerificationPort:
                 raw_observation=result,
             )
         else:
-            err = result.error_message or "Unknown calendar provider error"
-            raise VerifierReadError(f"Calendar provider error during read-back: {err}")
+            raise VerifierReadError("Calendar provider error during read-back")
 
 
 class TasksVerificationPort:
@@ -165,15 +163,11 @@ class TasksVerificationPort:
 
     def read(self, request: VerificationRequest) -> VerificationObservation:
         # Validate request target
-        if request.target.system != "google_tasks":
-            raise VerifierTargetMismatchError(
-                f"TasksVerificationPort expects google_tasks system, got {request.target.system!r}"
-            )
-        if request.target.resource_kind != ResourceKind.TASK:
-            raise VerifierTargetMismatchError(
-                f"TasksVerificationPort expects TASK resource_kind, "
-                f"got {request.target.resource_kind.value!r}"
-            )
+        if (
+            request.target.system != "google_tasks"
+            or request.target.resource_kind != ResourceKind.TASK
+        ):
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
 
         # Formulate independent read action
         read_action = ActionContract.create(
@@ -183,10 +177,14 @@ class TasksVerificationPort:
             parameters={},
         )
 
+        read_failed = False
         try:
             result = self._adapter.read_task(read_action)
-        except Exception as exc:
-            raise VerifierReadError(f"Tasks read-back failed: {exc}") from exc
+        except Exception:
+            read_failed = True
+
+        if read_failed:
+            raise VerifierReadError("Tasks provider error during read-back")
 
         # Determine provenance from transport
         provenance = (
@@ -225,8 +223,7 @@ class TasksVerificationPort:
                 raw_observation=result,
             )
         else:
-            err = result.error_message or "Unknown tasks provider error"
-            raise VerifierReadError(f"Tasks provider error during read-back: {err}")
+            raise VerifierReadError("Tasks provider error during read-back")
 
 
 class WeatherVerificationPort:
@@ -244,15 +241,11 @@ class WeatherVerificationPort:
 
     def read(self, request: VerificationRequest) -> VerificationObservation:
         # Validate request target
-        if request.target.system != "open_meteo":
-            raise VerifierTargetMismatchError(
-                f"WeatherVerificationPort expects open_meteo system, got {request.target.system!r}"
-            )
-        if request.target.resource_kind != ResourceKind.WEATHER_LOCATION:
-            raise VerifierTargetMismatchError(
-                f"WeatherVerificationPort expects WEATHER_LOCATION resource_kind, "
-                f"got {request.target.resource_kind.value!r}"
-            )
+        if (
+            request.target.system != "open_meteo"
+            or request.target.resource_kind != ResourceKind.WEATHER_LOCATION
+        ):
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
 
         read_action = ActionContract.create(
             mission_id=request.mission_id,
@@ -261,10 +254,14 @@ class WeatherVerificationPort:
             parameters={},
         )
 
+        read_failed = False
         try:
             result = self._adapter.read_weather(read_action)
-        except Exception as exc:
-            raise VerifierReadError(f"Weather read-back failed: {exc}") from exc
+        except Exception:
+            read_failed = True
+
+        if read_failed:
+            raise VerifierReadError("Weather provider error during read-back")
 
         provenance = self._adapter._transport.provenance
 
@@ -286,8 +283,7 @@ class WeatherVerificationPort:
                 raw_observation=obs,
             )
         else:
-            err = result.error_message or "Unknown weather provider error"
-            raise VerifierReadError(f"Weather provider error during read-back: {err}")
+            raise VerifierReadError("Weather provider error during read-back")
 
 
 # ===========================================================================
@@ -361,7 +357,8 @@ class VerifierDispatcher:
         port = self._routes.get(route_key)
         if port is None:
             raise MissingVerifierRouteError(
-                f"No independent verifier route registered for {route_key!r}"
+                "No independent verifier route registered for "
+                f"{request.target.system}:{request.target.resource_kind.value}"
             )
 
         obs = port.read(request)
@@ -383,49 +380,44 @@ class VerifierDispatcher:
                 or target.resource_kind != ResourceKind.CALENDAR_EVENT
             ):
                 raise VerifierTargetMismatchError(
-                    f"Action {action.action_type.value} requires google_calendar "
-                    f"CALENDAR_EVENT target, got {target.system}:{target.resource_kind.value}"
+                    "Verification target system/resource kind mismatch"
                 )
             if target.resource_id != action.target.resource_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification target resource_id {target.resource_id!r} does not match "
-                    f"action target resource_id {action.target.resource_id!r}"
+                    "Verification target resource_id does not match action target resource_id"
                 )
             if target.parent_id != action.target.parent_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification target parent_id {target.parent_id!r} does not match "
-                    f"action target parent_id {action.target.parent_id!r}"
+                    "Verification target parent container does not match "
+                    "action target parent container"
                 )
 
         elif action.action_type == ActionType.TASK_READ:
             if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
                 raise VerifierTargetMismatchError(
-                    f"Action TASK_READ requires google_tasks TASK target, "
-                    f"got {target.system}:{target.resource_kind.value}"
+                    "Verification target system/resource kind mismatch"
                 )
             if target.resource_id != action.target.resource_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification target resource_id {target.resource_id!r} does not match "
-                    f"action target resource_id {action.target.resource_id!r}"
+                    "Verification target resource_id does not match action target resource_id"
                 )
             if target.parent_id != action.target.parent_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification target parent_id {target.parent_id!r} does not match "
-                    f"action target parent_id {action.target.parent_id!r}"
+                    "Verification target parent container does not match "
+                    "action target parent container"
                 )
 
         elif action.action_type == ActionType.TASK_CREATE:
             # Action targeted TASK_LIST container; verification targets the concrete TASK child
             if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
                 raise VerifierTargetMismatchError(
-                    f"Action TASK_CREATE verification requires concrete google_tasks TASK target, "
-                    f"got {target.system}:{target.resource_kind.value}"
+                    "Verification target system/resource kind mismatch"
                 )
             # Child task's parent_id must match the task list targeted during creation
             if target.parent_id != action.target.resource_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification child task parent_id {target.parent_id!r} must match "
-                    f"action task list id {action.target.resource_id!r}"
+                    "Verification target parent container does not match "
+                    "action target parent container"
                 )
 
         elif action.action_type == ActionType.WEATHER_READ:
@@ -434,13 +426,11 @@ class VerifierDispatcher:
                 or target.resource_kind != ResourceKind.WEATHER_LOCATION
             ):
                 raise VerifierTargetMismatchError(
-                    f"Action WEATHER_READ requires open_meteo WEATHER_LOCATION target, "
-                    f"got {target.system}:{target.resource_kind.value}"
+                    "Verification target system/resource kind mismatch"
                 )
             if target.resource_id != action.target.resource_id:
                 raise VerifierTargetMismatchError(
-                    f"Verification target resource_id {target.resource_id!r} does not match "
-                    f"action target resource_id {action.target.resource_id!r}"
+                    "Verification target resource_id does not match action target resource_id"
                 )
 
 

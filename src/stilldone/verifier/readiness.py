@@ -41,6 +41,7 @@ from stilldone.execution.state import (
 from stilldone.verifier.contracts import (
     ExecutionPayloadSubstitutionError,
     VerificationObservation,
+    VerificationRequest,
     VerifierError,
 )
 from stilldone.verifier.freshness import (
@@ -221,6 +222,7 @@ def compute_mission_readiness(
     *,
     mission_id: MissionId,
     predicates: Sequence[DesiredStatePredicate],
+    verification_requests: Mapping[PredicateId, VerificationRequest] | None = None,
     predicate_evaluations: Mapping[PredicateId, PredicateEvaluationResult] | None = None,
     freshness_evaluations: Mapping[PredicateId, FreshnessResult] | None = None,
     observations: Mapping[PredicateId, VerificationObservation] | None = None,
@@ -234,11 +236,12 @@ def compute_mission_readiness(
     READY requirements:
     - current_state must be VERIFYING (READY may only be entered from VERIFYING).
     - at least one predicate must be defined.
-    - all required predicates must evaluate to PredicateTruth.TRUE.
+    - each required predicate must bind to its canonical verification request and observation.
+    - all required predicates must evaluate to PredicateTruth.TRUE against their observations.
     - no required predicate may evaluate to PredicateTruth.FALSE.
     - all required verification observations must be FreshnessStatus.FRESH.
     - no required observation may be STALE.
-    - no required predicate may have a missing verifier result.
+    - no required predicate may have a missing verifier request or observation.
     - no required action may be NOT_RUN, BLOCKED, FAILED, or IN_PROGRESS.
 
     Execution success alone is INSUFFICIENT.
@@ -278,6 +281,7 @@ def compute_mission_readiness(
             f"predicates must be a Sequence[DesiredStatePredicate], got {type(predicates).__name__}"
         )
 
+    valid_pids: set[PredicateId] = set()
     for i, p in enumerate(predicates):
         assert_not_planner_or_execution_payload(p, parameter_name=f"predicates[{i}]")
         if not isinstance(p, DesiredStatePredicate):
@@ -288,6 +292,98 @@ def compute_mission_readiness(
             raise ReadinessContractValueError(
                 f"Predicate {p.predicate_id} mission_id {p.mission_id} does not match {mission_id}"
             )
+        valid_pids.add(p.predicate_id)
+
+    # Validate verification_requests if provided
+    if verification_requests is not None:
+        assert_not_planner_or_execution_payload(
+            verification_requests, parameter_name="verification_requests"
+        )
+        if not isinstance(verification_requests, Mapping):
+            raise ReadinessContractTypeError("verification_requests must be a Mapping")
+        for pid, req in verification_requests.items():
+            assert_not_planner_or_execution_payload(
+                req, parameter_name=f"verification_requests[{pid}]"
+            )
+            if not isinstance(pid, PredicateId):
+                raise ReadinessContractTypeError("verification_requests key must be PredicateId")
+            if not isinstance(req, VerificationRequest):
+                raise ReadinessContractTypeError(
+                    "verification_requests value must be VerificationRequest"
+                )
+            if pid not in valid_pids:
+                raise ReadinessContractValueError(
+                    f"verification_requests contains foreign predicate {pid}"
+                )
+            if req.mission_id != mission_id:
+                raise ReadinessContractValueError(
+                    f"VerificationRequest mission_id {req.mission_id} does not match {mission_id}"
+                )
+            if req.predicate is not None and req.predicate.mission_id != mission_id:
+                raise ReadinessContractValueError(
+                    f"VerificationRequest predicate mission_id {req.predicate.mission_id} "
+                    f"does not match {mission_id}"
+                )
+
+    # Validate observations if provided
+    if observations is not None:
+        assert_not_planner_or_execution_payload(observations, parameter_name="observations")
+        if not isinstance(observations, Mapping):
+            raise ReadinessContractTypeError("observations must be a Mapping")
+        for pid, obs in observations.items():
+            assert_not_planner_or_execution_payload(obs, parameter_name=f"observations[{pid}]")
+            if not isinstance(pid, PredicateId):
+                raise ReadinessContractTypeError("observations key must be PredicateId")
+            if not isinstance(obs, VerificationObservation):
+                raise ReadinessContractTypeError(
+                    "observations value must be VerificationObservation"
+                )
+            if pid not in valid_pids:
+                raise ReadinessContractValueError(f"observations contains foreign predicate {pid}")
+
+    # Validate caller-supplied predicate_evaluations if provided
+    if predicate_evaluations is not None:
+        assert_not_planner_or_execution_payload(
+            predicate_evaluations, parameter_name="predicate_evaluations"
+        )
+        if not isinstance(predicate_evaluations, Mapping):
+            raise ReadinessContractTypeError("predicate_evaluations must be a Mapping")
+        for pid, eval_res in predicate_evaluations.items():
+            assert_not_planner_or_execution_payload(
+                eval_res, parameter_name=f"predicate_evaluations[{pid}]"
+            )
+            if not isinstance(pid, PredicateId):
+                raise ReadinessContractTypeError("predicate_evaluations key must be PredicateId")
+            if not isinstance(eval_res, PredicateEvaluationResult):
+                raise ReadinessContractTypeError(
+                    "predicate_evaluations value must be PredicateEvaluationResult"
+                )
+            if pid not in valid_pids:
+                raise ReadinessContractValueError(
+                    f"predicate_evaluations contains foreign predicate {pid}"
+                )
+
+    # Validate caller-supplied freshness_evaluations if provided
+    if freshness_evaluations is not None:
+        assert_not_planner_or_execution_payload(
+            freshness_evaluations, parameter_name="freshness_evaluations"
+        )
+        if not isinstance(freshness_evaluations, Mapping):
+            raise ReadinessContractTypeError("freshness_evaluations must be a Mapping")
+        for pid, fresh_res in freshness_evaluations.items():
+            assert_not_planner_or_execution_payload(
+                fresh_res, parameter_name=f"freshness_evaluations[{pid}]"
+            )
+            if not isinstance(pid, PredicateId):
+                raise ReadinessContractTypeError("freshness_evaluations key must be PredicateId")
+            if not isinstance(fresh_res, FreshnessResult):
+                raise ReadinessContractTypeError(
+                    "freshness_evaluations value must be FreshnessResult"
+                )
+            if pid not in valid_pids:
+                raise ReadinessContractValueError(
+                    f"freshness_evaluations contains foreign predicate {pid}"
+                )
 
     # Validate execution_record if provided
     unverified_action_ids: list[ActionId] = []
@@ -322,74 +418,10 @@ def compute_mission_readiness(
                 elif rec.status == ActionExecutionStatus.IN_PROGRESS:
                     action_reasons.append(f"Action {aid} is still in progress")
 
-    # Validate and gather predicate evaluations and freshness evaluations
+    # Evaluate readiness conditions
     final_pred_evals: dict[PredicateId, PredicateEvaluationResult] = {}
     final_fresh_evals: dict[PredicateId, FreshnessResult] = {}
 
-    if predicate_evaluations is not None:
-        assert_not_planner_or_execution_payload(
-            predicate_evaluations, parameter_name="predicate_evaluations"
-        )
-        if not isinstance(predicate_evaluations, Mapping):
-            raise ReadinessContractTypeError("predicate_evaluations must be a Mapping")
-        for pid, eval_res in predicate_evaluations.items():
-            assert_not_planner_or_execution_payload(
-                eval_res, parameter_name=f"predicate_evaluations[{pid}]"
-            )
-            if not isinstance(pid, PredicateId):
-                raise ReadinessContractTypeError("predicate_evaluations key must be PredicateId")
-            if not isinstance(eval_res, PredicateEvaluationResult):
-                raise ReadinessContractTypeError(
-                    "predicate_evaluations value must be PredicateEvaluationResult"
-                )
-            final_pred_evals[pid] = eval_res
-
-    if freshness_evaluations is not None:
-        assert_not_planner_or_execution_payload(
-            freshness_evaluations, parameter_name="freshness_evaluations"
-        )
-        if not isinstance(freshness_evaluations, Mapping):
-            raise ReadinessContractTypeError("freshness_evaluations must be a Mapping")
-        for pid, fresh_res in freshness_evaluations.items():
-            assert_not_planner_or_execution_payload(
-                fresh_res, parameter_name=f"freshness_evaluations[{pid}]"
-            )
-            if not isinstance(pid, PredicateId):
-                raise ReadinessContractTypeError("freshness_evaluations key must be PredicateId")
-            if not isinstance(fresh_res, FreshnessResult):
-                raise ReadinessContractTypeError(
-                    "freshness_evaluations value must be FreshnessResult"
-                )
-            final_fresh_evals[pid] = fresh_res
-
-    if observations is not None:
-        assert_not_planner_or_execution_payload(observations, parameter_name="observations")
-        if not isinstance(observations, Mapping):
-            raise ReadinessContractTypeError("observations must be a Mapping")
-        for pid, obs in observations.items():
-            assert_not_planner_or_execution_payload(obs, parameter_name=f"observations[{pid}]")
-            if not isinstance(pid, PredicateId):
-                raise ReadinessContractTypeError("observations key must be PredicateId")
-            if not isinstance(obs, VerificationObservation):
-                raise ReadinessContractTypeError(
-                    "observations value must be VerificationObservation"
-                )
-
-        # Evaluate any missing evaluations from provided observations
-        for p in predicates:
-            if p.predicate_id in observations:
-                obs = observations[p.predicate_id]
-                if p.predicate_id not in final_pred_evals:
-                    final_pred_evals[p.predicate_id] = evaluate_predicate(p, obs, at=eval_at)
-                if p.predicate_id not in final_fresh_evals:
-                    final_fresh_evals[p.predicate_id] = evaluate_observation_freshness(
-                        obs,
-                        p.freshness,
-                        at=eval_at,
-                        current_window_seconds=current_window_seconds,
-                    )
-
-    # Evaluate readiness conditions
     reasons: list[str] = list(action_reasons)
     satisfied_predicate_ids: list[PredicateId] = []
     failed_predicate_ids: list[PredicateId] = []
@@ -408,32 +440,115 @@ def compute_mission_readiness(
 
     for p in predicates:
         pid = p.predicate_id
-        if pid not in final_pred_evals or pid not in final_fresh_evals:
+
+        # 1. Verification request resolution
+        if verification_requests is None or pid not in verification_requests:
             if p.required:
                 missing_predicate_ids.append(pid)
                 reasons.append(
-                    f"Missing required verifier result for predicate {pid} (subject: {p.subject})"
+                    f"Missing required verifier request for predicate {pid} (subject: {p.subject})"
                 )
             continue
 
-        p_eval = final_pred_evals[pid]
-        f_eval = final_fresh_evals[pid]
+        req = verification_requests[pid]
+        if req.mission_id != mission_id:
+            raise ReadinessContractValueError(
+                f"VerificationRequest mission_id {req.mission_id} does not match {mission_id}"
+            )
+        if req.predicate is not None and req.predicate != p:
+            raise ReadinessContractValueError(
+                f"VerificationRequest predicate does not match desired state predicate {pid}"
+            )
 
-        if p_eval.truth == PredicateTruth.TRUE:
-            if f_eval.status == FreshnessStatus.FRESH:
+        # 2. Verification observation resolution
+        if observations is None or pid not in observations:
+            if p.required:
+                missing_predicate_ids.append(pid)
+                reasons.append(
+                    f"Missing required verifier observation for predicate {pid} "
+                    f"(subject: {p.subject})"
+                )
+            continue
+
+        obs = observations[pid]
+
+        # 3. Deterministic re-computation against observation with expected_target bound to request
+        expected_target = req.target
+        canonical_p_eval = evaluate_predicate(p, obs, expected_target=expected_target, at=eval_at)
+        canonical_f_eval = evaluate_observation_freshness(
+            obs,
+            p.freshness,
+            at=eval_at,
+            current_window_seconds=current_window_seconds,
+        )
+
+        # 4. Anti-forgery check against caller-supplied evaluations
+        if predicate_evaluations is not None and pid in predicate_evaluations:
+            supplied_p = predicate_evaluations[pid]
+            if supplied_p.predicate_id != pid:
+                raise ReadinessContractValueError(
+                    f"Supplied predicate evaluation predicate_id mismatch for {pid}"
+                )
+            if supplied_p.subject != p.subject:
+                raise ReadinessContractValueError(
+                    f"Supplied predicate evaluation subject mismatch for {pid}"
+                )
+            if supplied_p.operator != p.operator:
+                raise ReadinessContractValueError(
+                    f"Supplied predicate evaluation operator mismatch for {pid}"
+                )
+            if supplied_p.expected_value != p.expected_value:
+                raise ReadinessContractValueError(
+                    f"Supplied predicate evaluation expected_value mismatch for {pid}"
+                )
+            if (
+                supplied_p.truth == PredicateTruth.TRUE
+                and canonical_p_eval.truth != PredicateTruth.TRUE
+            ):
+                raise ReadinessContractValueError(
+                    f"Contradiction: supplied evaluation claims TRUE for {pid}, "
+                    f"but canonical observation evaluates {canonical_p_eval.truth}"
+                )
+            final_p_eval = canonical_p_eval
+        else:
+            final_p_eval = canonical_p_eval
+
+        if freshness_evaluations is not None and pid in freshness_evaluations:
+            supplied_f = freshness_evaluations[pid]
+            if getattr(supplied_f, "predicate_id", pid) != pid:
+                raise ReadinessContractValueError(
+                    f"Supplied freshness evaluation predicate_id mismatch for {pid}"
+                )
+            if (
+                supplied_f.status == FreshnessStatus.FRESH
+                and canonical_f_eval.status != FreshnessStatus.FRESH
+            ):
+                raise ReadinessContractValueError(
+                    f"Contradiction: supplied evaluation claims FRESH for {pid}, "
+                    f"but canonical observation is {canonical_f_eval.status}"
+                )
+            final_f_eval = canonical_f_eval
+        else:
+            final_f_eval = canonical_f_eval
+
+        final_pred_evals[pid] = final_p_eval
+        final_fresh_evals[pid] = final_f_eval
+
+        if final_p_eval.truth == PredicateTruth.TRUE:
+            if final_f_eval.status == FreshnessStatus.FRESH:
                 satisfied_predicate_ids.append(pid)
             else:
                 if p.required:
                     stale_predicate_ids.append(pid)
                     reasons.append(
                         f"Predicate {pid} (subject: {p.subject}) observation is STALE "
-                        f"(valid_until: {f_eval.valid_until.isoformat()})"
+                        f"(valid_until: {final_f_eval.valid_until.isoformat()})"
                     )
         else:
             if p.required:
                 failed_predicate_ids.append(pid)
                 reasons.append(
-                    f"Required predicate {pid} ({p.subject}) evaluated FALSE: {p_eval.reason}"
+                    f"Required predicate {pid} ({p.subject}) evaluated FALSE: {final_p_eval.reason}"
                 )
 
     # Compute deterministically whether the mission is READY

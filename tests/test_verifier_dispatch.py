@@ -24,10 +24,13 @@ Validates that:
 
 from __future__ import annotations
 
+import traceback
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from stilldone.action_policy import ValidatedActionContract
 from stilldone.adapters.calendar import (
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
@@ -590,7 +593,10 @@ class TestVerifierFailClosedInvariants:
             action=action,
             target=wrong_child_target,
         )
-        with pytest.raises(VerifierTargetMismatchError, match="must match action task list id"):
+        with pytest.raises(
+            VerifierTargetMismatchError,
+            match="parent container does not match",
+        ):
             dispatcher.dispatch(req)
 
     def test_naive_datetime_in_observation_fails_closed(
@@ -611,3 +617,168 @@ class TestVerifierFailClosedInvariants:
                 observed_at=naive_dt,
                 exists=True,
             )
+
+
+# ===========================================================================
+# Adversarial Sentinel Tests: Error Secrecy (Phase P-09.01 Repair)
+# ===========================================================================
+
+
+class TestVerifierDispatchErrorSecrecy:
+    """Proves that raw identifiers, secrets, and provider exceptions never leak.
+
+    Enforces:
+    - No raw resource_id or parent_id in str(exc) or repr(exc)
+    - No provider error text / tokens in str(exc) or repr(exc)
+    - Exception chaining broke (__cause__ is None, __context__ is None)
+    - Formatted tracebacks do not leak raw sentinels
+    """
+
+    SECRET_RES_ID = "SECRET_EVENT_ID_XYZ_776655"
+    SECRET_OTHER_RES_ID = "SECRET_OTHER_EVENT_ID_XYZ_112233"
+    SECRET_PARENT_ID = "SECRET_PARENT_CONTAINER_445566"
+    SECRET_OTHER_PARENT_ID = "SECRET_OTHER_PARENT_CONTAINER_998877"
+    SECRET_PROVIDER_TOKEN = "PROVIDER_INTERNAL_SECRET_LEAK_TOKEN_9999"
+
+    def test_target_resource_id_mismatch_never_echoes_raw_ids(
+        self, dispatcher: VerifierDispatcher
+    ) -> None:
+        mid = MissionId.generate()
+        aid = ActionId.generate()
+        action_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=self.SECRET_RES_ID,
+            parent_id=self.SECRET_PARENT_ID,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=action_target,
+            parameters={},
+            action_id=aid,
+        )
+        mismatched_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=self.SECRET_OTHER_RES_ID,
+            parent_id=self.SECRET_PARENT_ID,
+        )
+        req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=mismatched_target,
+        )
+
+        with pytest.raises(VerifierTargetMismatchError) as exc_info:
+            dispatcher.dispatch(req)
+
+        exc = exc_info.value
+        exc_str = str(exc)
+        exc_repr = repr(exc)
+        tb_str = "".join(traceback.format_exception(exc))
+
+        assert self.SECRET_RES_ID not in exc_str
+        assert self.SECRET_OTHER_RES_ID not in exc_str
+        assert self.SECRET_RES_ID not in exc_repr
+        assert self.SECRET_OTHER_RES_ID not in exc_repr
+        assert self.SECRET_RES_ID not in tb_str
+        assert self.SECRET_OTHER_RES_ID not in tb_str
+        assert exc_str == "Verification target resource_id does not match action target resource_id"
+
+    def test_target_parent_container_mismatch_never_echoes_raw_ids(
+        self, dispatcher: VerifierDispatcher
+    ) -> None:
+        mid = MissionId.generate()
+        aid = ActionId.generate()
+        action_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=self.SECRET_RES_ID,
+            parent_id=self.SECRET_PARENT_ID,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=action_target,
+            parameters={},
+            action_id=aid,
+        )
+        mismatched_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=self.SECRET_RES_ID,
+            parent_id=self.SECRET_OTHER_PARENT_ID,
+        )
+        req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=mismatched_target,
+        )
+
+        with pytest.raises(VerifierTargetMismatchError) as exc_info:
+            dispatcher.dispatch(req)
+
+        exc = exc_info.value
+        exc_str = str(exc)
+        exc_repr = repr(exc)
+        tb_str = "".join(traceback.format_exception(exc))
+
+        assert self.SECRET_PARENT_ID not in exc_str
+        assert self.SECRET_OTHER_PARENT_ID not in exc_str
+        assert self.SECRET_PARENT_ID not in exc_repr
+        assert self.SECRET_OTHER_PARENT_ID not in exc_repr
+        assert self.SECRET_PARENT_ID not in tb_str
+        assert self.SECRET_OTHER_PARENT_ID not in tb_str
+        assert (
+            exc_str
+            == "Verification target parent container does not match action target parent container"
+        )
+
+    def test_provider_exception_does_not_leak_into_read_error(self) -> None:
+        class CrashingCalendarAdapter(GoogleCalendarReadAdapter):
+            def read_event(self, action: ValidatedActionContract | ActionContract) -> Any:
+                raise RuntimeError(
+                    f"CRASH with secret token: "
+                    f"{TestVerifierDispatchErrorSecrecy.SECRET_PROVIDER_TOKEN}"
+                )
+
+        crashing_adapter = CrashingCalendarAdapter(
+            transport=FakeGoogleCalendarTransport(),
+            scope=DemoResourceScope(calendar_id="demo-cal", task_list_id="demo-tasks"),
+        )
+        port = CalendarVerificationPort(crashing_adapter)
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="evt-normal-1",
+            parent_id="demo-cal",
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=target,
+            parameters={},
+        )
+        req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=target,
+        )
+
+        with pytest.raises(VerifierError) as exc_info:
+            port.read(req)
+
+        exc = exc_info.value
+        exc_str = str(exc)
+        exc_repr = repr(exc)
+        tb_str = "".join(traceback.format_exception(exc))
+
+        assert self.SECRET_PROVIDER_TOKEN not in exc_str
+        assert self.SECRET_PROVIDER_TOKEN not in exc_repr
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+        assert self.SECRET_PROVIDER_TOKEN not in tb_str
+        assert exc_str == "Calendar provider error during read-back"

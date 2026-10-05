@@ -50,9 +50,16 @@ from stilldone.planning.contracts import (
 from stilldone.verifier.contracts import (
     ExecutionPayloadSubstitutionError,
     VerificationObservation,
+    VerificationRequest,
 )
 from stilldone.verifier.freshness import (
+    FreshnessResult,
+    FreshnessStatus,
     NaiveDatetimeError,
+)
+from stilldone.verifier.predicates import (
+    PredicateEvaluationResult,
+    PredicateTruth,
 )
 from stilldone.verifier.readiness import (
     PlannerReadinessAuthorityError,
@@ -155,6 +162,44 @@ def _make_tasks_observation(
     )
 
 
+def _make_calendar_request(
+    mission_id: MissionId,
+    predicate: DesiredStatePredicate,
+    target: TargetIdentity = CAL_TARGET,
+) -> VerificationRequest:
+    action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=target,
+        parameters={},
+    )
+    return VerificationRequest(
+        mission_id=mission_id,
+        action=action,
+        target=target,
+        predicate=predicate,
+    )
+
+
+def _make_tasks_request(
+    mission_id: MissionId,
+    predicate: DesiredStatePredicate,
+    target: TargetIdentity = TASKS_OBS_TARGET,
+) -> VerificationRequest:
+    action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=target,
+        parameters={},
+    )
+    return VerificationRequest(
+        mission_id=mission_id,
+        action=action,
+        target=target,
+        predicate=predicate,
+    )
+
+
 def _make_execution_record(
     mission_id: MissionId,
     actions_with_success: list[tuple[ActionContract, bool]],
@@ -216,9 +261,16 @@ class TestReadinessEligible:
         obs1 = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
         obs2 = _make_tasks_observation(status="needsAction", observed_at=T_OBS)
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={
                 pred1.predicate_id: obs1,
                 pred2.predicate_id: obs2,
@@ -265,9 +317,16 @@ class TestReadinessEligible:
         obs1 = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
         obs2 = _make_tasks_observation(status="needsAction", observed_at=T_OBS)
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={
                 pred1.predicate_id: obs1,
                 pred2.predicate_id: obs2,
@@ -300,9 +359,16 @@ class TestReadinessPredicateFalse:
         obs1 = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
         obs2 = _make_tasks_observation(status="completed", observed_at=T_OBS)
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={
                 pred1.predicate_id: obs1,
                 pred2.predicate_id: obs2,
@@ -341,9 +407,16 @@ class TestReadinessStaleObservation:
         obs1 = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
         obs2 = _make_tasks_observation(status="needsAction", observed_at=T_OBS)
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={
                 pred1.predicate_id: obs1,
                 pred2.predicate_id: obs2,
@@ -376,9 +449,16 @@ class TestReadinessMissingVerifierResult:
         # Only pred1 has an observation; pred2 has none
         obs1 = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={pred1.predicate_id: obs1},
             current_state=MissionState.VERIFYING,
             at=T_EVAL,
@@ -387,7 +467,7 @@ class TestReadinessMissingVerifierResult:
         assert det.is_ready is False
         assert det.state != MissionState.READY
         assert det.missing_predicate_ids == (pred2.predicate_id,)
-        assert any("Missing required verifier result" in r for r in det.reasons)
+        assert any("Missing required verifier observation" in r for r in det.reasons)
 
 
 # ===========================================================================
@@ -416,10 +496,12 @@ class TestReadinessExecutionSucceededPredicateFalse:
         pred1 = _make_calendar_predicate(mission_id, expected_status="confirmed")
         # But read-back observed "cancelled" status!
         obs1 = _make_calendar_observation(status="cancelled", observed_at=T_OBS)
+        req1 = _make_calendar_request(mission_id, pred1)
 
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1],
+            verification_requests={pred1.predicate_id: req1},
             observations={pred1.predicate_id: obs1},
             execution_record=exec_rec,
             current_state=MissionState.VERIFYING,
@@ -467,10 +549,17 @@ class TestReadinessProviderSuccessWithoutReadBack:
         pred1 = _make_calendar_predicate(mission_id, expected_status="confirmed")
         pred2 = _make_tasks_predicate(mission_id, expected_status="needsAction")
 
+        req1 = _make_calendar_request(mission_id, pred1)
+        req2 = _make_tasks_request(mission_id, pred2)
+
         # Zero observations provided (read-back missing completely)
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred1, pred2],
+            verification_requests={
+                pred1.predicate_id: req1,
+                pred2.predicate_id: req2,
+            },
             observations={},
             execution_record=exec_rec,
             current_state=MissionState.VERIFYING,
@@ -563,10 +652,12 @@ class TestReadinessDeterminism:
 
         pred = _make_calendar_predicate(mission_id, expected_status="confirmed")
         obs = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
+        req = _make_calendar_request(mission_id, pred)
 
         det1 = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred],
+            verification_requests={pred.predicate_id: req},
             observations={pred.predicate_id: obs},
             current_state=MissionState.VERIFYING,
             at=T_EVAL,
@@ -575,6 +666,7 @@ class TestReadinessDeterminism:
         det2 = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred],
+            verification_requests={pred.predicate_id: req},
             observations={pred.predicate_id: obs},
             current_state=MissionState.VERIFYING,
             at=T_EVAL,
@@ -600,11 +692,13 @@ class TestReadinessBoundaryInvariants:
         mission_id = MissionId.generate()
         pred = _make_calendar_predicate(mission_id, expected_status="confirmed")
         obs = _make_calendar_observation(status="confirmed", observed_at=T_OBS)
+        req = _make_calendar_request(mission_id, pred)
 
         # Attempting readiness check while mission is still EXECUTING
         det = compute_mission_readiness(
             mission_id=mission_id,
             predicates=[pred],
+            verification_requests={pred.predicate_id: req},
             observations={pred.predicate_id: obs},
             current_state=MissionState.EXECUTING,
             at=T_EVAL,
@@ -666,6 +760,303 @@ class TestReadinessBoundaryInvariants:
             compute_mission_readiness(
                 mission_id=mission_id1,
                 predicates=[pred],
+                execution_record=exec_rec,
+                at=T_EVAL,
+            )
+
+
+# ===========================================================================
+# Adversarial Tests: Canonical Lineage & Anti-Forgery (Phase P-09.04 Repair)
+# ===========================================================================
+
+
+class TestReadinessAdversarialLineage:
+    """Proves that READY cannot be forged from detached, relabeled, or invalid facts.
+
+    Scenarios:
+    1. relabeled predicate evaluation cannot promote READY
+    2. relabeled freshness result cannot promote READY
+    3. forged TRUE cannot override observation that evaluates FALSE
+    4. forged FRESH cannot override observation that is STALE
+    5. target mismatch between request and observation blocks READY
+    6. mission_id mismatch in request blocks READY
+    7. predicate mismatch between request and desired state blocks READY
+    8. missing verification request blocks READY
+    9. missing verification observation blocks READY
+    10. execution success + provider success + forged truth CANNOT produce READY
+    """
+
+    def test_relabeled_predicate_evaluation_cannot_promote_ready(self) -> None:
+        """Supplied evaluation with mismatched predicate_id or foreign predicate is rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        req = _make_calendar_request(mission_id, pred)
+        foreign_pid = PredicateId.generate()
+
+        forged_eval = PredicateEvaluationResult(
+            predicate_id=foreign_pid,
+            truth=PredicateTruth.TRUE,
+            subject=pred.subject,
+            operator=pred.operator,
+            expected_value=pred.expected_value,
+        )
+
+        with pytest.raises(ReadinessContractValueError, match="foreign predicate"):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                predicate_evaluations={foreign_pid: forged_eval},
+                at=T_EVAL,
+            )
+
+    def test_relabeled_freshness_result_cannot_promote_ready(self) -> None:
+        """Supplied freshness evaluation with foreign predicate is rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        req = _make_calendar_request(mission_id, pred)
+        foreign_pid = PredicateId.generate()
+
+        forged_fresh = FreshnessResult(
+            status=FreshnessStatus.FRESH,
+            observed_at=T_OBS,
+            evaluated_at=T_EVAL,
+            valid_until=T_EVAL,
+            age_seconds=0.0,
+            reason="Forged fresh",
+        )
+
+        with pytest.raises(ReadinessContractValueError, match="foreign predicate"):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                freshness_evaluations={foreign_pid: forged_fresh},
+                at=T_EVAL,
+            )
+
+    def test_forged_true_cannot_override_observation_that_evaluates_false(self) -> None:
+        """Caller cannot inject TRUE if canonical observation evaluates FALSE."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id, expected_status="confirmed")
+        # Observation is actually cancelled!
+        obs = _make_calendar_observation(status="cancelled", observed_at=T_OBS)
+        req = _make_calendar_request(mission_id, pred)
+
+        forged_eval = PredicateEvaluationResult(
+            predicate_id=pred.predicate_id,
+            truth=PredicateTruth.TRUE,
+            subject=pred.subject,
+            operator=pred.operator,
+            expected_value=pred.expected_value,
+        )
+
+        with pytest.raises(
+            ReadinessContractValueError, match="Contradiction: supplied evaluation claims TRUE"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                predicate_evaluations={pred.predicate_id: forged_eval},
+                at=T_EVAL,
+            )
+
+    def test_forged_fresh_cannot_override_observation_that_is_stale(self) -> None:
+        """Caller cannot inject FRESH if canonical observation is STALE."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id, max_age_seconds=60)
+        # Observation is 9 minutes old (STALE at T_STALE_EVAL)
+        obs = _make_calendar_observation(observed_at=T_OBS)
+        req = _make_calendar_request(mission_id, pred)
+
+        forged_fresh = FreshnessResult(
+            status=FreshnessStatus.FRESH,
+            observed_at=T_OBS,
+            evaluated_at=T_STALE_EVAL,
+            valid_until=T_STALE_EVAL,
+            age_seconds=0.0,
+            reason="Forged fresh",
+        )
+
+        with pytest.raises(
+            ReadinessContractValueError, match="Contradiction: supplied evaluation claims FRESH"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                freshness_evaluations={pred.predicate_id: forged_fresh},
+                at=T_STALE_EVAL,
+            )
+
+    def test_target_mismatch_between_request_and_observation_blocks_ready(self) -> None:
+        """Observation for a different target than the request fails closed and blocks READY."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        other_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="evt-other-different",
+            parent_id="primary",
+        )
+        obs_wrong_target = _make_calendar_observation(cal_target=other_target)
+        req = _make_calendar_request(mission_id, pred, target=CAL_TARGET)
+
+        det = compute_mission_readiness(
+            mission_id=mission_id,
+            predicates=[pred],
+            verification_requests={pred.predicate_id: req},
+            observations={pred.predicate_id: obs_wrong_target},
+            at=T_EVAL,
+        )
+
+        assert det.is_ready is False
+        assert det.state != MissionState.READY
+        assert pred.predicate_id in det.failed_predicate_ids
+
+    def test_mission_id_mismatch_in_request_blocks_ready(self) -> None:
+        """VerificationRequest with different mission_id fails closed."""
+        mission_id1 = MissionId.generate()
+        mission_id2 = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id1)
+        obs = _make_calendar_observation()
+
+        # Request bound to mission_id2
+        action2 = ActionContract.create(
+            mission_id=mission_id2,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        req = VerificationRequest(
+            mission_id=mission_id2,
+            action=action2,
+            target=CAL_TARGET,
+            predicate=None,
+        )
+
+        with pytest.raises(ReadinessContractValueError, match="mission_id"):
+            compute_mission_readiness(
+                mission_id=mission_id1,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_predicate_mismatch_between_request_and_desired_state_blocks_ready(self) -> None:
+        """VerificationRequest referencing a different predicate fails closed."""
+        mission_id = MissionId.generate()
+        pred1 = _make_calendar_predicate(mission_id)
+        pred2 = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+
+        # Request for pred1 references pred2 instead
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        mismatched_req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=pred2,
+        )
+
+        with pytest.raises(
+            ReadinessContractValueError, match="does not match desired state predicate"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred1],
+                verification_requests={pred1.predicate_id: mismatched_req},
+                observations={pred1.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_missing_verification_request_blocks_ready(self) -> None:
+        """Missing verification request marks predicate missing and blocks READY."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+
+        det = compute_mission_readiness(
+            mission_id=mission_id,
+            predicates=[pred],
+            verification_requests={},
+            observations={pred.predicate_id: obs},
+            at=T_EVAL,
+        )
+
+        assert det.is_ready is False
+        assert det.state != MissionState.READY
+        assert pred.predicate_id in det.missing_predicate_ids
+
+    def test_missing_verification_observation_blocks_ready(self) -> None:
+        """Missing verification observation marks predicate missing and blocks READY."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, pred)
+
+        det = compute_mission_readiness(
+            mission_id=mission_id,
+            predicates=[pred],
+            verification_requests={pred.predicate_id: req},
+            observations={},
+            at=T_EVAL,
+        )
+
+        assert det.is_ready is False
+        assert det.state != MissionState.READY
+        assert pred.predicate_id in det.missing_predicate_ids
+
+    def test_execution_and_provider_success_with_forged_truth_cannot_produce_ready(self) -> None:
+        """Execution success + provider success cannot forge READY when read-back
+        is contradictory.
+        """
+        mission_id = MissionId.generate()
+        aid = ActionId.generate()
+        action = ActionContract.create(
+            action_id=aid,
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=CAL_TARGET,
+            parameters={"summary": "School dropoff"},
+        )
+        exec_rec = _make_execution_record(mission_id, [(action, True)])
+        assert exec_rec.is_all_succeeded is True
+
+        pred = _make_calendar_predicate(mission_id, expected_status="confirmed")
+        req = _make_calendar_request(mission_id, pred)
+        # Reality: cancelled!
+        obs = _make_calendar_observation(status="cancelled")
+
+        forged_eval = PredicateEvaluationResult(
+            predicate_id=pred.predicate_id,
+            truth=PredicateTruth.TRUE,
+            subject=pred.subject,
+            operator=pred.operator,
+            expected_value=pred.expected_value,
+        )
+
+        with pytest.raises(
+            ReadinessContractValueError, match="Contradiction: supplied evaluation claims TRUE"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                predicate_evaluations={pred.predicate_id: forged_eval},
                 execution_record=exec_rec,
                 at=T_EVAL,
             )

@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: IMPLEMENTED (awaiting independent QA phase closure) | Phase P-09: P-09.01–P-09.04 IMPLEMENTED (awaiting independent QA phase closure) | Last independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 (REPAIRED), P-09.02 (REPAIRED), P-09.03 (PASS ✅), P-09.04 (REPAIRED) (awaiting independent QA review) | Last independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,32 +74,28 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Bounded Five-Task Batch (P-08.06 + P-09.01 → P-09.04) — IMPLEMENTED
+Active batch: Consolidated Verification-Truth Repair (P-09.01 + P-09.02 + P-09.04) — IMPLEMENTED
 
-Micro-tasks executed in this batch:
-- P-08.06 — IMPLEMENTED (`tests/test_execution_mission_mixed.py` covering all 10 mandatory scenarios)
-- P-09.01 — IMPLEMENTED (`src/stilldone/verifier/dispatch.py`, `tests/test_verifier_dispatch.py`)
-- P-09.02 — IMPLEMENTED (`src/stilldone/verifier/predicates.py`, `tests/test_verifier_predicates.py`)
-- P-09.03 — IMPLEMENTED (`src/stilldone/verifier/freshness.py`, `tests/test_verifier_freshness.py`)
-- P-09.04 — IMPLEMENTED (`src/stilldone/verifier/readiness.py`, `tests/test_verifier_readiness.py`)
+Micro-tasks executed in this repair batch:
+- P-09.01 — REPAIRED (error secrecy: zero external ID / sensitive payload leakage; exception chains severed)
+- P-09.02 — REPAIRED (exact native integer comparisons, finite floats via math.isfinite, fail-closed NaN/inf, privacy-safe structural reasons, observed_value=None)
+- P-09.04 — REPAIRED (bound READY to canonical verification request / observation lineage; strict anti-forgery guards)
 
 Status:
-- P-08.01 — PASS ✅ (independent QA verified)
-- P-08.02 — PASS ✅ (independent QA verified)
-- P-08.03 — PASS ✅ (independent QA verified)
-- P-08.04 — PASS ✅ (independent QA verified)
-- P-08.05 — PASS ✅ (independent QA verified)
-- P-08.06 — IMPLEMENTED (awaiting independent QA phase closure)
-- Phase P-08 Overall: IMPLEMENTED (awaiting independent QA phase closure)
+- P-00 through P-07: CLOSED — independent QA PASS ✅
+- P-08.01 → P-08.05: PASS ✅ (independent QA verified)
+- P-08.06: PASS ✅ (independent QA verified)
+- Phase P-08 Overall: CLOSED (independent QA PASS ✅)
 
 Phase P-09 Status:
-- P-09.01 — IMPLEMENTED (awaiting independent QA review)
-- P-09.02 — IMPLEMENTED (awaiting independent QA review)
-- P-09.03 — IMPLEMENTED (awaiting independent QA review)
-- P-09.04 — IMPLEMENTED (awaiting independent QA review)
+- P-09.01 — REPAIRED (awaiting independent QA review)
+- P-09.02 — REPAIRED (awaiting independent QA review)
+- P-09.03 — PASS ✅ (independent QA verified)
+- P-09.04 — REPAIRED (awaiting independent QA review)
 - P-09.05+ — PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`
+Last Independently VERIFIED SHA remains: `6bccb93fa64336198d6719a68ab835f6cd101c67`
+Current remote repair base: `bcfe878b170ff090544add5e5fe7b27d7dcc18e1`
 Next exact task after QA review: P-09.05 (Reconciliation against fresh external state)
 
 Architecture Truth — Dependency Isolation:
