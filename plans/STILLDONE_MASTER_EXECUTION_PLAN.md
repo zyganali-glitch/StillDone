@@ -1188,10 +1188,10 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-09.04 — Implement deterministic mission readiness computation
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-09.05 — Implement reconciliation of previously verified mission against fresh external state
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-09.06 — Implement `READY → DRIFTED` downgrade with mismatch explanation
 Status: PENDING

@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 (PASS ✅), P-09.02 (PASS ✅), P-09.03 (PASS ✅), P-09.04 (REPAIRED / awaiting independent QA review) | Last independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.04 (PASS ✅) | Active batch: P-09.05 → P-09.07 + P-10.01 → P-10.02 | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,28 +74,23 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active task: P-09.04 Final Surgical Repair (Canonical Verification Lineage & Predicate Binding) — REPAIRED (awaiting independent QA review)
+Active batch: Bounded Five-Task Batch (P-09.05 → P-09.07 + P-10.01 → P-10.02)
 
-Micro-tasks executed in this repair:
-- DEFECT 1: VerificationRequest must carry exact canonical non-None DesiredStatePredicate for participating predicates.
-- DEFECT 2: compute_mission_readiness independently validates canonical action <-> target lineage via shared pure helper validate_verification_request_lineage.
+Tasks in this batch:
+- P-09.05 — Implement reconciliation of previously verified mission against fresh external state
+- P-09.06 — Implement READY → DRIFTED downgrade with mismatch explanation
+- P-09.07 — Add executor-success/readback-mismatch and stale-history tests
+- P-10.01 — Freeze idempotency strategy per supported mutation
+- P-10.02 — Implement bounded exponential retry and retry classification
 
 Status:
 - P-00 through P-07: CLOSED — independent QA PASS ✅
-- P-08.01 → P-08.05: PASS ✅ (independent QA verified)
-- P-08.06: PASS ✅ (independent QA verified)
-- Phase P-08 Overall: CLOSED (independent QA PASS ✅)
+- Phase P-08: CLOSED (independent QA PASS ✅)
+- P-09.01 → P-09.04: PASS ✅ (independent QA verified)
 
-Phase P-09 Status:
-- P-09.01 — PASS ✅ (independent QA verified)
-- P-09.02 — PASS ✅ (independent QA verified)
-- P-09.03 — PASS ✅ (independent QA verified)
-- P-09.04 — REPAIRED (awaiting independent QA review)
-- P-09.05+ — PENDING / NOT AUTHORIZED / NOT_RUN
-
-Last Independently VERIFIED SHA remains: `6bccb93fa64336198d6719a68ab835f6cd101c67`
-Current remote repair base: `18e487aa449cfd5ca1602c330edae7281a53ee19`
-Next exact task after QA review: P-09.05 (Reconciliation against fresh external state)
+Last Independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
+Starting remote SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
+Next exact task: P-09.06 (Implement READY -> DRIFTED downgrade with mismatch explanation)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
