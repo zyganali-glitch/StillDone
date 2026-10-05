@@ -29,6 +29,16 @@ from stilldone.verifier.dispatch import (
     WeatherVerificationPort,
     create_verifier_dispatcher,
 )
+from stilldone.verifier.freshness import (
+    DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS,
+    FreshnessError,
+    FreshnessResult,
+    FreshnessStatus,
+    FutureDatedObservationError,
+    NaiveDatetimeError,
+    evaluate_freshness,
+    evaluate_observation_freshness,
+)
 from stilldone.verifier.predicates import (
     PredicateEvaluationResult,
     PredicateTruth,
@@ -38,9 +48,15 @@ from stilldone.verifier.predicates import (
 
 __all__ = [
     "CalendarVerificationPort",
+    "DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS",
     "ExecutionPayloadSubstitutionError",
+    "FreshnessError",
+    "FreshnessResult",
+    "FreshnessStatus",
+    "FutureDatedObservationError",
     "MalformedObservationError",
     "MissingVerifierRouteError",
+    "NaiveDatetimeError",
     "PredicateEvaluationResult",
     "PredicateTruth",
     "ReadAdapterPort",
@@ -54,6 +70,8 @@ __all__ = [
     "VerifierTargetMismatchError",
     "WeatherVerificationPort",
     "create_verifier_dispatcher",
+    "evaluate_freshness",
+    "evaluate_observation_freshness",
     "evaluate_predicate",
     "evaluate_predicates",
 ]
