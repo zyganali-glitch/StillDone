@@ -118,12 +118,16 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
 
 - Validation:
   * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 1016 tests).
-- P-07.06 Execution:
-  * Exactly 1 live Bedrock inference executed via bounded Strands planner (`amazon.nova-micro-v1:0` in `us-east-1`).
+- P-07.06 Execution & Exact-SHA Live Proof:
+  * Exact committed source SHA bound: `665c4388942ceb43c87335352bd99674dd6a9f85` (Commit A).
+  * Explicit operator live approval gate enforced prior to inference (`--approve-live`, ref: `"APPROVE P-07.06 REPAIR LIVE BEDROCK INFERENCE"`).
+  * Short-lived temporary session credentials enforced (`ASIA...` + `AWS_SESSION_TOKEN`, static keys fail closed).
+  * Exactly 1 live Bedrock inference executed via bounded Strands planner (`amazon.nova-micro-v1:0` in `us-east-1`, 4.085s).
   * Model output strictly crossed deterministic contract boundary (`parse_candidate_plan_for_input`).
-  * Negative control proved model necessity (fails closed without model output).
+  * Strands-compatible negative control model (`StrandsCompatibleNonProducingModel`) proved model necessity via normal Strands stream orchestration with zero network calls, failing closed with `StrandsEmptyResponseError`.
+  * Tool truth: `agent.tools == []` enforced by code/tests, `meta.tools_count == 0`, zero external tools executed.
+  * Cost truth: underlying service cost `NOT_DETERMINISTICALLY_OBSERVED`, promotional credit `ACTIVE / CONFIRMED`, personal spend delta strictly `$0.00`.
   * Evidence recorded in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
-  * Personal spend delta strictly $0.00 (promotional credit active).
   * Phase P-07 is EXECUTED — awaiting independent QA review.
 - Next Phase P-08 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN. DO NOT BEGIN P-08.
 
