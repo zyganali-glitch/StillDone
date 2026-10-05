@@ -1123,12 +1123,13 @@ Acceptance:
 - 88 focused unit tests in `tests/planning/test_planner_metadata.py` passing with zero network calls.
 
 ### P-07.06 — Prove model is necessary for natural-language mission compilation in the live path
-Status: EXECUTED / awaiting independent QA
+Status: EXECUTED / awaiting independent QA review
 
 Acceptance:
-- exact committed source SHA bound: `665c4388942ceb43c87335352bd99674dd6a9f85` (Commit A verified before inference);
-- explicit operator live approval gate enforced prior to inference (`--approve-live`, ref: `"APPROVE P-07.06 REPAIR LIVE BEDROCK INFERENCE"`);
-- short-lived temporary session credentials enforced (`ASIA...` + `AWS_SESSION_TOKEN`; static `AKIA` keys fail closed);
+- exact committed source SHA bound: `ca56e54e2cbe70fa004523c5e750af9bc3f527b9` (Commit C verified before credential resolution and inference);
+- fail-closed git gates enforced: clean working tree verified (`git status --porcelain`), `HEAD == origin/main == expected_source_sha`;
+- explicit operator live approval gate enforced prior to inference (`--approve-live`, ref: `"APPROVE P-07.06 FINAL REPAIR LIVE BEDROCK INFERENCE"`);
+- short-lived temporary session credentials enforced with positive ASIA prefix (`access_key.startswith("ASIA")` + `AWS_SESSION_TOKEN`; static `AKIA` and arbitrary non-`ASIA` keys fail closed; zero secrets logged);
 - executed exactly 1 live Bedrock inference via real bounded Strands planner (`plan_with_strands`) against `amazon.nova-micro-v1:0` in `us-east-1` with zero retries, zero fallback, zero tool executions (`tools=[]`), and single turn limit (`limits={"turns": 1}`);
 - natural-language mission intent (`"Check today's calendar events and create a task to review project roadmap"`) successfully compiled into valid `CandidatePlanProposal`;
 - model output strictly crossed deterministic contract ingress (`parse_candidate_plan_for_input`);
@@ -1136,11 +1137,11 @@ Acceptance:
 - model owns zero ActionId, zero EvidenceId, zero ApprovalGrant, zero execution truth, zero predicate truth, zero VERIFIED/READY promotion;
 - tool truth: production `plan_with_strands` constructs Agent with `tools=[]`, P-07.03 tests enforce empty tool registry, `meta.tools_count == 0`, zero external tools executed;
 - compatible negative control proved model necessity: `StrandsCompatibleNonProducingModel` (subclassed from `strands.models.model.Model`) entered Strands stream orchestration with zero network calls, failed closed via `StrandsEmptyResponseError`, producing zero CandidatePlan;
-- cost truth: underlying service cost `NOT_DETERMINISTICALLY_OBSERVED`, promotional credit status `ACTIVE / CONFIRMED`, personal out-of-pocket spend strictly `$0.00`;
+- cost and billing truth separation: proof script generates `underlying_service_cost="NOT_DETERMINISTICALLY_OBSERVED"`, `promotional_credit_status="NOT_OBSERVED_BY_THIS_RUNTIME"`, `personal_spend_delta="NOT_OBSERVED_BY_THIS_RUNTIME"`; separate operator/account observation independently confirms active promotional credit and $0.00 personal spend;
 - comprehensive live evidence captured in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
 
 Phase exit:
-Phase P-07 is EXECUTED — awaiting independent QA (AWS intelligence is genuine, bounded, exact-SHA proven).
+Phase P-07 is EXECUTED — awaiting independent QA review (AWS intelligence is genuine, bounded, exact-SHA proven).
 
 ---
 

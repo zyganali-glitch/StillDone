@@ -119,14 +119,15 @@ Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
 - Validation:
   * Full validation suite (`scripts/validate.py`) passing across both environments: Core/MCP (ruff, mypy, 1263 tests) and Strands Planner (mypy, 1016 tests).
 - P-07.06 Execution & Exact-SHA Live Proof:
-  * Exact committed source SHA bound: `665c4388942ceb43c87335352bd99674dd6a9f85` (Commit A).
-  * Explicit operator live approval gate enforced prior to inference (`--approve-live`, ref: `"APPROVE P-07.06 REPAIR LIVE BEDROCK INFERENCE"`).
-  * Short-lived temporary session credentials enforced (`ASIA...` + `AWS_SESSION_TOKEN`, static keys fail closed).
-  * Exactly 1 live Bedrock inference executed via bounded Strands planner (`amazon.nova-micro-v1:0` in `us-east-1`, 4.085s).
+  * Exact committed source SHA bound: `ca56e54e2cbe70fa004523c5e750af9bc3f527b9` (Commit C).
+  * Fail-closed git gates: clean working tree verified, `HEAD == origin/main == expected_source_sha`.
+  * Explicit operator live approval gate enforced prior to inference (`--approve-live`, ref: `"APPROVE P-07.06 FINAL REPAIR LIVE BEDROCK INFERENCE"`).
+  * Short-lived temporary session credentials enforced with positive ASIA prefix (`access_key.startswith("ASIA")` + `AWS_SESSION_TOKEN`, static/arbitrary keys fail closed; zero secrets logged).
+  * Exactly 1 live Bedrock inference executed via bounded Strands planner (`amazon.nova-micro-v1:0` in `us-east-1`, 3.463s, mission `bd9d9833-0533-4c87-a556-f1d9ac9b8792`).
   * Model output strictly crossed deterministic contract boundary (`parse_candidate_plan_for_input`).
   * Strands-compatible negative control model (`StrandsCompatibleNonProducingModel`) proved model necessity via normal Strands stream orchestration with zero network calls, failing closed with `StrandsEmptyResponseError`.
   * Tool truth: `agent.tools == []` enforced by code/tests, `meta.tools_count == 0`, zero external tools executed.
-  * Cost truth: underlying service cost `NOT_DETERMINISTICALLY_OBSERVED`, promotional credit `ACTIVE / CONFIRMED`, personal spend delta strictly `$0.00`.
+  * Cost truth & billing separation: proof runtime emitted `underlying_service_cost="NOT_DETERMINISTICALLY_OBSERVED"`, `promotional_credit_status="NOT_OBSERVED_BY_THIS_RUNTIME"`, `personal_spend_delta="NOT_OBSERVED_BY_THIS_RUNTIME"`; separate operator/account observation confirms active promotional credit and $0.00 personal spend.
   * Evidence recorded in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`.
   * Phase P-07 is EXECUTED — awaiting independent QA review.
 - Next Phase P-08 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN. DO NOT BEGIN P-08.
