@@ -580,3 +580,132 @@ class TestStrandsResultImmutableContract:
         with pytest.raises(TypeError) as exc_info:
             plan_with_strands(p_in, _model_override=fake, _metadata_override="fake")  # type: ignore[call-arg]
         assert "unexpected keyword argument" in str(exc_info.value)
+
+
+# ===========================================================================
+# P-07.06 Live Proof Harness & Compatible Negative Control Tests
+# ===========================================================================
+
+
+class TestLiveProofHarnessAndControl:
+    """Verifies P-07.06 live proof harness, approval gate, credential enforcement,
+    and Strands-compatible negative control model contract.
+    """
+
+    def test_strands_compatible_non_producing_model_contract(self) -> None:
+        """Defect 1: Compatible negative control inherits from Strands Model,
+        enters normal Strands stream orchestration with zero network calls,
+        and deterministic pipeline fails closed with StrandsEmptyResponseError.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        from p07_06_live_proof import (  # type: ignore[import-not-found]
+            create_compatible_non_producing_model,
+        )
+        from strands.models.model import Model
+
+        mid = MissionId(str(uuid4()))
+        p_in = PlannerInput(mission_id=mid, intent="Check tasks and make plan")
+        control_model: Any = create_compatible_non_producing_model()
+
+        assert issubclass(control_model.__class__, Model)
+        assert control_model.get_config() == {"model_id": DEFAULT_BEDROCK_MODEL_ID}
+
+        with pytest.raises(StrandsEmptyResponseError) as exc_info:
+            plan_with_strands(p_in, _model_override=control_model)
+
+        assert "No text blocks found" in str(exc_info.value)
+        assert control_model.stream_call_count == 1
+        assert control_model.network_call_count == 0
+
+    def test_live_proof_gate_cli_requires_approval_flag(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Defect 2: Live proof CLI requires --approve-live. Without it,
+        exits non-zero BEFORE credential resolution with zero AWS calls.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        # Ensure credentials resolution is NOT called
+        def forbid_credentials() -> Any:
+            raise AssertionError("Credentials resolution MUST NOT be called without approval flag")
+
+        monkeypatch.setattr(
+            p07_06_live_proof, "resolve_and_verify_temporary_credentials", forbid_credentials
+        )
+
+        exit_code = p07_06_live_proof.main([])
+        assert exit_code == 2
+
+        captured = capsys.readouterr()
+        assert "ERROR: Live Bedrock inference requires explicit operator approval" in captured.err
+
+    def test_live_proof_negative_control_only_mode(self) -> None:
+        """Live proof CLI --negative-control-only executes negative control with zero AWS calls."""
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        exit_code = p07_06_live_proof.main(["--negative-control-only"])
+        assert exit_code == 0
+
+    def test_temporary_credentials_enforcement(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Defect 3: Live proof script strictly requires short-lived temporary session
+        credentials (ASIA... + AWS_SESSION_TOKEN). Static long-lived keys fail closed.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        if str(repo_root / "scripts") not in sys.path:
+            sys.path.insert(0, str(repo_root / "scripts"))
+        import p07_06_live_proof
+
+        # Case 1: Missing all credentials -> fails closed
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.setattr(p07_06_live_proof.shutil, "which", lambda cmd: None)
+
+        with pytest.raises(RuntimeError, match="Missing AWS credentials in environment"):
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+
+        # Case 2: Static long-lived keys without session token -> fails closed
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+        with pytest.raises(RuntimeError, match="Missing AWS_SESSION_TOKEN"):
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+
+        # Case 3: Static AKIA key even if session token spoofed -> fails closed
+        monkeypatch.setenv("AWS_SESSION_TOKEN", "dummy_session_token")
+        with pytest.raises(RuntimeError, match="Static long-lived IAM access key"):
+            p07_06_live_proof.resolve_and_verify_temporary_credentials()
+
+        # Case 4: Legitimate temporary session credentials (ASIA... + session token) -> succeeds
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIATEMPORARY123456")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "temporary_secret_key_abcdef")
+        monkeypatch.setenv("AWS_SESSION_TOKEN", "valid_session_token_xyz")
+
+        meta = p07_06_live_proof.resolve_and_verify_temporary_credentials()
+        assert meta["credential_mode"] == "temporary_session"
+        assert meta["session_token_present"] is True
+        assert meta["key_prefix"] == "ASIA"
+        # Secrets must NOT be returned or leaked
+        assert "temporary_secret_key_abcdef" not in str(meta)
+        assert "valid_session_token_xyz" not in str(meta)
