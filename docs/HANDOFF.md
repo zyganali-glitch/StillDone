@@ -77,13 +77,12 @@ Preferred AWS target:
 Active batch: Phase P-08 Deterministic Mission Execution Engine (P-08.01 → P-08.05)
 
 Current exact task:
-P-08.01 — Implement mission compiler from validated plan to immutable execution contract
+P-08.02 — Implement deterministic action scheduler and dependency ordering
 
 Status:
-`IN PROGRESS`
+`IMPLEMENTED / awaiting independent QA`
 
 Remaining authorized tasks in batch:
-- P-08.02 — Implement deterministic action scheduler and dependency ordering
 - P-08.03 — Implement partial-failure preservation and per-step states
 - P-08.04 — Implement execution attempts and provider-result recording
 - P-08.05 — Implement no-silent-fallback adapter routing

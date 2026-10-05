@@ -27,16 +27,19 @@ from stilldone.execution.contracts import (
     TargetResolutionError,
     UnsupportedActionError,
 )
+from stilldone.execution.scheduler import ExecutionSchedule, schedule_execution
 
 __all__ = [
     "DependencyCycleError",
     "ExecutionContractError",
     "ExecutionContractTypeError",
     "ExecutionContractValueError",
+    "ExecutionSchedule",
     "MissingDependencyError",
     "MissionExecutionContract",
     "SymbolicTargetResolver",
     "TargetResolutionError",
     "UnsupportedActionError",
     "compile_candidate_plan",
+    "schedule_execution",
 ]

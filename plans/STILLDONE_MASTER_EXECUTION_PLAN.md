@@ -1151,10 +1151,10 @@ Goal:
 execute compiled plans without letting planner prose own truth.
 
 ### P-08.01 — Implement mission compiler from validated plan to immutable execution contract
-Status: IN PROGRESS (Authorized Batch P-08.01 → P-08.05)
+Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.02 — Implement deterministic action scheduler and dependency ordering
-Status: PENDING (Authorized Batch P-08.01 → P-08.05)
+Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.03 — Implement partial-failure preservation and per-step states
 Status: PENDING (Authorized Batch P-08.01 → P-08.05)
