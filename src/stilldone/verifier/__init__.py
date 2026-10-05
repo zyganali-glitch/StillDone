@@ -64,6 +64,8 @@ from stilldone.verifier.reconciliation import (
     ReconciliationError,
     ReconciliationLifecycleError,
     ReconciliationStatus,
+    ReconciliationTransitionResult,
+    apply_reconciliation_transition,
     reconcile_mission_state,
 )
 
@@ -94,6 +96,7 @@ __all__ = [
     "ReconciliationError",
     "ReconciliationLifecycleError",
     "ReconciliationStatus",
+    "ReconciliationTransitionResult",
     "TasksVerificationPort",
     "UnsupportedVerificationTargetError",
     "VerificationObservation",
@@ -103,6 +106,7 @@ __all__ = [
     "VerifierReadError",
     "VerifierTargetMismatchError",
     "WeatherVerificationPort",
+    "apply_reconciliation_transition",
     "assert_not_planner_or_execution_payload",
     "compute_mission_readiness",
     "create_verifier_dispatcher",

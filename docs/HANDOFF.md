@@ -90,7 +90,7 @@ Status:
 
 Last Independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
 Starting remote SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
-Next exact task: P-09.06 (Implement READY -> DRIFTED downgrade with mismatch explanation)
+Next exact task: P-09.07 (Add executor-success/readback-mismatch and stale-history tests)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

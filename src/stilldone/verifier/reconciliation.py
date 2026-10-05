@@ -28,6 +28,7 @@ from typing import Any
 
 from stilldone.domain.desired_state import DesiredStatePredicate, PredicateId
 from stilldone.domain.execution import ExecutionAttempt
+from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionId
 from stilldone.execution.state import ProviderExecutionResult
 from stilldone.verifier.contracts import (
@@ -475,4 +476,138 @@ def reconcile_mission_state(
         evaluated_at=eval_at,
         predicate_evaluations=final_pred_evals,
         freshness_evaluations=final_fresh_evals,
+    )
+
+
+# ===========================================================================
+# Lifecycle Transition Contract & Engine
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class ReconciliationTransitionResult:
+    """Immutable outcome of applying reconciliation to a mission lifecycle state.
+
+    Enforces that:
+    - Transition is allowed ONLY from READY state.
+    - If status == STILL_TRUE, remains READY.
+    - If status != STILL_TRUE, transitions to DRIFTED.
+    - Mismatch explanation is privacy-safe (zero raw IDs or provider payloads).
+    """
+
+    mission_id: MissionId
+    prior_state: MissionState
+    new_state: MissionState
+    is_drifted: bool
+    explanation: str | None
+    reconciliation: ReconciliationDetermination
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mission_id, MissionId):
+            raise ReconciliationContractTypeError(
+                f"mission_id must be a MissionId, got {type(self.mission_id).__name__}"
+            )
+        if not isinstance(self.prior_state, MissionState):
+            raise ReconciliationContractTypeError("prior_state must be a MissionState")
+        if not isinstance(self.new_state, MissionState):
+            raise ReconciliationContractTypeError("new_state must be a MissionState")
+        if not isinstance(self.is_drifted, bool):
+            raise ReconciliationContractTypeError("is_drifted must be a bool")
+        if self.explanation is not None and not isinstance(self.explanation, str):
+            raise ReconciliationContractTypeError("explanation must be str or None")
+        if not isinstance(self.reconciliation, ReconciliationDetermination):
+            raise ReconciliationContractTypeError(
+                "reconciliation must be ReconciliationDetermination"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert transition result to a deterministic serializable dictionary."""
+        return {
+            "mission_id": str(self.mission_id),
+            "prior_state": self.prior_state.value,
+            "new_state": self.new_state.value,
+            "is_drifted": self.is_drifted,
+            "explanation": self.explanation,
+            "reconciliation": self.reconciliation.to_dict(),
+        }
+
+
+def apply_reconciliation_transition(
+    *,
+    prior_state: MissionState | str,
+    reconciliation: ReconciliationDetermination,
+) -> ReconciliationTransitionResult:
+    """Apply deterministic lifecycle transition based on reconciliation results.
+
+    Laws:
+    - Transition is allowed ONLY from prior_state == READY.
+    - If prior_state is not READY, fails closed (raises ReconciliationLifecycleError).
+    - If reconciliation status is STILL_TRUE: remains READY (new_state=READY, is_drifted=False).
+    - If reconciliation status is NO_LONGER_TRUE, STALE, or INCOMPLETE: transitions to DRIFTED
+      (new_state=DRIFTED, is_drifted=True).
+    - Explanation is privacy-safe: mentions predicate IDs only, strictly omitting
+      external resource IDs, titles, notes, and raw provider payloads.
+    - Model prose has ZERO authority.
+    """
+    assert_not_planner_or_execution_payload(prior_state, parameter_name="prior_state")
+    assert_not_planner_or_execution_payload(reconciliation, parameter_name="reconciliation")
+
+    if isinstance(prior_state, str):
+        try:
+            norm_prior = MissionState(prior_state)
+        except ValueError as exc:
+            raise ReconciliationContractValueError(
+                f"Invalid mission state: {prior_state!r}"
+            ) from exc
+    elif isinstance(prior_state, MissionState):
+        norm_prior = prior_state
+    else:
+        raise ReconciliationContractTypeError(
+            f"prior_state must be MissionState or str, got {type(prior_state).__name__}"
+        )
+
+    if not isinstance(reconciliation, ReconciliationDetermination):
+        msg = (
+            "reconciliation must be ReconciliationDetermination, "
+            f"got {type(reconciliation).__name__}"
+        )
+        raise ReconciliationContractTypeError(msg)
+
+    if norm_prior != MissionState.READY:
+        raise ReconciliationLifecycleError(
+            "Reconciliation transition is only allowed from READY state, "
+            f"but mission is {norm_prior.value}"
+        )
+
+    if reconciliation.status == ReconciliationStatus.STILL_TRUE:
+        return ReconciliationTransitionResult(
+            mission_id=reconciliation.mission_id,
+            prior_state=norm_prior,
+            new_state=MissionState.READY,
+            is_drifted=False,
+            explanation=None,
+            reconciliation=reconciliation,
+        )
+
+    # Status is NO_LONGER_TRUE, STALE, or INCOMPLETE -> DRIFTED
+    if reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE:
+        drifted_items = [f"predicate {pid}" for pid in reconciliation.drifted_predicate_ids]
+        desc = ", ".join(drifted_items) if drifted_items else "desired state contradicted"
+        explanation = f"Mission drifted from READY: {desc}"
+    elif reconciliation.status == ReconciliationStatus.STALE:
+        stale_items = [f"predicate {pid}" for pid in reconciliation.stale_predicate_ids]
+        desc = ", ".join(stale_items) if stale_items else "verification expired"
+        explanation = f"Mission drifted from READY: observation stale for {desc}"
+    else:  # INCOMPLETE
+        inc_items = [f"predicate {pid}" for pid in reconciliation.incomplete_predicate_ids]
+        desc = ", ".join(inc_items) if inc_items else "missing verification facts"
+        explanation = f"Mission drifted from READY: required verification incomplete for {desc}"
+
+    return ReconciliationTransitionResult(
+        mission_id=reconciliation.mission_id,
+        prior_state=norm_prior,
+        new_state=MissionState.DRIFTED,
+        is_drifted=True,
+        explanation=explanation,
+        reconciliation=reconciliation,
     )

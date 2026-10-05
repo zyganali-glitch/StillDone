@@ -1194,7 +1194,7 @@ Status: PASS (independent QA verified)
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-09.06 — Implement `READY → DRIFTED` downgrade with mismatch explanation
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-09.07 — Add executor-success/readback-mismatch and stale-history tests
 Status: PENDING
