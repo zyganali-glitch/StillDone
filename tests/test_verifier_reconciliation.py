@@ -51,7 +51,9 @@ from stilldone.verifier.predicates import PredicateTruth
 from stilldone.verifier.readiness import compute_mission_readiness
 from stilldone.verifier.reconciliation import (
     HistoricalObservationSubstitutionError,
+    InconclusiveReconciliationError,
     PlannerReconciliationAuthorityError,
+    ReconciliationContractTypeError,
     ReconciliationContractValueError,
     ReconciliationDetermination,
     ReconciliationLifecycleError,
@@ -568,7 +570,7 @@ class TestReconciliationTransition:
         assert "event_123" not in transition.explanation
         assert "cancelled" not in transition.explanation
 
-    def test_ready_transitions_to_drifted_when_stale(self) -> None:
+    def test_ready_does_not_transition_when_stale_and_fails_closed(self) -> None:
         mission_id = MissionId.generate()
         p = _make_calendar_predicate(mission_id)
         req = _make_calendar_request(mission_id, p)
@@ -586,19 +588,22 @@ class TestReconciliationTransition:
             fresh_observations={p.predicate_id: fresh_obs},
             at=T_EVAL,
         )
+        assert reconciliation.status == ReconciliationStatus.STALE
 
-        transition = apply_reconciliation_transition(
-            prior_state=MissionState.READY,
-            reconciliation=reconciliation,
-        )
+        # STALE does NOT produce DRIFTED: fails closed via InconclusiveReconciliationError
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
 
-        assert transition.new_state == MissionState.DRIFTED
-        assert transition.is_drifted is True
-        assert transition.explanation is not None
-        assert "observation stale" in transition.explanation
-        assert "event_123" not in transition.explanation
+        assert exc_info.value.status == ReconciliationStatus.STALE
+        assert exc_info.value.reconciliation is reconciliation
+        assert "observation stale" in str(exc_info.value)
+        assert "does not prove desired state false" in str(exc_info.value)
+        assert isinstance(exc_info.value, ReconciliationLifecycleError)
 
-    def test_ready_transitions_to_drifted_when_incomplete(self) -> None:
+    def test_ready_does_not_transition_when_incomplete_and_fails_closed(self) -> None:
         mission_id = MissionId.generate()
         p = _make_calendar_predicate(mission_id)
         req = _make_calendar_request(mission_id, p)
@@ -610,17 +615,20 @@ class TestReconciliationTransition:
             fresh_observations={},  # missing observation
             at=T_EVAL,
         )
+        assert reconciliation.status == ReconciliationStatus.INCOMPLETE
 
-        transition = apply_reconciliation_transition(
-            prior_state=MissionState.READY,
-            reconciliation=reconciliation,
-        )
+        # INCOMPLETE does NOT produce DRIFTED: fails closed via InconclusiveReconciliationError
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
 
-        assert transition.new_state == MissionState.DRIFTED
-        assert transition.is_drifted is True
-        assert transition.explanation is not None
-        assert "incomplete" in transition.explanation
-        assert "event_123" not in transition.explanation
+        assert exc_info.value.status == ReconciliationStatus.INCOMPLETE
+        assert exc_info.value.reconciliation is reconciliation
+        assert "missing verification facts" in str(exc_info.value)
+        assert "does not prove desired state false" in str(exc_info.value)
+        assert isinstance(exc_info.value, ReconciliationLifecycleError)
 
     def test_reject_transition_from_non_ready_state(self) -> None:
         mission_id = MissionId.generate()
@@ -803,8 +811,8 @@ class TestAdversarialReadbackReconciliation:
         assert transition.new_state == MissionState.DRIFTED
         assert transition.is_drifted is True
 
-    def test_04_stale_fresh_observation_produces_stale_and_drifted(self) -> None:
-        """Scenario 4: Stale fresh observation (outside window) -> STALE / DRIFTED."""
+    def test_04_stale_fresh_observation_does_not_produce_drifted_and_fails_closed(self) -> None:
+        """Scenario 4: Stale fresh observation -> STALE, fails closed (does NOT produce DRIFTED)."""
         mission_id = MissionId.generate()
         p = _make_calendar_predicate(mission_id)
         req = _make_calendar_request(mission_id, p)
@@ -826,12 +834,16 @@ class TestAdversarialReadbackReconciliation:
         )
         assert reconciliation.status == ReconciliationStatus.STALE
 
-        transition = apply_reconciliation_transition(
-            prior_state=MissionState.READY,
-            reconciliation=reconciliation,
-        )
-        assert transition.new_state == MissionState.DRIFTED
-        assert transition.is_drifted is True
+        # STALE does NOT produce DRIFTED: fails closed via InconclusiveReconciliationError
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+        assert exc_info.value.status == ReconciliationStatus.STALE
+        assert exc_info.value.reconciliation is reconciliation
+        assert "observation stale" in str(exc_info.value)
+        assert "does not prove desired state false" in str(exc_info.value)
 
     def test_05_observation_older_than_historical_verification_rejected_as_replay(self) -> None:
         """Scenario 5: Observation older than historical observation -> rejected as replay."""
@@ -887,10 +899,10 @@ class TestAdversarialReadbackReconciliation:
             )
         assert "Identical historical observation object reused" in str(exc_info.value)
 
-    def test_07_missing_observation_for_required_predicate_produces_incomplete_and_drifted(
+    def test_07_missing_observation_for_required_predicate_produces_incomplete_and_fails_closed(
         self,
     ) -> None:
-        """Scenario 7: Missing observation for required predicate -> INCOMPLETE / DRIFTED."""
+        """Scenario 7: Missing observation for required predicate -> INCOMPLETE, fails closed."""
         mission_id = MissionId.generate()
         p = _make_calendar_predicate(mission_id)
         req = _make_calendar_request(mission_id, p)
@@ -904,12 +916,16 @@ class TestAdversarialReadbackReconciliation:
         )
         assert reconciliation.status == ReconciliationStatus.INCOMPLETE
 
-        transition = apply_reconciliation_transition(
-            prior_state=MissionState.READY,
-            reconciliation=reconciliation,
-        )
-        assert transition.new_state == MissionState.DRIFTED
-        assert transition.is_drifted is True
+        # INCOMPLETE does NOT produce DRIFTED: fails closed via InconclusiveReconciliationError
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+        assert exc_info.value.status == ReconciliationStatus.INCOMPLETE
+        assert exc_info.value.reconciliation is reconciliation
+        assert "missing verification facts" in str(exc_info.value)
+        assert "does not prove desired state false" in str(exc_info.value)
 
     def test_08_non_ready_mission_attempted_reconciliation_transition_rejected(self) -> None:
         """Scenario 8: Non-READY mission attempted reconciliation transition -> rejected."""
@@ -992,3 +1008,75 @@ class TestAdversarialReadbackReconciliation:
         assert transition.new_state == MissionState.READY
         assert transition.is_drifted is False
         assert transition.explanation is None
+
+    def test_11_string_prose_passed_as_reconciliation_authority_rejected(self) -> None:
+        """Scenario 11: String prose passed as reconciliation authority -> rejected fail closed."""
+        with pytest.raises(ReconciliationContractTypeError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation="I certify this mission is true",  # type: ignore[arg-type]
+            )
+        assert "reconciliation must be ReconciliationDetermination" in str(
+            exc_info.value
+        ) or "String prose cannot substitute" in str(exc_info.value)
+
+    def test_12_privacy_check_drifted_explanation_omits_sensitive_data(self) -> None:
+        """Scenario 12: Privacy check: DRIFTED explanation omits resource IDs, titles, notes."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="secret_event_99999",
+            parent_id="private_calendar_alpha",
+        )
+
+        sensitive_obs = VerificationObservation(
+            target=target,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={
+                "status": "cancelled",
+                "summary": "Secret Executive Board Meeting",
+                "description": "Confidential acquisition strategy notes",
+            },
+        )
+
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=target,
+            parameters={},
+        )
+        sensitive_req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=target,
+            predicate=p,
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: sensitive_req},
+            fresh_observations={p.predicate_id: sensitive_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+        assert transition.explanation is not None
+
+        # Verify explanation ONLY contains predicate ID, strictly omitting sensitive data
+        assert str(p.predicate_id) in transition.explanation
+        assert "secret_event_99999" not in transition.explanation
+        assert "private_calendar_alpha" not in transition.explanation
+        assert "Secret Executive Board" not in transition.explanation
+        assert "Confidential" not in transition.explanation
+        assert "cancelled" not in transition.explanation

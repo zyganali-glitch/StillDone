@@ -1191,13 +1191,13 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-09.05 — Implement reconciliation of previously verified mission against fresh external state
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-09.06 — Implement `READY → DRIFTED` downgrade with mismatch explanation
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: REPAIRED (awaiting independent QA review)
 
 ### P-09.07 — Add executor-success/readback-mismatch and stale-history tests
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: REPAIRED (awaiting independent QA review)
 
 Phase exit:
 renewable completion exists.
@@ -1210,10 +1210,10 @@ Goal:
 survive ambiguous network failures without duplicate real-world effects.
 
 ### P-10.01 — Freeze idempotency strategy per supported mutation
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-10.02 — Implement bounded exponential retry and retry classification
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
 Status: PENDING

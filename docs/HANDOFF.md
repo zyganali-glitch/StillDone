@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.04 (PASS ✅), P-09.05 → P-09.07 (IMPLEMENTED) | Phase P-10: P-10.01 → P-10.02 (IMPLEMENTED) | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.05 (PASS ✅), P-09.06 → P-09.07 (REPAIRED) | Phase P-10: P-10.01 → P-10.02 (PASS ✅) | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -198,18 +198,33 @@ Phase P-07 is **CLOSED — independent QA PASS ✅ (Verified closure SHA: `794ee
 - P-08.03 — PASS ✅
 - P-08.04 — PASS ✅
 - P-08.05 — PASS ✅
-- P-08.06 — IN_PROGRESS (authorized in current batch)
+- P-08.06 — PASS ✅
+
+Phase P-08 is CLOSED — independent QA PASS ✅
+
+## Phase P-09 Status
+
+- P-09.01 — PASS ✅
+- P-09.02 — PASS ✅
+- P-09.03 — PASS ✅
+- P-09.04 — PASS ✅
+- P-09.05 — PASS ✅
+- P-09.06 — REPAIRED (READY → DRIFTED strictly on fresh read-back mismatch; STALE/INCOMPLETE fail closed)
+- P-09.07 — REPAIRED (adversarial tests for fresh mismatch, non-drift inconclusive, replay, and privacy)
+
+## Phase P-10 Status
+
+- P-10.01 — PASS ✅
+- P-10.02 — PASS ✅
+- P-10.03+ — NOT AUTHORIZED / NOT_RUN
 
 ## Last independently VERIFIED contiguous SHA
 
-`6bccb93fa64336198d6719a68ab835f6cd101c67`
+`2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
 
 ## Next exact task
 
-P-08.06 — Add mixed success/failure/not-run mission tests
-
-Authorized batch:
-P-08.06 + P-09.01 → P-09.04
+Awaiting independent QA review for P-09.06 & P-09.07 repair closure.
 
 
 ---

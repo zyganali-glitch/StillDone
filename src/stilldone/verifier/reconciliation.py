@@ -97,6 +97,25 @@ class ReconciliationLifecycleError(ReconciliationError, ValueError):
     """Raised when an illegal lifecycle transition is attempted during reconciliation."""
 
 
+class InconclusiveReconciliationError(ReconciliationLifecycleError):
+    """Raised when reconciliation is inconclusive (STALE or INCOMPLETE).
+
+    Fails closed: evidence does not prove the desired state false, so READY cannot
+    transition to DRIFTED, nor can READY be renewed or re-certified.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reconciliation: ReconciliationDetermination,
+    ) -> None:
+        super().__init__(message)
+        self.reconciliation = reconciliation
+        self.status = reconciliation.status
+        self.mission_id = reconciliation.mission_id
+
+
 # ===========================================================================
 # Model / Execution Payload Rejection Helper
 # ===========================================================================
@@ -543,9 +562,12 @@ def apply_reconciliation_transition(
     - Transition is allowed ONLY from prior_state == READY.
     - If prior_state is not READY, fails closed (raises ReconciliationLifecycleError).
     - If reconciliation status is STILL_TRUE: remains READY (new_state=READY, is_drifted=False).
-    - If reconciliation status is NO_LONGER_TRUE, STALE, or INCOMPLETE: transitions to DRIFTED
+    - If reconciliation status is NO_LONGER_TRUE: transitions to DRIFTED
       (new_state=DRIFTED, is_drifted=True).
-    - Explanation is privacy-safe: mentions predicate IDs only, strictly omitting
+    - If reconciliation status is STALE or INCOMPLETE: fails closed (raises
+      InconclusiveReconciliationError). Stale or missing verification facts do NOT prove
+      the desired state false and MUST NOT directly produce DRIFTED or assert completion.
+    - Explanation for DRIFTED is privacy-safe: mentions predicate IDs only, strictly omitting
       external resource IDs, titles, notes, and raw provider payloads.
     - Model prose has ZERO authority.
     """
@@ -589,25 +611,35 @@ def apply_reconciliation_transition(
             reconciliation=reconciliation,
         )
 
-    # Status is NO_LONGER_TRUE, STALE, or INCOMPLETE -> DRIFTED
     if reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE:
         drifted_items = [f"predicate {pid}" for pid in reconciliation.drifted_predicate_ids]
         desc = ", ".join(drifted_items) if drifted_items else "desired state contradicted"
         explanation = f"Mission drifted from READY: {desc}"
-    elif reconciliation.status == ReconciliationStatus.STALE:
+        return ReconciliationTransitionResult(
+            mission_id=reconciliation.mission_id,
+            prior_state=norm_prior,
+            new_state=MissionState.DRIFTED,
+            is_drifted=True,
+            explanation=explanation,
+            reconciliation=reconciliation,
+        )
+
+    if reconciliation.status == ReconciliationStatus.STALE:
         stale_items = [f"predicate {pid}" for pid in reconciliation.stale_predicate_ids]
         desc = ", ".join(stale_items) if stale_items else "verification expired"
-        explanation = f"Mission drifted from READY: observation stale for {desc}"
-    else:  # INCOMPLETE
-        inc_items = [f"predicate {pid}" for pid in reconciliation.incomplete_predicate_ids]
-        desc = ", ".join(inc_items) if inc_items else "missing verification facts"
-        explanation = f"Mission drifted from READY: required verification incomplete for {desc}"
+        raise InconclusiveReconciliationError(
+            f"Reconciliation inconclusive (STALE): observation stale for {desc}. "
+            "Stale evidence does not prove desired state false; "
+            "cannot transition READY to DRIFTED.",
+            reconciliation=reconciliation,
+        )
 
-    return ReconciliationTransitionResult(
-        mission_id=reconciliation.mission_id,
-        prior_state=norm_prior,
-        new_state=MissionState.DRIFTED,
-        is_drifted=True,
-        explanation=explanation,
+    # ReconciliationStatus.INCOMPLETE
+    inc_items = [f"predicate {pid}" for pid in reconciliation.incomplete_predicate_ids]
+    desc = ", ".join(inc_items) if inc_items else "missing verification facts"
+    raise InconclusiveReconciliationError(
+        f"Reconciliation inconclusive (INCOMPLETE): missing verification facts for {desc}. "
+        "Missing evidence does not prove desired state false; "
+        "cannot transition READY to DRIFTED.",
         reconciliation=reconciliation,
     )

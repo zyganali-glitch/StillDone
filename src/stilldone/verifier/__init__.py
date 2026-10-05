@@ -57,6 +57,7 @@ from stilldone.verifier.readiness import (
 )
 from stilldone.verifier.reconciliation import (
     HistoricalObservationSubstitutionError,
+    InconclusiveReconciliationError,
     PlannerReconciliationAuthorityError,
     ReconciliationContractTypeError,
     ReconciliationContractValueError,
@@ -78,6 +79,7 @@ __all__ = [
     "FreshnessStatus",
     "FutureDatedObservationError",
     "HistoricalObservationSubstitutionError",
+    "InconclusiveReconciliationError",
     "MalformedObservationError",
     "MissingVerifierRouteError",
     "MissionReadinessDetermination",
