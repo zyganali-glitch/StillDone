@@ -13,6 +13,7 @@ Enforces StillDone core architectural laws:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,7 +52,9 @@ from stilldone.verifier.contracts import (
     ExecutionPayloadSubstitutionError,
     VerificationObservation,
     VerificationRequest,
+    VerifierTargetMismatchError,
 )
+from stilldone.verifier.dispatch import validate_verification_request_lineage
 from stilldone.verifier.freshness import (
     FreshnessResult,
     FreshnessStatus,
@@ -1060,3 +1063,393 @@ class TestReadinessAdversarialLineage:
                 execution_record=exec_rec,
                 at=T_EVAL,
             )
+
+
+class TestCanonicalLineageAndPredicateEnforcement:
+    """Adversarial tests for P-09.04 canonical predicate binding and action-target lineage."""
+
+    def test_predicate_none_request_rejected(self) -> None:
+        """1. predicate=None request + otherwise valid observation
+        -> rejected with ReadinessContractValueError.
+        """
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=None,
+        )
+
+        with pytest.raises(ReadinessContractValueError, match="predicate cannot be None"):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_predicate_differs_from_canonical_rejected(self) -> None:
+        """2. request predicate differs from canonical predicate -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+
+        # 2a: PredicateId differs
+        foreign_pred = replace(pred, predicate_id=PredicateId.generate())
+        req_diff_id = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=foreign_pred,
+        )
+        with pytest.raises(
+            ReadinessContractValueError, match="predicate_id does not match desired state predicate"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req_diff_id},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+        # 2b: Same PredicateId, but altered expected_value
+        altered_val_pred = replace(pred, expected_value="tentative")
+        req_diff_val = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=altered_val_pred,
+        )
+        with pytest.raises(
+            ReadinessContractValueError, match="does not match desired state predicate"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req_diff_val},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+        # 2c: Same PredicateId, but altered operator
+        altered_op_pred = replace(pred, operator=PredicateOperator.NOT_EQUALS)
+        req_diff_op = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=altered_op_pred,
+        )
+        with pytest.raises(
+            ReadinessContractValueError, match="does not match desired state predicate"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req_diff_op},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_calendar_read_different_resource_id_rejected(self) -> None:
+        """3. CALENDAR_READ request with different resource_id -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        mismatched_target = TargetIdentity(
+            system=CAL_TARGET.system,
+            resource_kind=CAL_TARGET.resource_kind,
+            resource_id="evt-other-different-999",
+            parent_id=CAL_TARGET.parent_id,
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=mismatched_target,
+            predicate=pred,
+        )
+
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_calendar_read_different_parent_id_rejected(self) -> None:
+        """4. CALENDAR_READ request with different parent_id -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        mismatched_parent_target = TargetIdentity(
+            system=CAL_TARGET.system,
+            resource_kind=CAL_TARGET.resource_kind,
+            resource_id=CAL_TARGET.resource_id,
+            parent_id="demo-cal-wrong-calendar-id",
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=mismatched_parent_target,
+            predicate=pred,
+        )
+
+        with pytest.raises(VerifierTargetMismatchError, match="parent container does not match"):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_task_read_wrong_task_id_rejected(self) -> None:
+        """5. TASK_READ request with wrong task ID -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_tasks_predicate(mission_id)
+        obs = _make_tasks_observation()
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.TASK_READ,
+            target=TASKS_OBS_TARGET,
+            parameters={},
+        )
+        wrong_task_target = TargetIdentity(
+            system=TASKS_OBS_TARGET.system,
+            resource_kind=TASKS_OBS_TARGET.resource_kind,
+            resource_id="task-wrong-different-555",
+            parent_id=TASKS_OBS_TARGET.parent_id,
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=wrong_task_target,
+            predicate=pred,
+        )
+
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_task_create_child_wrong_parent_task_list_id_rejected(self) -> None:
+        """6. TASK_CREATE child target with wrong parent task-list ID -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_tasks_predicate(mission_id)
+        obs = _make_tasks_observation()
+        # Action targeted the TASK_LIST container
+        action_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK_LIST,
+            resource_id="demo-tasks-canonical-list",
+            parent_id=None,
+        )
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.TASK_CREATE,
+            target=action_target,
+            parameters={"title": "Pack backpacks"},
+        )
+        # Verification target is the concrete child TASK with WRONG parent_id
+        wrong_child_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-child-101",
+            parent_id="demo-tasks-WRONG-list",
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=wrong_child_target,
+            predicate=pred,
+        )
+
+        with pytest.raises(VerifierTargetMismatchError, match="parent container does not match"):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+        # Positive control: child task with matching parent_id is valid
+        valid_child_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-child-101",
+            parent_id="demo-tasks-canonical-list",
+        )
+        valid_req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=valid_child_target,
+            predicate=pred,
+        )
+        validate_verification_request_lineage(valid_req)
+
+    def test_weather_read_wrong_location_id_rejected(self) -> None:
+        """7. WEATHER_READ request with wrong location ID -> rejected."""
+        mission_id = MissionId.generate()
+        weather_pred = DesiredStatePredicate(
+            predicate_id=PredicateId.generate(),
+            mission_id=mission_id,
+            subject="weather.precipitation",
+            operator=PredicateOperator.EQUALS,
+            expected_value=0.0,
+            freshness=FreshnessContract.max_age(3600),
+            required=True,
+        )
+        weather_target = TargetIdentity(
+            system="open_meteo",
+            resource_kind=ResourceKind.WEATHER_LOCATION,
+            resource_id="loc-canonical-berlin",
+            parent_id=None,
+        )
+        weather_action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.WEATHER_READ,
+            target=weather_target,
+            parameters={},
+        )
+        wrong_location_target = TargetIdentity(
+            system="open_meteo",
+            resource_kind=ResourceKind.WEATHER_LOCATION,
+            resource_id="loc-wrong-munich",
+            parent_id=None,
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=weather_action,
+            target=wrong_location_target,
+            predicate=weather_pred,
+        )
+        obs = VerificationObservation(
+            target=weather_target,
+            observed_at=T_OBS,
+            exists=True,
+            properties={"precipitation": 0.0},
+            provenance=EvidenceProvenance.FIXTURE,
+        )
+
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[weather_pred],
+                verification_requests={weather_pred.predicate_id: req},
+                observations={weather_pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_unsupported_or_mismatched_action_target_combination_rejected(self) -> None:
+        """8. unsupported/mismatched action-target combination -> rejected."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id)
+        obs = _make_calendar_observation()
+
+        # Combination A: Action is CALENDAR_READ but target system is google_tasks
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        mismatched_sys_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id=CAL_TARGET.resource_id,
+            parent_id=CAL_TARGET.parent_id,
+        )
+        req_mismatch_sys = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=mismatched_sys_target,
+            predicate=pred,
+        )
+        with pytest.raises(
+            VerifierTargetMismatchError, match="Verification target system/resource kind mismatch"
+        ):
+            compute_mission_readiness(
+                mission_id=mission_id,
+                predicates=[pred],
+                verification_requests={pred.predicate_id: req_mismatch_sys},
+                observations={pred.predicate_id: obs},
+                at=T_EVAL,
+            )
+
+    def test_exact_valid_request_action_target_predicate_observation_ready_eligible(
+        self,
+    ) -> None:
+        """9. exact valid request/action/target/predicate/observation -> READY eligible."""
+        mission_id = MissionId.generate()
+        pred = _make_calendar_predicate(mission_id, expected_status="confirmed")
+        obs = _make_calendar_observation(status="confirmed")
+        action = ActionContract.create(
+            mission_id=mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=CAL_TARGET,
+            parameters={},
+        )
+        req = VerificationRequest(
+            mission_id=mission_id,
+            action=action,
+            target=CAL_TARGET,
+            predicate=pred,
+        )
+        exec_rec = _make_execution_record(mission_id, [(action, True)])
+
+        det = compute_mission_readiness(
+            mission_id=mission_id,
+            predicates=[pred],
+            verification_requests={pred.predicate_id: req},
+            observations={pred.predicate_id: obs},
+            execution_record=exec_rec,
+            at=T_EVAL,
+        )
+
+        assert det.is_ready is True
+        assert det.state == MissionState.READY
+        assert pred.predicate_id in det.satisfied_predicate_ids
+        assert len(det.failed_predicate_ids) == 0
+        assert len(det.stale_predicate_ids) == 0
+        assert len(det.missing_predicate_ids) == 0
+        assert len(det.unverified_action_ids) == 0

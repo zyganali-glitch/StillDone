@@ -28,6 +28,7 @@ from stilldone.verifier.dispatch import (
     VerifierDispatcher,
     WeatherVerificationPort,
     create_verifier_dispatcher,
+    validate_verification_request_lineage,
 )
 from stilldone.verifier.freshness import (
     DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS,
@@ -90,4 +91,5 @@ __all__ = [
     "evaluate_observation_freshness",
     "evaluate_predicate",
     "evaluate_predicates",
+    "validate_verification_request_lineage",
 ]

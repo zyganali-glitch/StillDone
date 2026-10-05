@@ -71,6 +71,7 @@ from stilldone.verifier.dispatch import (
     CalendarVerificationPort,
     VerifierDispatcher,
     create_verifier_dispatcher,
+    validate_verification_request_lineage,
 )
 
 # ===========================================================================
@@ -782,3 +783,222 @@ class TestVerifierDispatchErrorSecrecy:
         assert exc.__context__ is None
         assert self.SECRET_PROVIDER_TOKEN not in tb_str
         assert exc_str == "Calendar provider error during read-back"
+
+
+class TestValidateVerificationRequestLineage:
+    """Tests for the pure canonical validate_verification_request_lineage helper."""
+
+    def test_rejects_non_verification_request(self) -> None:
+        with pytest.raises(TypeError, match="request must be VerificationRequest"):
+            validate_verification_request_lineage("not-a-request")  # type: ignore[arg-type]
+
+    def test_calendar_read_and_update_valid_lineage(self) -> None:
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="evt-101",
+            parent_id="demo-cal",
+        )
+        for act_type in (ActionType.CALENDAR_READ, ActionType.CALENDAR_UPDATE):
+            action = ActionContract.create(
+                mission_id=mid,
+                action_type=act_type,
+                target=target,
+                parameters={},
+            )
+            req = VerificationRequest(
+                mission_id=mid,
+                action=action,
+                target=target,
+            )
+            # Must not raise
+            validate_verification_request_lineage(req)
+
+    def test_calendar_read_mismatched_target_rejected(self) -> None:
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="evt-101",
+            parent_id="demo-cal",
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=target,
+            parameters={},
+        )
+
+        # Mismatched system
+        req_sys = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=TargetIdentity(
+                system="google_tasks",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-101",
+                parent_id="demo-cal",
+            ),
+        )
+        with pytest.raises(VerifierTargetMismatchError, match="system/resource kind mismatch"):
+            validate_verification_request_lineage(req_sys)
+
+        # Mismatched resource_id
+        req_res = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-different",
+                parent_id="demo-cal",
+            ),
+        )
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            validate_verification_request_lineage(req_res)
+
+        # Mismatched parent_id
+        req_par = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id="evt-101",
+                parent_id="demo-cal-other",
+            ),
+        )
+        with pytest.raises(VerifierTargetMismatchError, match="parent container does not match"):
+            validate_verification_request_lineage(req_par)
+
+    def test_task_read_valid_and_invalid_lineage(self) -> None:
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-202",
+            parent_id="demo-tasks",
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_READ,
+            target=target,
+            parameters={},
+        )
+        valid_req = VerificationRequest(mission_id=mid, action=action, target=target)
+        validate_verification_request_lineage(valid_req)
+
+        # Mismatched task resource_id
+        mismatched_req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=TargetIdentity(
+                system="google_tasks",
+                resource_kind=ResourceKind.TASK,
+                resource_id="task-wrong",
+                parent_id="demo-tasks",
+            ),
+        )
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            validate_verification_request_lineage(mismatched_req)
+
+    def test_task_create_child_parent_lineage(self) -> None:
+        mid = MissionId.generate()
+        action_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK_LIST,
+            resource_id="demo-tasks-list",
+            parent_id=None,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=action_target,
+            parameters={"title": "Pack bags"},
+        )
+        valid_child = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-new-303",
+            parent_id="demo-tasks-list",
+        )
+        valid_req = VerificationRequest(mission_id=mid, action=action, target=valid_child)
+        validate_verification_request_lineage(valid_req)
+
+        # Wrong parent_id
+        wrong_child = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-new-303",
+            parent_id="demo-tasks-other-list",
+        )
+        invalid_req = VerificationRequest(mission_id=mid, action=action, target=wrong_child)
+        with pytest.raises(VerifierTargetMismatchError, match="parent container does not match"):
+            validate_verification_request_lineage(invalid_req)
+
+    def test_weather_read_valid_and_invalid_lineage(self) -> None:
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="open_meteo",
+            resource_kind=ResourceKind.WEATHER_LOCATION,
+            resource_id="loc-berlin",
+            parent_id=None,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.WEATHER_READ,
+            target=target,
+            parameters={},
+        )
+        valid_req = VerificationRequest(mission_id=mid, action=action, target=target)
+        validate_verification_request_lineage(valid_req)
+
+        # Wrong location ID
+        invalid_req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=TargetIdentity(
+                system="open_meteo",
+                resource_kind=ResourceKind.WEATHER_LOCATION,
+                resource_id="loc-munich",
+                parent_id=None,
+            ),
+        )
+        with pytest.raises(
+            VerifierTargetMismatchError, match="does not match action target resource_id"
+        ):
+            validate_verification_request_lineage(invalid_req)
+
+    def test_unsupported_action_type_fails_closed(self) -> None:
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="custom_system",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="res-1",
+            parent_id=None,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_READ,
+            target=target,
+            parameters={},
+        )
+
+        class MockUnsupportedActionType:
+            value = "UNSUPPORTED_MUTATION"
+
+        object.__setattr__(action, "action_type", MockUnsupportedActionType())
+        req = VerificationRequest(
+            mission_id=mid,
+            action=action,
+            target=target,
+        )
+        with pytest.raises(
+            VerifierTargetMismatchError, match="Unsupported action type for verification lineage"
+        ):
+            validate_verification_request_lineage(req)

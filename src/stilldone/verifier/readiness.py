@@ -44,6 +44,7 @@ from stilldone.verifier.contracts import (
     VerificationRequest,
     VerifierError,
 )
+from stilldone.verifier.dispatch import validate_verification_request_lineage
 from stilldone.verifier.freshness import (
     DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS,
     FreshnessResult,
@@ -324,6 +325,7 @@ def compute_mission_readiness(
                     f"VerificationRequest predicate mission_id {req.predicate.mission_id} "
                     f"does not match {mission_id}"
                 )
+            validate_verification_request_lineage(req)
 
     # Validate observations if provided
     if observations is not None:
@@ -455,7 +457,20 @@ def compute_mission_readiness(
             raise ReadinessContractValueError(
                 f"VerificationRequest mission_id {req.mission_id} does not match {mission_id}"
             )
-        if req.predicate is not None and req.predicate != p:
+        validate_verification_request_lineage(req)
+        if req.predicate is None:
+            if p.required:
+                raise ReadinessContractValueError(
+                    f"VerificationRequest predicate cannot be None for required predicate {pid}"
+                )
+            raise ReadinessContractValueError(
+                f"VerificationRequest predicate cannot be None for desired state predicate {pid}"
+            )
+        if req.predicate.predicate_id != pid:
+            raise ReadinessContractValueError(
+                f"VerificationRequest predicate_id does not match desired state predicate {pid}"
+            )
+        if req.predicate != p:
             raise ReadinessContractValueError(
                 f"VerificationRequest predicate does not match desired state predicate {pid}"
             )

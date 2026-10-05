@@ -1179,10 +1179,10 @@ Goal:
 make reality, not the executor, decide completion.
 
 ### P-09.01 — Implement verifier dispatch independent from execute result payload
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-09.02 — Implement exact predicate evaluation for Calendar and Tasks
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-09.03 — Implement freshness/stale evaluation
 Status: PASS (independent QA verified)

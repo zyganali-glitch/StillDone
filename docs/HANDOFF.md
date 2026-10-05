@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 (REPAIRED), P-09.02 (REPAIRED), P-09.03 (PASS ✅), P-09.04 (REPAIRED) (awaiting independent QA review) | Last independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 (PASS ✅), P-09.02 (PASS ✅), P-09.03 (PASS ✅), P-09.04 (REPAIRED / awaiting independent QA review) | Last independently VERIFIED SHA: `6bccb93fa64336198d6719a68ab835f6cd101c67`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,12 +74,11 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Consolidated Verification-Truth Repair (P-09.01 + P-09.02 + P-09.04) — IMPLEMENTED
+Active task: P-09.04 Final Surgical Repair (Canonical Verification Lineage & Predicate Binding) — REPAIRED (awaiting independent QA review)
 
-Micro-tasks executed in this repair batch:
-- P-09.01 — REPAIRED (error secrecy: zero external ID / sensitive payload leakage; exception chains severed)
-- P-09.02 — REPAIRED (exact native integer comparisons, finite floats via math.isfinite, fail-closed NaN/inf, privacy-safe structural reasons, observed_value=None)
-- P-09.04 — REPAIRED (bound READY to canonical verification request / observation lineage; strict anti-forgery guards)
+Micro-tasks executed in this repair:
+- DEFECT 1: VerificationRequest must carry exact canonical non-None DesiredStatePredicate for participating predicates.
+- DEFECT 2: compute_mission_readiness independently validates canonical action <-> target lineage via shared pure helper validate_verification_request_lineage.
 
 Status:
 - P-00 through P-07: CLOSED — independent QA PASS ✅
@@ -88,14 +87,14 @@ Status:
 - Phase P-08 Overall: CLOSED (independent QA PASS ✅)
 
 Phase P-09 Status:
-- P-09.01 — REPAIRED (awaiting independent QA review)
-- P-09.02 — REPAIRED (awaiting independent QA review)
+- P-09.01 — PASS ✅ (independent QA verified)
+- P-09.02 — PASS ✅ (independent QA verified)
 - P-09.03 — PASS ✅ (independent QA verified)
 - P-09.04 — REPAIRED (awaiting independent QA review)
 - P-09.05+ — PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED SHA remains: `6bccb93fa64336198d6719a68ab835f6cd101c67`
-Current remote repair base: `bcfe878b170ff090544add5e5fe7b27d7dcc18e1`
+Current remote repair base: `18e487aa449cfd5ca1602c330edae7281a53ee19`
 Next exact task after QA review: P-09.05 (Reconciliation against fresh external state)
 
 Architecture Truth — Dependency Isolation:

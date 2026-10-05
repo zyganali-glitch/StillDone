@@ -286,6 +286,89 @@ class WeatherVerificationPort:
             raise VerifierReadError("Weather provider error during read-back")
 
 
+def validate_verification_request_lineage(request: VerificationRequest) -> None:
+    """Enforce strict lineage between request.action and request.target.
+
+    Canonical rules:
+    - CALENDAR_READ / CALENDAR_UPDATE:
+        * target.system == "google_calendar"
+        * target.resource_kind == CALENDAR_EVENT
+        * target.resource_id == action.target.resource_id
+        * target.parent_id == action.target.parent_id
+    - TASK_READ:
+        * target.system == "google_tasks"
+        * target.resource_kind == TASK
+        * target.resource_id == action.target.resource_id
+        * target.parent_id == action.target.parent_id
+    - TASK_CREATE:
+        * verification target system == "google_tasks"
+        * verification target resource_kind == TASK
+        * verification target.parent_id == action.target.resource_id
+          (child resource_id may differ because create targets the parent TASK_LIST)
+    - WEATHER_READ:
+        * target.system == "open_meteo"
+        * target.resource_kind == WEATHER_LOCATION
+        * target.resource_id == action.target.resource_id
+    - Unsupported action / target combinations:
+        * FAIL CLOSED (raises VerifierTargetMismatchError)
+
+    Zero external IDs or sensitive payloads in error messages.
+    """
+    if not isinstance(request, VerificationRequest):
+        raise TypeError(f"request must be VerificationRequest, got {type(request).__name__}")
+
+    action = request.action
+    target = request.target
+
+    if action.action_type in (ActionType.CALENDAR_READ, ActionType.CALENDAR_UPDATE):
+        if (
+            target.system != "google_calendar"
+            or target.resource_kind != ResourceKind.CALENDAR_EVENT
+        ):
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
+        if target.resource_id != action.target.resource_id:
+            raise VerifierTargetMismatchError(
+                "Verification target resource_id does not match action target resource_id"
+            )
+        if target.parent_id != action.target.parent_id:
+            raise VerifierTargetMismatchError(
+                "Verification target parent container does not match action target parent container"
+            )
+
+    elif action.action_type == ActionType.TASK_READ:
+        if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
+        if target.resource_id != action.target.resource_id:
+            raise VerifierTargetMismatchError(
+                "Verification target resource_id does not match action target resource_id"
+            )
+        if target.parent_id != action.target.parent_id:
+            raise VerifierTargetMismatchError(
+                "Verification target parent container does not match action target parent container"
+            )
+
+    elif action.action_type == ActionType.TASK_CREATE:
+        # Action targeted TASK_LIST container; verification targets the concrete TASK child
+        if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
+        # Child task's parent_id must match the task list targeted during creation
+        if target.parent_id != action.target.resource_id:
+            raise VerifierTargetMismatchError(
+                "Verification target parent container does not match action target parent container"
+            )
+
+    elif action.action_type == ActionType.WEATHER_READ:
+        if target.system != "open_meteo" or target.resource_kind != ResourceKind.WEATHER_LOCATION:
+            raise VerifierTargetMismatchError("Verification target system/resource kind mismatch")
+        if target.resource_id != action.target.resource_id:
+            raise VerifierTargetMismatchError(
+                "Verification target resource_id does not match action target resource_id"
+            )
+
+    else:
+        raise VerifierTargetMismatchError("Unsupported action type for verification lineage")
+
+
 # ===========================================================================
 # Deterministic Verifier Dispatcher
 # ===========================================================================
@@ -351,7 +434,7 @@ class VerifierDispatcher:
             raise TypeError(f"request must be VerificationRequest, got {type(request).__name__}")
 
         # Enforce action <-> target lineage
-        self._validate_action_target_lineage(request)
+        validate_verification_request_lineage(request)
 
         route_key = (request.target.system, request.target.resource_kind)
         port = self._routes.get(route_key)
@@ -371,67 +454,7 @@ class VerifierDispatcher:
     @staticmethod
     def _validate_action_target_lineage(request: VerificationRequest) -> None:
         """Enforce strict lineage between request.action and request.target."""
-        action = request.action
-        target = request.target
-
-        if action.action_type in (ActionType.CALENDAR_READ, ActionType.CALENDAR_UPDATE):
-            if (
-                target.system != "google_calendar"
-                or target.resource_kind != ResourceKind.CALENDAR_EVENT
-            ):
-                raise VerifierTargetMismatchError(
-                    "Verification target system/resource kind mismatch"
-                )
-            if target.resource_id != action.target.resource_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target resource_id does not match action target resource_id"
-                )
-            if target.parent_id != action.target.parent_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target parent container does not match "
-                    "action target parent container"
-                )
-
-        elif action.action_type == ActionType.TASK_READ:
-            if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
-                raise VerifierTargetMismatchError(
-                    "Verification target system/resource kind mismatch"
-                )
-            if target.resource_id != action.target.resource_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target resource_id does not match action target resource_id"
-                )
-            if target.parent_id != action.target.parent_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target parent container does not match "
-                    "action target parent container"
-                )
-
-        elif action.action_type == ActionType.TASK_CREATE:
-            # Action targeted TASK_LIST container; verification targets the concrete TASK child
-            if target.system != "google_tasks" or target.resource_kind != ResourceKind.TASK:
-                raise VerifierTargetMismatchError(
-                    "Verification target system/resource kind mismatch"
-                )
-            # Child task's parent_id must match the task list targeted during creation
-            if target.parent_id != action.target.resource_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target parent container does not match "
-                    "action target parent container"
-                )
-
-        elif action.action_type == ActionType.WEATHER_READ:
-            if (
-                target.system != "open_meteo"
-                or target.resource_kind != ResourceKind.WEATHER_LOCATION
-            ):
-                raise VerifierTargetMismatchError(
-                    "Verification target system/resource kind mismatch"
-                )
-            if target.resource_id != action.target.resource_id:
-                raise VerifierTargetMismatchError(
-                    "Verification target resource_id does not match action target resource_id"
-                )
+        validate_verification_request_lineage(request)
 
 
 # ===========================================================================
