@@ -77,13 +77,13 @@ Preferred AWS target:
 Active batch: Phase P-08 Deterministic Mission Execution Engine (P-08.01 → P-08.05)
 
 Current exact task:
-P-08.04 — Implement execution attempts and provider-result recording
+P-08.05 — Implement no-silent-fallback adapter routing
 
 Status:
 `IMPLEMENTED / awaiting independent QA`
 
 Remaining authorized tasks in batch:
-- P-08.05 — Implement no-silent-fallback adapter routing
+- None (Authorized Batch P-08.01 → P-08.05 completed; awaiting independent QA)
 
 P-08.06:
 `PENDING / NOT AUTHORIZED / NOT_RUN`

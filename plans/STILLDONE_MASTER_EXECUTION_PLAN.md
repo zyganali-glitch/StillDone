@@ -1163,7 +1163,7 @@ Status: IMPLEMENTED / awaiting independent QA
 Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.05 — Implement no-silent-fallback adapter routing
-Status: PENDING (Authorized Batch P-08.01 → P-08.05)
+Status: IMPLEMENTED / awaiting independent QA
 
 ### P-08.06 — Add mixed success/failure/not-run mission tests
 Status: PENDING / NOT AUTHORIZED / NOT_RUN
