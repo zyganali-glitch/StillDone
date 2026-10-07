@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from stilldone.recovery.continuity import (
     ActionRecoveryState,
+    RecoveryContinuityError,
     reconstruct_action_recovery_state,
     record_duplicate_determination,
     record_execution_attempt,
@@ -72,6 +73,7 @@ __all__ = [
     "ReadbackOutcome",
     "ReadbackVerificationResult",
     "RecoveryActionType",
+    "RecoveryContinuityError",
     "RecoveryDecision",
     "RecoveryError",
     "RecoveryLineageError",

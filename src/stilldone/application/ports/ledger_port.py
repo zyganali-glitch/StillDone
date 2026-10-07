@@ -575,11 +575,20 @@ class DurableFileLedger(MissionLedgerPort):
 
     def _load_from_file(self) -> None:
         with open(self._path, encoding="utf-8") as f:
-            for line in f:
+            for line_num, line in enumerate(f, start=1):
                 line_str = line.strip()
                 if not line_str:
                     continue
-                entry = json.loads(line_str)
+                try:
+                    entry = json.loads(line_str)
+                    if not isinstance(entry, dict):
+                        raise LedgerError(f"Line {line_num} is not a valid JSON object")
+                except Exception as exc:
+                    raise LedgerError(
+                        f"Malformed or corrupt entry in durable ledger log at "
+                        f"line {line_num}: {exc}"
+                    ) from exc
+
                 rec_type = entry.get("record_type")
                 if rec_type == "mission":
                     m_id = MissionId(entry["mission_id"])
@@ -603,12 +612,30 @@ class DurableFileLedger(MissionLedgerPort):
                         updated_at=datetime.fromisoformat(entry["updated_at"]),
                     )
                     m_key = str(m_id)
+                    if m_key in self._missions:
+                        existing_mission = self._missions[m_key]
+                        if canonical_serialize(
+                            to_canonical_primitive(existing_mission)
+                        ) == canonical_serialize(to_canonical_primitive(record)):
+                            raise DuplicateRecordError(
+                                f"Duplicate mission {m_key} encountered during durable log replay."
+                            )
+                        raise RecordConflictError(
+                            f"Conflicting record for mission {m_key} "
+                            "encountered during durable log replay."
+                        )
                     self._missions[m_key] = record
                     self._mission_actions.setdefault(m_key, [])
                     self._mission_evidence.setdefault(m_key, [])
                 elif rec_type == "action":
                     a_id = ActionId(entry["action_id"])
                     m_id = MissionId(entry["mission_id"])
+                    m_key = str(m_id)
+                    if m_key not in self._missions:
+                        raise RecordNotFoundError(
+                            f"Action {a_id} references absent mission {m_key} "
+                            "during durable log replay."
+                        )
                     a_data = entry["action"]
                     target = TargetIdentity(
                         system=a_data["target"]["system"],
@@ -632,7 +659,18 @@ class DurableFileLedger(MissionLedgerPort):
                         created_at=datetime.fromisoformat(entry["created_at"]),
                     )
                     a_key = str(a_id)
-                    m_key = str(m_id)
+                    if a_key in self._actions:
+                        existing_action = self._actions[a_key]
+                        if canonical_serialize(
+                            to_canonical_primitive(existing_action)
+                        ) == canonical_serialize(to_canonical_primitive(act_record)):
+                            raise DuplicateRecordError(
+                                f"Duplicate action {a_key} encountered during durable log replay."
+                            )
+                        raise RecordConflictError(
+                            f"Conflicting record for action {a_key} "
+                            "encountered during durable log replay."
+                        )
                     self._actions[a_key] = act_record
                     self._mission_actions.setdefault(m_key, []).append(a_key)
                     self._action_evidence.setdefault(a_key, [])
@@ -640,12 +678,32 @@ class DurableFileLedger(MissionLedgerPort):
                     e_id = EvidenceId(entry["evidence_id"])
                     a_id = ActionId(entry["action_id"])
                     m_id = MissionId(entry["mission_id"])
+                    a_key = str(a_id)
+                    if a_key not in self._actions:
+                        raise RecordNotFoundError(
+                            f"Evidence {e_id} references absent action {a_key} "
+                            "during durable log replay."
+                        )
+                    expected_mission_id = self._actions[a_key].mission_id
+                    if expected_mission_id != m_id:
+                        raise LedgerError(
+                            f"Evidence {e_id} mission {m_id} does not match referenced "
+                            f"action mission {expected_mission_id}."
+                        )
                     orig_data = entry["origin"]
                     origin = EvidenceOrigin.create(
                         provenance=orig_data["provenance"],
                         observed_at=datetime.fromisoformat(orig_data["observed_at"]),
                         recorded_live_origin=orig_data.get("recorded_live_origin"),
                     )
+                    expected_eid = compute_evidence_id(
+                        {"origin": origin, "payload": freeze_canonical_payload(entry["payload"])}
+                    )
+                    if expected_eid != e_id:
+                        raise RecordConflictError(
+                            f"Evidence {e_id} failed content-address validation during replay; "
+                            f"expected {expected_eid}."
+                        )
                     ev_record = EvidenceRecord(
                         evidence_id=e_id,
                         action_id=a_id,
@@ -655,11 +713,26 @@ class DurableFileLedger(MissionLedgerPort):
                         created_at=datetime.fromisoformat(entry["created_at"]),
                     )
                     e_key = str(e_id)
-                    a_key = str(a_id)
                     m_key = str(m_id)
+                    if e_key in self._evidence:
+                        existing_evidence = self._evidence[e_key]
+                        if canonical_serialize(
+                            to_canonical_primitive(existing_evidence)
+                        ) == canonical_serialize(to_canonical_primitive(ev_record)):
+                            raise DuplicateRecordError(
+                                f"Duplicate evidence {e_key} encountered during durable log replay."
+                            )
+                        raise RecordConflictError(
+                            f"Conflicting record for evidence {e_key} "
+                            "encountered during durable log replay."
+                        )
                     self._evidence[e_key] = ev_record
                     self._action_evidence.setdefault(a_key, []).append(e_key)
                     self._mission_evidence.setdefault(m_key, []).append(e_key)
+                else:
+                    raise LedgerError(
+                        f"Unknown record_type '{rec_type}' encountered during durable log replay."
+                    )
 
     def append_mission(self, record: MissionRecord) -> None:
         key = str(record.mission_id)

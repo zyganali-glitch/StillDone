@@ -278,7 +278,24 @@ def evaluate_post_execution_recovery(
             idempotency_key=stable_key,
         )
 
-    # 3. Safe retry eligible (e.g. read-only actions, or natural idempotent update on transient)
+    # 3. Actions where blind retry is prohibited (allows_blind_retry == False,
+    # including CALENDAR_UPDATE) MUST NOT directly retry; must require independent
+    # verification before any retry decision.
+    if not strategy.allows_blind_retry and retry_dec.should_retry:
+        return RecoveryDecision(
+            action_type=RecoveryActionType.REQUIRES_VERIFICATION,
+            action_id=action.action_id,
+            attempt_number=attempt_number,
+            delay_seconds=0.0,
+            reason=(
+                "Mutation strategy prohibits blind retry (allows_blind_retry=False); "
+                "requires independent verification before retry decision"
+            ),
+            retry_classification=retry_dec.classification,
+            idempotency_key=stable_key,
+        )
+
+    # 4. Safe retry eligible (actions with allows_blind_retry == True, such as read-only actions)
     if retry_dec.should_retry:
         return RecoveryDecision(
             action_type=RecoveryActionType.RETRY,

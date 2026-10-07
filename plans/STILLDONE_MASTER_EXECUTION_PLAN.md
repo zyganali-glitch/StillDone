@@ -1216,19 +1216,19 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: REPAIRED (awaiting independent QA review)
 
 ### P-10.04 — Implement duplicate detection and duplicate evidence state
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: PASS (independent QA PASS)
 
 ### P-10.05 — Implement process restart/resume from durable mission ledger
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: REPAIRED (awaiting independent QA review)
 
 ### P-10.06 — Run injected timeout-after-write and crash/restart campaign
-Status: IMPLEMENTED (awaiting independent QA review)
+Status: REPAIRED (awaiting independent QA review)
 
 Phase exit:
-at least one real failure can resume without duplicate effect.
+at least one real failure can resume without duplicate effect. Phase P-10: REPAIRED (awaiting independent QA review).
 
 ---
 

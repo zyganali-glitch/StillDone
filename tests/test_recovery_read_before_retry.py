@@ -34,6 +34,7 @@ from stilldone.planning.contracts import PlannerInput
 from stilldone.recovery.idempotency import (
     PlannerRecoveryAuthorityError,
     derive_idempotency_key,
+    get_idempotency_strategy,
 )
 from stilldone.recovery.orchestrator import (
     ReadbackOutcome,
@@ -94,6 +95,33 @@ class TestCalendarUpdateRecovery:
         assert decision.attempt_number == 1
         assert decision.delay_seconds == 0.0
         assert decision.retry_classification == RetryClassification.AMBIGUOUS_TIMEOUT
+        assert decision.idempotency_key == derive_idempotency_key(action, 1)
+
+    def test_calendar_update_transient_failure_requires_verification_not_blind_retry(
+        self,
+    ) -> None:
+        """Regression test for Defect 1:
+
+        CALENDAR_UPDATE + retryable transient + allows_blind_retry=False
+        => MUST NOT produce direct RETRY
+        => MUST require independent verification/read-back.
+        """
+        action = _make_action(ActionType.CALENDAR_UPDATE, CAL_TARGET)
+        strategy = get_idempotency_strategy(action)
+        assert strategy.allows_blind_retry is False
+
+        # Transient 503 error
+        decision = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error="Calendar backend unavailable (status 503)",
+        )
+        # Must require verification, NOT blind retry
+        assert decision.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert decision.attempt_number == 1
+        assert decision.delay_seconds == 0.0
+        assert decision.retry_classification == RetryClassification.RETRYABLE_TRANSIENT
+        assert "allows_blind_retry=False" in decision.reason
         assert decision.idempotency_key == derive_idempotency_key(action, 1)
 
     def test_readback_intended_effect_exists_prevents_second_execution(self) -> None:

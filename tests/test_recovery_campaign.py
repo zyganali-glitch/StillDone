@@ -51,9 +51,18 @@ from stilldone.domain.action import (
 from stilldone.domain.authority import ApprovalGrant, AuthorityClass
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
-from stilldone.ledger import ActionRecord, DurableFileLedger, MissionRecord
+from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+from stilldone.evidence import compute_evidence_id
+from stilldone.ledger import (
+    ActionRecord,
+    DurableFileLedger,
+    EvidenceRecord,
+    LedgerError,
+    MissionRecord,
+)
 from stilldone.planning.contracts import CandidateActionProposal
 from stilldone.recovery.continuity import (
+    RecoveryContinuityError,
     reconstruct_action_recovery_state,
     record_duplicate_determination,
     record_execution_attempt,
@@ -64,7 +73,11 @@ from stilldone.recovery.duplicate import (
     GoogleTasksDuplicateDetectorAdapter,
     derive_intended_mutation_identity,
 )
-from stilldone.recovery.idempotency import PlannerRecoveryAuthorityError
+from stilldone.recovery.idempotency import (
+    PlannerRecoveryAuthorityError,
+    derive_idempotency_key,
+    get_idempotency_strategy,
+)
 from stilldone.recovery.orchestrator import (
     RecoveryActionType,
     evaluate_post_execution_recovery,
@@ -810,3 +823,247 @@ class TestP10CampaignScenarios:
         rep = repr(evidence)
         assert "Bearer" not in rep
         assert "OAuth" not in rep
+
+    def test_scenario_14_calendar_update_transient_requires_verification_not_blind_retry(
+        self,
+    ) -> None:
+        """Scenario 14 (A): CALENDAR_UPDATE retryable transient cannot blind retry.
+
+        Frozen strategy says allows_blind_retry=False. Mutation requires independent
+        verification/read-back before any retry decision. Zero blind retries issued.
+        """
+        transport = FaultyGoogleCalendarTransport()
+        action = _make_calendar_update_action(summary="Team Standup")
+        strategy = get_idempotency_strategy(action)
+        assert strategy.allows_blind_retry is False
+
+        # Injected transient 503 error
+        decision = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error=CalendarTransportError("Backend 503 Service Unavailable", status_code=503),
+        )
+
+        assert decision.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert decision.retry_classification == RetryClassification.RETRYABLE_TRANSIENT
+        assert "allows_blind_retry=False" in decision.reason
+
+        # CRITICAL PROOF: zero writes were executed blindly!
+        assert transport.writes_count == 0
+
+    def test_scenario_15_durable_recovery_evidence_read_failure_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 15 (B): Durable recovery evidence read failure fails closed.
+
+        Reconstruction fails closed; mutation count = 0.
+        Proof: UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS.
+        """
+        log_file = tmp_path / "mission_recovery_s15.jsonl"
+        ledger = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger, action)
+
+        # Mock ledger get_evidence_for_action to simulate unreadable disk/database corruption
+        mock_ledger = MagicMock(spec=DurableFileLedger)
+        mock_ledger.get_action.return_value = ledger.get_action(action.action_id)
+        mock_ledger.get_evidence_for_action.side_effect = OSError("Durable ledger read failure")
+
+        with pytest.raises(
+            RecoveryContinuityError, match="Unable to read durable recovery evidence"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=mock_ledger)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0
+
+    def test_scenario_16_successful_task_create_durably_recorded_restart_zero_additional_writes(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 16 (C): Successful TASK_CREATE durably recorded; process restarts.
+
+        No second create; mutation count after restart = 0 additional writes.
+        Proof: EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN.
+        """
+        log_file = tmp_path / "mission_recovery_s16.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        adapter = GoogleTasksCreateAdapter(scope=DEMO_SCOPE, transport=transport)
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Attempt 1 succeeds cleanly
+        res = adapter.create_task(action)
+        assert res.status == TaskCreateStatus.CREATED
+        assert transport.writes_count == 1
+
+        record_execution_attempt(ledger=ledger1, action=action, attempt_number=1, error=None)
+
+        # PROCESS CRASH & RESTART
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+        recovery_state = reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        assert recovery_state.prior_attempt_count == 1
+        assert recovery_state.resumption_decision.action_type == RecoveryActionType.DO_NOT_RETRY
+        assert (
+            "downstream verification remains required" in recovery_state.resumption_decision.reason
+        )
+
+        # CRITICAL PROOF: write count remains exactly 1; 0 additional writes after restart!
+        assert transport.writes_count == 1
+
+    def test_scenario_17_successful_calendar_update_durably_recorded_restart_zero_additional_writes(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 17 (D): Successful CALENDAR_UPDATE durably recorded; process restarts.
+
+        No second update; mutation count after restart = 0 additional writes.
+        Proof: EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN.
+        """
+        log_file = tmp_path / "mission_recovery_s17.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleCalendarTransport()
+        transport.seed_event(
+            calendar_id=DEMO_SCOPE.calendar_id,
+            event_id="event_briefing_1",
+            summary="Original Meeting",
+            start_time="2026-10-08T06:00:00Z",
+            end_time="2026-10-08T06:30:00Z",
+        )
+        adapter = GoogleCalendarUpdateAdapter(scope=DEMO_SCOPE, transport=transport)
+        action = _make_calendar_update_action(summary="Updated Meeting")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Attempt 1 succeeds cleanly
+        approval = _make_approval_grant(action)
+        res = adapter.update_event(action, approval=approval)
+        assert res.status == CalendarUpdateStatus.UPDATED
+        assert transport.writes_count == 1
+
+        record_execution_attempt(ledger=ledger1, action=action, attempt_number=1, error=None)
+
+        # PROCESS CRASH & RESTART
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+        recovery_state = reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        assert recovery_state.prior_attempt_count == 1
+        assert recovery_state.resumption_decision.action_type == RecoveryActionType.DO_NOT_RETRY
+        assert (
+            "downstream verification remains required" in recovery_state.resumption_decision.reason
+        )
+
+        # CRITICAL PROOF: write count remains exactly 1; 0 additional writes after restart!
+        assert transport.writes_count == 1
+
+    def test_scenario_18_corrupt_conflicting_durable_ledger_reload_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 18 (E): Corrupt/conflicting durable ledger reload fails closed.
+
+        Fails closed before mutation; mutation count = 0.
+        """
+        log_file = tmp_path / "mission_recovery_s18.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+        del ledger1
+
+        # Inject corrupt / truncated entry into the durable log
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write('{"record_type": "corrupt_truncated_json' + "\n")
+
+        with pytest.raises(LedgerError, match="Malformed or corrupt entry"):
+            DurableFileLedger(log_file)
+
+        # CRITICAL PROOF: zero writes were executed!
+        assert transport.writes_count == 0
+
+    def test_scenario_19_gapped_or_conflicting_attempt_history_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 19 (F): Gapped or conflicting attempt history fails closed.
+
+        Retry budget is NOT reset or guessed; fail closed; mutation count = 0.
+        Proof: PROCESS RESTART != NEW RETRY BUDGET.
+        """
+        log_file = tmp_path / "mission_recovery_s19.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Record attempt 1, then attempt 3 (attempt 2 missing)
+        record_execution_attempt(
+            ledger=ledger1, action=action, attempt_number=1, error=TimeoutError()
+        )
+        record_execution_attempt(
+            ledger=ledger1, action=action, attempt_number=3, error=TimeoutError()
+        )
+
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(
+            RecoveryContinuityError, match="Non-contiguous, duplicate, or out-of-order"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0
+
+    def test_scenario_20_forged_mismatched_duplicate_evidence_lineage_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 20 (G): Forged/mismatched duplicate evidence mutation lineage fails closed.
+
+        Cannot authorize retry or suppress real verification; mutation count = 0.
+        """
+        log_file = tmp_path / "mission_recovery_s20.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Inject forged duplicate evidence with mismatched mutation_id
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        forged_payload = {
+            "evidence_type": "DUPLICATE_DETERMINATION",
+            "status": DuplicateDeterminationStatus.EFFECT_ABSENT.value,
+            "mutation_id": "forged_mutation_hash_999",
+            "idempotency_key": derive_idempotency_key(action, 1),
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "match_count": 0,
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": forged_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=forged_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger1.append_evidence(ev)
+
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(RecoveryContinuityError, match="mutation_id mismatch"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0

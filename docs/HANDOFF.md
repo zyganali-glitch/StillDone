@@ -74,24 +74,27 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Bounded Four-Task Batch (P-10.03 → P-10.06)
+Active batch: Consolidated Surgical Repair & Phase P-10 QA Closure
 
 Tasks in this batch:
-- P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
-- P-10.04 — Implement duplicate detection and duplicate evidence state
-- P-10.05 — Implement process restart/resume from durable mission ledger
-- P-10.06 — Run injected timeout-after-write and crash/restart campaign
+- P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate: REPAIRED (awaiting QA)
+- P-10.04 — Implement duplicate detection and duplicate evidence state: PASS ✅ (independent QA verified)
+- P-10.05 — Implement process restart/resume from durable mission ledger: REPAIRED (awaiting QA)
+- P-10.06 — Run injected timeout-after-write and crash/restart campaign: REPAIRED (awaiting QA)
 
 Status:
 - P-00 through P-08: CLOSED — independent QA PASS ✅
 - Phase P-09: CLOSED — independent QA PASS ✅ (P-09.01 → P-09.07 PASS ✅)
 - P-10.01 → P-10.02: PASS ✅ (independent QA verified)
-- P-10.03 → P-10.06: IN PROGRESS
+- P-10.04: PASS ✅ (independent QA verified)
+- P-10.03, P-10.05, P-10.06: REPAIRED (awaiting independent QA review)
+- Phase P-10: REPAIRED (awaiting independent QA review)
 - P-11+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
 Starting remote SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
-Next exact task: P-10.03 (Implement read-before-retry / verify-after-timeout behavior where appropriate)
+Remote HEAD at repair start: `e28c9799b1b3c3e64688052cf0a2fb9e362d49fc`
+Next exact task: Independent QA Review of Phase P-10 repairs (P-11+ NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

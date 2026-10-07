@@ -219,6 +219,14 @@ class ActionRecoveryState:
 # ===========================================================================
 
 
+class RecoveryContinuityError(Exception):
+    """Raised when durable recovery state cannot be safely or reliably reconstructed.
+
+    Enforces fail-closed recovery: unreadable, corrupt, gapped, or mismatched
+    history MUST NOT be interpreted as zero previous attempts or authorize mutation retry.
+    """
+
+
 def reconstruct_action_recovery_state(
     *,
     action: ActionContract,
@@ -228,7 +236,12 @@ def reconstruct_action_recovery_state(
     """Reconstruct an action's recovery state from durable ledger evidence.
 
     Laws:
+    - Ledger read failure or missing action MUST fail closed (RecoveryContinuityError).
     - Attempt count is reconstructed from durable facts; NEVER reset to 0.
+    - Attempt history must be non-conflicting and contiguous; gapped or malformed fails closed.
+    - Durably recorded execution success NEVER synthesizes transient retry.
+    - Duplicate determination evidence must match mutation identity lineage;
+      forged/mismatched fails closed.
     - Intended mutation identity is deterministic; NEVER regenerated differently.
     - Ambiguous outcome (e.g. timeout) is preserved; NEVER converted to SUCCESS.
     - High-duplicate-risk mutations (TASK_CREATE) and ambiguous timeouts preserve
@@ -250,67 +263,202 @@ def reconstruct_action_recovery_state(
     eff_policy = policy or RetryPolicy()
     effective_ceiling = min(eff_policy.max_attempts, strategy.max_attempt_ceiling)
 
-    # 1. Fetch all durable evidence records for this action
+    # 1. Validate action existence and lineage in durable ledger
+    try:
+        ledger_action = ledger.get_action(action.action_id)
+    except Exception as exc:
+        raise RecoveryContinuityError(
+            f"Unable to read canonical action {action.action_id} from durable ledger: {exc}"
+        ) from exc
+
+    if ledger_action.mission_id != action.mission_id:
+        raise RecoveryContinuityError(
+            f"Ledger action {action.action_id} mission {ledger_action.mission_id} "
+            f"does not match requested action mission {action.mission_id}"
+        )
+    if ledger_action.action.action_type != action.action_type:
+        raise RecoveryContinuityError(
+            f"Ledger action {action.action_id} action_type {ledger_action.action.action_type} "
+            f"does not match requested action_type {action.action_type}"
+        )
+
+    # 2. Fetch all durable evidence records for this action - fail closed on read failure
     try:
         evidence_records = ledger.get_evidence_for_action(action.action_id)
-    except Exception:
-        evidence_records = []
+    except Exception as exc:
+        raise RecoveryContinuityError(
+            f"Unable to read durable recovery evidence for action {action.action_id}: {exc}"
+        ) from exc
 
-    # 2. Extract attempt evidence and duplicate evidence
+    # 3. Extract and validate attempt evidence and duplicate evidence
     attempt_records: list[EvidenceRecord] = []
     duplicate_record: DuplicateEvidenceRecord | None = None
 
     for ev in evidence_records:
         ev_type = ev.payload.get("evidence_type")
         if ev_type == EXECUTION_ATTEMPT_EVIDENCE_TYPE:
+            if ev.action_id != action.action_id or ev.mission_id != action.mission_id:
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} record lineage mismatch: "
+                    f"action_id={ev.action_id}, mission_id={ev.mission_id}"
+                )
+            p = ev.payload
+            if p.get("action_id") != str(action.action_id):
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} payload action_id mismatch: "
+                    f"{p.get('action_id')}"
+                )
+            if p.get("mission_id") != str(action.mission_id):
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} payload mission_id mismatch: "
+                    f"{p.get('mission_id')}"
+                )
+            if p.get("action_type") != action.action_type.value:
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} payload action_type mismatch: "
+                    f"{p.get('action_type')}"
+                )
+            att_num = p.get("attempt_number")
+            if isinstance(att_num, bool) or not isinstance(att_num, int) or att_num < 1:
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} has invalid attempt_number: {att_num}"
+                )
+            if not isinstance(p.get("success"), bool):
+                raise RecoveryContinuityError(
+                    f"Attempt evidence {ev.evidence_id} has invalid or missing "
+                    f"success field: {p.get('success')}"
+                )
             attempt_records.append(ev)
-        elif ev_type == "DUPLICATE_DETERMINATION":
-            status_val = ev.payload.get("status")
-            if status_val:
-                try:
-                    det_status = DuplicateDeterminationStatus(status_val)
-                    duplicate_record = DuplicateEvidenceRecord(
-                        status=det_status,
-                        intended_mutation=intended_mutation,
-                        match_count=ev.payload.get("match_count", 0),
-                        scanned_items=ev.payload.get("scanned_items", 0),
-                        scanned_pages=ev.payload.get("scanned_pages", 0),
-                        observed_at=ev.origin.observed_at,
-                        matched_resource_id=ev.payload.get("matched_resource_id"),
-                        error_message=ev.payload.get("error_message"),
-                        provenance=ev.origin.provenance,
-                    )
-                except Exception:
-                    pass
 
+        elif ev_type == DUPLICATE_DETERMINATION_EVIDENCE_TYPE:
+            if ev.action_id != action.action_id or ev.mission_id != action.mission_id:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} record lineage mismatch: "
+                    f"action_id={ev.action_id}, mission_id={ev.mission_id}"
+                )
+            p = ev.payload
+            if p.get("action_id") != str(action.action_id):
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} payload action_id mismatch: "
+                    f"{p.get('action_id')}"
+                )
+            if p.get("mission_id") != str(action.mission_id):
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} payload mission_id mismatch: "
+                    f"{p.get('mission_id')}"
+                )
+            if p.get("action_type") != action.action_type.value:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} payload action_type mismatch: "
+                    f"{p.get('action_type')}"
+                )
+            if p.get("mutation_id") != intended_mutation.mutation_id:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} mutation_id mismatch: "
+                    f"got {p.get('mutation_id')}, expected {intended_mutation.mutation_id}"
+                )
+            if p.get("idempotency_key") != intended_mutation.idempotency_key:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} idempotency_key mismatch: "
+                    f"got {p.get('idempotency_key')}, expected {intended_mutation.idempotency_key}"
+                )
+            if "target_system" in p and p.get("target_system") != intended_mutation.target.system:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} target_system mismatch: "
+                    f"{p.get('target_system')}"
+                )
+            if (
+                "target_resource_kind" in p
+                and p.get("target_resource_kind") != intended_mutation.target.resource_kind.value
+            ):
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} target_resource_kind mismatch: "
+                    f"{p.get('target_resource_kind')}"
+                )
+            status_str = p.get("status")
+            if not isinstance(status_str, str):
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} has non-string or missing status: "
+                    f"{status_str}"
+                )
+            try:
+                det_status = DuplicateDeterminationStatus(status_str)
+            except Exception as exc:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} has invalid status {status_str}: {exc}"
+                ) from exc
+
+            match_cnt = p.get("match_count", 0)
+            try:
+                duplicate_record = DuplicateEvidenceRecord(
+                    status=det_status,
+                    intended_mutation=intended_mutation,
+                    match_count=match_cnt,
+                    scanned_items=p.get("scanned_items", 0),
+                    scanned_pages=p.get("scanned_pages", 0),
+                    observed_at=ev.origin.observed_at,
+                    matched_resource_id=p.get("matched_resource_id"),
+                    error_message=p.get("error_message"),
+                    provenance=ev.origin.provenance,
+                )
+            except Exception as exc:
+                raise RecoveryContinuityError(
+                    f"Duplicate evidence {ev.evidence_id} failed invariant check: {exc}"
+                ) from exc
+
+    # 4. Validate attempt history ordering and contiguous sequence
     prior_attempt_count = len(attempt_records)
+    if prior_attempt_count > 0:
+        attempt_numbers = [r.payload["attempt_number"] for r in attempt_records]
+        expected_sequence = list(range(1, prior_attempt_count + 1))
+        if attempt_numbers != expected_sequence:
+            raise RecoveryContinuityError(
+                f"Non-contiguous, duplicate, or out-of-order attempt numbers in durable ledger: "
+                f"got {attempt_numbers}, expected {expected_sequence}"
+            )
+
     remaining_budget = max(0, effective_ceiling - prior_attempt_count)
 
-    # 3. Determine if last attempt was an ambiguous outcome
+    # 5. Inspect latest attempt facts
+    last_attempt_success = False
     is_ambiguous = False
     last_error_classification: RetryClassification | None = None
     if attempt_records:
         last_attempt = attempt_records[-1]
-        cls_name = last_attempt.payload.get("classification")
-        if cls_name:
-            try:
-                last_error_classification = RetryClassification(cls_name)
-            except ValueError:
-                pass
-        if last_error_classification == RetryClassification.AMBIGUOUS_TIMEOUT:
-            is_ambiguous = True
+        last_payload = last_attempt.payload
+        if last_payload.get("success") is True:
+            last_attempt_success = True
+        else:
+            cls_name = last_payload.get("classification")
+            if cls_name:
+                try:
+                    last_error_classification = RetryClassification(cls_name)
+                except ValueError:
+                    pass
+            if last_error_classification == RetryClassification.AMBIGUOUS_TIMEOUT:
+                is_ambiguous = True
 
-    # 4. Determine if verification is required before retry
+    # 6. Determine if verification is required before retry
     requires_verification = False
     if strategy.duplicate_risk != DuplicateRiskClass.NONE:
         if is_ambiguous:
             requires_verification = True
         elif (
-            strategy.requires_read_before_retry and prior_attempt_count > 0 and remaining_budget > 0
+            not strategy.allows_blind_retry
+            and prior_attempt_count > 0
+            and remaining_budget > 0
+            and not last_attempt_success
+        ):
+            requires_verification = True
+        elif (
+            strategy.requires_read_before_retry
+            and prior_attempt_count > 0
+            and remaining_budget > 0
+            and not last_attempt_success
         ):
             requires_verification = True
 
-    # 5. Compute resumption decision
+    # 7. Compute resumption decision
     if duplicate_record is not None:
         # Duplicate determination already took place
         resumption_dec = evaluate_readback_recovery(
@@ -318,6 +466,24 @@ def reconstruct_action_recovery_state(
             attempt_number=max(1, prior_attempt_count),
             readback_result=duplicate_record.to_readback_result(),
             policy=eff_policy,
+        )
+    elif last_attempt_success:
+        # Durable execution success recorded!
+        # NEVER synthesize transient failure; NEVER authorize another mutation.
+        # Preserves independent verification boundary.
+        if strategy.duplicate_risk == DuplicateRiskClass.NONE:
+            resumption_reason = "Durable execution success observed; no further execution required"
+        else:
+            resumption_reason = (
+                "Durable execution success observed; downstream verification remains required"
+            )
+        resumption_dec = RecoveryDecision(
+            action_type=RecoveryActionType.DO_NOT_RETRY,
+            action_id=action.action_id,
+            attempt_number=prior_attempt_count,
+            delay_seconds=0.0,
+            reason=resumption_reason,
+            idempotency_key=stable_key,
         )
     elif prior_attempt_count == 0:
         # Action has never been attempted yet
