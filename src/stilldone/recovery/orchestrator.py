@@ -31,10 +31,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from stilldone.domain.action import ActionContract, ActionId, ActionType
+from stilldone.domain.action import ActionContract, ActionId
 from stilldone.recovery.idempotency import (
-    DuplicateRiskClass,
-    IdempotencyError,
     RecoveryError,
     assert_not_planner_for_recovery,
     derive_idempotency_key,
@@ -42,7 +40,6 @@ from stilldone.recovery.idempotency import (
 )
 from stilldone.recovery.retry import (
     RetryClassification,
-    RetryDecision,
     RetryPolicy,
     evaluate_retry,
 )
@@ -162,9 +159,7 @@ class RecoveryDecision:
             raise TypeError("attempt_number must be an integer")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be >= 1")
-        if not isinstance(self.delay_seconds, (int, float)) or isinstance(
-            self.delay_seconds, bool
-        ):
+        if not isinstance(self.delay_seconds, (int, float)) or isinstance(self.delay_seconds, bool):
             raise TypeError("delay_seconds must be a float")
         if math.isnan(self.delay_seconds) or math.isinf(self.delay_seconds):
             raise ValueError("delay_seconds must be finite")
@@ -192,9 +187,7 @@ class RecoveryDecision:
             "retry_classification": (
                 self.retry_classification.value if self.retry_classification else None
             ),
-            "readback_outcome": (
-                self.readback_outcome.value if self.readback_outcome else None
-            ),
+            "readback_outcome": (self.readback_outcome.value if self.readback_outcome else None),
             "idempotency_key": self.idempotency_key,
         }
 
@@ -364,8 +357,8 @@ def evaluate_readback_recovery(
             attempt_number=attempt_number,
             delay_seconds=0.0,
             reason=(
-                "Independent read-back confirmed intended effect already exists in external system; "
-                "further mutation prohibited"
+                "Independent read-back confirmed intended effect already exists in "
+                "external system; further mutation prohibited"
             ),
             readback_outcome=ReadbackOutcome.INTENDED_EFFECT_EXISTS,
             idempotency_key=stable_key,
@@ -394,7 +387,10 @@ def evaluate_readback_recovery(
                 action_id=action.action_id,
                 attempt_number=attempt_number,
                 delay_seconds=0.0,
-                reason=f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling}); retry budget exhausted",
+                reason=(
+                    f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling}); "
+                    "retry budget exhausted"
+                ),
                 readback_outcome=ReadbackOutcome.EFFECT_ABSENT,
                 idempotency_key=stable_key,
             )

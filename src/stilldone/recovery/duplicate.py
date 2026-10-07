@@ -17,14 +17,14 @@ Core Architectural Laws:
 - Privacy minimization:
   * Zero raw provider payloads or personal details persisted.
   * Sanitized deterministic evidence payload only.
-- When duplicates exist, preserves truth explicitly (DUPLICATE_DETECTED); never claims clean success.
+- When duplicates exist, preserves truth explicitly (DUPLICATE_DETECTED);
+  never claims clean success.
 - Model / planner output has ZERO authority.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -32,28 +32,22 @@ from typing import Any, Protocol, runtime_checkable
 
 from stilldone.adapters.calendar import (
     CalendarReadStatus,
-    ExpectedCalendarState,
     GoogleCalendarReadAdapter,
-    GoogleCalendarReadbackVerifier,
 )
 from stilldone.adapters.tasks import (
     DuplicateDetectionResult,
     DuplicateDetectionStatus,
     ExpectedTaskState,
     GoogleTasksDuplicateDetector,
-    TaskTransport,
 )
-from stilldone.demo_isolation import DemoResourceScope
 from stilldone.domain.action import (
     ActionContract,
     ActionId,
     ActionType,
-    ResourceKind,
     TargetIdentity,
 )
 from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
-from stilldone.evidence import EvidenceId, compute_evidence_id
 from stilldone.ledger import EvidenceRecord
 from stilldone.recovery.idempotency import (
     assert_not_planner_for_recovery,
@@ -258,9 +252,7 @@ class DuplicateEvidenceRecord:
                 )
         elif self.status == DuplicateDeterminationStatus.EFFECT_ABSENT:
             if self.match_count != 0:
-                raise ValueError(
-                    f"EFFECT_ABSENT requires match_count == 0, got {self.match_count}"
-                )
+                raise ValueError(f"EFFECT_ABSENT requires match_count == 0, got {self.match_count}")
 
     def to_canonical_payload(self) -> dict[str, Any]:
         """Convert to sanitized deterministic dictionary for evidence ledger persistence.
@@ -305,10 +297,12 @@ class DuplicateEvidenceRecord:
     def to_readback_result(self) -> ReadbackVerificationResult:
         """Bridge duplicate evidence to RecoveryOrchestrator ReadbackVerificationResult."""
         outcome_map = {
-            DuplicateDeterminationStatus.EFFECT_ABSENT: ReadbackOutcome.EFFECT_ABSENT,
-            DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS: ReadbackOutcome.INTENDED_EFFECT_EXISTS,
-            DuplicateDeterminationStatus.DUPLICATE_DETECTED: ReadbackOutcome.DUPLICATE_DETECTED,
-            DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE: ReadbackOutcome.INCONCLUSIVE,
+            DuplicateDeterminationStatus.EFFECT_ABSENT: (ReadbackOutcome.EFFECT_ABSENT),
+            DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS: (
+                ReadbackOutcome.INTENDED_EFFECT_EXISTS
+            ),
+            DuplicateDeterminationStatus.DUPLICATE_DETECTED: (ReadbackOutcome.DUPLICATE_DETECTED),
+            DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE: (ReadbackOutcome.INCONCLUSIVE),
         }
         return ReadbackVerificationResult(
             outcome=outcome_map[self.status],
@@ -380,11 +374,19 @@ class GoogleTasksDuplicateDetectorAdapter:
             )
 
         status_map = {
-            DuplicateDetectionStatus.UNIQUE_MATCH: DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS,
-            DuplicateDetectionStatus.DUPLICATE_DETECTED: DuplicateDeterminationStatus.DUPLICATE_DETECTED,
-            DuplicateDetectionStatus.NO_MATCH: DuplicateDeterminationStatus.EFFECT_ABSENT,
-            DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED: DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE,
-            DuplicateDetectionStatus.PROVIDER_ERROR: DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE,
+            DuplicateDetectionStatus.UNIQUE_MATCH: (
+                DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS
+            ),
+            DuplicateDetectionStatus.DUPLICATE_DETECTED: (
+                DuplicateDeterminationStatus.DUPLICATE_DETECTED
+            ),
+            DuplicateDetectionStatus.NO_MATCH: (DuplicateDeterminationStatus.EFFECT_ABSENT),
+            DuplicateDetectionStatus.SCAN_LIMIT_EXCEEDED: (
+                DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE
+            ),
+            DuplicateDetectionStatus.PROVIDER_ERROR: (
+                DuplicateDeterminationStatus.DETERMINATION_INCONCLUSIVE
+            ),
         }
 
         return DuplicateEvidenceRecord(

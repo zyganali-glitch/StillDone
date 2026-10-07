@@ -6,9 +6,15 @@ Survive ambiguous network failures without duplicate real-world effects.
 
 from __future__ import annotations
 
+from stilldone.recovery.continuity import (
+    ActionRecoveryState,
+    reconstruct_action_recovery_state,
+    record_duplicate_determination,
+    record_execution_attempt,
+)
 from stilldone.recovery.duplicate import (
-    DuplicateDeterminationStatus,
     DuplicateDetectorPort,
+    DuplicateDeterminationStatus,
     DuplicateEvidenceRecord,
     GoogleCalendarEffectDetectorAdapter,
     GoogleTasksDuplicateDetectorAdapter,
@@ -50,6 +56,7 @@ from stilldone.recovery.retry import (
 
 __all__ = [
     "FROZEN_IDEMPOTENCY_STRATEGIES",
+    "ActionRecoveryState",
     "BlindRetryForbiddenError",
     "DuplicateDeterminationStatus",
     "DuplicateDetectorPort",
@@ -82,4 +89,7 @@ __all__ = [
     "evaluate_readback_recovery",
     "evaluate_retry",
     "get_idempotency_strategy",
+    "reconstruct_action_recovery_state",
+    "record_duplicate_determination",
+    "record_execution_attempt",
 ]

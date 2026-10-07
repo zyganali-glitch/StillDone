@@ -19,7 +19,6 @@ from __future__ import annotations
 import pytest
 
 from stilldone.adapters.calendar import (
-    CalendarTransportEvent,
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
 )
@@ -42,12 +41,10 @@ from stilldone.recovery.duplicate import (
     DuplicateEvidenceRecord,
     GoogleCalendarEffectDetectorAdapter,
     GoogleTasksDuplicateDetectorAdapter,
-    IntendedMutationIdentity,
     derive_intended_mutation_identity,
 )
 from stilldone.recovery.idempotency import PlannerRecoveryAuthorityError
 from stilldone.recovery.orchestrator import (
-    ReadbackOutcome,
     RecoveryActionType,
     RecoveryOrchestrator,
 )
@@ -72,7 +69,9 @@ CAL_TARGET = TargetIdentity(
 )
 
 
-def _make_task_create_action(title: str = "Pack snacks", due: str | None = "2026-10-10") -> ActionContract:
+def _make_task_create_action(
+    title: str = "Pack snacks", due: str | None = "2026-10-10"
+) -> ActionContract:
     return ActionContract.create(
         mission_id=MissionId.generate(),
         action_type=ActionType.TASK_CREATE,
@@ -81,7 +80,9 @@ def _make_task_create_action(title: str = "Pack snacks", due: str | None = "2026
     )
 
 
-def _make_calendar_update_action(summary: str = "Family Briefing", start: str = "2026-10-08T07:00:00Z") -> ActionContract:
+def _make_calendar_update_action(
+    summary: str = "Family Briefing", start: str = "2026-10-08T07:00:00Z"
+) -> ActionContract:
     return ActionContract.create(
         mission_id=MissionId.generate(),
         action_type=ActionType.CALENDAR_UPDATE,
@@ -290,7 +291,9 @@ class TestGoogleCalendarEffectDetectorAdapter:
         read_adapter = GoogleCalendarReadAdapter(scope=DEMO_SCOPE, transport=transport)
         adapter = GoogleCalendarEffectDetectorAdapter(read_adapter=read_adapter)
 
-        action = _make_calendar_update_action(summary="Family Briefing", start="2026-10-08T07:00:00Z")
+        action = _make_calendar_update_action(
+            summary="Family Briefing", start="2026-10-08T07:00:00Z"
+        )
         rec = adapter.detect(action)
 
         assert rec.status == DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS
@@ -310,7 +313,9 @@ class TestGoogleCalendarEffectDetectorAdapter:
         read_adapter = GoogleCalendarReadAdapter(scope=DEMO_SCOPE, transport=transport)
         adapter = GoogleCalendarEffectDetectorAdapter(read_adapter=read_adapter)
 
-        action = _make_calendar_update_action(summary="Family Briefing", start="2026-10-08T07:00:00Z")
+        action = _make_calendar_update_action(
+            summary="Family Briefing", start="2026-10-08T07:00:00Z"
+        )
         rec = adapter.detect(action)
 
         assert rec.status == DuplicateDeterminationStatus.EFFECT_ABSENT

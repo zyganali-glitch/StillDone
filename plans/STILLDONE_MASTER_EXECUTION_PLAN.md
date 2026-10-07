@@ -1222,7 +1222,7 @@ Status: IMPLEMENTED (awaiting independent QA review)
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.05 — Implement process restart/resume from durable mission ledger
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.06 — Run injected timeout-after-write and crash/restart campaign
 Status: PENDING

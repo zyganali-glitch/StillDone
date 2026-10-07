@@ -7,18 +7,32 @@ Provides an explicitly non-durable in-memory implementation for testing and runt
 
 from __future__ import annotations
 
+import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, SupportsIndex
 
-from stilldone.domain.action import ActionContract, ActionId
+from stilldone.domain.action import (
+    ActionContract,
+    ActionId,
+    ActionType,
+    NormalizedParameters,
+    ResourceKind,
+    TargetIdentity,
+)
 from stilldone.domain.authority import ApprovalId
 from stilldone.domain.lifecycle import MissionState
-from stilldone.domain.mission import MissionContract, MissionId
+from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
 from stilldone.domain.provenance import EvidenceOrigin
 from stilldone.evidence import EvidenceId, compute_evidence_id
-from stilldone.serialization import canonical_serialize, to_canonical_primitive
+from stilldone.serialization import (
+    canonical_json,
+    canonical_serialize,
+    to_canonical_primitive,
+)
 
 
 class LedgerError(Exception):
@@ -481,6 +495,312 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
                 f"Conflicting record for evidence {e_key}: existing record differs from new record."
             )
         # Store a defensively isolated record to ensure ledger ownership integrity
+        self._evidence[e_key] = EvidenceRecord(
+            evidence_id=record.evidence_id,
+            action_id=record.action_id,
+            mission_id=record.mission_id,
+            origin=record.origin,
+            payload=record.payload,
+            created_at=record.created_at,
+        )
+        self._action_evidence[a_key].append(e_key)
+        self._mission_evidence[m_key].append(e_key)
+
+    def get_evidence(self, evidence_id: EvidenceId) -> EvidenceRecord:
+        key = str(evidence_id)
+        if key not in self._evidence:
+            raise RecordNotFoundError(f"Evidence {key} not found in ledger")
+        stored = self._evidence[key]
+        return EvidenceRecord(
+            evidence_id=stored.evidence_id,
+            action_id=stored.action_id,
+            mission_id=stored.mission_id,
+            origin=stored.origin,
+            payload=stored.payload,
+            created_at=stored.created_at,
+        )
+
+    def get_evidence_for_action(self, action_id: ActionId) -> list[EvidenceRecord]:
+        a_key = str(action_id)
+        if a_key not in self._actions:
+            raise RecordNotFoundError(f"Action {a_key} not found in ledger")
+        return [
+            self.get_evidence(EvidenceId(e_key)) for e_key in self._action_evidence.get(a_key, [])
+        ]
+
+    def get_evidence_for_mission(self, mission_id: MissionId) -> list[EvidenceRecord]:
+        m_key = str(mission_id)
+        if m_key not in self._missions:
+            raise RecordNotFoundError(f"Mission {m_key} not found in ledger")
+        return [
+            self.get_evidence(EvidenceId(e_key)) for e_key in self._mission_evidence.get(m_key, [])
+        ]
+
+
+class DurableFileLedger(MissionLedgerPort):
+    """Durable append-only file ledger implementation for process continuity and recovery.
+
+    Persists records to a durable append-only JSON-lines log file on disk.
+    Each append operation is flushed and fsynced to ensure durability.
+    On initialization, loads existing durable records into memory for fast indexing
+    and conflict checking.
+    """
+
+    IS_DURABLE: bool = True
+    DURABILITY_CLASSIFICATION: str = "DURABLE_APPEND_ONLY_FILE"
+
+    def __init__(self, file_path: str | Path) -> None:
+        self._path = Path(file_path).resolve()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._missions: dict[str, MissionRecord] = {}
+        self._actions: dict[str, ActionRecord] = {}
+        self._evidence: dict[str, EvidenceRecord] = {}
+        self._mission_actions: dict[str, list[str]] = {}
+        self._action_evidence: dict[str, list[str]] = {}
+        self._mission_evidence: dict[str, list[str]] = {}
+
+        if self._path.exists():
+            self._load_from_file()
+
+    @property
+    def file_path(self) -> Path:
+        return self._path
+
+    def _write_entry(self, entry: dict[str, Any]) -> None:
+        line = canonical_json(entry) + "\n"
+        with open(self._path, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _load_from_file(self) -> None:
+        with open(self._path, encoding="utf-8") as f:
+            for line in f:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                entry = json.loads(line_str)
+                rec_type = entry.get("record_type")
+                if rec_type == "mission":
+                    m_id = MissionId(entry["mission_id"])
+                    c_data = entry["contract"]
+                    intent = UserIntentSnapshot(
+                        text=c_data["intent"]["text"],
+                        captured_at=datetime.fromisoformat(c_data["intent"]["captured_at"]),
+                        mission_id=m_id,
+                    )
+                    contract = MissionContract(
+                        mission_id=m_id,
+                        intent=intent,
+                        created_at=datetime.fromisoformat(c_data["created_at"]),
+                        schema_version=c_data.get("schema_version", "v1"),
+                    )
+                    record = MissionRecord(
+                        mission_id=m_id,
+                        contract=contract,
+                        state=MissionState(entry["state"]),
+                        created_at=datetime.fromisoformat(entry["created_at"]),
+                        updated_at=datetime.fromisoformat(entry["updated_at"]),
+                    )
+                    m_key = str(m_id)
+                    self._missions[m_key] = record
+                    self._mission_actions.setdefault(m_key, [])
+                    self._mission_evidence.setdefault(m_key, [])
+                elif rec_type == "action":
+                    a_id = ActionId(entry["action_id"])
+                    m_id = MissionId(entry["mission_id"])
+                    a_data = entry["action"]
+                    target = TargetIdentity(
+                        system=a_data["target"]["system"],
+                        resource_kind=ResourceKind(a_data["target"]["resource_kind"]),
+                        resource_id=a_data["target"]["resource_id"],
+                        parent_id=a_data["target"].get("parent_id"),
+                    )
+                    act_contract = ActionContract(
+                        action_id=a_id,
+                        mission_id=m_id,
+                        action_type=ActionType(a_data["action_type"]),
+                        target=target,
+                        parameters=NormalizedParameters.from_dict(a_data["parameters"]),
+                    )
+                    appr_id = ApprovalId(entry["approval_id"]) if entry.get("approval_id") else None
+                    act_record = ActionRecord(
+                        action_id=a_id,
+                        mission_id=m_id,
+                        action=act_contract,
+                        approval_id=appr_id,
+                        created_at=datetime.fromisoformat(entry["created_at"]),
+                    )
+                    a_key = str(a_id)
+                    m_key = str(m_id)
+                    self._actions[a_key] = act_record
+                    self._mission_actions.setdefault(m_key, []).append(a_key)
+                    self._action_evidence.setdefault(a_key, [])
+                elif rec_type == "evidence":
+                    e_id = EvidenceId(entry["evidence_id"])
+                    a_id = ActionId(entry["action_id"])
+                    m_id = MissionId(entry["mission_id"])
+                    orig_data = entry["origin"]
+                    origin = EvidenceOrigin.create(
+                        provenance=orig_data["provenance"],
+                        observed_at=datetime.fromisoformat(orig_data["observed_at"]),
+                        recorded_live_origin=orig_data.get("recorded_live_origin"),
+                    )
+                    ev_record = EvidenceRecord(
+                        evidence_id=e_id,
+                        action_id=a_id,
+                        mission_id=m_id,
+                        origin=origin,
+                        payload=entry["payload"],
+                        created_at=datetime.fromisoformat(entry["created_at"]),
+                    )
+                    e_key = str(e_id)
+                    a_key = str(a_id)
+                    m_key = str(m_id)
+                    self._evidence[e_key] = ev_record
+                    self._action_evidence.setdefault(a_key, []).append(e_key)
+                    self._mission_evidence.setdefault(m_key, []).append(e_key)
+
+    def append_mission(self, record: MissionRecord) -> None:
+        key = str(record.mission_id)
+        if key in self._missions:
+            existing = self._missions[key]
+            if canonical_serialize(to_canonical_primitive(existing)) == canonical_serialize(
+                to_canonical_primitive(record)
+            ):
+                raise DuplicateRecordError(
+                    f"Mission {key} already exists with identical content. "
+                    "Silent overwrite is prohibited in append-only ledger."
+                )
+            raise RecordConflictError(
+                f"Conflicting record for mission {key}: existing record differs from new record."
+            )
+
+        entry = {
+            "record_type": "mission",
+            "mission_id": str(record.mission_id),
+            "contract": to_canonical_primitive(record.contract),
+            "state": record.state.value,
+            "created_at": record.created_at.isoformat(),
+            "updated_at": record.updated_at.isoformat(),
+        }
+        self._write_entry(entry)
+
+        self._missions[key] = record
+        self._mission_actions.setdefault(key, [])
+        self._mission_evidence.setdefault(key, [])
+
+    def get_mission(self, mission_id: MissionId) -> MissionRecord:
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        return self._missions[key]
+
+    def append_action(self, record: ActionRecord) -> None:
+        m_key = str(record.mission_id)
+        if m_key not in self._missions:
+            raise RecordNotFoundError(
+                f"Cannot append action {record.action_id}: mission {m_key} does not exist in ledger"
+            )
+
+        a_key = str(record.action_id)
+        if a_key in self._actions:
+            existing = self._actions[a_key]
+            if canonical_serialize(to_canonical_primitive(existing)) == canonical_serialize(
+                to_canonical_primitive(record)
+            ):
+                raise DuplicateRecordError(
+                    f"Action {a_key} already exists with identical content. "
+                    "Silent overwrite is prohibited in append-only ledger."
+                )
+            raise RecordConflictError(
+                f"Conflicting record for action {a_key}: existing record differs from new record."
+            )
+
+        entry = {
+            "record_type": "action",
+            "action_id": str(record.action_id),
+            "mission_id": str(record.mission_id),
+            "action": to_canonical_primitive(record.action),
+            "approval_id": str(record.approval_id) if record.approval_id else None,
+            "created_at": record.created_at.isoformat(),
+        }
+        self._write_entry(entry)
+
+        self._actions[a_key] = record
+        self._mission_actions[m_key].append(a_key)
+        self._action_evidence.setdefault(a_key, [])
+
+    def get_action(self, action_id: ActionId) -> ActionRecord:
+        key = str(action_id)
+        if key not in self._actions:
+            raise RecordNotFoundError(f"Action {key} not found in ledger")
+        return self._actions[key]
+
+    def get_actions_for_mission(self, mission_id: MissionId) -> list[ActionRecord]:
+        m_key = str(mission_id)
+        if m_key not in self._missions:
+            raise RecordNotFoundError(f"Mission {m_key} not found in ledger")
+        return [self._actions[a_key] for a_key in self._mission_actions.get(m_key, [])]
+
+    def append_evidence(self, record: EvidenceRecord) -> None:
+        m_key = str(record.mission_id)
+        if m_key not in self._missions:
+            msg = (
+                f"Cannot append evidence {record.evidence_id}: "
+                f"mission {m_key} does not exist in ledger"
+            )
+            raise RecordNotFoundError(msg)
+
+        a_key = str(record.action_id)
+        if a_key not in self._actions:
+            msg = (
+                f"Cannot append evidence {record.evidence_id}: "
+                f"action {a_key} does not exist in ledger"
+            )
+            raise RecordNotFoundError(msg)
+
+        action_record = self._actions[a_key]
+        if str(action_record.mission_id) != m_key:
+            msg = (
+                f"Relationship mismatch: action {a_key} belongs to mission "
+                f"{action_record.mission_id}, not {m_key}"
+            )
+            raise LedgerError(msg)
+
+        e_key = str(record.evidence_id)
+        if e_key in self._evidence:
+            existing = self._evidence[e_key]
+            if canonical_serialize(to_canonical_primitive(existing)) == canonical_serialize(
+                to_canonical_primitive(record)
+            ):
+                raise DuplicateRecordError(
+                    f"Evidence {e_key} already exists with identical content. "
+                    "Silent overwrite is prohibited in append-only ledger."
+                )
+            raise RecordConflictError(
+                f"Conflicting record for evidence {e_key}: existing record differs from new record."
+            )
+
+        entry = {
+            "record_type": "evidence",
+            "evidence_id": str(record.evidence_id),
+            "action_id": str(record.action_id),
+            "mission_id": str(record.mission_id),
+            "origin": {
+                "provenance": record.origin.provenance.value,
+                "observed_at": record.origin.observed_at.isoformat(),
+                "recorded_live_origin": (
+                    record.origin.recorded_live_origin.value
+                    if record.origin.recorded_live_origin
+                    else None
+                ),
+            },
+            "payload": to_canonical_primitive(record.payload),
+            "created_at": record.created_at.isoformat(),
+        }
+        self._write_entry(entry)
+
         self._evidence[e_key] = EvidenceRecord(
             evidence_id=record.evidence_id,
             action_id=record.action_id,
