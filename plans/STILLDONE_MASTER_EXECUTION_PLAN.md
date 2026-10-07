@@ -1222,13 +1222,13 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-10.05 — Implement process restart/resume from durable mission ledger
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-10.06 — Run injected timeout-after-write and crash/restart campaign
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 Phase exit:
-at least one real failure can resume without duplicate effect. Phase P-10: REPAIRED (awaiting independent QA review).
+at least one real failure can resume without duplicate effect. Phase P-10 is CLOSED — independent QA PASS (Verified closure SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`).
 
 ---
 

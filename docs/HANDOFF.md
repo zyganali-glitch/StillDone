@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: P-10.01 → P-10.04 (PASS ✅), P-10.05 & P-10.06 REPAIRED (awaiting independent QA) | Phase P-10 NOT CLOSED | Last independently VERIFIED contiguous SHA: `067a383491327ef39efa8e6a60b3137d88b76263`**
+Current repository state: **Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: CLOSED (independent QA PASS ✅) | P-10.01 → P-10.06: PASS ✅ | Last independently VERIFIED contiguous SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e` | Next engineering gate: P-11.01 (PENDING / NOT AUTHORIZED / NOT_RUN)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,25 +74,24 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Consolidated Surgical Repair & Phase P-10 QA Closure
+Active batch: Phase-Boundary Governance / P-Ω Audit and Canonical Closure Sync (Phase P-10 Boundary)
 
-Tasks in this batch:
+Tasks in Phase P-10:
+- P-10.01 — Freeze idempotency strategy per supported mutation: PASS ✅ (independent QA verified)
+- P-10.02 — Implement bounded exponential retry and retry classification: PASS ✅ (independent QA verified)
 - P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate: PASS ✅ (independent QA verified)
 - P-10.04 — Implement duplicate detection and duplicate evidence state: PASS ✅ (independent QA verified)
-- P-10.05 — Implement process restart/resume from durable mission ledger: REPAIRED (awaiting independent QA review)
-- P-10.06 — Run injected timeout-after-write and crash/restart campaign: REPAIRED (awaiting independent QA review)
+- P-10.05 — Implement process restart/resume from durable mission ledger: PASS ✅ (independent QA verified)
+- P-10.06 — Run injected timeout-after-write and crash/restart campaign: PASS ✅ (independent QA verified)
 
 Status:
-- P-00 through P-08: CLOSED — independent QA PASS ✅
-- Phase P-09: CLOSED — independent QA PASS ✅ (P-09.01 → P-09.07 PASS ✅)
-- P-10.01 → P-10.04: PASS ✅ (independent QA verified)
-- P-10.05, P-10.06: REPAIRED (awaiting independent QA review)
-- Phase P-10: NOT CLOSED
+- P-00 through P-09: CLOSED — independent QA PASS ✅
+- Phase P-10: CLOSED — independent QA PASS ✅ (P-10.01 → P-10.06 PASS ✅)
 - P-11+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
-Starting remote SHA: `72f7fefa69da568b98e2980b9b0e9337749634c9`
-Next exact task: Independent QA Review of Phase P-10 repairs (P-11+ NOT AUTHORIZED)
+Last Independently VERIFIED contiguous SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`
+Starting remote SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`
+Next exact task: P-11.01 — Freeze authority policy for canonical mission actions (PENDING / NOT AUTHORIZED / NOT_RUN until this P-Ω boundary audit receives independent QA PASS)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -220,23 +219,46 @@ Phase P-09 is CLOSED — independent QA PASS ✅ (Verified closure SHA: `067a383
 - P-10.02 — PASS ✅
 - P-10.03 — PASS ✅
 - P-10.04 — PASS ✅
-- P-10.05 — REPAIRED (awaiting independent QA review)
-- P-10.06 — REPAIRED (awaiting independent QA review)
+- P-10.05 — PASS ✅
+- P-10.06 — PASS ✅
 
-Phase P-10 is NOT CLOSED (awaiting independent QA review for P-10.05 & P-10.06)
+Phase P-10 is **CLOSED — independent QA PASS ✅ (Verified closure SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`)**.
 
 ## Last independently VERIFIED contiguous SHA
 
-`067a383491327ef39efa8e6a60b3137d88b76263`
+`53699a03e03bd58d7fc11bd5b8e178755e040b1e`
 
 ## Next exact task
 
-Awaiting independent QA review for Phase P-10 repairs (P-10.05 & P-10.06). P-11+ remains NOT AUTHORIZED / NOT_RUN.
+P-11.01 — Freeze authority policy for canonical mission actions (PENDING / NOT AUTHORIZED / NOT_RUN until this P-Ω boundary audit receives independent QA PASS).
 
 
 ---
 
 ## Phase Milestones Summary
+
+### Phase P-10 Closure Summary
+Phase P-10 (Idempotency, Retry & Recovery) successfully closed with independent QA PASS:
+- Closed micro-tasks P-10.01 through P-10.06 with independent QA PASS (Verified Closure SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`).
+- Frozen idempotency strategy per supported mutation (P-10.01): `calendar.update` using ETag / read-before-write / conditional modification; `task.create` using deterministic client deduplication / content hashing (`stilldone:intended-mutation:v1`); read-only actions classified as safe.
+- Bounded exponential retry and deterministic error classification (P-10.02): `RetryPolicy`, `RetryClassification` (`RETRYABLE_TRANSIENT`, `NON_RETRYABLE_CLIENT`, `AMBIGUOUS_TIMEOUT`, `NON_RETRYABLE_FATAL`), finite retry budgets.
+- Read-before-retry and verify-after-timeout orchestration (P-10.03): ambiguous timeout does not grant permission to blindly re-execute; triggers deterministic read-back / effect-detection before retry; prevents duplicate effects.
+- Duplicate detection and duplicate evidence state (P-10.04): `DuplicateDetectorPort`, `GoogleCalendarEffectDetectorAdapter`, `GoogleTasksDuplicateDetectorAdapter`, `DuplicateEvidenceRecord`, `DuplicateDeterminationStatus`.
+- Process restart / resume from durable mission ledger (P-10.05): `DurableFileLedger` (append-only JSONL + fsync, fail-closed replay and conflict detection); `reconstruct_action_recovery_state`; attempt budgets and failure history survive restart; terminal-success history invariant (prior success never re-executed); corrupt ledger fail-closed.
+- Injected timeout-after-write and crash/restart campaign (P-10.06): deterministic local adversarial test campaign proving no duplicate writes, attempt ceiling preservation, and fail-closed crash-safety across 100% of tested failure paths.
+- Provenance: strictly `LOCAL_EXECUTION` / deterministic unit & adversarial test doubles (`FIXTURE`). No new live Google/AWS mutations claimed.
+- Persistence Boundary: `DurableFileLedger` is specifically for recovery continuity of in-flight mutations; does NOT claim P-12 cross-session renewable mission continuity. P-12 remains `NOT_RUN`.
+- Authority Boundary: Did not pre-implement P-11 approval compression. P-11 remains `PENDING / NOT AUTHORIZED / NOT_RUN`.
+
+### Phase P-09 Closure Summary
+Phase P-09 (Independent Verification & Reconciliation Engine) successfully closed with independent QA PASS:
+- Closed micro-tasks P-09.01 through P-09.07 with independent QA PASS (Verified Closure SHA: `067a383491327ef39efa8e6a60b3137d88b76263`).
+- Implemented verifier dispatch decoupled from execute payload (`GoogleCalendarReadbackVerifier`, `GoogleTasksReadbackVerifier`).
+- Implemented exact predicate evaluation for Calendar and Tasks (`evaluate_predicate`, `DesiredStatePredicate`).
+- Implemented freshness/stale evaluation (`FreshnessContract`).
+- Implemented deterministic mission readiness computation (`assert_can_promote_to_ready`).
+- Implemented reconciliation of previously verified mission against fresh external state (`reconcile_mission`).
+- Implemented `READY → DRIFTED` downgrade with privacy-safe mismatch explanation.
 
 ### Phase P-05 Closure Summary
 Phase P-05 (Real MCP Server Spine) successfully closed with independent QA PASS:
