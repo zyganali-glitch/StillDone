@@ -3,8 +3,8 @@
 **Audit Scope**: Phase P-10 (Idempotency, Retry & Recovery) Boundary Closure & Global Repository-Level P-Ω Integrity Audit  
 **Audit Date**: `2026-10-07`  
 **Canonical Remote Repository**: `zyganali-glitch/StillDone` (`main`)  
-**Starting Remote SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`  
-**Last Independently VERIFIED Contiguous SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`  
+**Starting Remote SHA**: `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82`  
+**Last Independently VERIFIED Engineering SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`  
 **Governing Authority**: [AGENTS.md](../AGENTS.md) § 1–24; [docs/P_OMEGA_AUDIT_CHECKLIST.md](P_OMEGA_AUDIT_CHECKLIST.md); [plans/STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md) § Phase P-10  
 
 ---
@@ -15,21 +15,21 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 
 | # | Dimension | Status | Phase P-10 Audit Finding |
 |---|---|---|---|
-| **1** | **Canonical Remote State & Linear History** | **PASS** | Remote `origin/main` verified at `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. Ancestry graph is 100% linear from initial repository bootstrap (`c570f86`) through all phase closures (P-01 through P-10). Zero merge commits, zero detached branches, zero untracked divergence. |
-| **2** | **Exact Independent VERIFIED SHA** | **PASS** | Exact independently verified contiguous SHA is `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. All micro-tasks P-10.01 through P-10.06 hold independent QA PASS. |
+| **1** | **Canonical Remote State & Linear History** | **PASS** | Remote `origin/main` verified at `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82` with linear ancestry from engineering baseline `53699a03e03bd58d7fc11bd5b8e178755e040b1e` and initial bootstrap (`c570f86`). Zero merge commits, zero detached branches, zero untracked divergence. |
+| **2** | **Exact Independent VERIFIED SHA** | **PASS** | Last independently verified engineering baseline SHA is `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. All micro-tasks P-10.01 through P-10.06 hold independent QA PASS. |
 | **3** | **Scope & Future-Phase Leakage** | **PASS** | Phase P-11+ remains strictly `PENDING / NOT AUTHORIZED / NOT_RUN`. Zero code or artifacts from Phase P-11 (Approval Compression), Phase P-12 (Durable Cross-Session Continuity & Scheduled Drift), or Phase P-13+ (Killer Mission Slice, Alexa+ UI). |
 | **4** | **Deterministic Fact-Authority Boundary** | **PASS** | Model / planner prose possesses strictly **0** authority over execution, predicates, evidence, recovery, or state promotion. Enforced by runtime assertions (`assert_not_planner_for_recovery`, `assert_not_planner_for_execution`, `assert_not_planner_for_verification`). Model proposals cannot forge IDs or promote mission state. |
 | **5** | **Execute != Verify Invariant** | **PASS** | Core invariant strictly maintained: tool/adapter execution success produces at most `EXECUTED_UNVERIFIED`. Execution success **cannot** produce `VERIFIED` and **cannot** promote mission state to `READY`. Independent read-back is strictly required. |
 | **6** | **Verification, Predicate & Freshness Truth** | **PASS** | Independent verifiers for Calendar (`GoogleCalendarReadbackVerifier`) and Tasks (`GoogleTasksReadbackVerifier`) execute fresh provider reads. Desired-state predicates evaluate against observed state; `FreshnessContract` gates evidence validity before reconciliation. |
-| **7** | **READY -> DRIFTED Semantics** | **PASS** | Mission `READY` is revocable. If fresh read-back contradicts desired-state predicates or freshness expires, mission deterministically downgrades to `DRIFTED` with privacy-safe mismatch explanations. |
-| **8** | **Idempotency & Retry Policies** | **PASS** | `FROZEN_IDEMPOTENCY_STRATEGIES` establishes immutable mutation strategies: `calendar.update` uses ETag read-before-write conditional modification; `task.create` uses deterministic client-side deduplication keys (`stilldone:intended-mutation:v1`); read-only actions are classified as safe. `RetryPolicy` bounds attempts with exponential backoff. |
-| **9** | **Ambiguous Timeout Behavior** | **PASS** | Ambiguous timeouts (HTTP 408/504/timeout) are classified as `AMBIGUOUS_TIMEOUT`. Blind retry is strictly forbidden (`BlindRetryForbiddenError`). A lost response **never** grants permission to execute a second effect blindly. |
-| **10** | **Read-Before-Retry / Verify-After-Timeout** | **PASS** | Ambiguous outcomes and transient errors trigger `verify_after_timeout` via `RecoveryOrchestrator`. Independent effect detection reads external state first; if the desired mutation is already observed, zero additional write is executed (`writes_performed=0`). |
-| **11** | **Duplicate Detection & Evidence Truth** | **PASS** | Dedicated detector adapters (`GoogleCalendarEffectDetectorAdapter`, `GoogleTasksDuplicateDetectorAdapter`) inspect provider state. Emits typed `DuplicateEvidenceRecord` and `DuplicateDeterminationStatus` (`CONFIRMED_DUPLICATE_PRESENT`, `NO_DUPLICATE_ABSENT`, `INDETERMINATE`). |
-| **12** | **Durable Recovery Continuity** | **PASS** | `DurableFileLedger` persists records to an append-only JSONL log with `os.fsync`. `reconstruct_action_recovery_state` deterministically rebuilds in-flight mutation state across restarts. |
-| **13** | **Crash/Restart Safety** | **PASS** | Process crashes during or after mutation are safely recovered. Reconstructed state preserves mission ID, action ID, stable intended mutation identity, prior execution attempt count, ambiguous outcome state, and required read-before-retry flag. |
-| **14** | **Terminal-Success History Invariant** | **PASS** | Prior execution attempt success or read-back verification success durably recorded in the ledger strictly prevents re-execution upon restart (`DURABLE EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN`). |
-| **15** | **Attempt-Budget Preservation Across Restart** | **PASS** | Prior execution attempt count is preserved across process crashes (`PROCESS RESTART != NEW RETRY BUDGET`). Attempts accumulated prior to restart count against the immutable `max_attempts` ceiling. |
+| **7** | **READY -> DRIFTED Semantics & Freshness Boundary** | **PASS** | Mission `READY` is revocable. Only fresh read-back evaluating a required predicate as FALSE (`ReconciliationStatus.NO_LONGER_TRUE`) transitions `READY -> DRIFTED`. `STALE` or `INCOMPLETE` evidence is strictly inconclusive/fail-closed (`InconclusiveReconciliationError`) and **cannot** trigger `DRIFTED`. |
+| **8** | **Idempotency & Retry Policies** | **PASS** | `FROZEN_IDEMPOTENCY_STRATEGIES` establishes immutable mutation strategies: `calendar.update` uses `NATURAL_IN_PLACE_UPDATE` (`IDEMPOTENT_UPDATE`, `allows_blind_retry=False`, `requires_verify_after_timeout=True`, scope `event_id`); `task.create` uses `CLIENT_TOKEN_DEDUPLICATION` (`HIGH_DUPLICATE_CREATION`, `allows_blind_retry=False`, `requires_read_before_retry=True`, `requires_verify_after_timeout=True`, scope `client_request_token`); read-only actions use `READ_ONLY_SAFE` (`duplicate_risk=NONE`, `allows_blind_retry=True`). `RetryPolicy` bounds attempts with exponential backoff (max ceiling <= 5). |
+| **9** | **Ambiguous Timeout Behavior** | **PASS** | Ambiguous timeouts (HTTP 408, `TimeoutError`, timeout descriptors) are classified as `AMBIGUOUS_TIMEOUT` (HTTP 504 is classified as `RETRYABLE_TRANSIENT`). For mutations, blind retry is strictly prohibited: `evaluate_post_execution_recovery` emits `RecoveryActionType.REQUIRES_VERIFICATION` rather than permitting blind retry. A lost response **never** grants permission to execute a second effect blindly. |
+| **10** | **Read-Before-Retry / Verify-After-Timeout** | **PASS** | Ambiguous outcomes and duplicate-risk mutations trigger `RecoveryActionType.REQUIRES_VERIFICATION`. Independent read-back evaluation via `evaluate_readback_recovery` maps outcomes deterministically: `EFFECT_ALREADY_EXISTS` (0 writes performed), `DUPLICATE_PREVENTED`, `RETRY` (only if effect absent and budget remains), or `DO_NOT_RETRY` (inconclusive / exhausted). |
+| **11** | **Duplicate Detection & Evidence Truth** | **PASS** | Dedicated detector adapters (`GoogleCalendarEffectDetectorAdapter`, `GoogleTasksDuplicateDetectorAdapter`) inspect provider state. Emits typed `DuplicateEvidenceRecord` with canonical `DuplicateDeterminationStatus`: `EFFECT_ABSENT` (match_count == 0), `INTENDED_EFFECT_EXISTS` (match_count == 1), `DUPLICATE_DETECTED` (match_count >= 2), and `DETERMINATION_INCONCLUSIVE`. |
+| **12** | **Durable Recovery Continuity** | **PASS** | `DurableFileLedger` persists records to an append-only JSONL log with `os.fsync`. `reconstruct_action_recovery_state` deterministically rebuilds in-flight mutation state across restarts (`ActionRecoveryState`). |
+| **13** | **Crash/Restart Safety** | **PASS** | Process crashes during or after mutation are safely recovered. Reconstructed state preserves mission ID, action ID, stable `IntendedMutationIdentity`, `prior_attempt_count`, `is_ambiguous_outcome`, `requires_verification_before_retry`, and `remaining_attempt_budget`. |
+| **14** | **Terminal-Success History Invariant** | **PASS** | When the durable ledger records a latest `EXECUTION_ATTEMPT` with `success=True`, `reconstruct_action_recovery_state` emits `resumption_decision = RecoveryDecision(action_type=RecoveryActionType.DO_NOT_RETRY)`. For mutations, downstream verification remains required. An earlier success followed by a subsequent attempt is contradictory history and fails closed (`RecoveryContinuityError`). |
+| **15** | **Attempt-Budget Preservation Across Restart** | **PASS** | Prior execution attempt count (`prior_attempt_count`) is preserved across process crashes (`PROCESS RESTART != NEW RETRY BUDGET`). `remaining_attempt_budget = max(0, effective_ceiling - prior_attempt_count)`; if budget is exhausted, resumption decision is `DO_NOT_RETRY`. |
 | **16** | **Corrupt Durable History Fail-Closed** | **PASS** | Corrupt, malformed, or tampered durable JSONL log files fail closed immediately with `LedgerError` on reload (`UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS`, `CONTRADICTORY HISTORY != AUTHORITY TO GUESS`). |
 | **17** | **Approval/Authority Boundary Before P-11** | **PASS** | P-04 authority primitives (`AuthorityPolicy`, `compute_approval_binding_hash`, static grant validation) are preserved. P-10 introduces zero P-11 approval compression (no pending approval objects, no one-decision UX, no single-use replay ledger). |
 | **18** | **Security, Privacy & Redaction** | **PASS** | Zero credentials, secrets, OAuth tokens, AWS access keys, or personal emails committed. P-04 redaction engine (`redact_text`, `redact_payload`) sanitizes error messages and diagnostic payloads before logging and ledger persistence. |
@@ -40,11 +40,11 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 | **23** | **Exact-SHA Continuous Integration (CI)** | **PASS** | GitHub Actions CI (`.github/workflows/ci.yml`) validates both runtimes against exact committed commit SHAs on push and pull requests to `main`. |
 | **24** | **Zero-Personal-Spend & Cost Truth** | **PASS** | Target personal spend remains strictly `$0.00`. Phase P-10 executed zero cloud or external API calls ($0.00 spend). Cumulative P-01/P-07 usage remains bounded within promotional credit allowances; personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`. |
 | **25** | **Competition Architecture Alignment** | **PASS** | Track alignment: Alexa+ (Primary; Streamable HTTP MCP server spine); AWS Builder Mini Challenge (Secondary; Bedrock/Strands); Open Source Mini Challenge (Secondary; Apache-2.0, clean room). Rules snapshot date: `2026-10-01`. |
-| **26** | **Critical Documentation Consistency** | **PASS** | `AGENTS.md`, `docs/HANDOFF.md`, `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`, and this Audit Report are 100% synchronized to Phase P-10 CLOSED at SHA `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. |
+| **26** | **Critical Documentation Consistency** | **PASS** | `AGENTS.md`, `docs/HANDOFF.md`, `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`, and this Audit Report are 100% synchronized to Phase P-10 CLOSED with last verified engineering baseline SHA `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. |
 | **27** | **P-11+ Future-Phase Leakage Check** | **PASS** | Comprehensive AST and symbol inspection proves zero implementation of Phase P-11 through Phase P-22. |
 
 > [!IMPORTANT]
-> **Phase Gate Outcome**: In accordance with StillDone Constitution § 3 and § 21, the Phase P-10 boundary is **CLOSED — independent QA PASS (Verified Closure SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`)**.  
+> **Phase Gate Outcome**: In accordance with StillDone Constitution § 3 and § 21, Phase P-10 is **CLOSED — independent QA PASS (Verified Closure SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`)**.  
 > The next exact engineering gate is **`P-11.01 — Freeze authority policy for canonical mission actions`**.  
 > Task P-11.01 remains **`PENDING / NOT AUTHORIZED / NOT_RUN`** until this P-Ω boundary audit receives independent QA review and authorization.
 
@@ -54,8 +54,8 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 
 ### 2.1 Canonical Remote State & Linear Git History
 - **Inspection**: Canonical remote `origin/main` was fetched and inspected.
-- **Starting Remote SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e` independently confirmed.
-- **Ancestry Verification**: The commit graph is strictly linear from initial bootstrap (`c570f86`) through the Phase P-09 closure (`067a383491327ef39efa8e6a60b3137d88b76263`) and through all Phase P-10 commits and repairs:
+- **Starting Remote SHA**: `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82`.
+- **Ancestry Verification**: The commit graph is strictly linear from initial bootstrap (`c570f86`) through the Phase P-09 closure (`067a383491327ef39efa8e6a60b3137d88b76263`) and through all Phase P-10 commits, repairs, and verified engineering baseline `53699a03e03bd58d7fc11bd5b8e178755e040b1e`:
   1. `3a85b02` feat(p10.01): freeze idempotency strategy per supported mutation
   2. `68449f2` feat(p10.02): implement bounded exponential retry and retry classification
   3. `7990989` feat(p10.03): implement read-before-retry and verify-after-timeout orchestration
@@ -64,11 +64,12 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
   6. `e28c979` test(p10.06): run injected timeout-after-write and crash-restart campaign
   7. `72f7fef` fix(p10): resolve QA defects in blind retry, ledger reload, and continuity
   8. `53699a0` fix(p10.05-p10.06): enforce terminal success and classification consistency on restart
+  9. `e3bdd7d` docs(p-omega): synchronize phase p-10 boundary audit and closure truth
 - **Linearity Result**: Zero merge commits, zero rebases, zero detached branches.
 - **Result**: **PASS**
 
 ### 2.2 Exact Independently VERIFIED SHA
-- **Verified SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`.
+- **Verified Engineering Baseline SHA**: `53699a03e03bd58d7fc11bd5b8e178755e040b1e`.
 - **Micro-Task QA Proof**:
   - P-10.01: PASS ✅ (independent QA verified)
   - P-10.02: PASS ✅ (independent QA verified)
@@ -99,63 +100,92 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 ### 2.6 Verification, Predicate, Freshness & Reconciliation Truth
 - **Predicate Evaluation**: `evaluate_predicate` compares observed provider fields against expected values using frozen predicate operators (`EQUALS`, `NOT_EQUALS`, `CONTAINS`, `EXISTS`, etc.).
 - **Freshness Contract**: Stored evidence older than `FreshnessContract.max_age_seconds` is classified as `STALE`. `STALE` evidence prevents mission state promotion to `READY`.
-- **Reconciliation Engine**: `reconcile_mission` reads fresh external state before asserting drift or contradiction.
+- **Reconciliation Freshness Rule**: During `reconcile_mission_state`, observations are evaluated for freshness before assessing truth. If an observation for a required predicate is `STALE` or `INCOMPLETE`, reconciliation is inconclusive and fails closed (`InconclusiveReconciliationError`). Stale or incomplete evidence **cannot** prove satisfaction nor can it prove `NO_LONGER_TRUE`.
 - **Result**: **PASS**
 
 ### 2.7 READY -> DRIFTED Semantics & Revocability
 - **Revocability Law**: Mission `READY` is an observed fact, not a permanent achievement.
-- **Downgrade Mechanics**: If external reality changes after `READY` (e.g. an event is deleted or modified by another client), reconciliation transitions the mission from `READY` to `DRIFTED`.
+- **Transition Rule**: A lifecycle transition to `DRIFTED` is allowed **strictly from prior_state == READY**.
+- **Contradiction Condition**: A transition from `READY` to `DRIFTED` requires reconciliation status `NO_LONGER_TRUE`, which occurs **only when a fresh observation of a required predicate evaluates FALSE** (`p_eval.truth != PredicateTruth.TRUE` while `f_eval.status == FreshnessStatus.FRESH`).
+- **Inconclusive Boundary**: If evidence is `STALE` or `INCOMPLETE`, `apply_reconciliation_transition` fails closed by raising `InconclusiveReconciliationError`. Stale or missing evidence does **NOT** transition `READY` to `DRIFTED`, nor does it re-certify `READY`.
 - **Sanitized Explanation**: The downgrade emits a privacy-safe mismatch explanation without echoing sensitive plaintext or private user data.
 - **Result**: **PASS**
 
 ### 2.8 Idempotency & Retry Policies
-- **Strategy Matrix**: `FROZEN_IDEMPOTENCY_STRATEGIES` defines the strategy for every supported action:
-  - `calendar.read`: `SAFE_READ_ONLY` (Duplicate Risk: `NONE`)
-  - `calendar.update`: `CONDITIONAL_ETAG_READ_BEFORE_WRITE` (Duplicate Risk: `LOW_REVERSIBLE`)
-  - `task.read`: `SAFE_READ_ONLY` (Duplicate Risk: `NONE`)
-  - `task.create`: `CLIENT_DEDUPLICATION_KEY` (Duplicate Risk: `HIGH_DUPLICATE_CREATION`)
-  - `weather.read`: `SAFE_READ_ONLY` (Duplicate Risk: `NONE`)
+- **Strategy Matrix**: `FROZEN_IDEMPOTENCY_STRATEGIES` defines the exact strategy for every supported action:
+  - `ActionType.CALENDAR_UPDATE`:
+    - `strategy_type = IdempotencyStrategyType.NATURAL_IN_PLACE_UPDATE`
+    - `duplicate_risk = DuplicateRiskClass.IDEMPOTENT_UPDATE`
+    - `allows_blind_retry = False`
+    - `requires_read_before_retry = False`
+    - `requires_verify_after_timeout = True`
+    - `max_attempt_ceiling = 3`
+    - `deduplication_scope = "event_id"`
+  - `ActionType.TASK_CREATE`:
+    - `strategy_type = IdempotencyStrategyType.CLIENT_TOKEN_DEDUPLICATION`
+    - `duplicate_risk = DuplicateRiskClass.HIGH_DUPLICATE_CREATION`
+    - `allows_blind_retry = False`
+    - `requires_read_before_retry = True`
+    - `requires_verify_after_timeout = True`
+    - `max_attempt_ceiling = 3`
+    - `deduplication_scope = "client_request_token"`
+  - Read-Only Actions (`CALENDAR_READ`, `TASK_READ`, `WEATHER_READ`):
+    - `strategy_type = IdempotencyStrategyType.READ_ONLY_SAFE`
+    - `duplicate_risk = DuplicateRiskClass.NONE`
+    - `allows_blind_retry = True`
+    - `requires_read_before_retry = False`
+    - `requires_verify_after_timeout = False`
+    - `max_attempt_ceiling = 3`
+    - `deduplication_scope = "read_only"`
 - **Key Derivation**: `derive_idempotency_key` and `derive_intended_mutation_identity` generate deterministic domain-separated hashes (`stilldone:intended-mutation:v1`) from normalized action parameters.
-- **Retry Policy**: `RetryPolicy` enforces bounded exponential backoff with configurable base delay, multiplier, max delay, and strict `max_attempts` ceiling.
+- **Retry Policy**: `RetryPolicy` enforces bounded exponential backoff with configurable base delay, multiplier, max delay, and strict `max_attempts` ceiling (bounded <= 5).
 - **Result**: **PASS**
 
 ### 2.9 Ambiguous Timeout Behavior & Rejection of Blind Retries
-- **Error Classification**: `classify_error` maps exceptions deterministically to `RetryClassification`:
-  - `AMBIGUOUS_TIMEOUT`: HTTP 408, 504, `TimeoutError`, socket read timeouts.
-  - `RETRYABLE_TRANSIENT`: HTTP 429 (rate limit), HTTP 500/502/503 (server errors), connection reset.
-  - `NON_RETRYABLE_CLIENT`: HTTP 400, 401, 403, 404, schema errors, parameter errors.
-  - `NON_RETRYABLE_FATAL`: Process abort, permission denied, unrecoverable domain violation.
-- **Blind Retry Prohibition**: For mutations with duplicate risk (`task.create`, `calendar.update`), `evaluate_post_execution_recovery` forbids immediate blind retries on ambiguous timeouts, raising `BlindRetryForbiddenError`.
+- **Error Classification**: `classify_error` maps exceptions deterministically to canonical `RetryClassification`:
+  - `RETRYABLE_TRANSIENT`: HTTP 429, 502, 503, 504 (gateway timeouts), connection reset/refused, transient errors.
+  - `AMBIGUOUS_TIMEOUT`: HTTP 408, `TimeoutError`, timeout-like string descriptors ("timeout", "timed out", "deadline exceeded").
+  - `AUTHORITY_SECURITY_FAILURE`: HTTP 401, 403, `PermissionError`, authentication/authorization failure strings.
+  - `CONTRACT_PROGRAMMING_FAILURE`: `TypeError`, `ValueError`, `KeyError`, `AssertionError`.
+  - `NON_RETRYABLE_PERMANENT`: Other HTTP 4xx client errors (400, 404, etc.) and unclassified permanent failures.
+- **Blind Retry Prohibition**: For mutations where `allows_blind_retry = False` or `requires_verification_before_retry = True`, `evaluate_post_execution_recovery` returns `RecoveryDecision(action_type=RecoveryActionType.REQUIRES_VERIFICATION)`. It does not execute a blind retry.
 - **Axiom**: `LOST RESPONSE != PERMISSION TO CREATE A SECOND EFFECT`.
 - **Result**: **PASS**
 
 ### 2.10 Read-Before-Retry & Verify-After-Timeout Orchestration
 - **Recovery Orchestrator**: `RecoveryOrchestrator` governs post-failure recovery:
-  1. On ambiguous timeout or transient failure, emits decision `VERIFY_AFTER_TIMEOUT`.
-  2. Initiates independent read-back via provider-specific detector adapters (`GoogleCalendarEffectDetectorAdapter`, `GoogleTasksDuplicateDetectorAdapter`).
-  3. If the effect is observed as already applied, emits `NOOP_ALREADY_APPLIED` with `writes_performed=0`.
-  4. If the effect is absent and attempts remain, allows retry.
-  5. If attempt ceiling is reached, fails closed with `EXHAUSTED_ATTEMPTS`.
+  1. Immediately following an execution attempt on a mutation, if an ambiguous timeout or transient failure occurs, `evaluate_post_execution_recovery` emits `RecoveryActionType.REQUIRES_VERIFICATION`.
+  2. Independent read-back inspection is performed via provider detector adapters, producing `ReadbackVerificationResult` with canonical `ReadbackOutcome`.
+  3. `evaluate_readback_recovery` maps the outcome deterministically:
+     - `ReadbackOutcome.INTENDED_EFFECT_EXISTS`: Emits `RecoveryActionType.EFFECT_ALREADY_EXISTS` (confirms effect already applied; further mutation prohibited; 0 writes performed).
+     - `ReadbackOutcome.DUPLICATE_DETECTED`: Emits `RecoveryActionType.DUPLICATE_PREVENTED` (halts mutation to prevent compounding duplicates).
+     - `ReadbackOutcome.EFFECT_ABSENT`: If `attempt_number < effective_ceiling`, emits `RecoveryActionType.RETRY` with exponential backoff delay; if ceiling reached, emits `RecoveryActionType.DO_NOT_RETRY` ("retry budget exhausted").
+     - `ReadbackOutcome.INCONCLUSIVE`: Emits `RecoveryActionType.DO_NOT_RETRY` fail-closed (blind retry strictly prohibited).
 - **Result**: **PASS**
 
 ### 2.11 Duplicate Detection & Duplicate Evidence Truth
 - **Detectors**: Implemented `GoogleCalendarEffectDetectorAdapter` and `GoogleTasksDuplicateDetectorAdapter`.
-- **Evidence State**: Emits immutable `DuplicateEvidenceRecord` stored in the ledger with `DuplicateDeterminationStatus`:
-  - `CONFIRMED_DUPLICATE_PRESENT`: Intended mutation effect observed in provider state.
-  - `NO_DUPLICATE_ABSENT`: No matching effect found; safe to attempt mutation if budget remains.
-  - `INDETERMINATE`: Provider read failed or ambiguous; prevents blind duplicate mutation.
+- **Evidence State**: Emits immutable `DuplicateEvidenceRecord` stored in the ledger with canonical `DuplicateDeterminationStatus`:
+  - `EFFECT_ABSENT`: Intended mutation effect does not exist (`match_count == 0`).
+  - `INTENDED_EFFECT_EXISTS`: Exactly 1 matching effect found (`match_count == 1`).
+  - `DUPLICATE_DETECTED`: 2 or more matching effects detected (`match_count >= 2`).
+  - `DETERMINATION_INCONCLUSIVE`: Provider read error, timeout, or scan limit reached; inconclusive state fails closed.
 - **Result**: **PASS**
 
 ### 2.12 Durable Recovery Continuity & In-Flight State Reconstruction
 - **Ledger Implementation**: `DurableFileLedger` implements `MissionLedgerPort` via append-only JSONL files with immediate flush and `os.fsync`.
-- **State Reconstruction**: `reconstruct_action_recovery_state` reads the durable ledger history to reconstruct:
-  - `mission_id` and `action_id`;
-  - `intended_mutation_identity`;
-  - `prior_attempt_count`;
-  - `ambiguous_outcome_encountered`;
-  - `read_before_retry_required`;
-  - `duplicate_determination`;
-  - `terminal_success_achieved`.
+- **State Reconstruction**: `reconstruct_action_recovery_state` reads the durable ledger history to reconstruct `ActionRecoveryState`:
+  - `mission_id: MissionId`;
+  - `action_id: ActionId`;
+  - `action_type: ActionType`;
+  - `intended_mutation: IntendedMutationIdentity`;
+  - `stable_idempotency_key: str`;
+  - `prior_attempt_count: int`;
+  - `is_ambiguous_outcome: bool`;
+  - `requires_verification_before_retry: bool`;
+  - `duplicate_evidence: DuplicateEvidenceRecord | None`;
+  - `remaining_attempt_budget: int`;
+  - `resumption_decision: RecoveryDecision`.
 - **Result**: **PASS**
 
 ### 2.13 Crash/Restart Safety
@@ -168,19 +198,24 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 - **Result**: **PASS**
 
 ### 2.14 Terminal-Success History Invariant
-- **Rule**: If the durable ledger records a successful execution attempt or verified desired state for an action, process restart **never** permits re-executing that mutation.
-- **Enforcement**: `reconstruct_action_recovery_state` sets `terminal_success_achieved=True`. Any subsequent recovery decision returns `NOOP_ALREADY_APPLIED` or `SUCCESS`.
+- **Rule**: If the durable ledger records a successful execution attempt (`success=True`) for an action, process restart **never** permits re-executing that mutation.
+- **Enforcement**:
+  - `reconstruct_action_recovery_state` sets `resumption_decision = RecoveryDecision(action_type=RecoveryActionType.DO_NOT_RETRY)`.
+  - For mutations, the reason explicitly notes: `"Durable execution success observed; downstream verification remains required"`. Execution success does not substitute for independent read-back desired-state truth.
+  - **Contradictory History Check**: If an `EXECUTION_ATTEMPT` with `success=True` is followed by any subsequent attempt in ledger history, `reconstruct_action_recovery_state` fails closed immediately with `RecoveryContinuityError`: `"Success must be terminal within execution attempt history"`.
 - **Axiom**: `DURABLE EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN`.
 - **Result**: **PASS**
 
 ### 2.15 Attempt-Budget Preservation Across Restart
 - **Rule**: Process crash and restart does **not** reset the retry budget.
-- **Enforcement**: Recorded `EXECUTION_ATTEMPT` records in `DurableFileLedger` are summed during recovery reconstruction. If `prior_attempt_count >= max_attempts`, retry is denied immediately without attempting new writes.
+- **Enforcement**: Recorded `EXECUTION_ATTEMPT` records in `DurableFileLedger` are summed during recovery reconstruction (`prior_attempt_count = len(attempt_records)`).
+- **Budget Formula**: `remaining_attempt_budget = max(0, effective_ceiling - prior_attempt_count)`.
+- **Ceiling Enforcement**: If `remaining_attempt_budget == 0`, `resumption_decision` is `RecoveryActionType.DO_NOT_RETRY` ("retry budget exhausted"), preventing any further write attempts.
 - **Axiom**: `PROCESS RESTART != NEW RETRY BUDGET`.
 - **Result**: **PASS**
 
 ### 2.16 Corrupt/Unreadable Durable History Fail-Closed Behavior
-- **Tamper & Corruption Safety**: If the durable JSONL log file is corrupted (truncated lines, invalid JSON, modified record payloads, broken content-address hashes, mismatched lineage), `DurableFileLedger` fails closed on startup with `LedgerError`.
+- **Tamper & Corruption Safety**: If the durable JSONL log file is corrupted (truncated lines, invalid JSON, modified record payloads, broken content-address hashes, mismatched lineage), `DurableFileLedger` fails closed on startup with `LedgerError`, and `reconstruct_action_recovery_state` fails closed with `RecoveryContinuityError`.
 - **Zero Guessing**: The engine refuses to operate on corrupt history and never defaults to "zero attempts".
 - **Axioms**:
   - `UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS`.
@@ -285,7 +320,7 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 ## 3. Explicit Checks Classification
 
 ### 3.1 PASS Checks (Phase P-10 Boundary Closure)
-1. Canonical remote main inspection and SHA alignment (`PASS` — `53699a03e03bd58d7fc11bd5b8e178755e040b1e`)
+1. Canonical remote main inspection and SHA alignment (`PASS` — `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82`)
 2. Governance documents and constitutional constraints (`PASS`)
 3. Linear git commit graph with zero unreviewed merges (`PASS`)
 4. P-10.01: Frozen idempotency strategy per supported mutation (`PASS`)
@@ -334,11 +369,11 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 
 Phase P-10 establishes and proves seven inviolable recovery laws:
 
-1. **LOST RESPONSE != PERMISSION TO CREATE A SECOND EFFECT**: An ambiguous network timeout (HTTP 408/504) never permits a blind retry. The system must verify the external effect before attempting any second write.
-2. **UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS**: If the durable ledger history cannot be read or validated, the system fails closed. It never assumes zero prior attempts.
-3. **PROCESS RESTART != NEW RETRY BUDGET**: Crashing and restarting does not grant additional retry attempts. Attempt budgets are durable facts that survive process death.
-4. **DURABLE EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN**: If prior execution success or verified desired state is recorded, subsequent recovery restarts return success with zero additional writes.
-5. **CONTRADICTORY HISTORY != AUTHORITY TO GUESS**: Inconsistent or conflicting durable ledger records raise errors and halt execution fail-closed.
+1. **LOST RESPONSE != PERMISSION TO CREATE A SECOND EFFECT**: An ambiguous network timeout (HTTP 408 / TimeoutError) never permits a blind retry. The system emits `RecoveryActionType.REQUIRES_VERIFICATION` to independently verify external effect before attempting any second write.
+2. **UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS**: If the durable ledger history cannot be read or validated, the system fails closed (`RecoveryContinuityError` / `LedgerError`). It never assumes zero prior attempts.
+3. **PROCESS RESTART != NEW RETRY BUDGET**: Crashing and restarting does not grant additional retry attempts. Attempt budgets are durable facts that survive process death (`remaining_attempt_budget = max(0, effective_ceiling - prior_attempt_count)`).
+4. **DURABLE EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN**: If prior execution success is recorded, subsequent recovery restarts return `resumption_decision = RecoveryDecision(action_type=RecoveryActionType.DO_NOT_RETRY)` with zero additional writes. For mutations, downstream independent verification remains required.
+5. **CONTRADICTORY HISTORY != AUTHORITY TO GUESS**: Inconsistent or conflicting durable ledger records (e.g. attempt records occurring after recorded execution success) raise `RecoveryContinuityError` and halt execution fail-closed.
 6. **Execution success != desired-state truth**: A successful mutation response only records an attempt. Only independent read-back proves completion.
 7. **Idempotency key != proof an external effect exists**: An idempotency key deduplicates requests; it does not substitute for observing external reality.
 
@@ -362,10 +397,10 @@ Phase P-10 establishes and proves seven inviolable recovery laws:
 
 - **Phase P-10 Gate Outcome**:
   $$\mathbf{PHASE\ P\text{-}10\ CLOSED\ —\ INDEPENDENT\ QA\ PASS}$$
-- **Verified Closure SHA**:
+- **Verified Engineering Baseline SHA**:
   `53699a03e03bd58d7fc11bd5b8e178755e040b1e`
 - **P-Ω Boundary Audit Status**:
-  **`PASS — Phase P-10 boundary certified`**
+  **`REPAIRED — awaiting independent QA review`**
 - **Next Exact Engineering Gate**:
   `P-11.01 — Freeze authority policy for canonical mission actions`
 - **Phase P-11 Authorization Status**:
