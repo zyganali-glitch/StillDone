@@ -209,8 +209,8 @@ Phase P-08 is CLOSED — independent QA PASS ✅
 - P-09.03 — PASS ✅
 - P-09.04 — PASS ✅
 - P-09.05 — PASS ✅
-- P-09.06 — REPAIRED (READY → DRIFTED strictly on fresh read-back mismatch; STALE/INCOMPLETE fail closed)
-- P-09.07 — REPAIRED (adversarial tests for fresh mismatch, non-drift inconclusive, replay, and privacy)
+- P-09.06 — REPAIRED (freshness authoritative before contradiction; STALE contradictory observations cannot produce NO_LONGER_TRUE or DRIFTED)
+- P-09.07 — REPAIRED (adversarial tests for fresh contradiction, STALE contradictory non-drift, mixed status precedence, replay, and privacy)
 
 ## Phase P-10 Status
 

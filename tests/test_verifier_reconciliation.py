@@ -252,6 +252,39 @@ class TestMissionReconciliation:
         assert res.is_still_true is False
         assert res.stale_predicate_ids == (p.predicate_id,)
 
+    def test_reconcile_stale_when_obs_outside_freshness_window_even_if_contradictory(
+        self,
+    ) -> None:
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        # Fresh observation is older than max_age_seconds (standard is 300s = 5m),
+        # AND its property value contradicts expected predicate ('cancelled' != 'confirmed')
+        obs_time = T_EVAL - timedelta(seconds=600)
+        stale_contradictory_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=obs_time,
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+
+        res = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: stale_contradictory_obs},
+            at=T_EVAL,
+        )
+
+        # Freshness is authoritative: stale observation CANNOT support NO_LONGER_TRUE
+        # or drifted_predicate_ids
+        assert res.status == ReconciliationStatus.STALE
+        assert res.is_still_true is False
+        assert res.stale_predicate_ids == (p.predicate_id,)
+        assert len(res.drifted_predicate_ids) == 0
+        assert len(res.satisfied_predicate_ids) == 0
+
     def test_reconcile_incomplete_when_required_observation_missing(self) -> None:
         mission_id = MissionId.generate()
         p = _make_calendar_predicate(mission_id)
@@ -591,6 +624,43 @@ class TestReconciliationTransition:
         assert reconciliation.status == ReconciliationStatus.STALE
 
         # STALE does NOT produce DRIFTED: fails closed via InconclusiveReconciliationError
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+
+        assert exc_info.value.status == ReconciliationStatus.STALE
+        assert exc_info.value.reconciliation is reconciliation
+        assert "observation stale" in str(exc_info.value)
+        assert "does not prove desired state false" in str(exc_info.value)
+        assert isinstance(exc_info.value, ReconciliationLifecycleError)
+
+    def test_ready_does_not_transition_when_stale_contradictory_observation_and_fails_closed(
+        self,
+    ) -> None:
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+        stale_contradictory_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "cancelled"},  # contradictory value
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: stale_contradictory_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.STALE
+        assert len(reconciliation.drifted_predicate_ids) == 0
+
+        # STALE contradiction does NOT produce DRIFTED: fails closed via
+        # InconclusiveReconciliationError
         with pytest.raises(InconclusiveReconciliationError) as exc_info:
             apply_reconciliation_transition(
                 prior_state=MissionState.READY,
@@ -1080,3 +1150,228 @@ class TestAdversarialReadbackReconciliation:
         assert "Secret Executive Board" not in transition.explanation
         assert "Confidential" not in transition.explanation
         assert "cancelled" not in transition.explanation
+
+    def test_13_stale_contradictory_observation_does_not_produce_no_longer_true_and_fails_closed(
+        self,
+    ) -> None:
+        """Scenario 13: Stale observation with contradictory value -> STALE (no DRIFTED)."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        # Observation is 10 minutes old (> 300s window) and value contradicts ('cancelled')
+        stale_contradictory_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p],
+            verification_requests={p.predicate_id: req},
+            fresh_observations={p.predicate_id: stale_contradictory_obs},
+            at=T_EVAL,
+        )
+        assert reconciliation.status == ReconciliationStatus.STALE
+        assert len(reconciliation.drifted_predicate_ids) == 0
+        assert p.predicate_id in reconciliation.stale_predicate_ids
+
+        # STALE contradictory observation fails closed without DRIFTED transition
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+        assert exc_info.value.status == ReconciliationStatus.STALE
+
+    def test_14_mixed_predicates_stale_contradiction_with_fresh_true_produces_stale_not_drifted(
+        self,
+    ) -> None:
+        """Scenario 14: Mixed predicates: stale contradiction + fresh true -> STALE, no DRIFTED."""
+        mission_id = MissionId.generate()
+        p_cal = _make_calendar_predicate(mission_id)
+        req_cal = _make_calendar_request(mission_id, p_cal)
+
+        p_task = _make_tasks_predicate(mission_id)
+        req_task = _make_tasks_request(mission_id, p_task)
+
+        # Predicate 1 (Calendar): STALE with contradictory value ('cancelled')
+        stale_cal_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+        # Predicate 2 (Task): FRESH with satisfying value ('completed')
+        fresh_task_obs = VerificationObservation(
+            target=TASKS_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={"status": "completed"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p_cal, p_task],
+            verification_requests={
+                p_cal.predicate_id: req_cal,
+                p_task.predicate_id: req_task,
+            },
+            fresh_observations={
+                p_cal.predicate_id: stale_cal_obs,
+                p_task.predicate_id: fresh_task_obs,
+            },
+            at=T_EVAL,
+        )
+
+        # Stale contradiction cannot produce NO_LONGER_TRUE or drifted_pids
+        assert reconciliation.status == ReconciliationStatus.STALE
+        assert reconciliation.drifted_predicate_ids == ()
+        assert reconciliation.stale_predicate_ids == (p_cal.predicate_id,)
+        assert reconciliation.satisfied_predicate_ids == (p_task.predicate_id,)
+
+        # Fails closed without transition to DRIFTED
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+        assert exc_info.value.status == ReconciliationStatus.STALE
+
+    def test_15_mixed_predicates_fresh_contradiction_with_stale_obs_yields_drifted(
+        self,
+    ) -> None:
+        """Scenario 15: Mixed predicates: fresh contradiction + stale obs -> DRIFTED."""
+        mission_id = MissionId.generate()
+        p_cal = _make_calendar_predicate(mission_id)
+        req_cal = _make_calendar_request(mission_id, p_cal)
+
+        p_task = _make_tasks_predicate(mission_id)
+        req_task = _make_tasks_request(mission_id, p_task)
+
+        # Predicate 1 (Calendar): FRESH with contradictory value ('cancelled')
+        fresh_cal_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_FRESH,
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+        # Predicate 2 (Task): STALE with contradictory value ('pending')
+        stale_task_obs = VerificationObservation(
+            target=TASKS_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "pending"},
+        )
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p_cal, p_task],
+            verification_requests={
+                p_cal.predicate_id: req_cal,
+                p_task.predicate_id: req_task,
+            },
+            fresh_observations={
+                p_cal.predicate_id: fresh_cal_obs,
+                p_task.predicate_id: stale_task_obs,
+            },
+            at=T_EVAL,
+        )
+
+        # Fresh contradiction authorizes NO_LONGER_TRUE; stale observation stays in stale_pids
+        assert reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
+        assert reconciliation.drifted_predicate_ids == (p_cal.predicate_id,)
+        assert reconciliation.stale_predicate_ids == (p_task.predicate_id,)
+
+        transition = apply_reconciliation_transition(
+            prior_state=MissionState.READY,
+            reconciliation=reconciliation,
+        )
+        assert transition.new_state == MissionState.DRIFTED
+        assert transition.is_drifted is True
+        assert transition.explanation is not None
+        # Explanation includes ONLY the fresh drifted predicate
+        assert str(p_cal.predicate_id) in transition.explanation
+        assert str(p_task.predicate_id) not in transition.explanation
+
+    def test_16_mixed_predicates_stale_contradiction_with_incomplete_obs_fails_closed(
+        self,
+    ) -> None:
+        """Scenario 16: Mixed predicates: stale contradiction + missing obs -> INCOMPLETE."""
+        mission_id = MissionId.generate()
+        p_cal = _make_calendar_predicate(mission_id)
+        req_cal = _make_calendar_request(mission_id, p_cal)
+
+        p_task = _make_tasks_predicate(mission_id)
+        req_task = _make_tasks_request(mission_id, p_task)
+
+        # Predicate 1 (Calendar): STALE with contradictory value ('cancelled')
+        stale_cal_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_EVAL - timedelta(seconds=600),
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+        # Predicate 2 (Task): Missing observation entirely
+
+        reconciliation = reconcile_mission_state(
+            mission_id=mission_id,
+            predicates=[p_cal, p_task],
+            verification_requests={
+                p_cal.predicate_id: req_cal,
+                p_task.predicate_id: req_task,
+            },
+            fresh_observations={
+                p_cal.predicate_id: stale_cal_obs,
+                # task observation omitted
+            },
+            at=T_EVAL,
+        )
+
+        # Inconclusive: neither predicate is a fresh contradiction
+        assert reconciliation.status == ReconciliationStatus.INCOMPLETE
+        assert reconciliation.drifted_predicate_ids == ()
+        assert reconciliation.stale_predicate_ids == (p_cal.predicate_id,)
+        assert reconciliation.incomplete_predicate_ids == (p_task.predicate_id,)
+
+        with pytest.raises(InconclusiveReconciliationError) as exc_info:
+            apply_reconciliation_transition(
+                prior_state=MissionState.READY,
+                reconciliation=reconciliation,
+            )
+        assert exc_info.value.status == ReconciliationStatus.INCOMPLETE
+
+    def test_17_historical_replayed_contradiction_rejected_and_cannot_produce_drifted(
+        self,
+    ) -> None:
+        """Scenario 17: Historical / replayed contradictory observation rejected fail-closed."""
+        mission_id = MissionId.generate()
+        p = _make_calendar_predicate(mission_id)
+        req = _make_calendar_request(mission_id, p)
+
+        hist_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST,
+            exists=True,
+            properties={"status": "confirmed"},
+        )
+        # Adversary attempts to trigger DRIFTED by replaying an old contradictory observation
+        replayed_contradictory_obs = VerificationObservation(
+            target=CAL_TARGET,
+            observed_at=T_HIST,  # equal timestamp to historical
+            exists=True,
+            properties={"status": "cancelled"},
+        )
+
+        with pytest.raises(HistoricalObservationSubstitutionError) as exc_info:
+            reconcile_mission_state(
+                mission_id=mission_id,
+                predicates=[p],
+                verification_requests={p.predicate_id: req},
+                fresh_observations={p.predicate_id: replayed_contradictory_obs},
+                historical_observations={p.predicate_id: hist_obs},
+                at=T_EVAL,
+            )
+        assert "is not strictly newer than historical observation" in str(exc_info.value)

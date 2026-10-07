@@ -452,16 +452,18 @@ def reconcile_mission_state(
         final_pred_evals[pid] = p_eval
         final_fresh_evals[pid] = f_eval
 
-        if p_eval.truth == PredicateTruth.TRUE:
-            if f_eval.status == FreshnessStatus.FRESH:
-                satisfied_pids.append(pid)
-            else:
-                if p.required:
-                    stale_pids.append(pid)
-                    reasons.append(
-                        f"Fresh observation for predicate {pid} (subject: {p.subject}) is STALE "
-                        f"(valid_until: {f_eval.valid_until.isoformat()})"
-                    )
+        # Freshness is authoritative before asserting current truth or contradiction.
+        # Stale evidence cannot prove satisfaction nor can it prove NO_LONGER_TRUE / DRIFTED.
+        if f_eval.status != FreshnessStatus.FRESH:
+            if p.required:
+                stale_pids.append(pid)
+                reasons.append(
+                    f"Observation for predicate {pid} (subject: {p.subject}) is STALE "
+                    f"(valid_until: {f_eval.valid_until.isoformat()}); "
+                    "stale evidence cannot prove satisfaction or contradiction"
+                )
+        elif p_eval.truth == PredicateTruth.TRUE:
+            satisfied_pids.append(pid)
         else:
             if p.required:
                 drifted_pids.append(pid)
@@ -510,7 +512,8 @@ class ReconciliationTransitionResult:
     Enforces that:
     - Transition is allowed ONLY from READY state.
     - If status == STILL_TRUE, remains READY.
-    - If status != STILL_TRUE, transitions to DRIFTED.
+    - If status == NO_LONGER_TRUE, transitions to DRIFTED.
+    - If status is STALE or INCOMPLETE, fails closed as inconclusive (no DRIFTED transition).
     - Mismatch explanation is privacy-safe (zero raw IDs or provider payloads).
     """
 
