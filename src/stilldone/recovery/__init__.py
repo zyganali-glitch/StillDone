@@ -20,6 +20,17 @@ from stilldone.recovery.idempotency import (
     derive_idempotency_key,
     get_idempotency_strategy,
 )
+from stilldone.recovery.orchestrator import (
+    ReadbackOutcome,
+    ReadbackVerificationResult,
+    RecoveryActionType,
+    RecoveryDecision,
+    RecoveryLineageError,
+    RecoveryOrchestrator,
+    RecoveryOrchestratorError,
+    evaluate_post_execution_recovery,
+    evaluate_readback_recovery,
+)
 from stilldone.recovery.retry import (
     RetryClassification,
     RetryDecision,
@@ -36,7 +47,14 @@ __all__ = [
     "IdempotencyStrategyType",
     "MutationIdempotencyStrategy",
     "PlannerRecoveryAuthorityError",
+    "ReadbackOutcome",
+    "ReadbackVerificationResult",
+    "RecoveryActionType",
+    "RecoveryDecision",
     "RecoveryError",
+    "RecoveryLineageError",
+    "RecoveryOrchestrator",
+    "RecoveryOrchestratorError",
     "RetryClassification",
     "RetryDecision",
     "RetryPolicy",
@@ -44,6 +62,8 @@ __all__ = [
     "assert_not_planner_for_recovery",
     "classify_error",
     "derive_idempotency_key",
+    "evaluate_post_execution_recovery",
+    "evaluate_readback_recovery",
     "evaluate_retry",
     "get_idempotency_strategy",
 ]

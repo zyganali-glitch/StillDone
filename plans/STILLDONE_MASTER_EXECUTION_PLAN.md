@@ -1194,13 +1194,13 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-09.06 — Implement `READY → DRIFTED` downgrade with mismatch explanation
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-09.07 — Add executor-success/readback-mismatch and stale-history tests
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 Phase exit:
-renewable completion exists.
+Phase P-09 is CLOSED — independent QA PASS (Verified closure SHA: `067a383491327ef39efa8e6a60b3137d88b76263`).
 
 ---
 
@@ -1216,7 +1216,7 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.04 — Implement duplicate detection and duplicate evidence state
 Status: PENDING

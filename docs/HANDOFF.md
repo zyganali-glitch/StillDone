@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: P-09.01 → P-09.05 (PASS ✅), P-09.06 → P-09.07 (REPAIRED) | Phase P-10: P-10.01 → P-10.02 (PASS ✅) | Last independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: P-10.01 → P-10.02 (PASS ✅) | Last independently VERIFIED SHA: `067a383491327ef39efa8e6a60b3137d88b76263`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,24 +74,23 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active batch: Bounded Five-Task Batch (P-09.05 → P-09.07 + P-10.01 → P-10.02)
+Active batch: Bounded Four-Task Batch (P-10.03 → P-10.06)
 
 Tasks in this batch:
-- P-09.05 — Implement reconciliation of previously verified mission against fresh external state
-- P-09.06 — Implement READY → DRIFTED downgrade with mismatch explanation
-- P-09.07 — Add executor-success/readback-mismatch and stale-history tests
-- P-10.01 — Freeze idempotency strategy per supported mutation
-- P-10.02 — Implement bounded exponential retry and retry classification
+- P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
+- P-10.04 — Implement duplicate detection and duplicate evidence state
+- P-10.05 — Implement process restart/resume from durable mission ledger
+- P-10.06 — Run injected timeout-after-write and crash/restart campaign
 
 Status:
-- P-00 through P-07: CLOSED — independent QA PASS ✅
-- Phase P-08: CLOSED (independent QA PASS ✅)
-- P-09.01 → P-09.04: PASS ✅ (independent QA verified)
-- P-09.05 → P-09.07 + P-10.01 → P-10.02: IMPLEMENTED (awaiting independent QA review)
-- P-10.03+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-00 through P-08: CLOSED — independent QA PASS ✅
+- Phase P-09: CLOSED — independent QA PASS ✅ (P-09.01 → P-09.07 PASS ✅)
+- P-10.01 → P-10.02: PASS ✅ (independent QA verified)
+- P-10.03 → P-10.06: IN PROGRESS
+- P-11+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
-Starting remote SHA: `2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
+Last Independently VERIFIED SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
+Starting remote SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
 Next exact task: P-10.03 (Implement read-before-retry / verify-after-timeout behavior where appropriate)
 
 Architecture Truth — Dependency Isolation:
