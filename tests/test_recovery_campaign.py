@@ -1067,3 +1067,191 @@ class TestP10CampaignScenarios:
 
         # CRITICAL PROOF: zero writes were authorized or executed!
         assert transport.writes_count == 0
+
+    def test_scenario_21_durable_success_followed_by_later_attempt_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 21: Durable success followed by later execution attempt fails closed.
+
+        Proves: DURABLE EXECUTION SUCCESS != PERMISSION TO EXECUTE AGAIN.
+        An attempt history containing a later attempt after durable success is contradictory;
+        reconstruction must fail closed with RecoveryContinuityError and 0 additional writes.
+        """
+        log_file = tmp_path / "mission_recovery_s21.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        adapter = GoogleTasksCreateAdapter(scope=DEMO_SCOPE, transport=transport)
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Attempt 1 succeeds cleanly
+        res = adapter.create_task(action)
+        assert res.status == TaskCreateStatus.CREATED
+        assert transport.writes_count == 1
+
+        record_execution_attempt(ledger=ledger1, action=action, attempt_number=1, error=None)
+
+        # Contradictory later attempt appended
+        record_execution_attempt(
+            ledger=ledger1,
+            action=action,
+            attempt_number=2,
+            error=TimeoutError("Contradictory timeout"),
+        )
+
+        # PROCESS RESTART
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(RecoveryContinuityError, match="Success must be terminal"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: write count remains exactly 1; 0 additional writes!
+        assert transport.writes_count == 1
+
+    def test_scenario_22_failed_attempt_missing_classification_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 22: Failed attempt record missing classification fails closed.
+
+        Proves: UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS.
+        Malformed durable facts are uncertainty and must fail closed without mutation.
+        """
+        log_file = tmp_path / "mission_recovery_s22.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        # Inject attempt record with success=False but missing classification
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": False,
+            # Missing classification!
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger1.append_evidence(ev)
+
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(RecoveryContinuityError, match="missing or non-string classification"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0
+
+    def test_scenario_23_failed_attempt_unknown_classification_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 23: Failed attempt record with forged/unknown classification fails closed.
+
+        Proves: CONTRADICTORY HISTORY != AUTHORITY TO GUESS.
+        Unknown classification cannot be guessed or synthesized as transient failure.
+        """
+        log_file = tmp_path / "mission_recovery_s23.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": False,
+            "classification": "FORGED_RETRY_CLASSIFICATION_UNKNOWN",
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger1.append_evidence(ev)
+
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(
+            RecoveryContinuityError, match="unknown or invalid failure classification"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0
+
+    def test_scenario_24_success_with_contradictory_classification_fails_closed_zero_mutation(
+        self, tmp_path: Any
+    ) -> None:
+        """Scenario 24: Success record carrying contradictory failure classification fails closed.
+
+        Proves: DURABLE FACTS MUST BE INTERNALLY CONSISTENT.
+        success=True carrying a failure classification cannot authorize retry or mutation.
+        """
+        log_file = tmp_path / "mission_recovery_s24.jsonl"
+        ledger1 = DurableFileLedger(log_file)
+        transport = FaultyGoogleTasksTransport()
+        action = _make_task_create_action(title="Pack rain gear")
+
+        _register_action_in_ledger(ledger1, action)
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": True,
+            "classification": RetryClassification.AMBIGUOUS_TIMEOUT.value,
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger1.append_evidence(ev)
+
+        del ledger1
+        ledger2 = DurableFileLedger(log_file)
+
+        with pytest.raises(
+            RecoveryContinuityError, match="carries contradictory failure classification"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=ledger2)
+
+        # CRITICAL PROOF: zero writes were authorized or executed!
+        assert transport.writes_count == 0

@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: P-10.01 → P-10.02 (PASS ✅) | Last independently VERIFIED SHA: `067a383491327ef39efa8e6a60b3137d88b76263`**
+Current repository state: **Phase P-07: CLOSED (independent QA PASS ✅) | Phase P-08: CLOSED (independent QA PASS ✅) | Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: P-10.01 → P-10.04 (PASS ✅), P-10.05 & P-10.06 REPAIRED (awaiting independent QA) | Phase P-10 NOT CLOSED | Last independently VERIFIED contiguous SHA: `067a383491327ef39efa8e6a60b3137d88b76263`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -77,23 +77,21 @@ Preferred AWS target:
 Active batch: Consolidated Surgical Repair & Phase P-10 QA Closure
 
 Tasks in this batch:
-- P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate: REPAIRED (awaiting QA)
+- P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate: PASS ✅ (independent QA verified)
 - P-10.04 — Implement duplicate detection and duplicate evidence state: PASS ✅ (independent QA verified)
-- P-10.05 — Implement process restart/resume from durable mission ledger: REPAIRED (awaiting QA)
-- P-10.06 — Run injected timeout-after-write and crash/restart campaign: REPAIRED (awaiting QA)
+- P-10.05 — Implement process restart/resume from durable mission ledger: REPAIRED (awaiting independent QA review)
+- P-10.06 — Run injected timeout-after-write and crash/restart campaign: REPAIRED (awaiting independent QA review)
 
 Status:
 - P-00 through P-08: CLOSED — independent QA PASS ✅
 - Phase P-09: CLOSED — independent QA PASS ✅ (P-09.01 → P-09.07 PASS ✅)
-- P-10.01 → P-10.02: PASS ✅ (independent QA verified)
-- P-10.04: PASS ✅ (independent QA verified)
-- P-10.03, P-10.05, P-10.06: REPAIRED (awaiting independent QA review)
-- Phase P-10: REPAIRED (awaiting independent QA review)
+- P-10.01 → P-10.04: PASS ✅ (independent QA verified)
+- P-10.05, P-10.06: REPAIRED (awaiting independent QA review)
+- Phase P-10: NOT CLOSED
 - P-11+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
-Starting remote SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
-Remote HEAD at repair start: `e28c9799b1b3c3e64688052cf0a2fb9e362d49fc`
+Last Independently VERIFIED contiguous SHA: `067a383491327ef39efa8e6a60b3137d88b76263`
+Starting remote SHA: `72f7fefa69da568b98e2980b9b0e9337749634c9`
 Next exact task: Independent QA Review of Phase P-10 repairs (P-11+ NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
@@ -211,22 +209,29 @@ Phase P-08 is CLOSED — independent QA PASS ✅
 - P-09.03 — PASS ✅
 - P-09.04 — PASS ✅
 - P-09.05 — PASS ✅
-- P-09.06 — REPAIRED (freshness authoritative before contradiction; STALE contradictory observations cannot produce NO_LONGER_TRUE or DRIFTED)
-- P-09.07 — REPAIRED (adversarial tests for fresh contradiction, STALE contradictory non-drift, mixed status precedence, replay, and privacy)
+- P-09.06 — PASS ✅
+- P-09.07 — PASS ✅
+
+Phase P-09 is CLOSED — independent QA PASS ✅ (Verified closure SHA: `067a383491327ef39efa8e6a60b3137d88b76263`)
 
 ## Phase P-10 Status
 
 - P-10.01 — PASS ✅
 - P-10.02 — PASS ✅
-- P-10.03+ — NOT AUTHORIZED / NOT_RUN
+- P-10.03 — PASS ✅
+- P-10.04 — PASS ✅
+- P-10.05 — REPAIRED (awaiting independent QA review)
+- P-10.06 — REPAIRED (awaiting independent QA review)
+
+Phase P-10 is NOT CLOSED (awaiting independent QA review for P-10.05 & P-10.06)
 
 ## Last independently VERIFIED contiguous SHA
 
-`2ab207d136ade30ecab6cd5ecc1b9cfcd1f6c37a`
+`067a383491327ef39efa8e6a60b3137d88b76263`
 
 ## Next exact task
 
-Awaiting independent QA review for P-09.06 & P-09.07 repair closure.
+Awaiting independent QA review for Phase P-10 repairs (P-10.05 & P-10.06). P-11+ remains NOT AUTHORIZED / NOT_RUN.
 
 
 ---

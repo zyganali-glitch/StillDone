@@ -64,6 +64,7 @@ from stilldone.recovery.orchestrator import (
     RecoveryActionType,
 )
 from stilldone.recovery.retry import (
+    RetryClassification,
     RetryPolicy,
 )
 
@@ -842,3 +843,237 @@ class TestDuplicateEvidenceLineageValidation:
 
         with pytest.raises(RecoveryContinuityError, match="idempotency_key mismatch"):
             reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+
+class TestTerminalSuccessAndAttemptConsistency:
+    """Verifies that attempt success is terminal and classification is strictly consistent."""
+
+    def test_attempt_1_success_attempt_2_transient_failure_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """Attempt 1 succeeded, attempt 2 had transient failure: impossible recovery history."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=1, error=None)
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=2, error=503)
+
+        with pytest.raises(RecoveryContinuityError, match="Success must be terminal"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_attempt_1_success_attempt_2_ambiguous_timeout_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """Attempt 1 succeeded, attempt 2 had ambiguous timeout: impossible recovery history."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=1, error=None)
+        record_execution_attempt(
+            ledger=ledger, action=action, attempt_number=2, error=TimeoutError("Timeout")
+        )
+
+        with pytest.raises(RecoveryContinuityError, match="Success must be terminal"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_earlier_attempt_success_followed_by_later_attempt_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """Success at attempt 2 followed by attempt 3 failure must fail closed."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=1, error=503)
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=2, error=None)
+        record_execution_attempt(
+            ledger=ledger, action=action, attempt_number=3, error=TimeoutError("Late failure")
+        )
+
+        with pytest.raises(RecoveryContinuityError, match="Success must be terminal"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_attempt_failure_missing_classification_fails_closed(self, tmp_path: Path) -> None:
+        """Attempt failure without classification must fail closed as corrupt history."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": False,
+            # Missing classification!
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger.append_evidence(ev)
+
+        with pytest.raises(RecoveryContinuityError, match="missing or non-string classification"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_attempt_failure_invalid_classification_fails_closed(self, tmp_path: Path) -> None:
+        """Attempt failure with forged/unknown classification must fail closed."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": False,
+            "classification": "FORGED_UNKNOWN_CLASSIFICATION",
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger.append_evidence(ev)
+
+        with pytest.raises(
+            RecoveryContinuityError, match="unknown or invalid failure classification"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_attempt_success_with_failure_classification_fails_closed(self, tmp_path: Path) -> None:
+        """Attempt record with success=True carrying failure classification is contradictory."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": True,
+            "classification": RetryClassification.AMBIGUOUS_TIMEOUT.value,
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger.append_evidence(ev)
+
+        with pytest.raises(
+            RecoveryContinuityError, match="carries contradictory failure classification"
+        ):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_attempt_success_with_error_message_fails_closed(self, tmp_path: Path) -> None:
+        """Attempt record with success=True carrying error_message is contradictory."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        origin = EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=datetime.now(UTC)
+        )
+        bad_payload = {
+            "evidence_type": "EXECUTION_ATTEMPT",
+            "attempt_number": 1,
+            "action_id": str(action.action_id),
+            "mission_id": str(action.mission_id),
+            "action_type": action.action_type.value,
+            "success": True,
+            "error_message": "Something went wrong after all",
+        }
+        eid = compute_evidence_id({"origin": origin, "payload": bad_payload})
+        ev = EvidenceRecord(
+            evidence_id=eid,
+            action_id=action.action_id,
+            mission_id=action.mission_id,
+            origin=origin,
+            payload=bad_payload,
+            created_at=datetime.now(UTC),
+        )
+        ledger.append_evidence(ev)
+
+        with pytest.raises(RecoveryContinuityError, match="carries contradictory error_message"):
+            reconstruct_action_recovery_state(action=action, ledger=ledger)
+
+    def test_valid_success_record_reconstructs_to_do_not_retry(self, tmp_path: Path) -> None:
+        """Valid success record reconstructs to DO_NOT_RETRY and preserves attempt count."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        record_execution_attempt(ledger=ledger, action=action, attempt_number=1, error=None)
+
+        state = reconstruct_action_recovery_state(action=action, ledger=ledger)
+        assert state.prior_attempt_count == 1
+        assert state.resumption_decision.action_type == RecoveryActionType.DO_NOT_RETRY
+        assert state.is_ambiguous_outcome is False
+
+    def test_valid_failure_record_retains_correct_canonical_classification(
+        self, tmp_path: Path
+    ) -> None:
+        """Valid failure record retains correct canonical classification and ambiguity."""
+        log_file = tmp_path / "ledger.jsonl"
+        ledger = DurableFileLedger(log_file)
+        _, action = _seed_mission_and_action(
+            ledger, ActionType.TASK_CREATE, TASKS_TARGET, {"title": "Pack lunch"}
+        )
+
+        record_execution_attempt(
+            ledger=ledger, action=action, attempt_number=1, error=TimeoutError("Timeout")
+        )
+
+        state = reconstruct_action_recovery_state(action=action, ledger=ledger)
+        assert state.prior_attempt_count == 1
+        assert (
+            state.resumption_decision.retry_classification == RetryClassification.AMBIGUOUS_TIMEOUT
+        )
+        assert state.is_ambiguous_outcome is True
+        assert state.requires_verification_before_retry is True

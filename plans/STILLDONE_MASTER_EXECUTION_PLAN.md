@@ -1216,10 +1216,10 @@ Status: PASS (independent QA verified)
 Status: PASS (independent QA verified)
 
 ### P-10.03 — Implement read-before-retry / verify-after-timeout behavior where appropriate
-Status: REPAIRED (awaiting independent QA review)
+Status: PASS (independent QA verified)
 
 ### P-10.04 — Implement duplicate detection and duplicate evidence state
-Status: PASS (independent QA PASS)
+Status: PASS (independent QA verified)
 
 ### P-10.05 — Implement process restart/resume from durable mission ledger
 Status: REPAIRED (awaiting independent QA review)

@@ -328,6 +328,35 @@ def reconstruct_action_recovery_state(
                     f"Attempt evidence {ev.evidence_id} has invalid or missing "
                     f"success field: {p.get('success')}"
                 )
+            success = p["success"]
+            cls_name = p.get("classification")
+            err_msg = p.get("error_message")
+
+            if success is False:
+                if cls_name is None or not isinstance(cls_name, str):
+                    raise RecoveryContinuityError(
+                        f"Attempt evidence {ev.evidence_id} has success=False but missing "
+                        f"or non-string classification: {cls_name!r}"
+                    )
+                try:
+                    RetryClassification(cls_name)
+                except ValueError as exc:
+                    raise RecoveryContinuityError(
+                        f"Attempt evidence {ev.evidence_id} has unknown or invalid failure "
+                        f"classification: {cls_name!r}"
+                    ) from exc
+            else:
+                # success is True: must NOT carry failure classification or error message
+                if cls_name is not None:
+                    raise RecoveryContinuityError(
+                        f"Attempt evidence {ev.evidence_id} has success=True but carries "
+                        f"contradictory failure classification: {cls_name!r}"
+                    )
+                if err_msg is not None:
+                    raise RecoveryContinuityError(
+                        f"Attempt evidence {ev.evidence_id} has success=True but carries "
+                        f"contradictory error_message: {err_msg!r}"
+                    )
             attempt_records.append(ev)
 
         elif ev_type == DUPLICATE_DETERMINATION_EVIDENCE_TYPE:
@@ -417,6 +446,21 @@ def reconstruct_action_recovery_state(
                 f"got {attempt_numbers}, expected {expected_sequence}"
             )
 
+        # Terminal success invariant:
+        # Once an EXECUTION_ATTEMPT for the action durably records success=True,
+        # there MUST NOT be any later EXECUTION_ATTEMPT for that same canonical action.
+        saw_success_at: int | None = None
+        for r in attempt_records:
+            att_num = r.payload["attempt_number"]
+            if saw_success_at is not None:
+                raise RecoveryContinuityError(
+                    f"Durable execution success observed at attempt {saw_success_at}, "
+                    f"but subsequent attempt {att_num} was found in attempt history. "
+                    "Success must be terminal within execution attempt history."
+                )
+            if r.payload["success"] is True:
+                saw_success_at = att_num
+
     remaining_budget = max(0, effective_ceiling - prior_attempt_count)
 
     # 5. Inspect latest attempt facts
@@ -429,12 +473,8 @@ def reconstruct_action_recovery_state(
         if last_payload.get("success") is True:
             last_attempt_success = True
         else:
-            cls_name = last_payload.get("classification")
-            if cls_name:
-                try:
-                    last_error_classification = RetryClassification(cls_name)
-                except ValueError:
-                    pass
+            cls_name = last_payload["classification"]
+            last_error_classification = RetryClassification(cls_name)
             if last_error_classification == RetryClassification.AMBIGUOUS_TIMEOUT:
                 is_ambiguous = True
 
@@ -525,14 +565,14 @@ def reconstruct_action_recovery_state(
         )
     else:
         # Safe retry (e.g. read-only action on transient error)
+        if last_error_classification is None:
+            raise RecoveryContinuityError(
+                f"Attempt failure for action {action.action_id} lacks canonical classification"
+            )
         resumption_dec = evaluate_post_execution_recovery(
             action=action,
             attempt_number=prior_attempt_count,
-            error=(
-                last_error_classification.value
-                if last_error_classification
-                else "transient_failure"
-            ),
+            error=last_error_classification.value,
             policy=eff_policy,
         )
 
