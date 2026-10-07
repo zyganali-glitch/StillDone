@@ -1219,7 +1219,7 @@ Status: PASS (independent QA verified)
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.04 — Implement duplicate detection and duplicate evidence state
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.05 — Implement process restart/resume from durable mission ledger
 Status: PENDING
