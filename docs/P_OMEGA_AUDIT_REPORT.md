@@ -15,7 +15,7 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 
 | # | Dimension | Status | Phase P-10 Audit Finding |
 |---|---|---|---|
-| **1** | **Canonical Remote State & Linear History** | **PASS** | Remote `origin/main` verified at `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82` with linear ancestry from engineering baseline `53699a03e03bd58d7fc11bd5b8e178755e040b1e` and initial bootstrap (`c570f86`). Zero merge commits, zero detached branches, zero untracked divergence. |
+| **1** | **Canonical Remote State & Linear History** | **PASS** | Remote `origin/main` verified with linear ancestry from engineering baseline `53699a03e03bd58d7fc11bd5b8e178755e040b1e` and initial bootstrap (`c570f86`). Zero merge commits, zero detached branches, zero untracked divergence. |
 | **2** | **Exact Independent VERIFIED SHA** | **PASS** | Last independently verified engineering baseline SHA is `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. All micro-tasks P-10.01 through P-10.06 hold independent QA PASS. |
 | **3** | **Scope & Future-Phase Leakage** | **PASS** | Phase P-11+ remains strictly `PENDING / NOT AUTHORIZED / NOT_RUN`. Zero code or artifacts from Phase P-11 (Approval Compression), Phase P-12 (Durable Cross-Session Continuity & Scheduled Drift), or Phase P-13+ (Killer Mission Slice, Alexa+ UI). |
 | **4** | **Deterministic Fact-Authority Boundary** | **PASS** | Model / planner prose possesses strictly **0** authority over execution, predicates, evidence, recovery, or state promotion. Enforced by runtime assertions (`assert_not_planner_for_recovery`, `assert_not_planner_for_execution`, `assert_not_planner_for_verification`). Model proposals cannot forge IDs or promote mission state. |
@@ -27,20 +27,20 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 | **10** | **Read-Before-Retry / Verify-After-Timeout** | **PASS** | Ambiguous outcomes and duplicate-risk mutations trigger `RecoveryActionType.REQUIRES_VERIFICATION`. Independent read-back evaluation via `evaluate_readback_recovery` maps outcomes deterministically: `EFFECT_ALREADY_EXISTS` (0 writes performed), `DUPLICATE_PREVENTED`, `RETRY` (only if effect absent and budget remains), or `DO_NOT_RETRY` (inconclusive / exhausted). |
 | **11** | **Duplicate Detection & Evidence Truth** | **PASS** | Dedicated detector adapters (`GoogleCalendarEffectDetectorAdapter`, `GoogleTasksDuplicateDetectorAdapter`) inspect provider state. Emits typed `DuplicateEvidenceRecord` with canonical `DuplicateDeterminationStatus`: `EFFECT_ABSENT` (match_count == 0), `INTENDED_EFFECT_EXISTS` (match_count == 1), `DUPLICATE_DETECTED` (match_count >= 2), and `DETERMINATION_INCONCLUSIVE`. |
 | **12** | **Durable Recovery Continuity** | **PASS** | `DurableFileLedger` persists records to an append-only JSONL log with `os.fsync`. `reconstruct_action_recovery_state` deterministically rebuilds in-flight mutation state across restarts (`ActionRecoveryState`). |
-| **13** | **Crash/Restart Safety** | **PASS** | Process crashes during or after mutation are safely recovered. Reconstructed state preserves mission ID, action ID, stable `IntendedMutationIdentity`, `prior_attempt_count`, `is_ambiguous_outcome`, `requires_verification_before_retry`, and `remaining_attempt_budget`. |
+| **13** | **Crash/Restart Safety** | **PASS** | Process restarts following in-flight mutation outcomes are safely recovered across tested campaign scenarios. Reconstructed state preserves mission ID, action ID, stable `IntendedMutationIdentity`, `prior_attempt_count`, `is_ambiguous_outcome`, `requires_verification_before_retry`, and `remaining_attempt_budget`. |
 | **14** | **Terminal-Success History Invariant** | **PASS** | When the durable ledger records a latest `EXECUTION_ATTEMPT` with `success=True`, `reconstruct_action_recovery_state` emits `resumption_decision = RecoveryDecision(action_type=RecoveryActionType.DO_NOT_RETRY)`. For mutations, downstream verification remains required. An earlier success followed by a subsequent attempt is contradictory history and fails closed (`RecoveryContinuityError`). |
 | **15** | **Attempt-Budget Preservation Across Restart** | **PASS** | Prior execution attempt count (`prior_attempt_count`) is preserved across process crashes (`PROCESS RESTART != NEW RETRY BUDGET`). `remaining_attempt_budget = max(0, effective_ceiling - prior_attempt_count)`; if budget is exhausted, resumption decision is `DO_NOT_RETRY`. |
 | **16** | **Corrupt Durable History Fail-Closed** | **PASS** | Corrupt, malformed, or tampered durable JSONL log files fail closed immediately with `LedgerError` on reload (`UNREADABLE HISTORY != PROOF OF ZERO PRIOR ATTEMPTS`, `CONTRADICTORY HISTORY != AUTHORITY TO GUESS`). |
 | **17** | **Approval/Authority Boundary Before P-11** | **PASS** | P-04 authority primitives (`AuthorityPolicy`, `compute_approval_binding_hash`, static grant validation) are preserved. P-10 introduces zero P-11 approval compression (no pending approval objects, no one-decision UX, no single-use replay ledger). |
 | **18** | **Security, Privacy & Redaction** | **PASS** | Zero credentials, secrets, OAuth tokens, AWS access keys, or personal emails committed. P-04 redaction engine (`redact_text`, `redact_payload`) sanitizes error messages and diagnostic payloads before logging and ledger persistence. |
 | **19** | **Evidence Mode & Provenance Taxonomy** | **PASS** | Provenance is strictly separated from results across all 6 frozen values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`). |
-| **20** | **Live vs. Recorded-Live vs. Fixture** | **PASS** | P-10 verification is 100% `LOCAL_EXECUTION` / injected adversarial test doubles (`FIXTURE`). P-10 live Google mutations and P-10 live AWS Bedrock calls are explicitly `NOT_RUN`. Historical live evidence from P-01, P-05, and P-07 remains truthfully labeled `RECORDED_LIVE`. |
+| **20** | **Live vs. Recorded-Live vs. Fixture** | **PASS** | P-10 verification is strictly `LOCAL_EXECUTION` / injected adversarial test doubles (`FIXTURE`). P-10 live Google mutations and P-10 live AWS Bedrock calls are explicitly `NOT_RUN`. Historical live evidence from P-01, P-05, and P-07 remains truthfully labeled `RECORDED_LIVE`. |
 | **21** | **Donor Inventory & Apache-2.0 Licensing** | **PASS** | All 9 donors in `docs/DONOR_PROVENANCE.md` remain pinned under `CONCEPT_ONLY`. Exactly **0 lines** of donor source code imported. All logic is `CLEAN_ROOM_REIMPLEMENTED`. Root Apache-2.0 license preserved. |
 | **22** | **Two-Runtime Dependency Architecture** | **PASS** | Upstream dependency conflict (`mcp>=2.2.0` vs `strands-agents 1.57.2` requiring `mcp<2.2.0`) solved via two isolated environments with zero resolver overrides. Core/MCP runtime: `mcp 2.2.0`. Strands Planner runtime: `strands-agents 1.57.2`, transitive `mcp 2.1.1`. Unified source tree (`src/stilldone`). |
 | **23** | **Exact-SHA Continuous Integration (CI)** | **PASS** | GitHub Actions CI (`.github/workflows/ci.yml`) validates both runtimes against exact committed commit SHAs on push and pull requests to `main`. |
 | **24** | **Zero-Personal-Spend & Cost Truth** | **PASS** | Target personal spend remains strictly `$0.00`. Phase P-10 executed zero cloud or external API calls ($0.00 spend). Cumulative P-01/P-07 usage remains bounded within promotional credit allowances; personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`. |
 | **25** | **Competition Architecture Alignment** | **PASS** | Track alignment: Alexa+ (Primary; Streamable HTTP MCP server spine); AWS Builder Mini Challenge (Secondary; Bedrock/Strands); Open Source Mini Challenge (Secondary; Apache-2.0, clean room). Rules snapshot date: `2026-10-01`. |
-| **26** | **Critical Documentation Consistency** | **PASS** | `AGENTS.md`, `docs/HANDOFF.md`, `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`, and this Audit Report are 100% synchronized to Phase P-10 CLOSED with last verified engineering baseline SHA `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. |
+| **26** | **Critical Documentation Consistency** | **PASS** | `AGENTS.md`, `docs/HANDOFF.md`, `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`, and this Audit Report are fully synchronized to Phase P-10 CLOSED with last verified engineering baseline SHA `53699a03e03bd58d7fc11bd5b8e178755e040b1e`. |
 | **27** | **P-11+ Future-Phase Leakage Check** | **PASS** | Comprehensive AST and symbol inspection proves zero implementation of Phase P-11 through Phase P-22. |
 
 > [!IMPORTANT]
@@ -189,12 +189,31 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 - **Result**: **PASS**
 
 ### 2.13 Crash/Restart Safety
-- **Adversarial Campaign**: Phase P-10.06 verified crash/restart resilience across 24 dedicated campaign test scenarios (`tests/test_recovery_campaign.py`):
-  - Crash immediately following provider write before response receipt;
-  - Crash during read-before-retry evaluation;
-  - Crash between retries;
-  - Multiple sequential crashes with attempt accumulation.
-- **Safety Invariant**: In 100% of tested failure paths, recovering from the durable ledger prevented duplicate external mutations.
+- **Adversarial Campaign**: Phase P-10.06 verified crash/restart resilience across the 24 committed injected campaign test scenarios in `tests/test_recovery_campaign.py`.
+- **Supported Campaign Classes**: Tested recovery classes include:
+  - timeout-after-write;
+  - timeout-before-effect;
+  - independent read-back proving effect exists;
+  - independent read-back proving effect absent;
+  - inconclusive read-back fail-closed;
+  - duplicate already exists;
+  - calendar update verify-after-timeout;
+  - restart after ambiguous mutation outcome;
+  - restart after durable effect/write evidence;
+  - restart before effect under bounded recovery rules;
+  - attempt ceiling survives restart;
+  - authority/security/programming failures do not become retryable mutation authority;
+  - planner/model has zero recovery authority;
+  - privacy-safe evidence;
+  - durable recovery read failure;
+  - corrupt/conflicting ledger;
+  - gapped/conflicting attempt history;
+  - forged duplicate-evidence lineage;
+  - durable success followed by contradictory later attempt;
+  - missing/unknown failure classification;
+  - success record carrying contradictory failure classification.
+- **Bounded Verification**: Across the 24 committed injected campaign scenarios, the tested recovery paths preserve their asserted exact mutation-count and fail-closed invariants.
+- **Execution Boundary**: Strictly `LOCAL_EXECUTION` / injected adversarial test doubles (`FIXTURE`). Does not claim live-provider crash recovery.
 - **Result**: **PASS**
 
 ### 2.14 Terminal-Success History Invariant
@@ -262,7 +281,7 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
   7. Universal Agent OS UiPath (`dc22679`) — CONCEPT_ONLY (0 lines imported)
   8. Universal Agent OS GitLab (`3c4a412`) — CONCEPT_ONLY (0 lines imported)
   9. Universal Agent OS Qwen (`a43b341`) — CONCEPT_ONLY (0 lines imported)
-- **Total Reused Code**: Exactly **0 lines** of donor code imported. 100% `CLEAN_ROOM_REIMPLEMENTED`.
+- **Total Reused Code**: Exactly **0 lines** of donor code imported. Strictly `CLEAN_ROOM_REIMPLEMENTED`.
 - **Result**: **PASS**
 
 ### 2.22 Two-Runtime Dependency Architecture & Resolver Isolation
@@ -320,7 +339,7 @@ This audit conducts an exhaustive, evidence-backed phase-boundary review of the 
 ## 3. Explicit Checks Classification
 
 ### 3.1 PASS Checks (Phase P-10 Boundary Closure)
-1. Canonical remote main inspection and SHA alignment (`PASS` — `e3bdd7d31cc6675cfc45c6c7803b2bb6105fbc82`)
+1. Canonical remote main inspection and SHA alignment (`PASS` — verified linear ancestry from `53699a03e03bd58d7fc11bd5b8e178755e040b1e`)
 2. Governance documents and constitutional constraints (`PASS`)
 3. Linear git commit graph with zero unreviewed merges (`PASS`)
 4. P-10.01: Frozen idempotency strategy per supported mutation (`PASS`)
@@ -383,7 +402,7 @@ Phase P-10 establishes and proves seven inviolable recovery laws:
 
 ### DurableFileLedger Scope
 - **Purpose**: `DurableFileLedger` was introduced strictly for **P-10 in-flight mutation recovery continuity**.
-- **Mechanism**: Persists `MissionRecord`, `ActionRecord`, and `EvidenceRecord` to an append-only JSONL log file with atomic write and `os.fsync`.
+- **Mechanism**: Append-only JSONL persistence with explicit flush and `os.fsync` (persisting `MissionRecord`, `ActionRecord`, and `EvidenceRecord`; no general atomic-record-write guarantee is established).
 - **Validation**: On initialization, re-reads the log, verifies domain-separated content addresses and lineage, and detects duplicates or record conflicts.
 
 ### Explicit P-12 Non-Claim
