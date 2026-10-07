@@ -1225,7 +1225,7 @@ Status: IMPLEMENTED (awaiting independent QA review)
 Status: IMPLEMENTED (awaiting independent QA review)
 
 ### P-10.06 — Run injected timeout-after-write and crash/restart campaign
-Status: PENDING
+Status: IMPLEMENTED (awaiting independent QA review)
 
 Phase exit:
 at least one real failure can resume without duplicate effect.

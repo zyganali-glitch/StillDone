@@ -122,16 +122,20 @@ def record_execution_attempt(
 def record_duplicate_determination(
     *,
     ledger: MissionLedgerPort,
-    duplicate_evidence: DuplicateEvidenceRecord,
+    duplicate_evidence: DuplicateEvidenceRecord | None = None,
+    evidence: DuplicateEvidenceRecord | None = None,
 ) -> EvidenceRecord:
     """Record duplicate determination evidence into the durable ledger."""
-    assert_not_planner_for_recovery(duplicate_evidence, parameter_name="duplicate_evidence")
+    target_evidence = duplicate_evidence if duplicate_evidence is not None else evidence
+    if target_evidence is None:
+        raise ValueError("Either duplicate_evidence or evidence must be provided")
+    assert_not_planner_for_recovery(target_evidence, parameter_name="duplicate_evidence")
     if not isinstance(ledger, MissionLedgerPort):
         raise TypeError("ledger must implement MissionLedgerPort")
-    if not isinstance(duplicate_evidence, DuplicateEvidenceRecord):
+    if not isinstance(target_evidence, DuplicateEvidenceRecord):
         raise TypeError("duplicate_evidence must be DuplicateEvidenceRecord")
 
-    record = duplicate_evidence.to_evidence_record()
+    record = target_evidence.to_evidence_record()
     ledger.append_evidence(record)
     return record
 
@@ -325,8 +329,8 @@ def reconstruct_action_recovery_state(
             reason="Initial execution attempt eligible",
             idempotency_key=stable_key,
         )
-    elif remaining_budget == 0 and not is_ambiguous:
-        # Attempt ceiling was reached before crash/restart on non-ambiguous error
+    elif remaining_budget == 0:
+        # Attempt ceiling was reached before crash/restart
         resumption_dec = RecoveryDecision(
             action_type=RecoveryActionType.DO_NOT_RETRY,
             action_id=action.action_id,
@@ -349,20 +353,6 @@ def reconstruct_action_recovery_state(
             reason=(
                 "Process restarted during in-flight mutation; requires independent "
                 "read-before-retry to determine whether intended effect exists"
-            ),
-            retry_classification=last_error_classification,
-            idempotency_key=stable_key,
-        )
-    elif remaining_budget == 0:
-        # Attempt ceiling was reached before crash/restart
-        resumption_dec = RecoveryDecision(
-            action_type=RecoveryActionType.DO_NOT_RETRY,
-            action_id=action.action_id,
-            attempt_number=prior_attempt_count,
-            delay_seconds=0.0,
-            reason=(
-                f"Attempt ceiling reached ({prior_attempt_count} >= {effective_ceiling}); "
-                "retry budget exhausted"
             ),
             retry_classification=last_error_classification,
             idempotency_key=stable_key,

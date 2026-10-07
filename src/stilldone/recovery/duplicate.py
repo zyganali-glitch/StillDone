@@ -33,6 +33,7 @@ from typing import Any, Protocol, runtime_checkable
 from stilldone.adapters.calendar import (
     CalendarReadStatus,
     GoogleCalendarReadAdapter,
+    _is_time_equal,
 )
 from stilldone.adapters.tasks import (
     DuplicateDetectionResult,
@@ -356,11 +357,13 @@ class GoogleTasksDuplicateDetectorAdapter:
             )
 
         mutation_identity = derive_intended_mutation_identity(action)
-        title = action.parameters.get("title", "")
-        due = action.parameters.get("due")
+        title_val = action.parameters.get("title", "")
+        title_str = str(title_val) if title_val is not None else ""
+        due_val = action.parameters.get("due")
+        due_str = str(due_val) if due_val is not None else None
 
         try:
-            expected = ExpectedTaskState(title=title, due=due)
+            expected = ExpectedTaskState(title=title_str, due=due_str)
             result: DuplicateDetectionResult = self._detector.detect_duplicates(expected)
         except Exception as exc:
             return DuplicateEvidenceRecord(
@@ -451,7 +454,15 @@ class GoogleCalendarEffectDetectorAdapter:
             matches_all = True
             for k, expected_v in action.parameters.to_dict().items():
                 actual_v = getattr(obs, k, None)
-                if actual_v != expected_v:
+                if (
+                    k in ("start_time", "end_time")
+                    and actual_v is not None
+                    and expected_v is not None
+                ):
+                    if not _is_time_equal(str(actual_v), str(expected_v)):
+                        matches_all = False
+                        break
+                elif actual_v != expected_v:
                     matches_all = False
                     break
 

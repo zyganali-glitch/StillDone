@@ -228,7 +228,9 @@ def classify_error(error: Exception | str | int) -> RetryClassification:
             "unavailable",
             "temporarily",
             "connection reset",
+            "502",
             "503",
+            "504",
             "429",
         )
     ):
