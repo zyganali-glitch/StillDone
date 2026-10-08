@@ -1244,7 +1244,7 @@ Status: PASS ✅ (independent QA verified)
 Status: PASS ✅ (independent QA verified)
 
 ### P-11.03 — Bind approval to exact mission/action/target/parameters/expiry
-Status: REPAIRED / awaiting independent QA
+Status: PASS ✅ (independent QA verified)
 
 ### P-11.04 — Reject stale, mismatched, replayed, or already-used approvals
 Status: REPAIRED / awaiting independent QA

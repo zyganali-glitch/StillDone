@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: REPAIRED / awaiting independent QA | P-11.04: REPAIRED / awaiting independent QA | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: CLOSED (independent QA PASS ✅) | P-11.04: REPAIRED / awaiting independent QA | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,20 +74,20 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: Consolidated same-scope repair for P-11.03 and P-11.04 (REPAIRED / awaiting independent QA)
+Active task: P-11.04 — Final surgical repair of process-local transaction concurrency and persistence error privacy (REPAIRED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
-- P-11.03: REPAIRED / awaiting independent QA
+- P-11.03: CLOSED — independent QA PASS ✅
 - P-11.04: REPAIRED / awaiting independent QA
 - P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`
-Current exact task: Consolidated same-scope repair for P-11.03 and P-11.04 (REPAIRED / awaiting independent QA)
-Next exact task: Independent QA audit for P-11.03 and P-11.04
+Current exact task: P-11.04 — Final surgical repair of process-local transaction concurrency and persistence error privacy (REPAIRED / awaiting independent QA)
+Next exact task: Independent QA audit for P-11.04
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -116,8 +116,14 @@ Consolidated Repair Scope (P-11.03, P-11.04) — Completed, Awaiting Independent
    * `_hydrate_from_ledger()` enforces lineage consistency across identical `approval_id`s (`mission_id`, `action_id`, `binding_hash`); raises `MalformedApprovalStateError` on contradictory history.
    * Implemented explicit closed-world transition model: `UNUSED -> CONSUMED`, `UNUSED -> REVOKED`, `CONSUMED -> REVOKED`, `REVOKED -> REVOKED` (idempotent duplicate).
    * Fails closed on `REVOKED -> CONSUMED`, duplicate `CONSUMED -> CONSUMED`, transitions to `UNUSED`, and malformed payloads.
-5. Invariants, Concurrency & Separation:
-   * Concurrency guarantee truth: thread-safe process-local via internal lock; durable across restart via append-only ledger; no multi-process distributed atomic single-use overclaims.
+5. Transaction-Level Concurrency & Persistence Error Privacy (P-11.04 Final Surgical Repair):
+   * Added transaction-level lock (`self._lock = threading.RLock()`) owned by `ApprovalLedger` strictly serializing status checks, durable persistence, in-memory recording, and authorization result creation.
+   * Proved two same-process concurrent consume calls result in exactly one authorized winner and one `ApprovalAlreadyUsedError` failure, with exactly one durable consumption record.
+   * Proved concurrent consume vs revoke races strictly preserve closed-world transition integrity (never generating `REVOKED -> CONSUMED` or duplicate `CONSUMED` history, and never restoring `UNUSED`).
+   * Proved hydration after concurrent races remains clean.
+   * Concurrency truth: strictly same-process transaction-level thread-safety; durable across restart; NO multi-process or distributed atomicity guarantee.
+   * Persistence error privacy: sanitized all persistence error messages to static bounded strings (`"Failed to durably persist approval consumption"`, `"Failed to durably persist approval revocation"`).
+   * Suppressed exception chaining using `from None` outside the except block, proving hostile sentinels (bearer tokens, emails, filesystem paths, API keys, prompt injections) are absent from `str`, `repr`, `__dict__`, `__cause__` (None), `__context__` (None), and formatted tracebacks.
    * Consumption ordering preserved: verify grant -> persist durable consumption -> record runtime consumption -> return authority-for-one-attempt.
    * Zero external provider executions, zero verification claims (`is_verified=False`), zero READY assertions (`is_ready=False`).
    * P-10 recovery separation intact; P-11.05 and P-11.06 remain strictly absent/unimplemented.

@@ -379,6 +379,12 @@ class ApprovalLedger:
     - Process-local in-memory registry (default).
     - Durable persistence backed by MissionLedgerPort (e.g. DurableFileLedger),
       ensuring consumed approvals survive process restarts.
+
+    Concurrency & Durability Guarantee:
+    - Process-local transaction-level thread-safety via internal re-entrant lock (RLock).
+    - Durable across process restarts when backed by a canonical MissionLedgerPort.
+    - Strictly process-local: NO distributed or cross-process multi-instance
+      atomic locking is provided.
     """
 
     def __init__(
@@ -392,12 +398,14 @@ class ApprovalLedger:
         if registry is not None and not isinstance(registry, UsedApprovalRegistry):
             raise ApprovalConsumptionTypeError("registry must be a UsedApprovalRegistry instance")
 
+        self._lock = threading.RLock()
         self._ledger = ledger
         self._registry = registry or UsedApprovalRegistry()
 
-        # If backed by a ledger, hydrate existing records
+        # If backed by a ledger, hydrate existing records under transaction lock
         if self._ledger is not None:
-            self._hydrate_from_ledger()
+            with self._lock:
+                self._hydrate_from_ledger()
 
     @classmethod
     def from_ledger(cls, ledger: MissionLedgerPort) -> ApprovalLedger:
@@ -568,17 +576,34 @@ class ApprovalLedger:
                     f"Corrupt or malformed approval consumption evidence: {exc}"
                 ) from exc
 
-        # Commit validated hydrated records into the registry
-        for key, rec in hydrated_records.items():
-            self._registry._records[key] = rec
+        # Commit validated hydrated records into the registry under registry lock
+        with self._registry._lock:
+            for key, rec in hydrated_records.items():
+                self._registry._records[key] = rec
 
     def check_status(self, approval_id: ApprovalId | str) -> ApprovalUsageStatus:
         """Check the current usage status of an approval ID."""
         key = str(approval_id)
-        rec = self._registry.get_record(key)
-        if rec is None:
-            return ApprovalUsageStatus.UNUSED
-        return rec.status
+        with self._lock:
+            rec = self._registry.get_record(key)
+            if rec is None:
+                return ApprovalUsageStatus.UNUSED
+            return rec.status
+
+    def is_used(self, approval_id: ApprovalId | str) -> bool:
+        """Check if an approval ID has been consumed or revoked."""
+        with self._lock:
+            return self._registry.is_used(approval_id)
+
+    def is_consumed(self, approval_id: ApprovalId | str) -> bool:
+        """Check if an approval ID has been consumed."""
+        with self._lock:
+            return self._registry.is_consumed(approval_id)
+
+    def is_revoked(self, approval_id: ApprovalId | str) -> bool:
+        """Check if an approval ID has been revoked."""
+        with self._lock:
+            return self._registry.is_revoked(approval_id)
 
     def consume(
         self,
@@ -594,19 +619,17 @@ class ApprovalLedger:
         1. Model/planner check (fail-closed against planner input).
         2. Timestamp and argument validation.
         3. Cryptographic binding verification (checks match, expiry, not-yet-valid, tampering).
-        4. Single-use check: fails closed if approval was already consumed or revoked.
-        5. Consumption recording: marks approval consumed in memory and (if configured)
-           appends an immutable evidence record to the durable ledger BEFORE execution.
-        6. Returns ApprovalConsumptionResult authorizing at most one execution attempt.
+        4. Transaction synchronization: status check, durable persistence, in-memory recording,
+           and authorization result creation are serialized under self._lock.
+        5. Returns ApprovalConsumptionResult authorizing at most one execution attempt.
 
-        Args:
-            grant: Canonical ApprovalGrant to consume.
-            action: Candidate ActionContract or ValidatedActionContract.
-            at: Explicit timezone-aware evaluation datetime.
-            attempt_number: Sequential attempt counter (>= 1).
-
-        Returns:
-            ApprovalConsumptionResult authorizing execution.
+        Concurrency & Durability Guarantee:
+        - Critical multi-step transaction (check -> durable append -> registry mutation) is
+          strictly serialized via process-local self._lock (threading.RLock).
+        - Guarantees two concurrent calls for the same approval cannot both append durable evidence.
+        - Exactly one winning call returns authorized; the losing call fails closed with
+          ApprovalAlreadyUsedError.
+        - Strictly process-local: does NOT provide or claim multi-process/distributed atomicity.
         """
         assert_not_planner_for_authority(grant, parameter_name="grant")
         assert_not_planner_for_authority(action, parameter_name="action")
@@ -629,70 +652,75 @@ class ApprovalLedger:
         norm_at = at if at.tzinfo == UTC else at.astimezone(UTC)
 
         # 1. Cryptographic binding and validity verification
-        # Reuses canonical verify_approval_binding: checks expiry, not-yet-valid,
-        # tampering, and mismatches.
         verify_approval_binding(action, grant, at=norm_at)
 
-        # 2. Check single-use / replay in registry
-        if self._registry.is_consumed(grant.approval_id):
-            existing_rec = self._registry.get_record(grant.approval_id)
-            c_time = existing_rec.consumed_at.isoformat() if existing_rec else "previously"
-            att = existing_rec.attempt_number if existing_rec else 1
-            raise ApprovalAlreadyUsedError(
-                f"Approval '{grant.approval_id}' was already consumed at {c_time} for attempt {att}"
-            )
-        if self._registry.is_revoked(grant.approval_id):
-            raise ApprovalRevokedError(
-                f"Approval '{grant.approval_id}' has been revoked and cannot be consumed"
-            )
-
-        # 3. Durable persistence BEFORE execution (if backed by MissionLedgerPort)
-        if self._ledger is not None:
-            payload = {
-                "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
-                "approval_id": str(grant.approval_id),
-                "mission_id": str(grant.mission_id),
-                "action_id": str(grant.action_id),
-                "binding_hash": grant.binding_hash.value,
-                "consumed_at": norm_at.isoformat(),
-                "consumed_for_attempt": attempt_number,
-            }
-            ev_record = EvidenceRecord.create(
-                action_id=grant.action_id,
-                mission_id=grant.mission_id,
-                origin=EvidenceOrigin(
-                    provenance=EvidenceProvenance.LOCAL_EXECUTION,
-                    observed_at=norm_at,
-                ),
-                payload=payload,
-                created_at=norm_at,
-            )
-            try:
-                self._ledger.append_evidence(ev_record)
-            except Exception as exc:
+        # Transaction-level lock serializes status check, durable persistence,
+        # in-memory registry recording, and authorization creation.
+        with self._lock:
+            # 2. Check single-use / replay in registry under transaction lock
+            if self._registry.is_consumed(grant.approval_id):
+                existing_rec = self._registry.get_record(grant.approval_id)
+                c_time = existing_rec.consumed_at.isoformat() if existing_rec else "previously"
+                att = existing_rec.attempt_number if existing_rec else 1
                 msg = (
-                    f"Failed to durably persist approval consumption for "
-                    f"'{grant.approval_id}': {exc}"
+                    f"Approval '{grant.approval_id}' was already consumed at "
+                    f"{c_time} for attempt {att}"
                 )
-                raise ApprovalConsumptionPersistenceError(msg) from exc
+                raise ApprovalAlreadyUsedError(msg)
+            if self._registry.is_revoked(grant.approval_id):
+                raise ApprovalRevokedError(
+                    f"Approval '{grant.approval_id}' has been revoked and cannot be consumed"
+                )
 
-        # 4. In-memory registry recording
-        self._registry.record_consumption(
-            grant,
-            at=norm_at,
-            attempt_number=attempt_number,
-        )
+            # 3. Durable persistence BEFORE execution (if backed by MissionLedgerPort)
+            if self._ledger is not None:
+                payload = {
+                    "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+                    "approval_id": str(grant.approval_id),
+                    "mission_id": str(grant.mission_id),
+                    "action_id": str(grant.action_id),
+                    "binding_hash": grant.binding_hash.value,
+                    "consumed_at": norm_at.isoformat(),
+                    "consumed_for_attempt": attempt_number,
+                }
+                ev_record = EvidenceRecord.create(
+                    action_id=grant.action_id,
+                    mission_id=grant.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                        observed_at=norm_at,
+                    ),
+                    payload=payload,
+                    created_at=norm_at,
+                )
+                persistence_failed = False
+                try:
+                    self._ledger.append_evidence(ev_record)
+                except Exception:
+                    persistence_failed = True
 
-        # 5. Return typed consumption result (strictly zero execution / verification claim)
-        return ApprovalConsumptionResult(
-            approval_id=grant.approval_id,
-            consumed_at=norm_at,
-            attempt_number=attempt_number,
-            is_authorized=True,
-            execution_outcome=None,
-            is_verified=False,
-            is_ready=False,
-        )
+                if persistence_failed:
+                    raise ApprovalConsumptionPersistenceError(
+                        "Failed to durably persist approval consumption"
+                    ) from None
+
+            # 4. In-memory registry recording
+            self._registry.record_consumption(
+                grant,
+                at=norm_at,
+                attempt_number=attempt_number,
+            )
+
+            # 5. Return typed consumption result (strictly zero execution / verification claim)
+            return ApprovalConsumptionResult(
+                approval_id=grant.approval_id,
+                consumed_at=norm_at,
+                attempt_number=attempt_number,
+                is_authorized=True,
+                execution_outcome=None,
+                is_verified=False,
+                is_ready=False,
+            )
 
     def revoke(
         self,
@@ -701,7 +729,13 @@ class ApprovalLedger:
         at: datetime,
         reason: str | None = None,
     ) -> None:
-        """Revoke an ApprovalGrant."""
+        """Revoke an ApprovalGrant so it can never authorize execution.
+
+        Thread Safety & Concurrency:
+        - Critical multi-step transaction (lineage check -> durable append -> memory record)
+          is synchronized via self._lock.
+        - Prevents concurrent consume/revoke races from generating invalid closed-world histories.
+        """
         assert_not_planner_for_authority(grant, parameter_name="grant")
         if not isinstance(at, datetime):
             raise ApprovalConsumptionTypeError("at must be a datetime instance")
@@ -709,64 +743,74 @@ class ApprovalLedger:
             raise ApprovalConsumptionValueError("at must be timezone-aware")
 
         norm_at = at if at.tzinfo == UTC else at.astimezone(UTC)
-        if isinstance(grant, ApprovalGrant):
-            aid = grant.approval_id
-            mid = grant.mission_id
-            act_id = grant.action_id
-            b_hash = grant.binding_hash
-        elif isinstance(grant, ApprovalId):
-            aid = grant
-            existing_rec = self._registry.get_record(str(aid))
-            if existing_rec is not None:
-                mid = existing_rec.mission_id
-                act_id = existing_rec.action_id
-                b_hash = existing_rec.binding_hash
+
+        with self._lock:
+            if isinstance(grant, ApprovalGrant):
+                aid = grant.approval_id
+                mid = grant.mission_id
+                act_id = grant.action_id
+                b_hash = grant.binding_hash
+            elif isinstance(grant, ApprovalId):
+                aid = grant
+                existing_rec = self._registry.get_record(str(aid))
+                if existing_rec is not None:
+                    mid = existing_rec.mission_id
+                    act_id = existing_rec.action_id
+                    b_hash = existing_rec.binding_hash
+                else:
+                    raise ApprovalConsumptionValueError(
+                        f"Cannot revoke approval '{aid}': canonical lineage "
+                        "(mission_id, action_id, binding_hash) is unknown and cannot be resolved"
+                    )
             else:
-                raise ApprovalConsumptionValueError(
-                    f"Cannot revoke approval '{aid}': canonical lineage "
-                    "(mission_id, action_id, binding_hash) is unknown and cannot be resolved"
+                raise ApprovalConsumptionTypeError("grant must be ApprovalGrant or ApprovalId")
+
+            # Check if already revoked: idempotent duplicate revocation under transaction lock
+            if self._registry.is_revoked(aid):
+                return
+
+            # 1. Record in durable ledger first (if configured)
+            if self._ledger is not None:
+                payload = {
+                    "evidence_type": APPROVAL_REVOCATION_EVIDENCE_TYPE,
+                    "approval_id": str(aid),
+                    "mission_id": str(mid),
+                    "action_id": str(act_id),
+                    "binding_hash": b_hash.value,
+                    "consumed_at": norm_at.isoformat(),
+                    "consumed_for_attempt": 1,
+                    "reason": redact_text(reason) if reason is not None else None,
+                }
+                ev_record = EvidenceRecord.create(
+                    action_id=act_id,
+                    mission_id=mid,
+                    origin=EvidenceOrigin(
+                        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                        observed_at=norm_at,
+                    ),
+                    payload=payload,
+                    created_at=norm_at,
                 )
-        else:
-            raise ApprovalConsumptionTypeError("grant must be ApprovalGrant or ApprovalId")
+                persistence_failed = False
+                try:
+                    self._ledger.append_evidence(ev_record)
+                except Exception:
+                    persistence_failed = True
 
-        # 1. Record in durable ledger first (if configured)
-        if self._ledger is not None:
-            payload = {
-                "evidence_type": APPROVAL_REVOCATION_EVIDENCE_TYPE,
-                "approval_id": str(aid),
-                "mission_id": str(mid),
-                "action_id": str(act_id),
-                "binding_hash": b_hash.value,
-                "consumed_at": norm_at.isoformat(),
-                "consumed_for_attempt": 1,
-                "reason": redact_text(reason) if reason is not None else None,
-            }
-            ev_record = EvidenceRecord.create(
-                action_id=act_id,
+                if persistence_failed:
+                    raise ApprovalRevocationPersistenceError(
+                        "Failed to durably persist approval revocation"
+                    ) from None
+
+            # 2. Record in memory registry only after durable append succeeds
+            self._registry.revoke(
+                aid,
+                at=norm_at,
                 mission_id=mid,
-                origin=EvidenceOrigin(
-                    provenance=EvidenceProvenance.LOCAL_EXECUTION,
-                    observed_at=norm_at,
-                ),
-                payload=payload,
-                created_at=norm_at,
+                action_id=act_id,
+                binding_hash=b_hash,
+                reason=reason,
             )
-            try:
-                self._ledger.append_evidence(ev_record)
-            except Exception as exc:
-                raise ApprovalRevocationPersistenceError(
-                    f"Failed to durably persist revocation for approval '{aid}': {exc}"
-                ) from exc
-
-        # 2. Record in memory registry only after durable append succeeds
-        self._registry.revoke(
-            aid,
-            at=norm_at,
-            mission_id=mid,
-            action_id=act_id,
-            binding_hash=b_hash,
-            reason=reason,
-        )
 
 
 # ===========================================================================
