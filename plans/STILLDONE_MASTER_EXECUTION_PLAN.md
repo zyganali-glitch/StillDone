@@ -1238,13 +1238,13 @@ Goal:
 reserve human attention for the meaningful boundary.
 
 ### P-11.01 — Freeze authority policy for canonical mission actions
-Status: PASS (independent QA verified)
+Status: PASS ✅ (independent QA verified)
 
 ### P-11.02 — Implement pending approval object and one-decision UX contract
-Status: REPAIRED / awaiting independent QA
+Status: PASS ✅ (independent QA verified)
 
 ### P-11.03 — Bind approval to exact mission/action/target/parameters/expiry
-Status: PENDING
+Status: IMPLEMENTED / awaiting batch QA
 
 ### P-11.04 — Reject stale, mismatched, replayed, or already-used approvals
 Status: PENDING
