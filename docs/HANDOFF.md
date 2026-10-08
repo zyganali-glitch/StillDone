@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: IMPLEMENTED / awaiting batch QA | P-11.04: PENDING / authorized in batch | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: IMPLEMENTED / awaiting batch QA | P-11.04: IMPLEMENTED / awaiting independent QA | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,7 +74,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-11.03 — Bind approval to exact mission/action/target/parameters/expiry (IMPLEMENTED / awaiting batch QA)
+Active task: P-11.04 — Reject stale, mismatched, replayed, or already-used approvals (IMPLEMENTED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
@@ -82,12 +82,12 @@ Status:
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
 - P-11.03: IMPLEMENTED / awaiting batch QA
-- P-11.04: PENDING / authorized in batch
+- P-11.04: IMPLEMENTED / awaiting independent QA
 - P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`
-Current exact task: P-11.03 — Bind approval to exact mission/action/target/parameters/expiry (IMPLEMENTED / awaiting batch QA)
-Next exact task: P-11.04 — Reject stale, mismatched, replayed, or already-used approvals (AUTHORIZED IN BATCH)
+Current exact task: P-11.04 — Reject stale, mismatched, replayed, or already-used approvals (IMPLEMENTED / awaiting independent QA)
+Next exact task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
