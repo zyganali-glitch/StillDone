@@ -21,7 +21,7 @@ from __future__ import annotations
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from stilldone.action_policy import ValidatedActionContract, validate_action_contract
@@ -29,7 +29,7 @@ from stilldone.adapters.calendar import (
     CalendarReadResult,
     CalendarReadStatus,
 )
-from stilldone.approval_consumption import ApprovalLedger
+from stilldone.approval_consumption import ApprovalLedger, ApprovalUsageStatus
 from stilldone.authority_policy import (
     ActionAuthorityPolicy,
     AuthorityPolicyTypeError,
@@ -43,7 +43,10 @@ from stilldone.domain.authority import ApprovalGrant, AuthorityClass
 from stilldone.domain.execution import ExecutionAttempt
 from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceProvenance
-from stilldone.execution.attempts import create_execution_attempt
+from stilldone.execution.attempts import (
+    create_execution_attempt,
+    record_provider_exception,
+)
 from stilldone.execution.router import AdapterRouter
 from stilldone.execution.state import (
     ActionExecutionStatus,
@@ -109,26 +112,22 @@ def _deep_freeze_mapping(val: Any) -> Any:
     return val
 
 
+def _sanitize_value(val: Any) -> Any:
+    """Recursively sanitize arbitrary nested structures for privacy-safe serialization."""
+    if isinstance(val, str):
+        return redact_text(val)
+    if isinstance(val, Mapping):
+        return {str(k): _sanitize_value(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return [_sanitize_value(item) for item in val]
+    return to_canonical_primitive(val)
+
+
 def _sanitize_summary_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
     """Recursively sanitize mapping values for privacy-safe serialization."""
-    sanitized: dict[str, Any] = {}
-    for k, v in mapping.items():
-        if isinstance(v, str):
-            sanitized[k] = redact_text(v)
-        elif isinstance(v, Mapping):
-            sanitized[k] = _sanitize_summary_mapping(v)
-        elif isinstance(v, (list, tuple)):
-            sanitized[k] = [
-                redact_text(item)
-                if isinstance(item, str)
-                else _sanitize_summary_mapping(item)
-                if isinstance(item, Mapping)
-                else item
-                for item in v
-            ]
-        else:
-            sanitized[k] = to_canonical_primitive(v)
-    return sanitized
+    if not isinstance(mapping, Mapping):
+        return {}
+    return {str(k): _sanitize_value(v) for k, v in mapping.items()}
 
 
 # ===========================================================================
@@ -256,6 +255,151 @@ class ExecutionGateDecision:
 
 
 # ===========================================================================
+# Provider Mutation Instrumentation Models & Spy
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class ProviderMutationObservation:
+    """Immutable observation of mutation entry points across router, handler, and transport.
+
+    Distinguishes method invocation count from successful-write count:
+    - router_mutation_invocations: number of router execution dispatches for mutation.
+    - handler_mutation_invocations: number of CalendarUpdateHandler.execute calls.
+    - transport_mutation_invocations: number of transport.update_event method invocations.
+    - transport_writes: number of completed transport mutation writes.
+    """
+
+    router_mutation_invocations: int = 0
+    handler_mutation_invocations: int = 0
+    transport_mutation_invocations: int = 0
+    transport_writes: int = 0
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "router_mutation_invocations",
+            "handler_mutation_invocations",
+            "transport_mutation_invocations",
+            "transport_writes",
+        ):
+            val = getattr(self, field_name)
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                raise ExecutionGateValueError(
+                    f"{field_name} must be a non-negative integer, got {val!r}"
+                )
+
+    @property
+    def total_mutation_invocations(self) -> int:
+        """Total number of mutation entry-point method invocations."""
+        return (
+            self.router_mutation_invocations
+            + self.handler_mutation_invocations
+            + self.transport_mutation_invocations
+        )
+
+    @property
+    def is_zero_mutation(self) -> bool:
+        """True if zero mutation method invocations occurred and zero writes took place."""
+        return self.total_mutation_invocations == 0 and self.transport_writes == 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Convert observation to a serializable dictionary."""
+        return {
+            "router_mutation_invocations": self.router_mutation_invocations,
+            "handler_mutation_invocations": self.handler_mutation_invocations,
+            "transport_mutation_invocations": self.transport_mutation_invocations,
+            "transport_writes": self.transport_writes,
+            "total_mutation_invocations": self.total_mutation_invocations,
+        }
+
+
+class CalendarMutationSpy:
+    """Minimal P-11.05 spy instrumenting router, handler, and transport mutation paths.
+
+    Separates method entry invocation counting from successful-write counting,
+    ensuring attempts that raise before write increment are observed.
+    """
+
+    def __init__(
+        self,
+        *,
+        router: AdapterRouter | None = None,
+        handler: Any | None = None,
+        transport: Any | None = None,
+    ) -> None:
+        self.router_invocations: int = 0
+        self.handler_invocations: int = 0
+        self.transport_invocations: int = 0
+        self._router = router
+        self._handler = handler
+        self._transport = transport
+        self._installed = False
+        self._orig_router_execute: Any = None
+        self._orig_handler_execute: Any = None
+        self._orig_transport_update: Any = None
+        self.install()
+
+    def install(self) -> None:
+        """Install instrumentation hooks on target objects."""
+        if self._installed:
+            return
+
+        if self._router is not None and hasattr(self._router, "execute"):
+            self._orig_router_execute = self._router.execute
+
+            def _spy_router_execute(action: Any, *args: Any, **kwargs: Any) -> Any:
+                act = getattr(action, "action", action)
+                act_type = getattr(act, "action_type", None)
+                if act_type == ActionType.CALENDAR_UPDATE:
+                    self.router_invocations += 1
+                return self._orig_router_execute(action, *args, **kwargs)
+
+            self._router.execute = _spy_router_execute  # type: ignore[method-assign]
+
+        if self._handler is not None and hasattr(self._handler, "execute"):
+            self._orig_handler_execute = self._handler.execute
+
+            def _spy_handler_execute(*args: Any, **kwargs: Any) -> Any:
+                self.handler_invocations += 1
+                return self._orig_handler_execute(*args, **kwargs)
+
+            self._handler.execute = _spy_handler_execute
+
+        if self._transport is not None and hasattr(self._transport, "update_event"):
+            self._orig_transport_update = self._transport.update_event
+
+            def _spy_transport_update(*args: Any, **kwargs: Any) -> Any:
+                self.transport_invocations += 1
+                return self._orig_transport_update(*args, **kwargs)
+
+            self._transport.update_event = _spy_transport_update
+
+        self._installed = True
+
+    def uninstall(self) -> None:
+        """Restore original methods."""
+        if not self._installed:
+            return
+        if self._router is not None and self._orig_router_execute is not None:
+            self._router.execute = self._orig_router_execute  # type: ignore[method-assign]
+        if self._handler is not None and self._orig_handler_execute is not None:
+            self._handler.execute = self._orig_handler_execute
+        if self._transport is not None and self._orig_transport_update is not None:
+            self._transport.update_event = self._orig_transport_update
+        self._installed = False
+
+    def observe(self) -> ProviderMutationObservation:
+        """Capture current observation snapshot."""
+        writes = getattr(self._transport, "writes_count", 0) if self._transport is not None else 0
+        return ProviderMutationObservation(
+            router_mutation_invocations=self.router_invocations,
+            handler_mutation_invocations=self.handler_invocations,
+            transport_mutation_invocations=self.transport_invocations,
+            transport_writes=writes,
+        )
+
+
+# ===========================================================================
 # Unapproved Action Receipt Model
 # ===========================================================================
 
@@ -282,7 +426,8 @@ class UnapprovedActionReceipt:
     - relevant before/after state comparison proving unchanged external state;
     - no READY claim;
     - evidence provenance;
-    - recorded timestamp.
+    - recorded timestamp;
+    - optional ProviderMutationObservation.
     """
 
     source_sha: str
@@ -305,6 +450,7 @@ class UnapprovedActionReceipt:
     is_ready_claimed: bool
     provenance: EvidenceProvenance
     recorded_at: datetime
+    mutation_observation: ProviderMutationObservation | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_sha, str) or not self.source_sha.strip():
@@ -390,6 +536,17 @@ class UnapprovedActionReceipt:
         if self.recorded_at.tzinfo != UTC:
             object.__setattr__(self, "recorded_at", self.recorded_at.astimezone(UTC))
 
+        if self.mutation_observation is not None:
+            if not isinstance(self.mutation_observation, ProviderMutationObservation):
+                raise ExecutionGateTypeError(
+                    "mutation_observation must be a ProviderMutationObservation or None, "
+                    f"got {type(self.mutation_observation).__name__}"
+                )
+            if not self.mutation_observation.is_zero_mutation:
+                raise ExecutionGateValueError(
+                    "P-11.05 receipt requires mutation_observation to record zero mutations"
+                )
+
         # Deep freeze state summaries to guarantee complete immutability
         object.__setattr__(
             self, "before_state_summary", _deep_freeze_mapping(self.before_state_summary)
@@ -446,7 +603,7 @@ class UnapprovedActionReceipt:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert receipt to a serializable, privacy-safe dictionary."""
-        return {
+        d: dict[str, Any] = {
             "source_sha": self.source_sha,
             "mission_id": str(self.mission_id),
             "action_id": str(self.action_id),
@@ -468,6 +625,9 @@ class UnapprovedActionReceipt:
             "provenance": self.provenance.value,
             "recorded_at": self.recorded_at.isoformat(),
         }
+        if self.mutation_observation is not None:
+            d["mutation_observation"] = self.mutation_observation.to_dict()
+        return d
 
 
 # ===========================================================================
@@ -735,12 +895,26 @@ def execute_gated_action(
         tracker.mark_in_progress(action.action_id)
 
     actual_action = action.action if isinstance(action, ValidatedActionContract) else action
-    provider_result = router.execute(
-        actual_action,
-        attempt=attempt,
-        approval=approval,
-        at=gate_decision.evaluated_at,
-    )
+    try:
+        provider_result = router.execute(
+            actual_action,
+            attempt=attempt,
+            approval=approval,
+            at=gate_decision.evaluated_at,
+        )
+    except Exception as exc:
+        if tracker is not None:
+            prov_res = record_provider_exception(actual_action.action_type, exc)
+            err_msg = (
+                prov_res.error_message or f"Synchronous execution failed: {type(exc).__name__}"
+            )
+            tracker.record_failure(
+                actual_action.action_id,
+                attempt=attempt,
+                provider_result=prov_res,
+                error_message=err_msg,
+            )
+        raise
 
     final_status: ActionExecutionStatus
     if provider_result.success:
@@ -787,9 +961,10 @@ def create_unapproved_action_receipt(
     pending_approval: PendingApproval,
     before_read: CalendarReadResult,
     after_read: CalendarReadResult,
-    measured_provider_mutations: int,
     source_sha: str,
     ledger: ApprovalLedger | None = None,
+    measured_provider_mutations: int = 0,
+    mutation_observation: ProviderMutationObservation | None = None,
     before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
@@ -800,7 +975,13 @@ def create_unapproved_action_receipt(
     Enforces all P-11.05 invariants and derives facts from observed reality:
     - Binds strictly to the canonical gate decision, action, and pending approval.
     - Rejects contradictory action identity, pending identity, or gate decision.
-    - Requires measured_provider_mutations == 0 from actual instrumentation.
+    - Requires measured_provider_mutations == 0 and validates
+      ProviderMutationObservation if supplied.
+    - Verifies zero approval consumption operations occurred in ledger for this action.
+    - Rejects absent ledger evidence (ledger=None fails closed).
+    - Enforces chronological ordering: before_read -> gate_decision -> independent after_read.
+    - Validates timezone-aware read_at and observed_at consistency.
+    - Rejects reversed, stale, same-operation, or pre-gate after-read evidence.
     - Derives before and after states directly from CalendarReadResult observations.
     - Rejects mismatched before vs after states (state_unchanged must be True).
     - Verifies external state does NOT reflect the proposed mutation parameters.
@@ -886,6 +1067,29 @@ def create_unapproved_action_receipt(
             "gate_decision pending_approval_id does not match pending_approval"
         )
 
+    # Defect 2: Require legitimate ledger evidence to prove absence of approval consumption
+    if ledger is None:
+        raise ExecutionGateValueError(
+            "ledger evidence is required to verify absence of approval consumption; "
+            "absent ledger evidence cannot be accepted"
+        )
+    if not isinstance(ledger, ApprovalLedger):
+        raise ExecutionGateTypeError(
+            f"ledger must be an ApprovalLedger instance, got {type(ledger).__name__}"
+        )
+
+    # Check that zero approval consumption records exist for this action in ledger
+    with ledger._lock:
+        for rec in ledger._registry._records.values():
+            if (
+                rec.action_id == actual_action.action_id
+                and rec.status == ApprovalUsageStatus.CONSUMED
+            ):
+                raise ExecutionGateValueError(
+                    f"Approval '{rec.approval_id}' was consumed for action "
+                    f"'{actual_action.action_id}' in ledger; cannot create receipt"
+                )
+
     # Measured provider mutations must come from instrumentation and be 0
     if measured_provider_mutations != 0:
         raise ExecutionGateValueError(
@@ -893,13 +1097,37 @@ def create_unapproved_action_receipt(
             f"got {measured_provider_mutations}"
         )
 
-    # Ledger consumption verification
-    if ledger is not None:
-        if ledger.is_used(pending_approval.pending_approval_id.value):
-            raise ExecutionGateValueError("Approval was marked used in ledger; must be unused")
-        if ledger.is_consumed(pending_approval.pending_approval_id.value):
+    # Defect 3: Validate ProviderMutationObservation if provided
+    if mutation_observation is not None:
+        if not isinstance(mutation_observation, ProviderMutationObservation):
+            raise ExecutionGateTypeError(
+                "mutation_observation must be a ProviderMutationObservation instance, "
+                f"got {type(mutation_observation).__name__}"
+            )
+        if mutation_observation.router_mutation_invocations != 0:
             raise ExecutionGateValueError(
-                "Approval was marked consumed in ledger; must be unconsumed"
+                f"Router mutation invocations must be 0 for NOT_RUN action, "
+                f"got {mutation_observation.router_mutation_invocations}"
+            )
+        if mutation_observation.handler_mutation_invocations != 0:
+            raise ExecutionGateValueError(
+                f"Handler mutation invocations must be 0 for NOT_RUN action, "
+                f"got {mutation_observation.handler_mutation_invocations}"
+            )
+        if mutation_observation.transport_mutation_invocations != 0:
+            raise ExecutionGateValueError(
+                f"Transport mutation invocations must be 0 for NOT_RUN action, "
+                f"got {mutation_observation.transport_mutation_invocations}"
+            )
+        if mutation_observation.transport_writes != 0:
+            raise ExecutionGateValueError(
+                f"Transport writes must be 0 for NOT_RUN action, "
+                f"got {mutation_observation.transport_writes}"
+            )
+        if measured_provider_mutations != mutation_observation.transport_writes:
+            raise ExecutionGateValueError(
+                f"measured_provider_mutations ({measured_provider_mutations}) contradicts "
+                f"mutation_observation.transport_writes ({mutation_observation.transport_writes})"
             )
 
     # Read observations verification
@@ -916,6 +1144,89 @@ def create_unapproved_action_receipt(
 
     before_obs = before_read.observation
     after_obs = after_read.observation
+
+    # Defect 1: Validate distinct operations
+    if before_read is after_read:
+        raise ExecutionGateValueError(
+            "before_read and after_read must be separate, independent read results"
+        )
+    if before_obs is after_obs:
+        raise ExecutionGateValueError(
+            "before_read and after_read observations must be separate instances"
+        )
+
+    # Timezone-awareness checks
+    if before_read.read_at.tzinfo is None or before_read.read_at.utcoffset() is None:
+        raise ExecutionGateValueError("before_read.read_at must be timezone-aware")
+    if before_obs.observed_at.tzinfo is None or before_obs.observed_at.utcoffset() is None:
+        raise ExecutionGateValueError("before_read.observation.observed_at must be timezone-aware")
+    if after_read.read_at.tzinfo is None or after_read.read_at.utcoffset() is None:
+        raise ExecutionGateValueError("after_read.read_at must be timezone-aware")
+    if after_obs.observed_at.tzinfo is None or after_obs.observed_at.utcoffset() is None:
+        raise ExecutionGateValueError("after_read.observation.observed_at must be timezone-aware")
+    if gate_decision.evaluated_at.tzinfo is None or gate_decision.evaluated_at.utcoffset() is None:
+        raise ExecutionGateValueError("gate_decision.evaluated_at must be timezone-aware")
+
+    b_read_at = (
+        before_read.read_at
+        if before_read.read_at.tzinfo == UTC
+        else before_read.read_at.astimezone(UTC)
+    )
+    b_obs_at = (
+        before_obs.observed_at
+        if before_obs.observed_at.tzinfo == UTC
+        else before_obs.observed_at.astimezone(UTC)
+    )
+    a_read_at = (
+        after_read.read_at
+        if after_read.read_at.tzinfo == UTC
+        else after_read.read_at.astimezone(UTC)
+    )
+    a_obs_at = (
+        after_obs.observed_at
+        if after_obs.observed_at.tzinfo == UTC
+        else after_obs.observed_at.astimezone(UTC)
+    )
+    g_eval_at = (
+        gate_decision.evaluated_at
+        if gate_decision.evaluated_at.tzinfo == UTC
+        else gate_decision.evaluated_at.astimezone(UTC)
+    )
+
+    # Reject identical same-operation timestamps
+    if b_read_at == a_read_at and b_obs_at == a_obs_at:
+        raise ExecutionGateValueError(
+            "before_read and after_read have identical timestamps; "
+            "two separate read operations are required"
+        )
+
+    # Chronological ordering checks:
+    # before observation -> gate evaluation -> independent after observation
+    if a_read_at < b_read_at or a_obs_at < b_obs_at:
+        raise ExecutionGateValueError(
+            "after_read occurred before before_read (reversed observation chronology)"
+        )
+    if b_read_at > g_eval_at or b_obs_at > g_eval_at:
+        raise ExecutionGateValueError("before_read occurred after gate evaluation")
+    if a_read_at < g_eval_at or a_obs_at < g_eval_at:
+        raise ExecutionGateValueError(
+            "after_read occurred before gate evaluation (pre-gate after-read evidence is invalid)"
+        )
+
+    # Freshness / Staleness check: before_read cannot be stale
+    if g_eval_at - b_read_at > timedelta(hours=24):
+        raise ExecutionGateValueError(
+            "before_read observation is stale (>24h prior to gate evaluation)"
+        )
+
+    # Recorded at timestamp
+    now = recorded_at or datetime.now(UTC)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ExecutionGateValueError("recorded_at must be timezone-aware")
+    norm_now = now if now.tzinfo == UTC else now.astimezone(UTC)
+
+    if norm_now < a_read_at or norm_now < a_obs_at:
+        raise ExecutionGateValueError("recorded_at cannot precede after_read observation timestamp")
 
     if (
         before_obs.event_id != actual_action.target.resource_id
@@ -969,9 +1280,6 @@ def create_unapproved_action_receipt(
                 "External event state reflects proposed mutation summary; mutation was executed!"
             )
 
-    now = recorded_at or datetime.now(UTC)
-    norm_now = now if now.tzinfo == UTC else now.astimezone(UTC)
-
     return UnapprovedActionReceipt(
         source_sha=source_sha,
         mission_id=actual_action.mission_id,
@@ -993,16 +1301,19 @@ def create_unapproved_action_receipt(
         is_ready_claimed=False,
         provenance=provenance,
         recorded_at=norm_now,
+        mutation_observation=mutation_observation,
     )
 
 
 __all__ = [
+    "CalendarMutationSpy",
     "ExecutionGateDecision",
     "ExecutionGateError",
     "ExecutionGateTypeError",
     "ExecutionGateValueError",
     "PendingApprovalBindingMismatchError",
     "PlannerGateAuthorityError",
+    "ProviderMutationObservation",
     "UnapprovedActionReceipt",
     "UnapprovedMutationBlockedError",
     "UnexpectedApprovalGrantError",

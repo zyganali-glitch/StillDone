@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: CLOSED (independent QA PASS ✅) | P-11.04: CLOSED (independent QA PASS ✅) | P-11.05: REPAIRED (Repairs A–E complete) / awaiting independent QA | P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `4ec4475f006207ec5840880bb9476f6d169442cd` | Audited P-11.05 implementation SHA: `12b42e4f0f92a08518b1e6efe4fd030912477bc9`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: CLOSED (independent QA PASS ✅) | P-11.04: CLOSED (independent QA PASS ✅) | P-11.05: REPAIRED (Consolidated Evidence-Integrity Repair Defects 1–5 complete) / awaiting independent QA | P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,20 +74,20 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (IMPLEMENTED / proof captured / awaiting independent QA)
+Active task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (REPAIRED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
-- P-11.03: CLOSED — independent QA PASS ✅
-- P-11.04: CLOSED — independent QA PASS ✅
-- P-11.05: IMPLEMENTED / proof captured / awaiting independent QA
+- P-11.03: CLOSED — independent QA PASS ✅ (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`)
+- P-11.04: CLOSED — independent QA PASS ✅ (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`)
+- P-11.05: REPAIRED (Consolidated Defects 1–5 complete) / awaiting independent QA
 - P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`
-Current exact task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (IMPLEMENTED / proof captured / awaiting independent QA)
+Current exact task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (REPAIRED / awaiting independent QA)
 Next exact task: Independent QA audit for P-11.05
 
 Architecture Truth — Dependency Isolation:
@@ -254,16 +254,15 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Last independently VERIFIED contiguous SHA
 
-`faa8c0591cdd7b57d30c34c393a263fdedae7bca`
+`4ec4475f006207ec5840880bb9476f6d169442cd`
 
 ## Current exact task
 
-P-11.01 — Freeze authority policy for canonical mission actions (REPAIRED / awaiting independent QA).
+P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (REPAIRED / awaiting independent QA).
 
 ## Next exact task
 
-P-11.02 — Implement pending approval object and one-decision UX contract (PENDING / NOT AUTHORIZED / NOT_RUN).
-
+Independent QA audit for P-11.05 (P-11.06 remains PENDING / NOT AUTHORIZED / NOT_RUN).
 
 ---
 
@@ -276,7 +275,7 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
   - Strict separation of authority policy from runtime grant: policy states requirements but never manufactures or implies an `ApprovalGrant`.
   - Verified read-only observation actions require zero approval; `calendar.update` strictly requires bound approval (`permit_execution_without_grant=False`); `task.create` is explicitly classified as mutating `REVERSIBLE_AUTO` (`permit_execution_without_grant=True`).
   - Tested with 53 comprehensive adversarial and canonical tests in `tests/test_phase_p11_authority_policy.py`.
-- **P-11.02 — Implement pending approval object and one-decision UX contract**: `REPAIRED / awaiting independent QA`.
+- **P-11.02 — Implement pending approval object and one-decision UX contract**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`).
   - Implemented immutable `PendingApproval` domain object and `OneDecisionContract` UX contract (`src/stilldone/pending_approval.py`).
   - Bounded human decision surface: closed-world `ApprovalDecision` enum (`APPROVE`, `REJECT`), zero free-form model strings permitted.
   - Pure content-addressed deterministic identity: `PendingApprovalId` backed by domain-separated SHA-256 (`stilldone:pending-approval:v1`).
@@ -284,14 +283,20 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
   - Pending != Approved invariant: `is_authorized=False`, `is_approved=False`, status is strictly `PENDING`, zero `ApprovalGrant` creation or execution authorization.
   - Smuggling protection: rejects `ApprovalGrant` instances passed to factory or dataclass constructor (`SmuggledGrantError`).
   - Privacy-safe: sensitive parameter plaintext, tokens, and emails automatically redacted in human summary and omitted from object repr.
-  - Surgical repair self-validation invariants:
-    * Self-validating `parameters_digest`: strictly lowercase 64-character SHA-256 hex recomputed deterministically from `parameters` via centralized helper `compute_parameters_digest`, verified via constant-time comparison (`hmac.compare_digest`), failing closed with `PendingApprovalTamperedError` on tampering and `PendingApprovalValueError` on invalid hex formatting.
-    * Self-validating human summary: derives privacy-safe human summary deterministically from the exact stored action via centralized helper `compute_human_summary`, enforcing `decision_contract.human_summary == expected_summary` and failing closed with `PendingApprovalValueError` if presentation prose diverges from runtime action facts.
-    * Timezone-aware UTC normalization and split-brain resolution: both `OneDecisionContract` and `PendingApproval` normalize `requested_at` to UTC and enforce strict timestamp equality (`decision_contract.requested_at == pending.requested_at`), failing closed with `PendingApprovalValueError` on split-brain timestamps.
-    * Explicit architectural serialization boundary: `OneDecisionContract.to_dict()` is the operator-facing privacy-safe presentation dictionary; `PendingApproval.to_dict()` is the internal domain entity serialization.
   - Tested with 75 comprehensive adversarial and canonical unit tests in `tests/test_phase_p11_02_pending_approval.py`.
-- **P-11.03 through P-11.06**: `PENDING / NOT AUTHORIZED / NOT_RUN`.
-- **Last independently VERIFIED contiguous SHA**: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`.
+- **P-11.03 — Bind approval to exact mission/action/target/parameters/expiry**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`).
+- **P-11.04 — Reject stale, mismatched, replayed, or already-used approvals**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`).
+- **P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval**: `REPAIRED (Consolidated Defects 1–5 complete) / awaiting independent QA`.
+  - Proves unapproved `CALENDAR_UPDATE` halts immediately at execution authority gate returning `ActionExecutionStatus.NOT_RUN` with `is_authorized=False` and `attempt=None`.
+  - Defect 1: Strictly enforced monotonic observation chronology (`before_read.read_at <= gate_decision.evaluated_at <= after_read.read_at`), non-identical timestamps, distinct observation instances, and timezone awareness across all observation timestamps.
+  - Defect 2: Approval ledger identity & bounds: eliminated invalid `PendingApprovalId` lookups as `ApprovalId`; accurately bounded negative proof to: no `ApprovalGrant` supplied, zero approval-consumption operations in `ApprovalLedger` for target action, and no authorization granted; absent ledger (`ledger=None`) fails closed.
+  - Defect 3: Provider mutation instrumentation: `CalendarMutationSpy` instruments all three mutation entry points (router, handler, transport update_event); separates method entry count from writes count; validates all entry points and writes are strictly 0; rejects contradictory observations.
+  - Defect 4: Source provenance & exact-SHA proof: runtime validation under `python -O` via `ProofVerificationError`; `--expected-sha` verified against clean worktree (`COMMITTED_SOURCE`); dirty worktree rejected fail-closed; CI suite executes proof with checked-out HEAD.
+  - Defect 5: Privacy & state integrity: recursive redaction across nested mappings, lists, tuples, and sets; hostile sentinels tested and absent; synchronous router/provider exceptions trapped in `execute_gated_action` to record `EXECUTION_FAILED`, preventing misleading terminal-looking `IN_PROGRESS` states.
+  - External event state unchanged across bounded observed fields (`summary`, `start_time`, `end_time`, `all_day`, `etag`, `status`) on `FakeGoogleCalendarTransport`.
+  - Zero personal spend ($0.00 observed API spend); zero live writes.
+- **P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN**.
+- **Last independently VERIFIED contiguous SHA**: `4ec4475f006207ec5840880bb9476f6d169442cd`.
 
 ### Phase P-10 Closure Summary
 Phase P-10 (Idempotency, Retry & Recovery) successfully closed with independent QA PASS:

@@ -3,24 +3,44 @@
 ## 1. Executive Summary
 
 - **Task**: `P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval`
-- **Execution Mode**: `Independent-QA-directed surgical repair` (Repairs A through E)
-- **Execution Timestamp**: `2026-10-08T20:40:00+00:00` (UTC)
+- **Execution Mode**: `Independent-QA-directed consolidated evidence-integrity repair` (Defects 1 through 5 resolved)
+- **Execution Timing**: Dynamic runtime timestamps recorded per execution run (derived from timezone-aware `read_at` and `evaluated_at` fields in each generated `UnapprovedActionReceipt`). The previous unsupported static timestamp (`2026-10-08T20:40:00+00:00`) has been eliminated.
 - **Last Independently Verified Remote SHA**: `4ec4475f006207ec5840880bb9476f6d169442cd`
-- **Audited P-11.05 Implementation SHA**: `12b42e4f0f92a08518b1e6efe4fd030912477bc9`
 - **Target Event Identity**: `evt_leave_for_school_001` on dedicated demo calendar `c_1880abc123demo@group.calendar.google.com`
 - **Action Type**: `ActionType.CALENDAR_UPDATE` (`calendar.update`)
 - **Authority Classification**: `AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`
 - **Pending Approval ID**: Content-addressed SHA-256 (`PendingApprovalId`)
 - **Approval Decision Status**: `PendingApprovalStatus.PENDING` (`is_approved=False`)
-- **Approval Grant Present**: `False` (zero grant created or submitted)
-- **Approval Consumed**: `False` (`ApprovalLedger` and `UsedApprovalRegistry` records == 0)
-- **Provider Mutation Call Count**: `0` (`FakeGoogleCalendarTransport.writes_count == 0`; zero HTTP `PUT`/`PATCH`/`POST` calls)
-- **Deterministic Execution State**: `ActionExecutionStatus.NOT_RUN`
-- **Before-State Start Time**: `2026-10-09T07:45:00+03:00`
-- **Proposed Start Time**: `2026-10-09T07:30:00+03:00`
-- **After-State Start Time**: `2026-10-09T07:45:00+03:00` (100% identical; state completely unchanged)
-- **External State Drift**: `0` (before-state observation strictly equals after-state observation)
-- **Mission Lifecycle State Claim**: `READY` is **STRICTLY NOT CLAIMED** (`is_ready_claimed=False`)
+- **Approval Grant Present**: `False` (`approval=None`; zero grant created or submitted)
+- **Approval Consumption Negative Proof Boundary**:
+  - Exactly bounded: no `ApprovalGrant` supplied, zero approval-consumption operations recorded for the target `action_id` in `ApprovalLedger`, and no authorization granted.
+  - Eliminated invalid `PendingApprovalId` lookups in `ApprovalLedger` (which indexes by `ApprovalId`).
+  - Silent `ledger=None` assumption eliminated; receipt creation strictly requires explicit `ApprovalLedger` evidence and fails closed otherwise.
+  - No global unobserved claim of historical approval consumption outside observed ledger records.
+- **Provider Mutation Entry-Point Invocations**: Strictly `0` across all three mutation entry points:
+  - `router_mutation_invocations == 0`
+  - `handler_mutation_invocations == 0`
+  - `transport_mutation_invocations == 0`
+  - Independently instrumented and measured via `CalendarMutationSpy`, not an arbitrary caller-supplied zero integer.
+- **Provider Writes Count**: Strictly `0` (`FakeGoogleCalendarTransport.writes_count == 0`; zero HTTP `PUT`/`PATCH`/`POST` calls).
+- **Deterministic Execution State**: `ActionExecutionStatus.NOT_RUN` (`is_authorized=False`, `attempt=None`).
+- **Bounded External State Observed**:
+  - The observed state contract explicitly covers a bounded subset: `event_id`, `calendar_id`, `summary`, `start_time`, `end_time`, `all_day`, `etag`, and `status`.
+  - Does not claim that all conceivable Google Calendar provider fields were observed.
+  - Provenance: `LOCAL_EXECUTION` / `FIXTURE` on `FakeGoogleCalendarTransport`.
+  - Before-State: `start_time: 2026-10-09T07:45:00+03:00`
+  - Proposed State: `start_time: 2026-10-09T07:30:00+03:00`
+  - After-State: `start_time: 2026-10-09T07:45:00+03:00` (100% identical; state completely unchanged)
+- **Chronological Ordering**:
+  - Strictly enforced and verified: `before_read.read_at` $\le$ `gate_decision.evaluated_at` $\le$ `after_read.read_at`.
+  - Distinct instances and non-identical timestamps required (`before_read.read_at < after_read.read_at`).
+  - Timezone awareness enforced across all timestamps (`read_at`, `observed_at`, `evaluated_at`).
+  - Freshness contract enforced ($\le 24$h stale boundary).
+- **External State Drift**: `0` (before-state observation strictly equals after-state observation).
+- **Mission Lifecycle State Claim**: `READY` is **STRICTLY NOT CLAIMED** (`is_ready_claimed=False`).
+- **Cost and Billing Reporting**:
+  - Observed API spending during this task: `$0.00` (zero live API calls executed, zero paid capabilities invoked).
+  - This observed task spending is strictly distinguished from unverified account-level billing claims or promotional credit balances.
 - **Live vs Local Boundary**:
   - Deterministic execution gating, tracker verification, and receipt generation executed via `LOCAL_EXECUTION` / `FIXTURE`.
   - Live Google Calendar credentials are not cached in the environment; interactive `InstalledAppFlow` cannot run headlessly. The live read portion is faithfully reported as `NOT_RUN / BLOCKED (token not cached)`.
@@ -34,7 +54,7 @@ StillDone enforces the foundational invariant:
 
 > **NO APPROVAL ≠ FAILED EXECUTION**
 >
-> An unapproved action is **NOT_RUN**. The provider mutation is never attempted. Provider mutation call count is strictly **0**.
+> An unapproved action is **NOT_RUN**. The provider mutation is never attempted. Provider mutation entry-point calls and write count are strictly **0**.
 
 ### 2.1 The Negative Proof
 This task is NOT: "call Google Calendar update and expect Google API to reject it with 401 or 403."
@@ -44,46 +64,55 @@ The execution authority gate (`evaluate_execution_gate` / `execute_gated_action`
 2. `policy.permit_execution_without_grant == False`
 3. `approval is None`
 4. Result: Immediate fail-closed stop returning `ActionExecutionStatus.NOT_RUN` with `is_authorized=False`.
-5. Router and adapter write methods are **NEVER INVOKED** (call count == 0; verified by spies on router, handler, and transport).
+5. Router, handler, and transport write methods are **NEVER INVOKED** (call count == 0; verified by `CalendarMutationSpy` across all 3 entry points).
 6. Tracker records `ActionExecutionStatus.NOT_RUN` without fabricating an execution attempt (`attempt=None`).
 7. Result is strictly NOT mislabeled `FAILED`, `EXECUTION_FAILED`, `PARTIAL`, `SUCCESS`, or `READY`.
 
 ---
 
-## 3. Consolidated Same-Scope Repairs (Repairs A–E)
+## 3. Consolidated Evidence-Integrity Repairs (Defects 1–5)
 
-### Repair A — Privacy-Safe Rejection
-- Raw string/repr reflection of arbitrary action or approval inputs in exceptions eliminated.
-- Rejection messages are static, bounded, and privacy-safe:
-  - `"String or conversational prose cannot act as authority gate action; must be a canonical ActionContract or ValidatedActionContract"`
-  - `"String prose cannot act as an ApprovalGrant; model/conversational text has ZERO authority"`
-- Exceptions raised using `from None` to prevent leaking sensitive values via `__cause__`, `__context__`, or chained tracebacks.
-- Hostile custom objects with secrets in `__repr__` and `__str__` rejected safely, displaying only `type(obj).__name__`.
+### Defect 1 — Observation Chronology Enforcement
+- **Ordering Constraint**: `create_unapproved_action_receipt()` and `scripts/p11_05_proof.py` strictly enforce:
+  `before_read.read_at <= gate_decision.evaluated_at <= after_read.read_at`
+- **Distinct Observations**: Rejects pre-gate after-reads, reversed reads (`before_read.read_at > after_read.read_at`), and same-operation reads (identical observation objects or identical timestamps).
+- **Timezone Awareness**: Rejects naive datetimes across all timestamps (`read_at`, `observed_at`, `evaluated_at`).
+- **Freshness**: Rejects before-reads older than 24 hours relative to gate evaluation.
+- **Instrumented Proof**: Proof script explicitly performs two separate Calendar reads separated by the gate decision.
+- **Regression Suite**: Automated regression tests verify that two reads taken before gate evaluation cannot produce a valid receipt.
 
-### Repair B — Correct Authority and State Boundaries
-- `PendingApproval` validated against complete exact action binding: `action_id`, `mission_id`, `action_type`, `authority_class`, `target`, `parameters`, `parameters_digest`, and `pending_approval_id`.
-- Mismatched pending approvals rejected without exposing sensitive target or parameter contents.
-- Unexpected `ApprovalGrant` on actions not requiring approval (e.g. `CALENDAR_READ`) rejected with `UnexpectedApprovalGrantError` before tracker or attempt generation is touched.
-- Premature `IN_PROGRESS` transitions prevented by generating `ExecutionAttempt` before updating tracker state.
-- Spies verify router, handler, and transport receive strictly 0 mutation calls.
+### Defect 2 — Approval Ledger Identity & Bounds Correction
+- **Identity Distinction**: Fixed improper use of `PendingApprovalId` as an `ApprovalId` in ledger lookups.
+- **Ledger Verification**: Inspects `ApprovalLedger` records to verify that zero consumed approvals exist for the target `action_id`.
+- **Negative Proof Scope**: Accurately bounds negative proof to:
+  1. No `ApprovalGrant` supplied;
+  2. No approval-consumption operations performed for the target action in the supplied ledger;
+  3. No authorization granted.
+- **Fail-Closed on Missing Evidence**: Rejects `ledger=None` fail-closed with `ExecutionGateValueError`.
+- **Adversarial Tests**: Added adversarial tests verifying rejection of consumed approvals for the target action, permission of consumed approvals for unrelated actions, and failure on absent ledgers.
 
-### Repair C — Evidence Derived From Observed Facts
-- `create_unapproved_action_receipt` binds facts directly to `ExecutionGateDecision`, canonical `action`, `PendingApproval`, and real `CalendarReadResult` observations.
-- Rejects loose unverified dictionaries. Requires `CalendarReadStatus.SUCCESS` with non-None observations targeting the exact event.
-- Verifies external event state did not mutate to the proposed parameters.
-- Provider mutation invocations verified from actual measured instrumentation (`writes_count == 0`).
-- Receipts are deeply frozen (`MappingProxyType`, `tuple`, `frozenset`) against post-creation mutation.
-- `to_dict()` sanitizes strings recursively with `redact_text`.
-- False claims of `LIVE_*` provenance rejected fail-closed.
+### Defect 3 — Provider Invocation Proof & Spy Instrumentation
+- **CalendarMutationSpy**: Implemented wrapper capturing invocations across:
+  1. `AdapterRouter` (`router_mutation_invocations`)
+  2. `CalendarUpdateHandler` (`handler_mutation_invocations`)
+  3. `FakeGoogleCalendarTransport.update_event` (`transport_mutation_invocations`)
+  4. Transport write count (`transport_writes`)
+- **Invocation vs Write Separation**: Spies distinguish method invocation count from successful-write count. If an adapter method is called but raises an exception before incrementing writes (e.g. invalid `If-Match` raising `CalendarTargetError`), the invocation is accurately captured.
+- **Contradiction Rejection**: `create_unapproved_action_receipt()` strictly validates `mutation_observation.is_zero_mutation`, rejecting any contradictory observation where invocations $> 0$ or writes $> 0$.
 
-### Repair D — Trustworthy Proof Execution and Source Provenance
-- `scripts/p11_05_proof.py` replaced all bare `assert`s with `ProofVerificationError` runtime checks effective under `python -O`.
-- Fails closed if Git SHA cannot be established (no `UNKNOWN_SHA` fallback).
-- Tracks worktree cleanliness and distinguishes `COMMITTED_SOURCE` from `LOCAL_DIRTY_WORKTREE`.
-- Supports `--expected-sha` argument for post-commit CI verification.
+### Defect 4 — Source Provenance and Exact-SHA Proof
+- **Runtime Checks Under `-O`**: `scripts/p11_05_proof.py` uses `ProofVerificationError` instead of bare assertions, remaining fully effective under `python -O`.
+- **Exact-SHA Verification**: Script accepts `--expected-sha` and validates against checked-out Git HEAD.
+- **Cleanliness Enforcement**: Rejects `--expected-sha` fail-closed when working tree is dirty (`"Cannot claim exact-SHA committed-source proof when git worktree is dirty"`).
+- **Provenance Modes**: Accurately distinguishes `COMMITTED_SOURCE` (clean worktree) from `LOCAL_DIRTY_WORKTREE`.
+- **Automated CI Path**: `tests/test_phase_p11_05_calendar_update_not_run.py` automatically exercises `--expected-sha` with checked-out HEAD when the worktree is clean, guaranteeing exact-SHA validation in CI.
 
-### Repair E — Adversarial Proof Strengthening
-- Expanded test suite from 15 to 34 automated unit & adversarial tests in `tests/test_phase_p11_05_calendar_update_not_run.py`.
+### Defect 5 — Privacy and State Integrity
+- **Recursive Sanitization**: Enhanced `to_dict()` sanitization with recursive traversal across nested mappings, lists, tuples, and sets, scrubbing sensitive strings (emails, bearer tokens, passwords) using `redact_text`.
+- **Hostile Sentinel Tests**: Tested hostile objects and sentinels (`HOSTILE_SECRET_KEY_99999`) in nested structures, verifying their absence from serialized receipts and exception messages.
+- **Exception Isolation**: All gate exceptions raised using `raise ... from None` to eliminate leakage via `__cause__` or `__context__`.
+- **Synchronous Exception Handling**: `execute_gated_action` wraps router execution in `try...except`; synchronous router or provider exceptions update the tracker to `EXECUTION_FAILED`, preventing misleading terminal-looking `IN_PROGRESS` states.
+- **Truthful Status**: Pre-execution approval denial remains strictly `NOT_RUN` without fabricating an execution attempt (`attempt=None`).
 
 ---
 
@@ -98,11 +127,11 @@ The complete proof was verified deterministically via `scripts/p11_05_proof.py` 
 | **3** | Authority classification | `get_action_authority_policy(ActionType.CALENDAR_UPDATE)` | `REVERSIBLE_APPROVAL_REQUIRED`, `requires_bound_approval=True`, `permit_execution_without_grant=False` |
 | **4** | Produce PendingApproval | `create_pending_approval(validated_action)` | Deterministic content-addressed `PendingApprovalId` created; status is `PENDING` |
 | **5** | Do NOT approve | Explicit parameter check | `approval=None`; no `ApprovalGrant` instance created or supplied |
-| **6** | Do NOT consume grant | `ApprovalLedger` inspection | `approval_ledger.is_used(...) == False`, `is_consumed(...) == False`, status == `UNUSED` |
+| **6** | Do NOT consume grant | `ApprovalLedger` inspection | `approval_ledger` records for target `action_id` == `0`; `is_used(...) == False`, status == `UNUSED` |
 | **7** | Submit candidate action | `execute_gated_action(action, router, tracker, approval=None)` | Routed through execution authority gate; stops before adapter router dispatch |
-| **8** | Provider write prevented | `cal_transport.writes_count` assertion | Writes count == `0` (before count: 0, after count: 0; spy verified) |
-| **9** | Deterministic NOT_RUN | `ExecutionStateTracker.get_status(aid)` | Recorded as strictly `ActionExecutionStatus.NOT_RUN` (`is_authorized=False`) |
-| **10** | Independent read-back | Separate `cal_read_adapter.read_event` | Read-back succeeds independently (`status == CalendarReadStatus.SUCCESS`) |
+| **8** | Provider write prevented | `CalendarMutationSpy` assertion | Router calls == `0`, handler calls == `0`, transport calls == `0`, transport writes == `0` |
+| **9** | Deterministic NOT_RUN | `ExecutionStateTracker.get_status(aid)` | Recorded as strictly `ActionExecutionStatus.NOT_RUN` (`is_authorized=False`, `attempt=None`) |
+| **10** | Independent read-back | Separate `cal_read_adapter.read_event` | Read-back succeeds independently (`status == CalendarReadStatus.SUCCESS`); monotonic chronology verified |
 | **11** | External state unchanged | Equality assertion on before/after states | `before_state == after_state` (`start_time: 07:45:00+03:00` preserved; not changed to proposed `07:30:00`) |
 | **12** | Durable receipt created | `create_unapproved_action_receipt(...)` | Complete `UnapprovedActionReceipt` generated from observed facts with zero secrets |
 
@@ -132,6 +161,7 @@ The following operations were explicitly **NOT_RUN** during Phase P-11.05:
 
 ## 7. Financial and Privacy Auditing
 
-- **Personal Spend**: `$0.00`
-- **Paid Resources / APIs**: `0`
-- **Secrets / Tokens in Git / Evidence**: Strictly `0` (sanitized IDs, zero OAuth secrets, zero credentials logged)
+- **Observed Task API Spend**: `$0.00`
+- **Paid Resources / Capabilities Invoked**: `0`
+- **Account-Level Billing**: Unverified / not observed by this runtime (distinguished from observed $0.00 task spend).
+- **Secrets / Tokens in Git / Evidence**: Strictly `0` (sanitized IDs, zero OAuth secrets, zero credentials logged).

@@ -1250,10 +1250,23 @@ Status: PASS ✅ (independent QA verified)
 Status: PASS ✅ (independent QA verified)
 
 ### P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval
-Status: REPAIRED (Repairs A–E complete) / awaiting independent QA
+Status: REPAIRED (Consolidated Evidence-Integrity Repair Defects 1–5 complete) / awaiting independent QA
+
+Acceptance:
+- 12-step negative proof chain executed deterministically proving an unapproved `CALENDAR_UPDATE` action remains strictly `NOT_RUN`;
+- authority gate evaluates P-11.01 policy table: unapproved action halts immediately with `is_authorized=False` before router dispatch;
+- tracker records `ActionExecutionStatus.NOT_RUN` without fabricating an execution attempt (`attempt=None`);
+- Defect 1 (Observation Chronology): strictly enforced monotonic ordering `before_read.read_at <= gate_decision.evaluated_at <= after_read.read_at`; pre-gate after-reads, reversed reads, same-operation duplicate reads, stale reads (>24h), and timezone-naive timestamps rejected fail-closed;
+- Defect 2 (Approval Ledger Identity & Bounds): eliminated invalid `PendingApprovalId` lookups as `ApprovalId`; accurately bounded negative proof to: no `ApprovalGrant` supplied, zero approval-consumption operations in `ApprovalLedger` for target action, and no authorization granted; absent ledger (`ledger=None`) fails closed;
+- Defect 3 (Provider Mutation Instrumentation): `CalendarMutationSpy` instruments all three mutation entry points (router, handler, transport update_event); separates method entry count from writes count; validates all entry points and writes are strictly 0; rejects contradictory observations;
+- Defect 4 (Source Provenance & Exact-SHA Proof): runtime validation under `python -O` via `ProofVerificationError`; `--expected-sha` verified against clean worktree (`COMMITTED_SOURCE`); dirty worktree rejected fail-closed; CI suite executes proof with checked-out HEAD;
+- Defect 5 (Privacy & State Integrity): recursive redaction across nested mappings, lists, tuples, and sets; hostile sentinels tested and absent; synchronous router/provider exceptions trapped in `execute_gated_action` to record `EXECUTION_FAILED`, preventing misleading terminal-looking `IN_PROGRESS` states;
+- External state unchanged: bounded observed fields (`summary`, `start_time`, `end_time`, `all_day`, `etag`, `status`) verified identical between before-read and after-read on `FakeGoogleCalendarTransport`;
+- Zero personal spend maintained ($0.00 observed API spend);
+- P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: PENDING
+Status: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Phase exit:
 one meaningful approval replaces repeated confirmations.

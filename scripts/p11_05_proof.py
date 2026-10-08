@@ -77,6 +77,7 @@ from stilldone.domain.mission import MissionId  # noqa: E402
 from stilldone.domain.provenance import EvidenceProvenance  # noqa: E402
 from stilldone.execution.contracts import MissionExecutionContract  # noqa: E402
 from stilldone.execution.gate import (  # noqa: E402
+    CalendarMutationSpy,
     create_unapproved_action_receipt,
     execute_gated_action,
 )
@@ -169,6 +170,10 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
     is_worktree_clean = check_git_worktree_clean()
 
     if expected_sha is not None:
+        if not is_worktree_clean:
+            raise ProofVerificationError(
+                "Cannot claim exact-SHA committed-source proof when git worktree is dirty"
+            )
         cleaned_expected = expected_sha.strip().lower()
         if current_sha != cleaned_expected:
             raise ProofVerificationError(
@@ -207,14 +212,21 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
     loc_config = WeatherLocationConfig("loc-demo", latitude=52.52, longitude=13.41)
     weather_read = OpenMeteoReadAdapter(loc_config, weather_transport)
 
+    cal_update_handler = CalendarUpdateHandler(cal_update_adapter)
     router = AdapterRouter(
         {
             ActionType.CALENDAR_READ: CalendarReadHandler(cal_read_adapter),
-            ActionType.CALENDAR_UPDATE: CalendarUpdateHandler(cal_update_adapter),
+            ActionType.CALENDAR_UPDATE: cal_update_handler,
             ActionType.TASK_READ: TasksReadHandler(tasks_read),
             ActionType.TASK_CREATE: TasksCreateHandler(tasks_create),
             ActionType.WEATHER_READ: WeatherReadHandler(weather_read),
         }
+    )
+
+    mutation_spy = CalendarMutationSpy(
+        router=router,
+        handler=cal_update_handler,
+        transport=cal_transport,
     )
 
     shared_mission_id = MissionId.generate()
@@ -290,15 +302,15 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
     # Step 5 & 6: Enforce NO approval grant and NO approval consumption
     registry = UsedApprovalRegistry()
     approval_ledger = ApprovalLedger(registry=registry)
-    if approval_ledger.is_used(pending_approval.pending_approval_id.value):
-        raise ProofVerificationError("Pending approval must not be marked used")
-    if approval_ledger.is_consumed(pending_approval.pending_approval_id.value):
-        raise ProofVerificationError("Pending approval must not be marked consumed")
-    if (
-        approval_ledger.check_status(pending_approval.pending_approval_id.value)
-        != ApprovalUsageStatus.UNUSED
-    ):
-        raise ProofVerificationError("Approval status must be UNUSED")
+    with approval_ledger._lock:
+        for rec in registry._records.values():
+            if (
+                rec.action_id == update_action.action_id
+                and rec.status == ApprovalUsageStatus.CONSUMED
+            ):
+                raise ProofVerificationError(
+                    "Approval consumption record exists in ledger for this action"
+                )
 
     # Step 7: Send candidate action through execution authority gate
     exec_contract = MissionExecutionContract(
@@ -320,7 +332,13 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         pending_approval=pending_approval,
     )
 
+    mutation_obs = mutation_spy.observe()
+
     # Step 8: Assert mutation execution is rejected BEFORE provider write
+    if not mutation_obs.is_zero_mutation:
+        raise ProofVerificationError(
+            f"Provider mutation was invoked during unapproved execution! {mutation_obs.to_dict()}"
+        )
     if cal_transport.writes_count != initial_update_calls or cal_transport.writes_count != 0:
         raise ProofVerificationError(
             f"Provider update method was invoked! Writes count: {cal_transport.writes_count}"
@@ -370,6 +388,21 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
     if after_result.observation is None:
         raise ProofVerificationError("After read observation is None")
 
+    # Chronological ordering checks:
+    # before observation -> gate evaluation -> independent after observation
+    if before_result.read_at > gate_decision.evaluated_at:
+        raise ProofVerificationError(
+            "Chronology violation: before_result.read_at occurred after gate evaluation"
+        )
+    if after_result.read_at < gate_decision.evaluated_at:
+        raise ProofVerificationError(
+            "Chronology violation: after_result.read_at occurred before gate evaluation"
+        )
+    if before_result.read_at >= after_result.read_at:
+        raise ProofVerificationError(
+            "Chronology violation: before_result.read_at >= after_result.read_at"
+        )
+
     after_obs = after_result.observation
     after_state = {
         "summary": after_obs.summary,
@@ -399,6 +432,7 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         before_read=before_result,
         after_read=after_result,
         measured_provider_mutations=cal_transport.writes_count,
+        mutation_observation=mutation_obs,
         source_sha=current_sha,
         ledger=approval_ledger,
         before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
@@ -425,7 +459,6 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         "task": "P-11.05 -- Prove Calendar existing-event update remains NOT_RUN before approval",
         "current_git_sha": current_sha,
         "last_verified_parent_sha": LAST_VERIFIED_PARENT_SHA,
-        "audited_p11_05_sha": AUDITED_P11_05_IMPLEMENTATION_SHA,
         "worktree_clean": is_worktree_clean,
         "source_provenance_mode": "COMMITTED_SOURCE"
         if is_worktree_clean
@@ -438,6 +471,7 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         "approval_grant_present": False,
         "approval_consumed": False,
         "provider_update_invocation_count": cal_transport.writes_count,
+        "provider_mutation_observation": mutation_obs.to_dict(),
         "execution_status": gate_decision.status.value,
         "before_state": before_state,
         "after_state": after_state,
@@ -474,7 +508,6 @@ def main() -> None:
     print(f"Task:                    {result['task']}")
     print(f"Current Git SHA:         {result['current_git_sha']}")
     print(f"Parent Verified SHA:     {result['last_verified_parent_sha']}")
-    print(f"Audited P-11.05 SHA:     {result['audited_p11_05_sha']}")
     print(f"Worktree Clean:          {result['worktree_clean']}")
     print(f"Source Provenance:       {result['source_provenance_mode']}")
     print(f"Target Event:            {result['target_event_id']}")

@@ -40,6 +40,7 @@ from stilldone.adapters.calendar import (
     CalendarEventObservation,
     CalendarReadResult,
     CalendarReadStatus,
+    CalendarTargetError,
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
     GoogleCalendarUpdateAdapter,
@@ -83,11 +84,14 @@ from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.execution.contracts import MissionExecutionContract
 from stilldone.execution.gate import (
+    CalendarMutationSpy,
     ExecutionGateDecision,
     ExecutionGateTypeError,
     ExecutionGateValueError,
     PendingApprovalBindingMismatchError,
     PlannerGateAuthorityError,
+    ProviderMutationObservation,
+    UnapprovedActionReceipt,
     UnexpectedApprovalGrantError,
     create_unapproved_action_receipt,
     evaluate_execution_gate,
@@ -763,6 +767,7 @@ class TestObservedFactsReceiptIntegrity:
             pending_approval=pending,
         )
         after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         receipt = create_unapproved_action_receipt(
             gate_decision=gate_decision,
@@ -772,6 +777,7 @@ class TestObservedFactsReceiptIntegrity:
             after_read=after_result,
             measured_provider_mutations=seeded_calendar_transport.writes_count,
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=ledger,
         )
 
         assert receipt.execution_state == ActionExecutionStatus.NOT_RUN
@@ -789,11 +795,9 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
-
         invalid_decision = ExecutionGateDecision(
             action_id=update_action.action_id,
             action_type=update_action.action_type,
@@ -804,6 +808,8 @@ class TestObservedFactsReceiptIntegrity:
             evaluated_at=datetime.now(UTC),
             pending_approval_id=pending.pending_approval_id,
         )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError) as exc_info:
             create_unapproved_action_receipt(
@@ -814,6 +820,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result,
                 measured_provider_mutations=0,
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
             )
         assert "Receipt requires gate decision status NOT_RUN" in str(exc_info.value)
 
@@ -826,13 +833,14 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
         gate_decision = evaluate_execution_gate(
             update_action, approval=None, pending_approval=pending
         )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError) as exc_info:
             create_unapproved_action_receipt(
@@ -843,6 +851,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result,
                 measured_provider_mutations=1,  # Contradictory measured count!
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
             )
         assert "Measured provider mutations must be 0" in str(exc_info.value)
 
@@ -857,6 +866,13 @@ class TestObservedFactsReceiptIntegrity:
         before_result = calendar_read_adapter.read_event(read_action)
         assert before_result.observation is not None
         orig_obs = before_result.observation
+
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
 
         mutated_obs = CalendarEventObservation(
             event_id=orig_obs.event_id,
@@ -873,14 +889,9 @@ class TestObservedFactsReceiptIntegrity:
             status=CalendarReadStatus.SUCCESS,
             event_id=orig_obs.event_id,
             observation=mutated_obs,
+            read_at=datetime.now(UTC),
         )
-
-        pending = create_pending_approval(
-            validate_action_contract(update_action), requested_at=datetime.now(UTC)
-        )
-        gate_decision = evaluate_execution_gate(
-            update_action, approval=None, pending_approval=pending
-        )
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError) as exc_info:
             create_unapproved_action_receipt(
@@ -891,6 +902,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result_mutated,
                 measured_provider_mutations=0,
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
             )
         assert "Observed external event state differs" in str(exc_info.value)
 
@@ -905,6 +917,13 @@ class TestObservedFactsReceiptIntegrity:
         before_result = calendar_read_adapter.read_event(read_action)
         assert before_result.observation is not None
         orig_obs = before_result.observation
+
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
 
         # Fake an observation where start_time mutated to proposed start_time
         mutated_obs = CalendarEventObservation(
@@ -922,14 +941,9 @@ class TestObservedFactsReceiptIntegrity:
             status=CalendarReadStatus.SUCCESS,
             event_id=orig_obs.event_id,
             observation=mutated_obs,
+            read_at=datetime.now(UTC),
         )
-
-        pending = create_pending_approval(
-            validate_action_contract(update_action), requested_at=datetime.now(UTC)
-        )
-        gate_decision = evaluate_execution_gate(
-            update_action, approval=None, pending_approval=pending
-        )
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError):
             create_unapproved_action_receipt(
@@ -940,6 +954,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result_executed,
                 measured_provider_mutations=0,
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
             )
 
     def test_receipt_rejects_live_provenance_claims(
@@ -951,13 +966,14 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
         gate_decision = evaluate_execution_gate(
             update_action, approval=None, pending_approval=pending
         )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError) as exc_info:
             create_unapproved_action_receipt(
@@ -968,6 +984,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result,
                 measured_provider_mutations=0,
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
                 provenance=EvidenceProvenance.LIVE_GOOGLE,
             )
         assert "cannot claim live provenance" in str(exc_info.value)
@@ -981,13 +998,14 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
         gate_decision = evaluate_execution_gate(
             update_action, approval=None, pending_approval=pending
         )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         with pytest.raises(ExecutionGateValueError) as exc_info:
             create_unapproved_action_receipt(
@@ -998,6 +1016,7 @@ class TestObservedFactsReceiptIntegrity:
                 after_read=after_result,
                 measured_provider_mutations=0,
                 source_sha="invalid_short_sha",
+                ledger=ledger,
             )
         assert "40-character hexadecimal git commit SHA" in str(exc_info.value)
 
@@ -1010,13 +1029,14 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
         gate_decision = evaluate_execution_gate(
             update_action, approval=None, pending_approval=pending
         )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
 
         receipt = create_unapproved_action_receipt(
             gate_decision=gate_decision,
@@ -1026,6 +1046,7 @@ class TestObservedFactsReceiptIntegrity:
             after_read=after_result,
             measured_provider_mutations=0,
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=ledger,
         )
 
         with pytest.raises(TypeError):
@@ -1043,12 +1064,411 @@ class TestObservedFactsReceiptIntegrity:
         read_action = _make_calendar_read_action()
         update_action = _make_calendar_update_action()
         before_result = calendar_read_adapter.read_event(read_action)
-        after_result = calendar_read_adapter.read_event(read_action)
         pending = create_pending_approval(
             validate_action_contract(update_action), requested_at=datetime.now(UTC)
         )
         gate_decision = evaluate_execution_gate(
             update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        receipt = create_unapproved_action_receipt(
+            gate_decision=gate_decision,
+            action=update_action,
+            pending_approval=pending,
+            before_read=before_result,
+            after_read=after_result,
+            measured_provider_mutations=0,
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=ledger,
+        )
+
+        as_dict = receipt.to_dict()
+        assert as_dict["execution_state"] == "NOT_RUN"
+        assert as_dict["provider_mutation_invocations"] == 0
+        assert as_dict["is_ready_claimed"] is False
+
+    # -----------------------------------------------------------------------
+    # Defect 1: Observation Chronology Tests
+    # -----------------------------------------------------------------------
+
+    def test_receipt_rejects_pre_gate_after_read_chronology_regression(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Regression: two reads made before gate evaluation cannot produce a valid receipt."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        # Both reads performed before gate evaluation:
+        before_result = calendar_read_adapter.read_event(read_action)
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        # Gate evaluation occurs strictly after after_result was read:
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        ledger = ApprovalLedger()
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "after_read occurred before gate evaluation" in str(exc_info.value)
+
+    def test_receipt_rejects_reversed_read_chronology(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory rejects after_read that has timestamp earlier than before_read."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        base_time = datetime.now(UTC)
+
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=base_time
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action,
+            approval=None,
+            pending_approval=pending,
+            at=base_time + timedelta(seconds=10),
+        )
+
+        obs = calendar_read_adapter.read_event(read_action).observation
+        assert obs is not None
+
+        # before_read has a later timestamp than after_read
+        before_obs = CalendarEventObservation(
+            event_id=obs.event_id,
+            calendar_id=obs.calendar_id,
+            summary=obs.summary,
+            start_time=obs.start_time,
+            end_time=obs.end_time,
+            all_day=obs.all_day,
+            etag=obs.etag,
+            status=obs.status,
+            observed_at=base_time + timedelta(seconds=5),
+        )
+        before_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=obs.event_id,
+            observation=before_obs,
+            read_at=base_time + timedelta(seconds=5),
+        )
+
+        after_obs = CalendarEventObservation(
+            event_id=obs.event_id,
+            calendar_id=obs.calendar_id,
+            summary=obs.summary,
+            start_time=obs.start_time,
+            end_time=obs.end_time,
+            all_day=obs.all_day,
+            etag=obs.etag,
+            status=obs.status,
+            observed_at=base_time + timedelta(seconds=2),  # Earlier than before_read!
+        )
+        after_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=obs.event_id,
+            observation=after_obs,
+            read_at=base_time + timedelta(seconds=2),
+        )
+        ledger = ApprovalLedger()
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "reversed observation chronology" in str(exc_info.value)
+
+    def test_receipt_rejects_same_operation_identical_timestamps(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory rejects before_read and after_read having identical timestamps."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        t = datetime.now(UTC)
+
+        obs = calendar_read_adapter.read_event(read_action).observation
+        assert obs is not None
+
+        obs1 = CalendarEventObservation(
+            event_id=obs.event_id,
+            calendar_id=obs.calendar_id,
+            summary=obs.summary,
+            start_time=obs.start_time,
+            end_time=obs.end_time,
+            all_day=obs.all_day,
+            etag=obs.etag,
+            status=obs.status,
+            observed_at=t,
+        )
+        obs2 = CalendarEventObservation(
+            event_id=obs.event_id,
+            calendar_id=obs.calendar_id,
+            summary=obs.summary,
+            start_time=obs.start_time,
+            end_time=obs.end_time,
+            all_day=obs.all_day,
+            etag=obs.etag,
+            status=obs.status,
+            observed_at=t,
+        )
+        before_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=obs.event_id,
+            observation=obs1,
+            read_at=t,
+        )
+        after_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=obs.event_id,
+            observation=obs2,
+            read_at=t,
+        )
+
+        pending = create_pending_approval(validate_action_contract(update_action), requested_at=t)
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending, at=t
+        )
+        ledger = ApprovalLedger()
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "identical timestamps" in str(exc_info.value)
+
+    def test_receipt_rejects_stale_before_read(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory rejects before_read older than 24 hours."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        now = datetime.now(UTC)
+        stale_time = now - timedelta(hours=25)
+
+        obs = calendar_read_adapter.read_event(read_action).observation
+        assert obs is not None
+
+        stale_obs = CalendarEventObservation(
+            event_id=obs.event_id,
+            calendar_id=obs.calendar_id,
+            summary=obs.summary,
+            start_time=obs.start_time,
+            end_time=obs.end_time,
+            all_day=obs.all_day,
+            etag=obs.etag,
+            status=obs.status,
+            observed_at=stale_time,
+        )
+        before_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=obs.event_id,
+            observation=stale_obs,
+            read_at=stale_time,
+        )
+
+        pending = create_pending_approval(validate_action_contract(update_action), requested_at=now)
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending, at=now
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "stale" in str(exc_info.value)
+
+    def test_receipt_rejects_timezone_naive_timestamps(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory rejects naive timestamps without timezone info."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        # Construct naive read result
+        naive_result = CalendarReadResult(
+            status=CalendarReadStatus.SUCCESS,
+            event_id=before_result.event_id,
+            observation=before_result.observation,
+            read_at=datetime.now(),  # Naive!
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=naive_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "must be timezone-aware" in str(exc_info.value)
+
+    # -----------------------------------------------------------------------
+    # Defect 2: Approval Ledger Identity Tests
+    # -----------------------------------------------------------------------
+
+    def test_receipt_rejects_absent_ledger_evidence(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory fails closed when ledger is None."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=None,  # Absent!
+            )
+        assert "ledger evidence is required" in str(exc_info.value)
+
+    def test_receipt_rejects_consumed_approval_for_target_action(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory rejects if ledger contains a consumed approval for target action."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        ledger = ApprovalLedger()
+        grant = ApprovalGrant.create(
+            action=update_action,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        ledger.consume(
+            grant,
+            update_action,
+            at=datetime.now(UTC),
+            attempt_number=1,
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "was consumed for action" in str(exc_info.value)
+
+    def test_receipt_permits_consumed_approval_for_different_action(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory permits ledger containing consumed approval for a different action."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        different_action = ActionContract.create(
+            mission_id=update_action.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=update_action.target,
+            parameters={"summary": "Different event update"},
+            action_id=ActionId.generate(),
+        )
+        ledger = ApprovalLedger()
+        grant = ApprovalGrant.create(
+            action=different_action,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        ledger.consume(
+            grant,
+            different_action,
+            at=datetime.now(UTC),
+            attempt_number=1,
         )
 
         receipt = create_unapproved_action_receipt(
@@ -1059,12 +1479,211 @@ class TestObservedFactsReceiptIntegrity:
             after_read=after_result,
             measured_provider_mutations=0,
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=ledger,
+        )
+        assert receipt.consumption_present is False
+
+    # -----------------------------------------------------------------------
+    # Defect 3: Provider Mutation Instrumentation Tests
+    # -----------------------------------------------------------------------
+
+    def test_calendar_mutation_spy_captures_method_invocation_that_raises_before_write(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        seeded_calendar_transport: FakeGoogleCalendarTransport,
+    ) -> None:
+        """Spy captures transport invocation even if method raises before incrementing writes."""
+        spy = CalendarMutationSpy(transport=seeded_calendar_transport)
+
+        # Attempt an update with forbidden If-Match (*), which FakeGoogleCalendarTransport
+        # rejects BEFORE writes_count += 1
+        with pytest.raises(CalendarTargetError):
+            seeded_calendar_transport.update_event(
+                calendar_id=DEMO_CALENDAR_ID,
+                event_id=DEMO_EVENT_ID,
+                payload={"summary": "invalid update"},
+                if_match="*",
+            )
+
+        obs = spy.observe()
+        # Transport method was entered:
+        assert obs.transport_mutation_invocations == 1
+        # But write was not completed:
+        assert obs.transport_writes == 0
+        assert obs.is_zero_mutation is False
+
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        # Receipt must reject this non-zero invocation observation:
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=obs,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "Transport mutation invocations must be 0" in str(exc_info.value)
+
+    def test_receipt_rejects_contradictory_mutation_observation(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        """Receipt factory fails closed if measured mutations contradicts observation."""
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        # Contradictory observation:
+        obs = ProviderMutationObservation(
+            router_mutation_invocations=0,
+            handler_mutation_invocations=1,
+            transport_mutation_invocations=0,
+            transport_writes=0,
         )
 
-        as_dict = receipt.to_dict()
-        assert as_dict["execution_state"] == "NOT_RUN"
-        assert as_dict["provider_mutation_invocations"] == 0
-        assert as_dict["is_ready_claimed"] is False
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=obs,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "Handler mutation invocations must be 0" in str(exc_info.value)
+
+    # -----------------------------------------------------------------------
+    # Defect 5: Deep Privacy Sanitization & State Integrity Tests
+    # -----------------------------------------------------------------------
+
+    def test_receipt_deep_recursive_sanitization_hostile_sentinels(self) -> None:
+        """Deep recursive sanitization redacts hostile sentinels across nested collections."""
+        update_action = _make_calendar_update_action(summary="Meeting with attacker@evil.org")
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+
+        receipt = UnapprovedActionReceipt(
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            mission_id=update_action.mission_id,
+            action_id=update_action.action_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            target_event_id=update_action.target.resource_id,
+            pending_approval_id=pending.pending_approval_id,
+            approval_status=PendingApprovalStatus.PENDING,
+            grant_present=False,
+            consumption_present=False,
+            execution_state=ActionExecutionStatus.NOT_RUN,
+            provider_mutation_invocations=0,
+            before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            before_state_summary={
+                "summary": "Meeting with attacker@evil.org",
+                "nested_dict": {
+                    "token": "Bearer secret_jwt_token_12345",
+                    "attendees": [
+                        "victim@company.com",
+                        {"note": "Call +1-555-0199 or admin@secure.net"},
+                    ],
+                },
+                "nested_tuple": ("contact@leak.io", "plain text"),
+            },
+            after_state_summary={
+                "summary": "Meeting with attacker@evil.org",
+                "nested_dict": {
+                    "token": "Bearer secret_jwt_token_12345",
+                    "attendees": [
+                        "victim@company.com",
+                        {"note": "Call +1-555-0199 or admin@secure.net"},
+                    ],
+                },
+                "nested_tuple": ("contact@leak.io", "plain text"),
+            },
+            state_unchanged=True,
+            is_ready_claimed=False,
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            recorded_at=datetime.now(UTC),
+        )
+
+        import json
+
+        serialized = json.dumps(receipt.to_dict())
+        # Verify hostile sentinels are completely absent from serialized output:
+        assert "attacker@evil.org" not in serialized
+        assert "victim@company.com" not in serialized
+        assert "admin@secure.net" not in serialized
+        assert "contact@leak.io" not in serialized
+        assert "Bearer secret_jwt_token_12345" not in serialized
+
+    def test_execute_gated_action_records_failure_on_synchronous_router_exception(
+        self,
+    ) -> None:
+        """Synchronous exception in router marks tracker as FAILED instead of stuck IN_PROGRESS."""
+        # Action that does not require approval
+        action = ActionContract.create(
+            mission_id=MissionId.generate(),
+            action_type=ActionType.TASK_READ,
+            target=TargetIdentity(
+                system="google_tasks",
+                resource_kind=ResourceKind.TASK,
+                resource_id="task_123",
+                parent_id=DEMO_TASKLIST_ID,
+            ),
+            parameters={},
+            action_id=ActionId.generate(),
+        )
+
+        exec_contract = MissionExecutionContract(
+            mission_id=action.mission_id,
+            actions=(action,),
+            dependencies={action.action_id: frozenset()},
+        )
+        schedule = schedule_execution(exec_contract)
+        tracker = ExecutionStateTracker(exec_contract, schedule)
+
+        class ExplodingRouter:
+            def execute(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("Exploding transport network connection failed!")
+
+        with pytest.raises(RuntimeError):
+            execute_gated_action(
+                action,
+                ExplodingRouter(),  # type: ignore[arg-type]
+                tracker=tracker,
+            )
+
+        # Tracker must NOT be stuck in IN_PROGRESS!
+        assert tracker.get_status(action.action_id) == ActionExecutionStatus.EXECUTION_FAILED
+        rec = tracker.get_record(action.action_id)
+        assert rec is not None
+        assert "Exploding transport" in (rec.error_message or "")
 
 
 # ===========================================================================
@@ -1172,18 +1791,72 @@ class TestProofScriptExecution:
     """Validate that the standalone proof script executes properly and fails closed."""
 
     def test_proof_script_runs_and_passes_under_python_optimized_mode(self) -> None:
-        """Run python -O scripts/p11_05_proof.py --json and verify output."""
-        repo_root = Path(__file__).resolve().parent.parent
-        res = subprocess.run(
-            [sys.executable, "-O", "scripts/p11_05_proof.py", "--json"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-        )
-        assert res.returncode == 0, f"Proof script failed: {res.stderr}"
+        """Run python -O scripts/p11_05_proof.py --json and verify output and source provenance."""
         import json
 
-        data = json.loads(res.stdout)
+        repo_root = Path(__file__).resolve().parent.parent
+
+        # Query git status
+        head_sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_root),
+                text=True,
+            )
+            .strip()
+            .lower()
+        )
+        status_out = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo_root),
+            text=True,
+        ).strip()
+        is_clean = len(status_out) == 0
+
+        if is_clean:
+            # When clean (as in CI), execute with checked-out git HEAD as --expected-sha
+            cmd = [
+                sys.executable,
+                "-O",
+                "scripts/p11_05_proof.py",
+                "--expected-sha",
+                head_sha,
+                "--json",
+            ]
+            res = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
+            assert res.returncode == 0, f"Proof script failed: {res.stderr}"
+            data = json.loads(res.stdout)
+            assert data["source_provenance_mode"] == "COMMITTED_SOURCE"
+            assert data["current_git_sha"] == head_sha
+            assert data["worktree_clean"] is True
+        else:
+            # When dirty (local dev worktree), verify dirty fail-closed behavior for --expected-sha
+            dirty_res = subprocess.run(
+                [
+                    sys.executable,
+                    "-O",
+                    "scripts/p11_05_proof.py",
+                    "--expected-sha",
+                    head_sha,
+                ],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+            )
+            assert dirty_res.returncode != 0
+            assert (
+                "Cannot claim exact-SHA committed-source proof when git worktree is dirty"
+                in dirty_res.stderr
+            )
+
+            # And verify default run succeeds reporting LOCAL_DIRTY_WORKTREE
+            cmd = [sys.executable, "-O", "scripts/p11_05_proof.py", "--json"]
+            res = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
+            assert res.returncode == 0, f"Proof script failed: {res.stderr}"
+            data = json.loads(res.stdout)
+            assert data["source_provenance_mode"] == "LOCAL_DIRTY_WORKTREE"
+            assert data["worktree_clean"] is False
+
         assert data["execution_status"] == "NOT_RUN"
         assert data["provider_update_invocation_count"] == 0
         assert data["external_state_unchanged"] is True
