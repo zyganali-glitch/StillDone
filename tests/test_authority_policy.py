@@ -882,7 +882,7 @@ def test_irreversible_blocked_or_human_required_cannot_auto_authorize() -> None:
 
     # Synthesize an action that classifies as IRREVERSIBLE for policy engine test
     # using a local test subclass or mocking the table
-    original_table = dict(ACTION_AUTHORITY_TABLE)
+    original_table = ACTION_AUTHORITY_TABLE
     try:
         from stilldone import authority_policy
 
@@ -931,7 +931,7 @@ def test_external_communication_approval_required_semantics() -> None:
     """Prove EXTERNAL_COMMUNICATION_APPROVAL_REQUIRED requires exact bound approval."""
     action = _make_validated_action(ActionType.CALENDAR_UPDATE)
 
-    original_table = dict(ACTION_AUTHORITY_TABLE)
+    original_table = ACTION_AUTHORITY_TABLE
     try:
         from stilldone import authority_policy
 

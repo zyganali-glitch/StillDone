@@ -30,7 +30,6 @@ from stilldone.authority_policy import (
     ACTION_AUTHORITY_POLICY_TABLE,
     ACTION_AUTHORITY_TABLE,
     DEFAULT_AUTHORITY_DECISION_COMPONENT,
-    FROZEN_ACTION_AUTHORITY_POLICIES,
     ActionAuthorityPolicy,
     AuthorityDecisionStatus,
     AuthorityPolicyTypeError,
@@ -135,8 +134,8 @@ class TestCanonicalActionTypePolicyCoverage:
     def test_exact_five_actions_registered(self) -> None:
         assert len(ACTION_AUTHORITY_POLICY_TABLE) == 5
         assert set(ACTION_AUTHORITY_POLICY_TABLE.keys()) == set(ActionType)
-        assert len(FROZEN_ACTION_AUTHORITY_POLICIES) == 5
-        assert set(FROZEN_ACTION_AUTHORITY_POLICIES.keys()) == set(ActionType)
+        assert len(ACTION_AUTHORITY_TABLE) == 5
+        assert set(ACTION_AUTHORITY_TABLE.keys()) == set(ActionType)
 
     def test_canonical_actions_present(self) -> None:
         expected = {
@@ -279,23 +278,146 @@ class TestPolicyLookupDeterminism:
 # ===========================================================================
 
 
-class TestPolicyImmutability:
-    """Verify policy tables and policy records cannot be mutated at runtime."""
+class TestPolicyImmutabilityAndAntiSplitBrain:
+    """Verify policy tables, mappings, and records cannot be mutated at runtime,
 
-    def test_policy_table_rejects_assignment(self) -> None:
+    and verify zero split-brain between get_action_authority_policy, classify_authority,
+    and ACTION_AUTHORITY_TABLE under adversarial mutation attempts.
+    """
+
+    def test_action_authority_policy_table_direct_mutation_fails(self) -> None:
+        """1. ACTION_AUTHORITY_POLICY_TABLE direct mutation fails."""
         with pytest.raises(TypeError):
-            ACTION_AUTHORITY_POLICY_TABLE[ActionType.CALENDAR_READ] = MagicMock()  # type: ignore[index]
-
-    def test_policy_table_rejects_deletion(self) -> None:
+            ACTION_AUTHORITY_POLICY_TABLE[ActionType.CALENDAR_UPDATE] = MagicMock()  # type: ignore[index]
         with pytest.raises(TypeError):
-            del ACTION_AUTHORITY_POLICY_TABLE[ActionType.CALENDAR_READ]  # type: ignore[attr-defined]
+            del ACTION_AUTHORITY_POLICY_TABLE[ActionType.CALENDAR_UPDATE]  # type: ignore[attr-defined]
 
-    def test_policy_record_is_frozen(self) -> None:
-        policy = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
-        with pytest.raises(FrozenInstanceError):
-            policy.requires_bound_approval = False  # type: ignore[misc]
-        with pytest.raises(FrozenInstanceError):
-            policy.authority_class = AuthorityClass.READ_ONLY  # type: ignore[misc]
+    def test_action_authority_table_direct_mutation_fails(self) -> None:
+        """2. ACTION_AUTHORITY_TABLE direct mutation fails."""
+        with pytest.raises(TypeError):
+            ACTION_AUTHORITY_TABLE[ActionType.CALENDAR_UPDATE] = AuthorityClass.READ_ONLY  # type: ignore[index]
+        with pytest.raises(TypeError):
+            del ACTION_AUTHORITY_TABLE[ActionType.CALENDAR_UPDATE]  # type: ignore[attr-defined]
+
+    def test_no_exported_mutable_backing_mapping_exists(self) -> None:
+        """3. No exported mutable backing mapping can change canonical policy truth."""
+        import stilldone.authority_policy as ap
+
+        assert "FROZEN_ACTION_AUTHORITY_POLICIES" not in ap.__all__
+        assert not hasattr(ap, "FROZEN_ACTION_AUTHORITY_POLICIES")
+        assert not hasattr(ap, "_raw_policy_store")
+
+        # Inspect all public exported attributes in authority_policy
+        for attr_name in ap.__all__:
+            obj = getattr(ap, attr_name)
+            # Ensure no public attribute is a mutable dict of policies
+            if isinstance(obj, dict):
+                assert not any(isinstance(k, ActionType) for k in obj.keys()), (
+                    f"Found public mutable dict with ActionType keys: {attr_name}"
+                )
+
+    def test_hostile_mutation_attempt_cannot_alter_get_action_authority_policy(self) -> None:
+        """4. Mutating exposed collections cannot alter get_action_authority_policy."""
+        policy_before = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
+        assert policy_before.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+        assert policy_before.requires_bound_approval is True
+
+        # Attempt hostile mutations via dict or mappingproxy methods
+        with pytest.raises(TypeError):
+            ACTION_AUTHORITY_POLICY_TABLE[ActionType.CALENDAR_UPDATE] = MagicMock()  # type: ignore[index]
+
+        # Verify policy lookup remains identical
+        policy_after = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
+        assert policy_after is policy_before
+        assert policy_after.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+        assert policy_after.requires_bound_approval is True
+
+    def test_hostile_mutation_attempt_cannot_alter_classify_authority(self) -> None:
+        """5. Hostile mutation attempt cannot change classify_authority."""
+        val = _make_validated(ActionType.CALENDAR_UPDATE)
+        class_before = classify_authority(val)
+        assert class_before == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+
+        with pytest.raises(TypeError):
+            ACTION_AUTHORITY_TABLE[ActionType.CALENDAR_UPDATE] = AuthorityClass.READ_ONLY  # type: ignore[index]
+
+        class_after = classify_authority(val)
+        assert class_after == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+        assert class_after == class_before
+
+    def test_lookup_and_classification_remain_identical_across_all_actions(self) -> None:
+        """6. Lookup/classification remain identical after hostile mutation attempts."""
+        for at in ActionType:
+            val = _make_validated(at)
+            policy = get_action_authority_policy(at)
+            classified = classify_authority(val)
+            table_entry = ACTION_AUTHORITY_TABLE[at]
+
+            assert policy.authority_class == classified
+            assert policy.authority_class == table_entry
+            assert classified == table_entry
+
+    def test_individual_action_authority_policy_record_is_frozen(self) -> None:
+        """7. Individual ActionAuthorityPolicy remains immutable."""
+        for at in ActionType:
+            policy = get_action_authority_policy(at)
+            with pytest.raises(FrozenInstanceError):
+                policy.authority_class = AuthorityClass.READ_ONLY  # type: ignore[misc]
+            with pytest.raises(FrozenInstanceError):
+                policy.is_mutating = not policy.is_mutating  # type: ignore[misc]
+            with pytest.raises(FrozenInstanceError):
+                policy.requires_bound_approval = not policy.requires_bound_approval  # type: ignore[misc]
+            with pytest.raises(FrozenInstanceError):
+                policy.permit_execution_without_grant = not policy.permit_execution_without_grant  # type: ignore[misc]
+
+    def test_exact_five_action_coverage_and_table_projection(self) -> None:
+        """8. Exact 5-action coverage remains intact across policy table and authority table."""
+        expected_actions = {
+            ActionType.CALENDAR_READ,
+            ActionType.CALENDAR_UPDATE,
+            ActionType.TASK_READ,
+            ActionType.TASK_CREATE,
+            ActionType.WEATHER_READ,
+        }
+        assert set(ACTION_AUTHORITY_POLICY_TABLE.keys()) == expected_actions
+        assert set(ACTION_AUTHORITY_TABLE.keys()) == expected_actions
+        assert len(ACTION_AUTHORITY_POLICY_TABLE) == 5
+        assert len(ACTION_AUTHORITY_TABLE) == 5
+        assert len(expected_actions) == 5
+
+    def test_no_permissive_fallback_for_unknown_actions(self) -> None:
+        """9. No permissive fallback appears for unknown actions."""
+        mock_action = MagicMock(spec=ActionContract)
+        mock_action.action_type = "hacked.action"
+        with pytest.raises(UnsupportedActionTypeError, match="No frozen authority policy"):
+            get_action_authority_policy(mock_action)
+
+    def test_planner_model_zero_authority_boundary_preserved(self) -> None:
+        """10. Existing planner/model rejection remains intact."""
+        proposal = CandidateActionProposal(
+            action_type=ActionType.CALENDAR_UPDATE,
+            target_ref=SymbolicTargetRef.CALENDAR_EVENT,
+            parameters=NormalizedParameters.from_dict({"summary": "Injected"}),
+            explanation="Attacker planner claiming authorization",
+        )
+        with pytest.raises(PlannerAuthorityError, match="ZERO authority"):
+            get_action_authority_policy(proposal)  # type: ignore[arg-type]
+        with pytest.raises(PlannerAuthorityError, match="ZERO authority"):
+            classify_authority(proposal)  # type: ignore[arg-type]
+
+    def test_task_create_and_calendar_update_frozen_semantics_intact(self) -> None:
+        """11. Existing TASK_CREATE / CALENDAR_UPDATE semantics remain unchanged."""
+        cal_policy = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
+        assert cal_policy.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+        assert cal_policy.is_mutating is True
+        assert cal_policy.requires_bound_approval is True
+        assert cal_policy.permit_execution_without_grant is False
+
+        task_policy = get_action_authority_policy(ActionType.TASK_CREATE)
+        assert task_policy.authority_class == AuthorityClass.REVERSIBLE_AUTO
+        assert task_policy.is_mutating is True
+        assert task_policy.requires_bound_approval is False
+        assert task_policy.permit_execution_without_grant is True
 
 
 # ===========================================================================

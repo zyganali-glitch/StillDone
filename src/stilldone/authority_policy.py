@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hmac
 import types
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -298,8 +298,8 @@ class ActionAuthorityPolicy:
         }
 
 
-FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
-    ActionType.CALENDAR_READ: ActionAuthorityPolicy(
+_CANONICAL_ACTION_AUTHORITY_POLICIES: tuple[ActionAuthorityPolicy, ...] = (
+    ActionAuthorityPolicy(
         action_type=ActionType.CALENDAR_READ,
         authority_class=AuthorityClass.READ_ONLY,
         is_mutating=False,
@@ -308,7 +308,7 @@ FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
         permit_execution_without_grant=True,
         owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
     ),
-    ActionType.CALENDAR_UPDATE: ActionAuthorityPolicy(
+    ActionAuthorityPolicy(
         action_type=ActionType.CALENDAR_UPDATE,
         authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
         is_mutating=True,
@@ -317,7 +317,7 @@ FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
         permit_execution_without_grant=False,
         owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
     ),
-    ActionType.TASK_READ: ActionAuthorityPolicy(
+    ActionAuthorityPolicy(
         action_type=ActionType.TASK_READ,
         authority_class=AuthorityClass.READ_ONLY,
         is_mutating=False,
@@ -326,7 +326,7 @@ FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
         permit_execution_without_grant=True,
         owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
     ),
-    ActionType.TASK_CREATE: ActionAuthorityPolicy(
+    ActionAuthorityPolicy(
         action_type=ActionType.TASK_CREATE,
         authority_class=AuthorityClass.REVERSIBLE_AUTO,
         is_mutating=True,
@@ -335,7 +335,7 @@ FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
         permit_execution_without_grant=True,
         owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
     ),
-    ActionType.WEATHER_READ: ActionAuthorityPolicy(
+    ActionAuthorityPolicy(
         action_type=ActionType.WEATHER_READ,
         authority_class=AuthorityClass.READ_ONLY,
         is_mutating=False,
@@ -344,27 +344,50 @@ FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
         permit_execution_without_grant=True,
         owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
     ),
+)
+
+_raw_policy_store: dict[ActionType, ActionAuthorityPolicy] = {
+    p.action_type: p for p in _CANONICAL_ACTION_AUTHORITY_POLICIES
 }
 
 # Module-level invariants: exact 1:1 mapping with ActionType
-assert set(FROZEN_ACTION_AUTHORITY_POLICIES.keys()) == set(ActionType), (
-    "FROZEN_ACTION_AUTHORITY_POLICIES must cover all canonical ActionType members"
+assert set(_raw_policy_store.keys()) == set(ActionType), (
+    "ACTION_AUTHORITY_POLICY_TABLE must cover all canonical ActionType members"
 )
-assert len(FROZEN_ACTION_AUTHORITY_POLICIES) == len(ActionType) == 5, (
-    "FROZEN_ACTION_AUTHORITY_POLICIES must have exactly 5 entries"
+assert len(_raw_policy_store) == len(ActionType) == 5, (
+    "ACTION_AUTHORITY_POLICY_TABLE must have exactly 5 entries"
 )
 
 ACTION_AUTHORITY_POLICY_TABLE: Mapping[ActionType, ActionAuthorityPolicy] = types.MappingProxyType(
-    FROZEN_ACTION_AUTHORITY_POLICIES
+    _raw_policy_store
 )
 
-_AUTHORITY_ENTRIES: dict[ActionType, AuthorityClass] = {
-    at: policy.authority_class for at, policy in FROZEN_ACTION_AUTHORITY_POLICIES.items()
-}
+del _raw_policy_store
 
-ACTION_AUTHORITY_TABLE: Mapping[ActionType, AuthorityClass] = types.MappingProxyType(
-    _AUTHORITY_ENTRIES
-)
+
+class _ActionAuthorityMapping(Mapping[ActionType, AuthorityClass]):
+    """Immutable mapping projecting AuthorityClass directly from ACTION_AUTHORITY_POLICY_TABLE.
+
+    Ensures zero split-brain: cannot drift from the canonical policy source.
+    """
+
+    def __getitem__(self, key: ActionType) -> AuthorityClass:
+        return ACTION_AUTHORITY_POLICY_TABLE[key].authority_class
+
+    def __iter__(self) -> Iterator[ActionType]:
+        return iter(ACTION_AUTHORITY_POLICY_TABLE)
+
+    def __len__(self) -> int:
+        return len(ACTION_AUTHORITY_POLICY_TABLE)
+
+    def __contains__(self, key: object) -> bool:
+        return key in ACTION_AUTHORITY_POLICY_TABLE
+
+    def __repr__(self) -> str:
+        return repr({k: self[k] for k in self})
+
+
+ACTION_AUTHORITY_TABLE: Mapping[ActionType, AuthorityClass] = _ActionAuthorityMapping()
 
 
 def get_action_authority_policy(
@@ -1002,7 +1025,6 @@ __all__ = [
     "AuthorityPolicyTypeError",
     "AuthorityPolicyValueError",
     "DEFAULT_AUTHORITY_DECISION_COMPONENT",
-    "FROZEN_ACTION_AUTHORITY_POLICIES",
     "InvalidApprovalTypeError",
     "IrreversibleActionBlockedError",
     "PlannerAuthorityError",

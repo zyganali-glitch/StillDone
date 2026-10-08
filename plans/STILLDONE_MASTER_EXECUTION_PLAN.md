@@ -1238,7 +1238,7 @@ Goal:
 reserve human attention for the meaningful boundary.
 
 ### P-11.01 — Freeze authority policy for canonical mission actions
-Status: IMPLEMENTED / awaiting independent QA
+Status: REPAIRED / awaiting independent QA
 
 ### P-11.02 — Implement pending approval object and one-decision UX contract
 Status: PENDING
