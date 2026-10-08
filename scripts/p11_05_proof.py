@@ -6,25 +6,28 @@ CALENDAR_UPDATE action requiring approval:
 2. Produces a canonical P-11.02 PendingApproval in PENDING state.
 3. Has NO approval granted and NO approval consumed.
 4. Is rejected at the execution authority gate BEFORE provider write.
-5. Produces exactly zero provider mutation invocations (writes_count == 0).
+5. Produces exactly zero provider mutation invocations (measured writes == 0).
 6. Records deterministic execution status ActionExecutionStatus.NOT_RUN.
 7. Leaves external Calendar state 100% unchanged between before/after reads.
-8. Produces a durable UnapprovedActionReceipt with complete provenance and zero secrets.
+8. Produces a durable UnapprovedActionReceipt derived from observed facts with zero secrets.
 9. Proves no execution attempt is fabricated and no retry budget is consumed.
 10. Proves model prose / planner proposals cannot bypass the gate.
 
 Live boundary truth:
-If live Google Calendar read credentials are not present in the runtime,
-the live read portion is explicitly reported as NOT_RUN / BLOCKED, and
-simulation provenance is faithfully recorded as LOCAL_EXECUTION / FIXTURE.
+Live Google Calendar read is reported NOT_RUN / BLOCKED in this headless runtime,
+and simulation provenance is faithfully recorded as LOCAL_EXECUTION / FIXTURE.
 Zero live mutations are ever performed.
+
+Reliability guarantees:
+- All checks use fail-closed runtime validation (effective under python -O).
+- Fails closed if git SHA cannot be determined.
+- Explicit tracking of worktree cleanliness and exact source provenance.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -95,7 +98,9 @@ from stilldone.pending_approval import (  # noqa: E402
     create_pending_approval,
 )
 
-CANONICAL_SOURCE_SHA = "4ec4475f006207ec5840880bb9476f6d169442cd"
+LAST_VERIFIED_PARENT_SHA = "4ec4475f006207ec5840880bb9476f6d169442cd"
+AUDITED_P11_05_IMPLEMENTATION_SHA = "12b42e4f0f92a08518b1e6efe4fd030912477bc9"
+
 DEMO_CALENDAR_ID = "c_1880abc123demo@group.calendar.google.com"
 DEMO_TASKLIST_ID = "MDExMTI0ZGVtbw"
 DEMO_EVENT_ID = "evt_leave_for_school_001"
@@ -105,45 +110,71 @@ PROPOSED_START_TIME = "2026-10-09T07:30:00+03:00"
 PROPOSED_SUMMARY = "Leave for school"
 
 
+class ProofVerificationError(Exception):
+    """Raised when any step of the proof chain fails runtime validation."""
+
+
 def get_git_commit_sha() -> str:
-    """Get the current git commit SHA."""
+    """Get the current verified git commit SHA, failing closed if unavailable."""
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
+        sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(REPO_ROOT),
+                text=True,
+            )
+            .strip()
+            .lower()
+        )
+        if len(sha) != 40 or not all(c in "0123456789abcdef" for c in sha):
+            raise ProofVerificationError(
+                f"Git HEAD output is not a valid 40-character hex SHA: {sha!r}"
+            )
+        return sha
+    except Exception as exc:
+        raise ProofVerificationError(
+            f"Cannot determine git commit SHA; proof fails closed: {exc}"
+        ) from exc
+
+
+def check_git_worktree_clean() -> bool:
+    """Check whether the working tree is clean."""
+    try:
+        output = subprocess.check_output(
+            ["git", "status", "--porcelain"],
             cwd=str(REPO_ROOT),
             text=True,
         ).strip()
-    except Exception as exc:
-        return f"UNKNOWN_SHA ({exc})"
+        return len(output) == 0
+    except Exception:
+        return False
 
 
 def check_live_google_credentials() -> dict[str, Any]:
-    """Check whether live Google Calendar read credentials are safely available."""
-    token_path = REPO_ROOT / "token.json"
-    env_token = os.environ.get("GOOGLE_OAUTH_TOKEN")
-    env_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-    has_token = token_path.exists() or bool(env_token) or bool(env_creds)
-    if not has_token:
-        return {
-            "status": "NOT_RUN",
-            "reason": (
-                "Live Google OAuth token is not cached in runtime environment. "
-                "Interactive InstalledAppFlow cannot run headlessly. "
-                "Live read portion is reported NOT_RUN / BLOCKED."
-            ),
-            "exercised": False,
-        }
+    """Report live boundary status: headless proof executes locally; live read not exercised."""
     return {
-        "status": "AVAILABLE",
-        "reason": "Google credentials present in runtime",
+        "status": "NOT_RUN",
+        "reason": (
+            "Live Google Calendar read not exercised in headless test runtime. "
+            "Zero live mutations permitted (writes_count == 0). "
+            "Execution gating and receipt verified via LOCAL_EXECUTION / FIXTURE."
+        ),
         "exercised": False,
     }
 
 
-def run_p11_05_proof() -> dict[str, Any]:
-    """Execute the canonical P-11.05 proof chain."""
+def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
+    """Execute the canonical P-11.05 proof chain with fail-closed runtime checks."""
     current_sha = get_git_commit_sha()
+    is_worktree_clean = check_git_worktree_clean()
+
+    if expected_sha is not None:
+        cleaned_expected = expected_sha.strip().lower()
+        if current_sha != cleaned_expected:
+            raise ProofVerificationError(
+                f"Current git SHA {current_sha} does not match expected SHA {cleaned_expected}"
+            )
+
     live_status = check_live_google_credentials()
 
     # Step 1: Initialize demo environment and record before-state
@@ -202,8 +233,11 @@ def run_p11_05_proof() -> dict[str, Any]:
     )
 
     before_result = cal_read_adapter.read_event(read_action)
-    assert before_result.status == CalendarReadStatus.SUCCESS, "Before read must succeed"
-    assert before_result.observation is not None
+    if before_result.status != CalendarReadStatus.SUCCESS:
+        raise ProofVerificationError(f"Before read failed: {before_result.status.value}")
+    if before_result.observation is None:
+        raise ProofVerificationError("Before read observation is None")
+
     before_obs = before_result.observation
     before_state = {
         "summary": before_obs.summary,
@@ -233,27 +267,38 @@ def run_p11_05_proof() -> dict[str, Any]:
 
     # Step 3: Evaluate authority under frozen P-11.01 policy
     policy = get_action_authority_policy(update_action.action_type)
-    assert policy.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
-    assert policy.requires_bound_approval is True
-    assert policy.requires_human_approval is True
-    assert policy.permit_execution_without_grant is False
+    if policy.authority_class != AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED:
+        raise ProofVerificationError(
+            f"Expected REVERSIBLE_APPROVAL_REQUIRED, got {policy.authority_class.value}"
+        )
+    if not policy.requires_bound_approval:
+        raise ProofVerificationError("Expected requires_bound_approval=True")
+    if not policy.requires_human_approval:
+        raise ProofVerificationError("Expected requires_human_approval=True")
+    if policy.permit_execution_without_grant:
+        raise ProofVerificationError("Expected permit_execution_without_grant=False")
 
     # Step 4: Construct canonical P-11.02 PendingApproval
     req_at = datetime.now(UTC)
     validated_action = validate_action_contract(update_action)
     pending_approval = create_pending_approval(validated_action, requested_at=req_at)
-    assert pending_approval.is_approved is False
-    assert pending_approval.status == PendingApprovalStatus.PENDING
+    if pending_approval.status != PendingApprovalStatus.PENDING:
+        raise ProofVerificationError(
+            f"PendingApproval must be PENDING, got {pending_approval.status.value}"
+        )
 
     # Step 5 & 6: Enforce NO approval grant and NO approval consumption
     registry = UsedApprovalRegistry()
     approval_ledger = ApprovalLedger(registry=registry)
-    assert approval_ledger.is_used(pending_approval.pending_approval_id.value) is False
-    assert approval_ledger.is_consumed(pending_approval.pending_approval_id.value) is False
-    assert (
+    if approval_ledger.is_used(pending_approval.pending_approval_id.value):
+        raise ProofVerificationError("Pending approval must not be marked used")
+    if approval_ledger.is_consumed(pending_approval.pending_approval_id.value):
+        raise ProofVerificationError("Pending approval must not be marked consumed")
+    if (
         approval_ledger.check_status(pending_approval.pending_approval_id.value)
-        == ApprovalUsageStatus.UNUSED
-    )
+        != ApprovalUsageStatus.UNUSED
+    ):
+        raise ProofVerificationError("Approval status must be UNUSED")
 
     # Step 7: Send candidate action through execution authority gate
     exec_contract = MissionExecutionContract(
@@ -276,20 +321,35 @@ def run_p11_05_proof() -> dict[str, Any]:
     )
 
     # Step 8: Assert mutation execution is rejected BEFORE provider write
-    assert cal_transport.writes_count == initial_update_calls == 0, (
-        "Provider update method must NEVER be invoked"
-    )
-    assert gate_decision.is_authorized is False
-    assert gate_decision.attempt is None
-    assert gate_decision.provider_result is None
+    if cal_transport.writes_count != initial_update_calls or cal_transport.writes_count != 0:
+        raise ProofVerificationError(
+            f"Provider update method was invoked! Writes count: {cal_transport.writes_count}"
+        )
+    if gate_decision.is_authorized is not False:
+        raise ProofVerificationError("gate_decision.is_authorized must be False")
+    if gate_decision.attempt is not None:
+        raise ProofVerificationError("gate_decision.attempt must be None")
+    if gate_decision.provider_result is not None:
+        raise ProofVerificationError("gate_decision.provider_result must be None")
 
     # Step 9: Record deterministic result as NOT_RUN
-    assert gate_decision.status == ActionExecutionStatus.NOT_RUN
-    assert tracker.get_status(update_action.action_id) == ActionExecutionStatus.NOT_RUN
+    if gate_decision.status != ActionExecutionStatus.NOT_RUN:
+        raise ProofVerificationError(
+            f"gate_decision.status must be NOT_RUN, got {gate_decision.status.value}"
+        )
+    if tracker.get_status(update_action.action_id) != ActionExecutionStatus.NOT_RUN:
+        raise ProofVerificationError("tracker status must be NOT_RUN")
     record = tracker.get_record(update_action.action_id)
-    assert record is not None
-    assert record.status == ActionExecutionStatus.NOT_RUN
-    assert "requires bound human approval" in record.error_message
+    if record is None:
+        raise ProofVerificationError("tracker record is None")
+    if record.status != ActionExecutionStatus.NOT_RUN:
+        raise ProofVerificationError(
+            f"tracker record status must be NOT_RUN, got {record.status.value}"
+        )
+    if record.error_message is None or "requires bound human approval" not in record.error_message:
+        raise ProofVerificationError(
+            f"tracker record error message missing expected text: {record.error_message}"
+        )
 
     # Step 10: Perform separate independent Calendar read-back
     read_after_action = ActionContract.create(
@@ -305,8 +365,11 @@ def run_p11_05_proof() -> dict[str, Any]:
         action_id=ActionId.generate(),
     )
     after_result = cal_read_adapter.read_event(read_after_action)
-    assert after_result.status == CalendarReadStatus.SUCCESS
-    assert after_result.observation is not None
+    if after_result.status != CalendarReadStatus.SUCCESS:
+        raise ProofVerificationError(f"After read failed: {after_result.status.value}")
+    if after_result.observation is None:
+        raise ProofVerificationError("After read observation is None")
+
     after_obs = after_result.observation
     after_state = {
         "summary": after_obs.summary,
@@ -317,23 +380,27 @@ def run_p11_05_proof() -> dict[str, Any]:
     }
 
     # Step 11: Prove external event state is 100% unchanged
-    assert before_state == after_state, (
-        f"External event state mutated! Before: {before_state}, After: {after_state}"
-    )
-    assert after_state["start_time"] == INITIAL_START_TIME
-    assert after_state["start_time"] != PROPOSED_START_TIME
+    if before_state != after_state:
+        raise ProofVerificationError(
+            f"External event state mutated! Before: {before_state}, After: {after_state}"
+        )
+    if after_state["start_time"] != INITIAL_START_TIME:
+        raise ProofVerificationError(
+            f"start_time changed from initial: {after_state['start_time']}"
+        )
+    if after_state["start_time"] == PROPOSED_START_TIME:
+        raise ProofVerificationError("start_time equals proposed start_time; mutation executed!")
 
-    # Step 12: Produce durable UnapprovedActionReceipt
+    # Step 12: Produce durable UnapprovedActionReceipt derived from observed facts
     receipt = create_unapproved_action_receipt(
+        gate_decision=gate_decision,
+        action=update_action,
+        pending_approval=pending_approval,
+        before_read=before_result,
+        after_read=after_result,
+        measured_provider_mutations=cal_transport.writes_count,
         source_sha=current_sha,
-        mission_id=update_action.mission_id,
-        action_id=update_action.action_id,
-        action_type=update_action.action_type,
-        authority_class=policy.authority_class,
-        target_event_id=DEMO_EVENT_ID,
-        pending_approval_id=pending_approval.pending_approval_id,
-        before_state_summary=before_state,
-        after_state_summary=after_state,
+        ledger=approval_ledger,
         before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
         after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
         provenance=EvidenceProvenance.LOCAL_EXECUTION,
@@ -341,17 +408,28 @@ def run_p11_05_proof() -> dict[str, Any]:
 
     # Verification of receipt invariants
     receipt_dict = receipt.to_dict()
-    assert receipt_dict["execution_state"] == "NOT_RUN"
-    assert receipt_dict["provider_mutation_invocations"] == 0
-    assert receipt_dict["state_unchanged"] is True
-    assert receipt_dict["grant_present"] is False
-    assert receipt_dict["consumption_present"] is False
-    assert receipt_dict["is_ready_claimed"] is False
+    if receipt_dict["execution_state"] != "NOT_RUN":
+        raise ProofVerificationError("receipt execution_state != NOT_RUN")
+    if receipt_dict["provider_mutation_invocations"] != 0:
+        raise ProofVerificationError("receipt provider_mutation_invocations != 0")
+    if receipt_dict["state_unchanged"] is not True:
+        raise ProofVerificationError("receipt state_unchanged is not True")
+    if receipt_dict["grant_present"] is not False:
+        raise ProofVerificationError("receipt grant_present is not False")
+    if receipt_dict["consumption_present"] is not False:
+        raise ProofVerificationError("receipt consumption_present is not False")
+    if receipt_dict["is_ready_claimed"] is not False:
+        raise ProofVerificationError("receipt is_ready_claimed is not False")
 
     return {
         "task": "P-11.05 -- Prove Calendar existing-event update remains NOT_RUN before approval",
         "current_git_sha": current_sha,
-        "canonical_starting_sha": CANONICAL_SOURCE_SHA,
+        "last_verified_parent_sha": LAST_VERIFIED_PARENT_SHA,
+        "audited_p11_05_sha": AUDITED_P11_05_IMPLEMENTATION_SHA,
+        "worktree_clean": is_worktree_clean,
+        "source_provenance_mode": "COMMITTED_SOURCE"
+        if is_worktree_clean
+        else "LOCAL_DIRTY_WORKTREE",
         "target_class": "CalendarEvent (Leave for school demo event)",
         "target_event_id": DEMO_EVENT_ID,
         "authority_classification": policy.authority_class.value,
@@ -369,7 +447,7 @@ def run_p11_05_proof() -> dict[str, Any]:
         "not_run_checks": [
             "P-11.06 approved execution path (NotImplementedError)",
             "Live Google Calendar update mutations (0 live writes permitted)",
-            "Live Google Calendar read execution (BLOCKED: token not cached)",
+            "Live Google Calendar read execution (NOT_RUN / BLOCKED in headless runtime)",
             "Human ApprovalGrant creation (intentionally omitted)",
             "Retry orchestrator execution (NOT_RUN consumes 0 retry budget)",
         ],
@@ -379,9 +457,12 @@ def run_p11_05_proof() -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="P-11.05 Proof Script")
     parser.add_argument("--json", action="store_true", help="Output JSON only")
+    parser.add_argument(
+        "--expected-sha", type=str, default=None, help="Verify against expected git SHA"
+    )
     args = parser.parse_args()
 
-    result = run_p11_05_proof()
+    result = run_p11_05_proof(expected_sha=args.expected_sha)
 
     if args.json:
         print(json.dumps(result, indent=2))
@@ -392,7 +473,10 @@ def main() -> None:
     print("=" * 70)
     print(f"Task:                    {result['task']}")
     print(f"Current Git SHA:         {result['current_git_sha']}")
-    print(f"Starting SHA:            {result['canonical_starting_sha']}")
+    print(f"Parent Verified SHA:     {result['last_verified_parent_sha']}")
+    print(f"Audited P-11.05 SHA:     {result['audited_p11_05_sha']}")
+    print(f"Worktree Clean:          {result['worktree_clean']}")
+    print(f"Source Provenance:       {result['source_provenance_mode']}")
     print(f"Target Event:            {result['target_event_id']}")
     print(f"Authority Class:         {result['authority_classification']}")
     print(f"Pending Approval ID:     {result['pending_approval_id']}")

@@ -25,6 +25,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from stilldone.action_policy import ValidatedActionContract, validate_action_contract
+from stilldone.adapters.calendar import (
+    CalendarReadResult,
+    CalendarReadStatus,
+)
+from stilldone.approval_consumption import ApprovalLedger
 from stilldone.authority_policy import (
     ActionAuthorityPolicy,
     AuthorityPolicyTypeError,
@@ -49,6 +54,8 @@ from stilldone.pending_approval import (
     PendingApproval,
     PendingApprovalId,
     PendingApprovalStatus,
+    compute_parameters_digest,
+    compute_pending_approval_id,
 )
 from stilldone.redaction import redact_text
 from stilldone.serialization import to_canonical_primitive
@@ -76,6 +83,52 @@ class PlannerGateAuthorityError(ExecutionGateTypeError, PlannerAuthorityError):
 
 class UnapprovedMutationBlockedError(ExecutionGateError):
     """Raised when an assertive gate rejects an unapproved mutation action."""
+
+
+class UnexpectedApprovalGrantError(ExecutionGateValueError):
+    """Raised when an ApprovalGrant is supplied for an action that does not require approval."""
+
+
+class PendingApprovalBindingMismatchError(ExecutionGateValueError):
+    """Raised when a PendingApproval does not match the candidate action binding."""
+
+
+# ===========================================================================
+# Deep Immutability & Sanitization Helpers
+# ===========================================================================
+
+
+def _deep_freeze_mapping(val: Any) -> Any:
+    """Recursively freeze mappings, sequences, and sets to ensure deep immutability."""
+    if isinstance(val, Mapping):
+        return types.MappingProxyType({k: _deep_freeze_mapping(v) for k, v in val.items()})
+    if isinstance(val, (list, tuple)):
+        return tuple(_deep_freeze_mapping(v) for v in val)
+    if isinstance(val, set):
+        return frozenset(_deep_freeze_mapping(v) for v in val)
+    return val
+
+
+def _sanitize_summary_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """Recursively sanitize mapping values for privacy-safe serialization."""
+    sanitized: dict[str, Any] = {}
+    for k, v in mapping.items():
+        if isinstance(v, str):
+            sanitized[k] = redact_text(v)
+        elif isinstance(v, Mapping):
+            sanitized[k] = _sanitize_summary_mapping(v)
+        elif isinstance(v, (list, tuple)):
+            sanitized[k] = [
+                redact_text(item)
+                if isinstance(item, str)
+                else _sanitize_summary_mapping(item)
+                if isinstance(item, Mapping)
+                else item
+                for item in v
+            ]
+        else:
+            sanitized[k] = to_canonical_primitive(v)
+    return sanitized
 
 
 # ===========================================================================
@@ -212,7 +265,7 @@ class UnapprovedActionReceipt:
     """Immutable evidence receipt proving an unapproved mutation remained NOT_RUN.
 
     Captures complete deterministic authority facts and provider truth:
-    - exact source SHA;
+    - exact source SHA (40 hex characters);
     - mission ID;
     - action ID;
     - action type;
@@ -256,6 +309,13 @@ class UnapprovedActionReceipt:
     def __post_init__(self) -> None:
         if not isinstance(self.source_sha, str) or not self.source_sha.strip():
             raise ExecutionGateValueError("source_sha must be a non-empty string")
+        sha_clean = self.source_sha.strip().lower()
+        if len(sha_clean) != 40 or not all(c in "0123456789abcdef" for c in sha_clean):
+            raise ExecutionGateValueError(
+                "source_sha must be a 40-character hexadecimal git commit SHA"
+            )
+        object.__setattr__(self, "source_sha", sha_clean)
+
         if not isinstance(self.mission_id, MissionId):
             raise ExecutionGateTypeError(
                 f"mission_id must be a MissionId, got {type(self.mission_id).__name__}"
@@ -330,12 +390,12 @@ class UnapprovedActionReceipt:
         if self.recorded_at.tzinfo != UTC:
             object.__setattr__(self, "recorded_at", self.recorded_at.astimezone(UTC))
 
-        # Freeze state summaries
+        # Deep freeze state summaries to guarantee complete immutability
         object.__setattr__(
-            self, "before_state_summary", types.MappingProxyType(dict(self.before_state_summary))
+            self, "before_state_summary", _deep_freeze_mapping(self.before_state_summary)
         )
         object.__setattr__(
-            self, "after_state_summary", types.MappingProxyType(dict(self.after_state_summary))
+            self, "after_state_summary", _deep_freeze_mapping(self.after_state_summary)
         )
 
         # Invariant validations for P-11.05 receipt:
@@ -365,8 +425,27 @@ class UnapprovedActionReceipt:
         if self.is_ready_claimed:
             raise ExecutionGateValueError("P-11.05 receipt requires is_ready_claimed=False")
 
+        # Zero false-live claims: Fixture proof must NOT claim LIVE_*
+        live_provenances = (
+            EvidenceProvenance.LIVE_AWS,
+            EvidenceProvenance.LIVE_GOOGLE,
+            EvidenceProvenance.LIVE_EXTERNAL,
+        )
+        if self.provenance in live_provenances:
+            raise ExecutionGateValueError(
+                f"P-11.05 fixture proof cannot claim live provenance '{self.provenance.value}'"
+            )
+        if self.before_read_provenance in live_provenances:
+            raise ExecutionGateValueError(
+                "before_read_provenance cannot claim live provenance without exercised live access"
+            )
+        if self.after_read_provenance in live_provenances:
+            raise ExecutionGateValueError(
+                "after_read_provenance cannot claim live provenance without exercised live access"
+            )
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert receipt to a serializable dictionary."""
+        """Convert receipt to a serializable, privacy-safe dictionary."""
         return {
             "source_sha": self.source_sha,
             "mission_id": str(self.mission_id),
@@ -382,8 +461,8 @@ class UnapprovedActionReceipt:
             "provider_mutation_invocations": self.provider_mutation_invocations,
             "before_read_provenance": self.before_read_provenance.value,
             "after_read_provenance": self.after_read_provenance.value,
-            "before_state_summary": to_canonical_primitive(dict(self.before_state_summary)),
-            "after_state_summary": to_canonical_primitive(dict(self.after_state_summary)),
+            "before_state_summary": _sanitize_summary_mapping(self.before_state_summary),
+            "after_state_summary": _sanitize_summary_mapping(self.after_state_summary),
             "state_unchanged": self.state_unchanged,
             "is_ready_claimed": self.is_ready_claimed,
             "provenance": self.provenance.value,
@@ -407,7 +486,8 @@ def evaluate_execution_gate(
 
     Enforces:
     1. Reject model/planner proposal objects fail-closed (PlannerGateAuthorityError).
-    2. Reject arbitrary prose, conversational strings, or unvalidated inputs fail-closed.
+    2. Reject arbitrary prose, conversational strings, or unvalidated inputs fail-closed
+       with static, privacy-safe error messages (no raw value reflection).
     3. Self-validate action contract under action policy (ValidatedActionContract).
     4. Query frozen P-11.01 ActionAuthorityPolicy:
        - If action requires bound approval (CALENDAR_UPDATE):
@@ -416,6 +496,7 @@ def evaluate_execution_gate(
          * If approval is provided: raises NotImplementedError because P-11.06 approved
            execution path is strictly pending authorization and NOT implemented here.
        - If action does not require bound approval (READ_ONLY, REVERSIBLE_AUTO):
+         * If approval grant is unexpectedly provided: raises UnexpectedApprovalGrantError.
          * Returns is_authorized=True, eligible for execution.
 
     Args:
@@ -428,23 +509,26 @@ def evaluate_execution_gate(
         ExecutionGateDecision capturing authorization status and deterministic reason.
     """
     # 1. Model / planner injection guards
-    assert_not_planner_for_authority(action, parameter_name="action")
-    if approval is not None:
-        assert_not_planner_for_authority(approval, parameter_name="approval")
-    if pending_approval is not None:
-        assert_not_planner_for_authority(pending_approval, parameter_name="pending_approval")
+    try:
+        assert_not_planner_for_authority(action, parameter_name="action")
+        if approval is not None:
+            assert_not_planner_for_authority(approval, parameter_name="approval")
+        if pending_approval is not None:
+            assert_not_planner_for_authority(pending_approval, parameter_name="pending_approval")
+    except PlannerAuthorityError as exc:
+        raise PlannerGateAuthorityError(str(exc)) from None
 
-    # 2. Reject arbitrary string/prose decisions
+    # 2. Reject arbitrary string/prose decisions with static, bounded, privacy-safe messages
     if isinstance(action, str):
         raise AuthorityPolicyTypeError(
-            f"String input {action!r} cannot act as authority gate input; "
+            "String or conversational prose cannot act as authority gate action; "
             "must be a canonical ActionContract or ValidatedActionContract"
-        )
+        ) from None
     if isinstance(approval, str):
         raise AuthorityPolicyTypeError(
-            f"String prose {approval!r} cannot act as an ApprovalGrant; "
+            "String prose cannot act as an ApprovalGrant; "
             "model/conversational text has ZERO authority"
-        )
+        ) from None
 
     # 3. Action validation
     if isinstance(action, ValidatedActionContract):
@@ -454,40 +538,84 @@ def evaluate_execution_gate(
     else:
         raise ExecutionGateTypeError(
             f"action must be ActionContract or ValidatedActionContract, got {type(action).__name__}"
-        )
+        ) from None
 
-    # 4. Timestamp normalization
+    # 4. Approval object type validation
+    if approval is not None and not isinstance(approval, ApprovalGrant):
+        raise ExecutionGateTypeError(
+            f"approval must be an ApprovalGrant or None, got {type(approval).__name__}"
+        ) from None
+
+    # 5. Timestamp normalization
     now = at or datetime.now(UTC)
     if not isinstance(now, datetime):
-        raise ExecutionGateTypeError("Evaluation timestamp 'at' must be a datetime")
+        raise ExecutionGateTypeError("Evaluation timestamp 'at' must be a datetime") from None
     if now.tzinfo is None or now.utcoffset() is None:
-        raise AuthorityPolicyValueError("Evaluation timestamp 'at' must be timezone-aware")
+        raise AuthorityPolicyValueError(
+            "Evaluation timestamp 'at' must be timezone-aware"
+        ) from None
     norm_at = now if now.tzinfo == UTC else now.astimezone(UTC)
 
-    # 5. Resolve frozen authority policy from P-11.01
+    # 6. Resolve frozen authority policy from P-11.01
     policy: ActionAuthorityPolicy = get_action_authority_policy(validated.action_type)
 
-    # 6. Validate pending_approval if supplied
+    # 7. Validate pending_approval if supplied against complete exact action binding
     paid: PendingApprovalId | None = None
     if pending_approval is not None:
         if not isinstance(pending_approval, PendingApproval):
             raise ExecutionGateTypeError(
                 "pending_approval must be a PendingApproval instance, "
                 f"got {type(pending_approval).__name__}"
-            )
+            ) from None
         if pending_approval.action_id != validated.action_id:
-            raise ExecutionGateValueError(
-                f"pending_approval action_id {pending_approval.action_id} "
-                f"does not match action {validated.action_id}"
-            )
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval action_id does not match candidate action action_id"
+            ) from None
         if pending_approval.mission_id != validated.mission_id:
-            raise ExecutionGateValueError(
-                f"pending_approval mission_id {pending_approval.mission_id} "
-                f"does not match action mission {validated.mission_id}"
-            )
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval mission_id does not match candidate action mission_id"
+            ) from None
+        if pending_approval.action_type != validated.action_type:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval action_type does not match candidate action action_type"
+            ) from None
+        if pending_approval.authority_class != policy.authority_class:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval authority_class does not match policy authority_class"
+            ) from None
+        if pending_approval.target != validated.target:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval target does not match candidate action target"
+            ) from None
+        if pending_approval.parameters != validated.parameters:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval parameters do not match candidate action parameters"
+            ) from None
+        if pending_approval.parameters_digest != compute_parameters_digest(validated.parameters):
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval parameters_digest does not match computed parameters digest"
+            ) from None
+        if pending_approval.status != PendingApprovalStatus.PENDING:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval status must be PENDING"
+            ) from None
+
+        computed_paid = compute_pending_approval_id(
+            mission_id=validated.mission_id,
+            action_id=validated.action_id,
+            action_type=validated.action_type,
+            authority_class=policy.authority_class,
+            target=validated.target,
+            parameters=validated.parameters,
+        )
+        if pending_approval.pending_approval_id != computed_paid:
+            raise PendingApprovalBindingMismatchError(
+                "PendingApproval pending_approval_id does not match computed canonical identity"
+            ) from None
+
         paid = pending_approval.pending_approval_id
 
-    # 7. Evaluate approval requirement
+    # 8. Evaluate approval requirement
     if policy.requires_bound_approval:
         if approval is None:
             # APPROVAL ABSENT: Action MUST remain NOT_RUN
@@ -508,7 +636,7 @@ def evaluate_execution_gate(
                 provider_result=None,
             )
 
-        # Approval is present: Enforce Rule 12
+        # Approval is present: Enforce Rule 12 / P-11.06 lock
         # P-11.06 approved execution path is NOT implemented here!
         raise NotImplementedError(
             "P-11.06 approved execution path is not implemented in P-11.05 "
@@ -516,6 +644,13 @@ def evaluate_execution_gate(
         )
 
     # Action does not require bound approval (READ_ONLY or REVERSIBLE_AUTO)
+    # Reject unexpected approval grant before any state change
+    if approval is not None:
+        raise UnexpectedApprovalGrantError(
+            f"Unexpected ApprovalGrant provided for action that does not require approval "
+            f"({validated.action_type.value} has authority class {policy.authority_class.value})"
+        ) from None
+
     return ExecutionGateDecision(
         action_id=validated.action_id,
         action_type=validated.action_type,
@@ -559,8 +694,8 @@ def execute_gated_action(
        - Crucially: action is NOT marked EXECUTION_FAILED or FAILED!
        - Returns ExecutionGateDecision with status=NOT_RUN.
     2. If the authority gate determines authorized:
+       - Generates ExecutionAttempt FIRST (failing before tracker mutation if attempt fails).
        - Marks tracker in progress (if supplied).
-       - Creates canonical ExecutionAttempt.
        - Invokes router to execute action.
        - Records success or failure on tracker.
        - Returns ExecutionGateDecision with final execution status.
@@ -592,11 +727,12 @@ def execute_gated_action(
         return gate_decision
 
     # Branch 2: Action is authorized to proceed
-    if tracker is not None:
-        tracker.mark_in_progress(action.action_id)
-
+    # Generate attempt FIRST to prevent premature IN_PROGRESS transition if attempt generation fails
     gen = attempt_generator or create_execution_attempt
     attempt = gen(action.action_id)
+
+    if tracker is not None:
+        tracker.mark_in_progress(action.action_id)
 
     actual_action = action.action if isinstance(action, ValidatedActionContract) else action
     provider_result = router.execute(
@@ -646,15 +782,14 @@ def execute_gated_action(
 
 def create_unapproved_action_receipt(
     *,
+    gate_decision: ExecutionGateDecision,
+    action: ValidatedActionContract | ActionContract,
+    pending_approval: PendingApproval,
+    before_read: CalendarReadResult,
+    after_read: CalendarReadResult,
+    measured_provider_mutations: int,
     source_sha: str,
-    mission_id: MissionId,
-    action_id: ActionId,
-    action_type: ActionType,
-    authority_class: AuthorityClass,
-    target_event_id: str,
-    pending_approval_id: PendingApprovalId,
-    before_state_summary: Mapping[str, Any],
-    after_state_summary: Mapping[str, Any],
+    ledger: ApprovalLedger | None = None,
     before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
@@ -662,34 +797,189 @@ def create_unapproved_action_receipt(
 ) -> UnapprovedActionReceipt:
     """Create an immutable UnapprovedActionReceipt proving an unapproved action remained NOT_RUN.
 
-    Enforces all P-11.05 invariants:
-    - approval_status is strictly PENDING;
-    - grant_present is strictly False;
-    - consumption_present is strictly False;
-    - execution_state is strictly NOT_RUN;
-    - provider_mutation_invocations is strictly 0;
-    - state_unchanged is verified from before vs after summary equality;
-    - is_ready_claimed is strictly False.
+    Enforces all P-11.05 invariants and derives facts from observed reality:
+    - Binds strictly to the canonical gate decision, action, and pending approval.
+    - Rejects contradictory action identity, pending identity, or gate decision.
+    - Requires measured_provider_mutations == 0 from actual instrumentation.
+    - Derives before and after states directly from CalendarReadResult observations.
+    - Rejects mismatched before vs after states (state_unchanged must be True).
+    - Verifies external state does NOT reflect the proposed mutation parameters.
+    - Rejects loose unverified dictionaries or absent observations.
+    - Rejects false LIVE_* provenance claims for fixture/local executions.
+    - Deeply freezes all nested state payloads against post-creation mutation.
     """
+    if not isinstance(gate_decision, ExecutionGateDecision):
+        raise ExecutionGateTypeError(
+            f"gate_decision must be an ExecutionGateDecision, got {type(gate_decision).__name__}"
+        )
+    if not isinstance(action, (ValidatedActionContract, ActionContract)):
+        raise ExecutionGateTypeError(
+            f"action must be ActionContract or ValidatedActionContract, got {type(action).__name__}"
+        )
+    if not isinstance(pending_approval, PendingApproval):
+        raise ExecutionGateTypeError(
+            f"pending_approval must be a PendingApproval, got {type(pending_approval).__name__}"
+        )
+    if not isinstance(before_read, CalendarReadResult):
+        raise ExecutionGateTypeError(
+            f"before_read must be a CalendarReadResult, got {type(before_read).__name__}"
+        )
+    if not isinstance(after_read, CalendarReadResult):
+        raise ExecutionGateTypeError(
+            f"after_read must be a CalendarReadResult, got {type(after_read).__name__}"
+        )
+    if isinstance(measured_provider_mutations, bool) or not isinstance(
+        measured_provider_mutations, int
+    ):
+        mpm_name = type(measured_provider_mutations).__name__
+        raise ExecutionGateTypeError(f"measured_provider_mutations must be an int, got {mpm_name}")
+    if not isinstance(source_sha, str):
+        raise ExecutionGateTypeError(
+            f"source_sha must be a string, got {type(source_sha).__name__}"
+        )
+
+    # Gate decision validations
+    if gate_decision.status != ActionExecutionStatus.NOT_RUN:
+        raise ExecutionGateValueError(
+            f"Receipt requires gate decision status NOT_RUN, got {gate_decision.status.value}"
+        )
+    if gate_decision.is_authorized:
+        raise ExecutionGateValueError("Receipt requires gate decision is_authorized=False")
+    if gate_decision.attempt is not None:
+        raise ExecutionGateValueError("Receipt requires gate decision attempt=None")
+    if gate_decision.provider_result is not None:
+        raise ExecutionGateValueError("Receipt requires gate decision provider_result=None")
+
+    # Action binding
+    actual_action = action.action if isinstance(action, ValidatedActionContract) else action
+    if actual_action.action_id != gate_decision.action_id:
+        raise ExecutionGateValueError("Action action_id does not match gate decision action_id")
+    if actual_action.action_type != gate_decision.action_type:
+        raise ExecutionGateValueError("Action action_type does not match gate decision action_type")
+    if actual_action.action_type != ActionType.CALENDAR_UPDATE:
+        act_val = actual_action.action_type.value
+        raise ExecutionGateValueError(
+            f"Unapproved action receipt applies to CALENDAR_UPDATE, got {act_val}"
+        )
+
+    # Pending approval binding
+    if pending_approval.status != PendingApprovalStatus.PENDING:
+        raise ExecutionGateValueError(
+            f"pending_approval status must be PENDING, got {pending_approval.status.value}"
+        )
+    if pending_approval.action_id != actual_action.action_id:
+        raise ExecutionGateValueError("pending_approval action_id does not match action action_id")
+    if pending_approval.mission_id != actual_action.mission_id:
+        raise ExecutionGateValueError(
+            "pending_approval mission_id does not match action mission_id"
+        )
+    if pending_approval.action_type != actual_action.action_type:
+        raise ExecutionGateValueError(
+            "pending_approval action_type does not match action action_type"
+        )
+    if pending_approval.target != actual_action.target:
+        raise ExecutionGateValueError("pending_approval target does not match action target")
+    if pending_approval.parameters != actual_action.parameters:
+        raise ExecutionGateValueError("pending_approval parameters do not match action parameters")
+    if gate_decision.pending_approval_id != pending_approval.pending_approval_id:
+        raise ExecutionGateValueError(
+            "gate_decision pending_approval_id does not match pending_approval"
+        )
+
+    # Measured provider mutations must come from instrumentation and be 0
+    if measured_provider_mutations != 0:
+        raise ExecutionGateValueError(
+            f"Measured provider mutations must be 0 for NOT_RUN action, "
+            f"got {measured_provider_mutations}"
+        )
+
+    # Ledger consumption verification
+    if ledger is not None:
+        if ledger.is_used(pending_approval.pending_approval_id.value):
+            raise ExecutionGateValueError("Approval was marked used in ledger; must be unused")
+        if ledger.is_consumed(pending_approval.pending_approval_id.value):
+            raise ExecutionGateValueError(
+                "Approval was marked consumed in ledger; must be unconsumed"
+            )
+
+    # Read observations verification
+    if before_read.status != CalendarReadStatus.SUCCESS or before_read.observation is None:
+        raise ExecutionGateValueError(
+            f"before_read must have status SUCCESS with non-None observation, "
+            f"got {before_read.status.value}"
+        )
+    if after_read.status != CalendarReadStatus.SUCCESS or after_read.observation is None:
+        raise ExecutionGateValueError(
+            f"after_read must have status SUCCESS with non-None observation, "
+            f"got {after_read.status.value}"
+        )
+
+    before_obs = before_read.observation
+    after_obs = after_read.observation
+
+    if (
+        before_obs.event_id != actual_action.target.resource_id
+        or after_obs.event_id != actual_action.target.resource_id
+    ):
+        raise ExecutionGateValueError(
+            "Read observations must match action target resource_id (event_id)"
+        )
+    if (
+        before_obs.calendar_id != actual_action.target.parent_id
+        or after_obs.calendar_id != actual_action.target.parent_id
+    ):
+        raise ExecutionGateValueError(
+            "Read observations must match action target parent_id (calendar_id)"
+        )
+
+    before_summary: dict[str, Any] = {
+        "summary": before_obs.summary,
+        "start_time": before_obs.start_time,
+        "end_time": before_obs.end_time,
+        "all_day": before_obs.all_day,
+        "etag": before_obs.etag,
+        "status": before_obs.status,
+    }
+    after_summary: dict[str, Any] = {
+        "summary": after_obs.summary,
+        "start_time": after_obs.start_time,
+        "end_time": after_obs.end_time,
+        "all_day": after_obs.all_day,
+        "etag": after_obs.etag,
+        "status": after_obs.status,
+    }
+
+    # Verify state equality
+    if before_summary != after_summary:
+        raise ExecutionGateValueError(
+            "Observed external event state differs between before and after reads; "
+            "unapproved action must leave state unchanged"
+        )
+
+    # Verify external state does NOT reflect proposed mutation parameters
+    params = actual_action.parameters.to_dict()
+    if "start_time" in params and params["start_time"] != before_obs.start_time:
+        if after_obs.start_time == params["start_time"]:
+            raise ExecutionGateValueError(
+                "External event state reflects proposed mutation start_time; mutation was executed!"
+            )
+    if "summary" in params and params["summary"] != before_obs.summary:
+        if after_obs.summary == params["summary"]:
+            raise ExecutionGateValueError(
+                "External event state reflects proposed mutation summary; mutation was executed!"
+            )
+
     now = recorded_at or datetime.now(UTC)
     norm_now = now if now.tzinfo == UTC else now.astimezone(UTC)
 
-    # Compare state fields to deterministically prove unchanged external state
-    state_matches = dict(before_state_summary) == dict(after_state_summary)
-    if not state_matches:
-        raise ExecutionGateValueError(
-            "External state mismatch detected between before and after observations; "
-            "unapproved mutation was expected to leave state unchanged"
-        )
-
     return UnapprovedActionReceipt(
         source_sha=source_sha,
-        mission_id=mission_id,
-        action_id=action_id,
-        action_type=action_type,
-        authority_class=authority_class,
-        target_event_id=target_event_id,
-        pending_approval_id=pending_approval_id,
+        mission_id=actual_action.mission_id,
+        action_id=actual_action.action_id,
+        action_type=actual_action.action_type,
+        authority_class=gate_decision.authority_class,
+        target_event_id=actual_action.target.resource_id,
+        pending_approval_id=pending_approval.pending_approval_id,
         approval_status=PendingApprovalStatus.PENDING,
         grant_present=False,
         consumption_present=False,
@@ -697,8 +987,8 @@ def create_unapproved_action_receipt(
         provider_mutation_invocations=0,
         before_read_provenance=before_read_provenance,
         after_read_provenance=after_read_provenance,
-        before_state_summary=before_state_summary,
-        after_state_summary=after_state_summary,
+        before_state_summary=before_summary,
+        after_state_summary=after_summary,
         state_unchanged=True,
         is_ready_claimed=False,
         provenance=provenance,
@@ -711,9 +1001,11 @@ __all__ = [
     "ExecutionGateError",
     "ExecutionGateTypeError",
     "ExecutionGateValueError",
+    "PendingApprovalBindingMismatchError",
     "PlannerGateAuthorityError",
     "UnapprovedActionReceipt",
     "UnapprovedMutationBlockedError",
+    "UnexpectedApprovalGrantError",
     "create_unapproved_action_receipt",
     "evaluate_execution_gate",
     "execute_gated_action",

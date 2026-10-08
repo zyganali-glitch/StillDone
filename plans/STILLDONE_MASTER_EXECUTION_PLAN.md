@@ -1250,7 +1250,7 @@ Status: PASS ✅ (independent QA verified)
 Status: PASS ✅ (independent QA verified)
 
 ### P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval
-Status: IMPLEMENTED / proof captured / awaiting independent QA
+Status: REPAIRED (Repairs A–E complete) / awaiting independent QA
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
 Status: PENDING
