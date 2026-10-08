@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: CLOSED (independent QA PASS ✅) | P-10.01 → P-10.06: PASS ✅ | Last independently VERIFIED contiguous SHA: `53699a03e03bd58d7fc11bd5b8e178755e040b1e` | Next engineering gate: P-11.01 (PENDING / NOT AUTHORIZED / NOT_RUN)**
+Current repository state: **Phase P-09: CLOSED (independent QA PASS ✅) | Phase P-10: CLOSED (independent QA PASS ✅) | P-10.01 → P-10.06: PASS ✅ | Last independently VERIFIED contiguous SHA: `faa8c0591cdd7b57d30c34c393a263fdedae7bca` | P-11.01: IMPLEMENTED / awaiting independent QA | P-11.02+: PENDING / NOT AUTHORIZED / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -235,7 +235,17 @@ P-11.01 — Freeze authority policy for canonical mission actions (PENDING / NOT
 
 ---
 
-## Phase Milestones Summary
+### Phase P-11 Status Summary
+- **P-11.01 — Freeze authority policy for canonical mission actions**: `IMPLEMENTED / awaiting independent QA`.
+  - Frozen deterministic `ActionAuthorityPolicy` contract for all 5 canonical actions (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`).
+  - Immutable policy table `ACTION_AUTHORITY_POLICY_TABLE` mapped via `types.MappingProxyType` and validated with exact 1:1 mapping against `ActionType`.
+  - Preserved backward-compatible `ACTION_AUTHORITY_TABLE` mirroring classified authority classes.
+  - Fail-closed deterministic lookup `get_action_authority_policy`: rejects unsupported actions, raw strings/prose, and planner/model objects (`PlannerAuthorityError`).
+  - Strict separation of authority policy from runtime grant: policy states requirements but never manufactures or implies an `ApprovalGrant`.
+  - Verified read-only observation actions require zero approval; `calendar.update` strictly requires bound approval (`permit_execution_without_grant=False`); `task.create` is explicitly classified as mutating `REVERSIBLE_AUTO` (`permit_execution_without_grant=True`).
+  - Tested with 45 comprehensive adversarial and canonical tests in `tests/test_phase_p11_authority_policy.py`.
+- **P-11.02 through P-11.06**: `PENDING / NOT AUTHORIZED / NOT_RUN`.
+- **Last independently VERIFIED contiguous SHA**: `faa8c0591cdd7b57d30c34c393a263fdedae7bca`.
 
 ### Phase P-10 Closure Summary
 Phase P-10 (Idempotency, Retry & Recovery) successfully closed with independent QA PASS:

@@ -166,6 +166,7 @@ def validate_strands_planner() -> None:
                 "tests/test_ledger.py",
                 "tests/test_phase_p03_adversarial.py",
                 "tests/test_phase_p04_security_audit.py",
+                "tests/test_phase_p11_authority_policy.py",
                 "tests/test_receipt.py",
                 "tests/test_redaction.py",
                 "tests/test_serialization.py",

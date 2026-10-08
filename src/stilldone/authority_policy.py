@@ -33,9 +33,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from stilldone.action_policy import ValidatedActionContract
-from stilldone.domain.action import ActionId, ActionType
+from stilldone.domain.action import ActionContract, ActionId, ActionType
 from stilldone.domain.authority import (
     ApprovalGrant,
     ApprovalId,
@@ -43,6 +44,22 @@ from stilldone.domain.authority import (
     compute_approval_binding_hash,
 )
 from stilldone.domain.mission import MissionId
+
+# Detect planner/model classes if available to reject model authority injections
+try:
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        PlannerInput,
+    )
+
+    _PLANNER_TYPES: tuple[type, ...] = (
+        CandidatePlanProposal,
+        CandidateActionProposal,
+        PlannerInput,
+    )
+except ImportError:
+    _PLANNER_TYPES = ()
 
 # ===========================================================================
 # Decision Status and Rejection Reason Enums
@@ -92,6 +109,20 @@ class AuthorityPolicyError(Exception):
 
 class AuthorityPolicyTypeError(AuthorityPolicyError, TypeError):
     """Raised when an object or argument has an invalid type."""
+
+
+class PlannerAuthorityError(AuthorityPolicyTypeError):
+    """Raised when a model/planner proposal object is passed as authority input."""
+
+
+def assert_not_planner_for_authority(obj: Any, *, parameter_name: str = "argument") -> None:
+    """Reject planner/model proposals fail-closed in authority policy operations."""
+    for pt in _PLANNER_TYPES:
+        if isinstance(obj, pt):
+            raise PlannerAuthorityError(
+                f"Model/planner proposal {type(obj).__name__} has ZERO authority "
+                f"and cannot act as authority input ({parameter_name})"
+            )
 
 
 class AuthorityPolicyValueError(AuthorityPolicyError, ValueError):
@@ -152,28 +183,239 @@ class AuthorityBlockedError(AuthorityPolicyError):
 
 
 # ===========================================================================
-# Closed-World Authority Classification Table
+# Canonical Action Authority Policy Model & Frozen Tables
 # ===========================================================================
 
-_AUTHORITY_ENTRIES: dict[ActionType, AuthorityClass] = {
-    ActionType.CALENDAR_READ: AuthorityClass.READ_ONLY,
-    ActionType.CALENDAR_UPDATE: AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
-    ActionType.TASK_READ: AuthorityClass.READ_ONLY,
-    ActionType.TASK_CREATE: AuthorityClass.REVERSIBLE_AUTO,
-    ActionType.WEATHER_READ: AuthorityClass.READ_ONLY,
+DEFAULT_AUTHORITY_DECISION_COMPONENT: str = "stilldone.authority_policy.evaluate_authority"
+
+
+@dataclass(frozen=True)
+class ActionAuthorityPolicy:
+    """Immutable canonical authority policy for a supported ActionType.
+
+    Answers deterministically:
+    - action_type: Canonical ActionType member.
+    - authority_class: Canonical AuthorityClass required.
+    - is_mutating: Whether action mutates external state (True) or observes it (False).
+    - requires_human_approval: Whether human approval is required before execution.
+    - requires_bound_approval: Whether a bound ApprovalGrant must exist before execution.
+    - permit_execution_without_grant: Whether execution is permitted without an ApprovalGrant.
+    - owning_runtime_component: The exact runtime component owning the authority decision.
+    """
+
+    action_type: ActionType
+    authority_class: AuthorityClass
+    is_mutating: bool
+    requires_human_approval: bool
+    requires_bound_approval: bool
+    permit_execution_without_grant: bool
+    owning_runtime_component: str = DEFAULT_AUTHORITY_DECISION_COMPONENT
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action_type, ActionType):
+            raise TypeError(
+                f"action_type must be an ActionType instance, got {type(self.action_type).__name__}"
+            )
+        if not isinstance(self.authority_class, AuthorityClass):
+            ac_type = type(self.authority_class).__name__
+            raise TypeError(f"authority_class must be an AuthorityClass instance, got {ac_type}")
+        if type(self.is_mutating) is not bool:
+            raise TypeError(f"is_mutating must be a bool, got {type(self.is_mutating).__name__}")
+        if type(self.requires_human_approval) is not bool:
+            rha_type = type(self.requires_human_approval).__name__
+            raise TypeError(f"requires_human_approval must be a bool, got {rha_type}")
+        if type(self.requires_bound_approval) is not bool:
+            rba_type = type(self.requires_bound_approval).__name__
+            raise TypeError(f"requires_bound_approval must be a bool, got {rba_type}")
+        if type(self.permit_execution_without_grant) is not bool:
+            pe_type = type(self.permit_execution_without_grant).__name__
+            raise TypeError(f"permit_execution_without_grant must be a bool, got {pe_type}")
+        if (
+            not isinstance(self.owning_runtime_component, str)
+            or not self.owning_runtime_component.strip()
+        ):
+            raise ValueError("owning_runtime_component must be a non-empty string")
+
+        # Invariant: requires_human_approval must match authority_class.requires_human_approval
+        expected_approval = self.authority_class.requires_human_approval
+        if self.requires_human_approval != expected_approval:
+            raise ValueError(
+                f"requires_human_approval ({self.requires_human_approval}) must match "
+                f"authority_class.requires_human_approval ({expected_approval})"
+            )
+
+        # Invariant: if requires_bound_approval is True, permit_execution_without_grant is False
+        if self.requires_bound_approval and self.permit_execution_without_grant:
+            raise ValueError(
+                "Action requiring bound approval cannot permit execution without a grant"
+            )
+
+        # Invariant: if permit_execution_without_grant is True, requires_bound_approval is False
+        if self.permit_execution_without_grant and self.requires_bound_approval:
+            raise ValueError(
+                "Action permitting execution without a grant cannot require bound approval"
+            )
+
+        # Invariant: read-only actions must not mutate and must not require approval
+        if not self.is_mutating:
+            if self.authority_class != AuthorityClass.READ_ONLY:
+                raise ValueError("Read-only actions must have AuthorityClass.READ_ONLY")
+            if self.requires_human_approval:
+                raise ValueError("Read-only actions cannot require human approval")
+            if self.requires_bound_approval:
+                raise ValueError("Read-only actions cannot require bound approval")
+            if not self.permit_execution_without_grant:
+                raise ValueError("Read-only actions must permit execution without a grant")
+
+    @property
+    def is_read_only(self) -> bool:
+        """True if the action is read-only (non-mutating)."""
+        return not self.is_mutating
+
+    @property
+    def execution_permitted_without_grant(self) -> bool:
+        """Alias for permit_execution_without_grant."""
+        return self.permit_execution_without_grant
+
+    @property
+    def requires_bound_approval_for_execution(self) -> bool:
+        """Alias for requires_bound_approval."""
+        return self.requires_bound_approval
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert policy to a serializable dictionary."""
+        return {
+            "action_type": self.action_type.value,
+            "authority_class": self.authority_class.value,
+            "is_mutating": self.is_mutating,
+            "is_read_only": self.is_read_only,
+            "requires_human_approval": self.requires_human_approval,
+            "requires_bound_approval": self.requires_bound_approval,
+            "requires_bound_approval_for_execution": self.requires_bound_approval_for_execution,
+            "permit_execution_without_grant": self.permit_execution_without_grant,
+            "execution_permitted_without_grant": self.execution_permitted_without_grant,
+            "owning_runtime_component": self.owning_runtime_component,
+        }
+
+
+FROZEN_ACTION_AUTHORITY_POLICIES: dict[ActionType, ActionAuthorityPolicy] = {
+    ActionType.CALENDAR_READ: ActionAuthorityPolicy(
+        action_type=ActionType.CALENDAR_READ,
+        authority_class=AuthorityClass.READ_ONLY,
+        is_mutating=False,
+        requires_human_approval=False,
+        requires_bound_approval=False,
+        permit_execution_without_grant=True,
+        owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
+    ),
+    ActionType.CALENDAR_UPDATE: ActionAuthorityPolicy(
+        action_type=ActionType.CALENDAR_UPDATE,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        is_mutating=True,
+        requires_human_approval=True,
+        requires_bound_approval=True,
+        permit_execution_without_grant=False,
+        owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
+    ),
+    ActionType.TASK_READ: ActionAuthorityPolicy(
+        action_type=ActionType.TASK_READ,
+        authority_class=AuthorityClass.READ_ONLY,
+        is_mutating=False,
+        requires_human_approval=False,
+        requires_bound_approval=False,
+        permit_execution_without_grant=True,
+        owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
+    ),
+    ActionType.TASK_CREATE: ActionAuthorityPolicy(
+        action_type=ActionType.TASK_CREATE,
+        authority_class=AuthorityClass.REVERSIBLE_AUTO,
+        is_mutating=True,
+        requires_human_approval=False,
+        requires_bound_approval=False,
+        permit_execution_without_grant=True,
+        owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
+    ),
+    ActionType.WEATHER_READ: ActionAuthorityPolicy(
+        action_type=ActionType.WEATHER_READ,
+        authority_class=AuthorityClass.READ_ONLY,
+        is_mutating=False,
+        requires_human_approval=False,
+        requires_bound_approval=False,
+        permit_execution_without_grant=True,
+        owning_runtime_component=DEFAULT_AUTHORITY_DECISION_COMPONENT,
+    ),
 }
 
 # Module-level invariants: exact 1:1 mapping with ActionType
-assert set(_AUTHORITY_ENTRIES.keys()) == set(ActionType), (
-    "ACTION_AUTHORITY_TABLE must cover all canonical ActionType members"
+assert set(FROZEN_ACTION_AUTHORITY_POLICIES.keys()) == set(ActionType), (
+    "FROZEN_ACTION_AUTHORITY_POLICIES must cover all canonical ActionType members"
 )
-assert len(_AUTHORITY_ENTRIES) == len(ActionType) == 5, (
-    "ACTION_AUTHORITY_TABLE must have exactly 5 entries"
+assert len(FROZEN_ACTION_AUTHORITY_POLICIES) == len(ActionType) == 5, (
+    "FROZEN_ACTION_AUTHORITY_POLICIES must have exactly 5 entries"
 )
+
+ACTION_AUTHORITY_POLICY_TABLE: Mapping[ActionType, ActionAuthorityPolicy] = types.MappingProxyType(
+    FROZEN_ACTION_AUTHORITY_POLICIES
+)
+
+_AUTHORITY_ENTRIES: dict[ActionType, AuthorityClass] = {
+    at: policy.authority_class for at, policy in FROZEN_ACTION_AUTHORITY_POLICIES.items()
+}
 
 ACTION_AUTHORITY_TABLE: Mapping[ActionType, AuthorityClass] = types.MappingProxyType(
     _AUTHORITY_ENTRIES
 )
+
+
+def get_action_authority_policy(
+    action: ValidatedActionContract | ActionContract | ActionType,
+) -> ActionAuthorityPolicy:
+    """Resolve the immutable canonical authority policy for an action or ActionType.
+
+    Fails closed on unsupported action types, unvalidated model prose,
+    or planner proposal injections.
+    Does NOT manufacture, imply, or verify an ApprovalGrant.
+
+    Args:
+        action: A canonical ValidatedActionContract, ActionContract, or ActionType.
+
+    Returns:
+        The frozen ActionAuthorityPolicy for the corresponding action type.
+
+    Raises:
+        PlannerAuthorityError: If action is a model/planner proposal object.
+        AuthorityPolicyTypeError: If action is a raw string or unsupported type.
+        UnsupportedActionTypeError: If action type is not present in the policy table.
+    """
+    assert_not_planner_for_authority(action, parameter_name="action")
+
+    if isinstance(action, ValidatedActionContract):
+        act_type = action.action_type
+    elif isinstance(action, ActionContract):
+        act_type = action.action_type
+    elif isinstance(action, ActionType):
+        act_type = action
+    elif isinstance(action, str):
+        # Plain strings (including model prose) cannot bypass canonical typed enum
+        raise AuthorityPolicyTypeError(
+            f"String input {action!r} cannot act as authority policy input; "
+            "must be a canonical ActionType, ActionContract, or ValidatedActionContract"
+        )
+    else:
+        raise AuthorityPolicyTypeError(
+            "action must be a ValidatedActionContract, ActionContract, or ActionType instance, "
+            f"got {type(action).__name__}"
+        )
+
+    policy = ACTION_AUTHORITY_POLICY_TABLE.get(act_type)
+    if policy is None:
+        raise UnsupportedActionTypeError(
+            f"No frozen authority policy registered for action type: {act_type!r}"
+        )
+    return policy
+
+
+get_authority_policy = get_action_authority_policy
 
 
 # ===========================================================================
@@ -287,6 +529,7 @@ def classify_authority(action: ValidatedActionContract) -> AuthorityClass:
         AuthorityPolicyTypeError: If action is not a ValidatedActionContract instance.
         UnsupportedActionTypeError: If action type is not present in the classification table.
     """
+    assert_not_planner_for_authority(action, parameter_name="action")
     if not isinstance(action, ValidatedActionContract):
         raise AuthorityPolicyTypeError(
             f"action must be a ValidatedActionContract instance, got {type(action).__name__}"
@@ -495,13 +738,16 @@ def evaluate_authority(
         AuthorityPolicyError: If raise_on_rejection is True and the action is not authorized.
     """
     if not isinstance(action, ValidatedActionContract):
+        assert_not_planner_for_authority(action, parameter_name="action")
         raise AuthorityPolicyTypeError(
             f"action must be a ValidatedActionContract instance, got {type(action).__name__}"
         )
-    if approval is not None and not isinstance(approval, ApprovalGrant):
-        raise InvalidApprovalTypeError(
-            f"approval must be an ApprovalGrant instance or None, got {type(approval).__name__}"
-        )
+    if approval is not None:
+        assert_not_planner_for_authority(approval, parameter_name="approval")
+        if not isinstance(approval, ApprovalGrant):
+            raise InvalidApprovalTypeError(
+                f"approval must be an ApprovalGrant instance or None, got {type(approval).__name__}"
+            )
     if not isinstance(at, datetime):
         raise AuthorityPolicyTypeError(
             f"Evaluation timestamp 'at' must be a datetime instance, got {type(at).__name__}"
@@ -739,7 +985,9 @@ def assert_authorized(
 
 
 __all__ = [
+    "ACTION_AUTHORITY_POLICY_TABLE",
     "ACTION_AUTHORITY_TABLE",
+    "ActionAuthorityPolicy",
     "ApprovalAuthorityClassMismatchError",
     "ApprovalBindingMismatchError",
     "ApprovalExpiredError",
@@ -753,14 +1001,20 @@ __all__ = [
     "AuthorityPolicyError",
     "AuthorityPolicyTypeError",
     "AuthorityPolicyValueError",
+    "DEFAULT_AUTHORITY_DECISION_COMPONENT",
+    "FROZEN_ACTION_AUTHORITY_POLICIES",
     "InvalidApprovalTypeError",
     "IrreversibleActionBlockedError",
+    "PlannerAuthorityError",
     "RejectionReason",
     "UnexpectedApprovalGrantError",
     "UnsupportedActionTypeError",
     "assert_authorized",
+    "assert_not_planner_for_authority",
     "classify_authority",
     "evaluate_authority",
+    "get_action_authority_policy",
+    "get_authority_policy",
     "verify_approval_grant",
     "verify_authority",
 ]
