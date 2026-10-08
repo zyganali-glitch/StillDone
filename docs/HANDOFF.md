@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: REPAIRED / awaiting independent QA | P-11.02+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `faa8c0591cdd7b57d30c34c393a263fdedae7bca`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: IMPLEMENTED / awaiting independent QA | P-11.03+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,17 +74,18 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active task: P-11.01 — Freeze authority policy for canonical mission actions (REPAIRED / awaiting independent QA)
+Active task: P-11.02 — Implement pending approval object and one-decision UX contract (IMPLEMENTED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
-- P-Ω Phase P-10 boundary: PASS ✅ (Verified closure SHA: `faa8c0591cdd7b57d30c34c393a263fdedae7bca`)
-- P-11.01: REPAIRED / awaiting independent QA
-- P-11.02+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-Ω Phase P-10 boundary: PASS ✅
+- P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
+- P-11.02: IMPLEMENTED / awaiting independent QA
+- P-11.03+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `faa8c0591cdd7b57d30c34c393a263fdedae7bca`
-Current exact task: P-11.01 — Freeze authority policy for canonical mission actions (REPAIRED / awaiting independent QA)
-Next exact task: P-11.02 — Implement pending approval object and one-decision UX contract (PENDING / NOT AUTHORIZED / NOT_RUN)
+Last Independently VERIFIED contiguous SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`
+Current exact task: P-11.02 — Implement pending approval object and one-decision UX contract (IMPLEMENTED / awaiting independent QA)
+Next exact task: P-11.03 — Bind approval to exact mission/action/target/parameters/expiry (PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -233,7 +234,7 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
 ---
 
 ### Phase P-11 Status Summary
-- **P-11.01 — Freeze authority policy for canonical mission actions**: `REPAIRED / awaiting independent QA`.
+- **P-11.01 — Freeze authority policy for canonical mission actions**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`).
   - Frozen deterministic `ActionAuthorityPolicy` contract for all 5 canonical actions (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`).
   - Immutable policy table `ACTION_AUTHORITY_POLICY_TABLE` mapped via `types.MappingProxyType` with private construction store (zero public mutable backing dictionary).
   - Truly immutable projecting `ACTION_AUTHORITY_TABLE` deriving dynamically from `ACTION_AUTHORITY_POLICY_TABLE` with zero split-brain possibility.
@@ -241,8 +242,17 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
   - Strict separation of authority policy from runtime grant: policy states requirements but never manufactures or implies an `ApprovalGrant`.
   - Verified read-only observation actions require zero approval; `calendar.update` strictly requires bound approval (`permit_execution_without_grant=False`); `task.create` is explicitly classified as mutating `REVERSIBLE_AUTO` (`permit_execution_without_grant=True`).
   - Tested with 53 comprehensive adversarial and canonical tests in `tests/test_phase_p11_authority_policy.py`.
-- **P-11.02 through P-11.06**: `PENDING / NOT AUTHORIZED / NOT_RUN`.
-- **Last independently VERIFIED contiguous SHA**: `faa8c0591cdd7b57d30c34c393a263fdedae7bca`.
+- **P-11.02 — Implement pending approval object and one-decision UX contract**: `IMPLEMENTED / awaiting independent QA`.
+  - Implemented immutable `PendingApproval` domain object and `OneDecisionContract` UX contract (`src/stilldone/pending_approval.py`).
+  - Bounded human decision surface: closed-world `ApprovalDecision` enum (`APPROVE`, `REJECT`), zero free-form model strings permitted.
+  - Pure content-addressed deterministic identity: `PendingApprovalId` backed by domain-separated SHA-256 (`stilldone:pending-approval:v1`).
+  - Strict P-11.01 authority linkage: derives requirements exclusively from `ACTION_AUTHORITY_POLICY_TABLE`; fails closed with `ApprovalNotRequiredError` for `TASK_CREATE` and read-only actions.
+  - Pending != Approved invariant: `is_authorized=False`, `is_approved=False`, status is strictly `PENDING`, zero `ApprovalGrant` creation or execution authorization.
+  - Smuggling protection: rejects `ApprovalGrant` instances passed to factory or dataclass constructor (`SmuggledGrantError`).
+  - Privacy-safe: sensitive parameter plaintext, tokens, and emails automatically redacted in human summary and omitted from object repr.
+  - Tested with 61 comprehensive adversarial tests in `tests/test_phase_p11_02_pending_approval.py`.
+- **P-11.03 through P-11.06**: `PENDING / NOT AUTHORIZED / NOT_RUN`.
+- **Last independently VERIFIED contiguous SHA**: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`.
 
 ### Phase P-10 Closure Summary
 Phase P-10 (Idempotency, Retry & Recovery) successfully closed with independent QA PASS:
