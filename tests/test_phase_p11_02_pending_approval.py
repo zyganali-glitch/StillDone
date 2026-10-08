@@ -22,7 +22,7 @@ Validates:
 from __future__ import annotations
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -60,6 +60,8 @@ from stilldone.pending_approval import (
     PendingApprovalTypeError,
     PendingApprovalValueError,
     SmuggledGrantError,
+    compute_human_summary,
+    compute_parameters_digest,
     compute_pending_approval_id,
     create_pending_approval,
     validate_approval_decision,
@@ -646,7 +648,7 @@ class TestMalformedPolicyLineageFailsClosed:
             action_type=action.action_type,
             authority_class=pending.authority_class,
             decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
-            human_summary="summary",
+            human_summary=pending.human_summary,
             status=PendingApprovalStatus.PENDING,
             requested_at=_NOW,
         )
@@ -748,3 +750,293 @@ class TestNoP1103PlusIntroduced:
         assert not hasattr(pa, "consume_approval")
         assert not hasattr(pa, "revoke_approval")
         assert not hasattr(pa, "used_approval_registry")
+
+
+# ===========================================================================
+# 17. Surgical Repair: Public Constructor Self-Validation & Boundary Proofs
+# ===========================================================================
+
+
+class TestPhaseP1102SurgicalRepairSelfValidation:
+    """Proves self-validation of parameters_digest, human_summary, and requested_at."""
+
+    def test_wrong_64_char_parameters_digest_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+        wrong_digest = "0" * 64
+
+        with pytest.raises(
+            PendingApprovalTamperedError, match="parameters_digest verification failed"
+        ):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=wrong_digest,
+                requested_at=_NOW,
+                decision_contract=pending.one_decision_contract,
+                action=action.action,
+            )
+
+    def test_non_hex_64_char_parameters_digest_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+        non_hex_digest = "g" * 64
+
+        with pytest.raises(PendingApprovalValueError, match="lowercase hexadecimal"):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=non_hex_digest,
+                requested_at=_NOW,
+                decision_contract=pending.one_decision_contract,
+                action=action.action,
+            )
+
+    def test_uppercase_hex_parameters_digest_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+        upper_digest = pending.parameters_digest.upper()
+
+        with pytest.raises(PendingApprovalValueError, match="lowercase hexadecimal"):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=upper_digest,
+                requested_at=_NOW,
+                decision_contract=pending.one_decision_contract,
+                action=action.action,
+            )
+
+    def test_invalid_length_parameters_digest_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+
+        with pytest.raises(PendingApprovalValueError, match="must be exactly 64 hex characters"):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest="abc",
+                requested_at=_NOW,
+                decision_contract=pending.one_decision_contract,
+                action=action.action,
+            )
+
+    def test_non_string_parameters_digest_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+
+        with pytest.raises(PendingApprovalTypeError, match="parameters_digest must be a string"):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=12345,  # type: ignore[arg-type]
+                requested_at=_NOW,
+                decision_contract=pending.one_decision_contract,
+                action=action.action,
+            )
+
+    def test_correctly_recomputed_digest_accepted(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        digest = compute_parameters_digest(action.parameters)
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
+
+        pending = create_pending_approval(action, requested_at=_NOW)
+        assert pending.parameters_digest == digest
+
+    def test_direct_pending_approval_with_misleading_human_summary_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+
+        misleading_ux = OneDecisionContract(
+            pending_approval_id=pending.pending_approval_id,
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=pending.authority_class,
+            decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+            human_summary="Deploy nuclear launch codes without review",
+            status=PendingApprovalStatus.PENDING,
+            requested_at=_NOW,
+        )
+
+        with pytest.raises(
+            PendingApprovalValueError, match="decision_contract.human_summary mismatch"
+        ):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=pending.parameters_digest,
+                requested_at=_NOW,
+                decision_contract=misleading_ux,
+                action=action.action,
+            )
+
+    def test_human_summary_must_equal_deterministic_sanitized_summary_of_exact_action(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        expected = compute_human_summary(action)
+        pending = create_pending_approval(action, requested_at=_NOW)
+        assert pending.human_summary == expected
+        assert pending.decision_contract.human_summary == expected
+
+    def test_secret_email_redaction_remains_deterministic_in_summary(self) -> None:
+        action = _make_validated_action(
+            ActionType.CALENDAR_UPDATE,
+            parameters={
+                "summary": "Secret meeting with alice@corp.com key bearer secret_token_12345678"
+            },
+        )
+        summary = compute_human_summary(action)
+        assert REDACTED_EMAIL in summary
+        assert REDACTED_SECRET in summary
+        assert "alice@corp.com" not in summary
+        assert "secret_token_12345678" not in summary
+
+    def test_decision_contract_requested_at_mismatch_rejected(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending = create_pending_approval(action, requested_at=_NOW)
+
+        mismatched_ux = OneDecisionContract(
+            pending_approval_id=pending.pending_approval_id,
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=pending.authority_class,
+            decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+            human_summary=pending.human_summary,
+            status=PendingApprovalStatus.PENDING,
+            requested_at=_NOW + timedelta(seconds=1),
+        )
+
+        with pytest.raises(
+            PendingApprovalValueError,
+            match="decision_contract.requested_at .* must equal pending approval requested_at",
+        ):
+            PendingApproval(
+                pending_approval_id=pending.pending_approval_id,
+                mission_id=action.mission_id,
+                action_id=action.action_id,
+                action_type=action.action_type,
+                authority_class=pending.authority_class,
+                target=action.target,
+                parameters=action.parameters,
+                parameters_digest=pending.parameters_digest,
+                requested_at=_NOW,
+                decision_contract=mismatched_ux,
+                action=action.action,
+            )
+
+    def test_equivalent_timezone_representations_normalize_consistently(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        tz_plus3 = timezone(timedelta(hours=3))
+        dt_plus3 = _NOW.astimezone(tz_plus3)
+
+        # Both dt_plus3 and _NOW represent the exact same UTC moment
+        pending = create_pending_approval(action, requested_at=dt_plus3)
+        assert pending.requested_at.tzinfo == UTC
+        assert pending.requested_at == _NOW
+        assert pending.decision_contract.requested_at.tzinfo == UTC
+        assert pending.decision_contract.requested_at == _NOW
+
+        # Direct construction with dt_plus3 also normalizes cleanly
+        direct = PendingApproval(
+            pending_approval_id=pending.pending_approval_id,
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=pending.authority_class,
+            target=action.target,
+            parameters=action.parameters,
+            parameters_digest=pending.parameters_digest,
+            requested_at=dt_plus3,
+            decision_contract=pending.one_decision_contract,
+            action=action.action,
+        )
+        assert direct.requested_at.tzinfo == UTC
+        assert direct.requested_at == pending.decision_contract.requested_at
+
+    def test_direct_correctly_constructed_pending_approval_succeeds(self) -> None:
+        action = _make_validated_action(ActionType.CALENDAR_UPDATE)
+        pending_id = compute_pending_approval_id(
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            target=action.target,
+            parameters=action.parameters,
+        )
+        digest = compute_parameters_digest(action.parameters)
+        summary = compute_human_summary(action)
+        ux = OneDecisionContract(
+            pending_approval_id=pending_id,
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+            human_summary=summary,
+            status=PendingApprovalStatus.PENDING,
+            requested_at=_NOW,
+        )
+        direct = PendingApproval(
+            pending_approval_id=pending_id,
+            mission_id=action.mission_id,
+            action_id=action.action_id,
+            action_type=action.action_type,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            target=action.target,
+            parameters=action.parameters,
+            parameters_digest=digest,
+            requested_at=_NOW,
+            decision_contract=ux,
+            action=action.action,
+        )
+        assert direct.pending_approval_id == pending_id
+        assert direct.human_summary == summary
+        assert direct.parameters_digest == digest
+        assert direct.is_pending is True
+        assert direct.is_authorized is False
+        assert direct.is_approved is False
+
+    def test_compute_parameters_digest_type_guard(self) -> None:
+        with pytest.raises(
+            PendingApprovalTypeError, match="parameters must be a NormalizedParameters instance"
+        ):
+            compute_parameters_digest("not parameters")  # type: ignore[arg-type]
+
+    def test_compute_human_summary_type_guard(self) -> None:
+        with pytest.raises(
+            PendingApprovalTypeError,
+            match="action must be an ActionContract or ValidatedActionContract instance",
+        ):
+            compute_human_summary("not action")  # type: ignore[arg-type]

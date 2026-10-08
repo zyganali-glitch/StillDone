@@ -203,6 +203,16 @@ def compute_pending_approval_id(
     return PendingApprovalId(digest)
 
 
+def compute_parameters_digest(parameters: NormalizedParameters) -> str:
+    """Compute the deterministic, canonical SHA-256 digest of normalized parameters."""
+    if not isinstance(parameters, NormalizedParameters):
+        raise PendingApprovalTypeError(
+            f"parameters must be a NormalizedParameters instance, got {type(parameters).__name__}"
+        )
+    param_bytes = canonical_serialize(to_canonical_primitive(parameters.to_dict()))
+    return hashlib.sha256(param_bytes).hexdigest()
+
+
 # ===========================================================================
 # One-Decision UX Presentation Contract
 # ===========================================================================
@@ -268,6 +278,8 @@ class OneDecisionContract:
             )
         if self.requested_at.tzinfo is None or self.requested_at.utcoffset() is None:
             raise PendingApprovalValueError("requested_at must be timezone-aware")
+        if self.requested_at.tzinfo != UTC:
+            object.__setattr__(self, "requested_at", self.requested_at.astimezone(UTC))
 
     def __repr__(self) -> str:
         return (
@@ -277,7 +289,13 @@ class OneDecisionContract:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert presentation contract to a serializable dictionary."""
+        """Convert presentation contract to a serializable dictionary.
+
+        Boundary Note:
+        This is the operator-facing privacy-safe presentation dictionary. It exposes
+        only the bounded human decision surface (decision options, human summary, status,
+        and lineage identifiers) and never exposes internal execution machinery or raw payloads.
+        """
         return {
             "pending_approval_id": self.pending_approval_id.value,
             "mission_id": str(self.mission_id),
@@ -317,6 +335,49 @@ def validate_approval_decision(decision: Any) -> ApprovalDecision:
         f"Invalid decision type {type(decision).__name__}; "
         "must be an ApprovalDecision instance or exact string 'APPROVE' / 'REJECT'"
     )
+
+
+# ===========================================================================
+# Privacy-Safe Summary Helper
+# ===========================================================================
+
+
+def compute_human_summary(action: ActionContract | ValidatedActionContract) -> str:
+    """Build a privacy-safe, sanitized, human-readable summary for a pending action.
+
+    Applies deterministic redaction for secrets and emails, and never echoes
+    raw provider responses, hidden metadata, or tokens.
+    """
+    actual_action = action.action if isinstance(action, ValidatedActionContract) else action
+    if not isinstance(actual_action, ActionContract):
+        raise PendingApprovalTypeError(
+            "action must be an ActionContract or ValidatedActionContract instance, "
+            f"got {type(action).__name__}"
+        )
+    params = actual_action.parameters
+    if actual_action.action_type == ActionType.CALENDAR_UPDATE:
+        parts: list[str] = []
+        if "summary" in params:
+            parts.append(f"summary={str(params['summary'])!r}")
+        if "start_time" in params:
+            parts.append(f"start_time={str(params['start_time'])!r}")
+        if "all_day" in params:
+            parts.append(f"all_day={params['all_day']}")
+        param_desc = ", ".join(parts) if parts else "parameters updated"
+        raw_text = (
+            f"Update Google Calendar event on '{actual_action.target.system}' "
+            f"({actual_action.target.resource_id}): {param_desc}"
+        )
+    else:
+        raw_text = (
+            f"Execute action '{actual_action.action_type.value}' on "
+            f"'{actual_action.target.system}' target '{actual_action.target.resource_id}'"
+        )
+
+    return redact_text(raw_text)
+
+
+_build_human_summary = compute_human_summary
 
 
 # ===========================================================================
@@ -402,14 +463,28 @@ class PendingApproval:
                 "parameters must be a NormalizedParameters instance, "
                 f"got {type(self.parameters).__name__}"
             )
-        if not isinstance(self.parameters_digest, str) or len(self.parameters_digest) != 64:
-            raise PendingApprovalValueError("parameters_digest must be a 64-character hex digest")
+        if not isinstance(self.parameters_digest, str):
+            raise PendingApprovalTypeError(
+                f"parameters_digest must be a string, got {type(self.parameters_digest).__name__}"
+            )
+        if len(self.parameters_digest) != 64:
+            raise PendingApprovalValueError(
+                "parameters_digest must be exactly 64 hex characters, "
+                f"got {len(self.parameters_digest)}"
+            )
+        for char in self.parameters_digest:
+            if char not in "0123456789abcdef":
+                raise PendingApprovalValueError(
+                    f"parameters_digest must be lowercase hexadecimal: {self.parameters_digest!r}"
+                )
         if not isinstance(self.requested_at, datetime):
             raise PendingApprovalTypeError(
                 f"requested_at must be a datetime instance, got {type(self.requested_at).__name__}"
             )
         if self.requested_at.tzinfo is None or self.requested_at.utcoffset() is None:
             raise PendingApprovalValueError("requested_at must be timezone-aware")
+        if self.requested_at.tzinfo != UTC:
+            object.__setattr__(self, "requested_at", self.requested_at.astimezone(UTC))
         if self.status != PendingApprovalStatus.PENDING:
             raise PendingApprovalValueError(
                 f"PendingApproval status must be PENDING, got {self.status!r}. "
@@ -462,14 +537,6 @@ class PendingApproval:
                 f"'{policy.authority_class.value}' and does not require human approval"
             )
 
-        # Invariant: Smuggled grant protection
-        for f in fields(self):
-            val = getattr(self, f.name)
-            if isinstance(val, ApprovalGrant):
-                raise SmuggledGrantError(
-                    f"Field '{f.name}' cannot contain an ApprovalGrant in a PendingApproval object"
-                )
-
         # Invariant: Decision contract consistency
         if self.decision_contract.pending_approval_id != self.pending_approval_id:
             raise PendingApprovalValueError("decision_contract.pending_approval_id mismatch")
@@ -481,6 +548,29 @@ class PendingApproval:
             raise PendingApprovalValueError("decision_contract.action_type mismatch")
         if self.decision_contract.authority_class != self.authority_class:
             raise PendingApprovalValueError("decision_contract.authority_class mismatch")
+        if self.decision_contract.requested_at != self.requested_at:
+            dc_req = self.decision_contract.requested_at.isoformat()
+            raise PendingApprovalValueError(
+                f"decision_contract.requested_at ({dc_req}) "
+                f"must equal pending approval requested_at "
+                f"({self.requested_at.isoformat()})"
+            )
+
+        # Invariant: Human summary consistency
+        expected_human_summary = compute_human_summary(self.action)
+        if self.decision_contract.human_summary != expected_human_summary:
+            raise PendingApprovalValueError(
+                "decision_contract.human_summary mismatch: "
+                f"{self.decision_contract.human_summary!r} != expected {expected_human_summary!r}"
+            )
+
+        # Invariant: Parameters digest cryptographic self-validation
+        expected_parameters_digest = compute_parameters_digest(self.parameters)
+        if not hmac.compare_digest(self.parameters_digest, expected_parameters_digest):
+            raise PendingApprovalTamperedError(
+                f"parameters_digest verification failed: {self.parameters_digest!r} "
+                f"!= expected {expected_parameters_digest!r}"
+            )
 
         # Invariant: Recompute and verify content-addressed pending approval ID
         expected_id = compute_pending_approval_id(
@@ -538,7 +628,14 @@ class PendingApproval:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert pending approval object to a serializable dictionary."""
+        """Convert pending approval object to a serializable dictionary.
+
+        Boundary Note:
+        This is the internal domain entity serialization containing the full action,
+        target identity, normalized parameters, parameter digest, and nested presentation contract.
+        It is used for domain state tracking and persistence, distinct from the operator-facing
+        OneDecisionContract presentation boundary.
+        """
         return {
             "pending_approval_id": self.pending_approval_id.value,
             "mission_id": str(self.mission_id),
@@ -559,40 +656,6 @@ class PendingApproval:
             "human_summary": self.human_summary,
             "one_decision_contract": self.decision_contract.to_dict(),
         }
-
-
-# ===========================================================================
-# Privacy-Safe Summary Helper
-# ===========================================================================
-
-
-def _build_human_summary(action: ValidatedActionContract) -> str:
-    """Build a privacy-safe, sanitized, human-readable summary for a pending action.
-
-    Applies deterministic redaction for secrets and emails, and never echoes
-    raw provider responses, hidden metadata, or tokens.
-    """
-    params = action.parameters
-    if action.action_type == ActionType.CALENDAR_UPDATE:
-        parts: list[str] = []
-        if "summary" in params:
-            parts.append(f"summary={str(params['summary'])!r}")
-        if "start_time" in params:
-            parts.append(f"start_time={str(params['start_time'])!r}")
-        if "all_day" in params:
-            parts.append(f"all_day={params['all_day']}")
-        param_desc = ", ".join(parts) if parts else "parameters updated"
-        raw_text = (
-            f"Update Google Calendar event on '{action.target.system}' "
-            f"({action.target.resource_id}): {param_desc}"
-        )
-    else:
-        raw_text = (
-            f"Execute action '{action.action_type.value}' on '{action.target.system}' "
-            f"target '{action.target.resource_id}'"
-        )
-
-    return redact_text(raw_text)
 
 
 # ===========================================================================
@@ -670,11 +733,10 @@ def create_pending_approval(
     )
 
     # 8. Compute parameters digest
-    param_bytes = canonical_serialize(to_canonical_primitive(action.parameters.to_dict()))
-    param_digest = hashlib.sha256(param_bytes).hexdigest()
+    param_digest = compute_parameters_digest(action.parameters)
 
     # 9. Build privacy-safe human summary
-    summary = _build_human_summary(action)
+    summary = compute_human_summary(action)
 
     # 10. Build OneDecisionContract
     decision_contract = OneDecisionContract(
@@ -721,6 +783,8 @@ __all__ = [
     "PendingApprovalTypeError",
     "PendingApprovalValueError",
     "SmuggledGrantError",
+    "compute_human_summary",
+    "compute_parameters_digest",
     "compute_pending_approval_id",
     "create_pending_approval",
     "validate_approval_decision",

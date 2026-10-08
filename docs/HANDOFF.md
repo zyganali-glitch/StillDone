@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: IMPLEMENTED / awaiting independent QA | P-11.03+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: REPAIRED / awaiting independent QA | P-11.03+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,17 +74,17 @@ Preferred AWS target:
 
 ## Current exact task
 
-Active task: P-11.02 — Implement pending approval object and one-decision UX contract (IMPLEMENTED / awaiting independent QA)
+Active task: P-11.02 — Implement pending approval object and one-decision UX contract (REPAIRED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
-- P-11.02: IMPLEMENTED / awaiting independent QA
+- P-11.02: REPAIRED / awaiting independent QA
 - P-11.03+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`
-Current exact task: P-11.02 — Implement pending approval object and one-decision UX contract (IMPLEMENTED / awaiting independent QA)
+Current exact task: P-11.02 — Implement pending approval object and one-decision UX contract (REPAIRED / awaiting independent QA)
 Next exact task: P-11.03 — Bind approval to exact mission/action/target/parameters/expiry (PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
@@ -242,7 +242,7 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
   - Strict separation of authority policy from runtime grant: policy states requirements but never manufactures or implies an `ApprovalGrant`.
   - Verified read-only observation actions require zero approval; `calendar.update` strictly requires bound approval (`permit_execution_without_grant=False`); `task.create` is explicitly classified as mutating `REVERSIBLE_AUTO` (`permit_execution_without_grant=True`).
   - Tested with 53 comprehensive adversarial and canonical tests in `tests/test_phase_p11_authority_policy.py`.
-- **P-11.02 — Implement pending approval object and one-decision UX contract**: `IMPLEMENTED / awaiting independent QA`.
+- **P-11.02 — Implement pending approval object and one-decision UX contract**: `REPAIRED / awaiting independent QA`.
   - Implemented immutable `PendingApproval` domain object and `OneDecisionContract` UX contract (`src/stilldone/pending_approval.py`).
   - Bounded human decision surface: closed-world `ApprovalDecision` enum (`APPROVE`, `REJECT`), zero free-form model strings permitted.
   - Pure content-addressed deterministic identity: `PendingApprovalId` backed by domain-separated SHA-256 (`stilldone:pending-approval:v1`).
@@ -250,7 +250,12 @@ P-11.02 — Implement pending approval object and one-decision UX contract (PEND
   - Pending != Approved invariant: `is_authorized=False`, `is_approved=False`, status is strictly `PENDING`, zero `ApprovalGrant` creation or execution authorization.
   - Smuggling protection: rejects `ApprovalGrant` instances passed to factory or dataclass constructor (`SmuggledGrantError`).
   - Privacy-safe: sensitive parameter plaintext, tokens, and emails automatically redacted in human summary and omitted from object repr.
-  - Tested with 61 comprehensive adversarial tests in `tests/test_phase_p11_02_pending_approval.py`.
+  - Surgical repair self-validation invariants:
+    * Self-validating `parameters_digest`: strictly lowercase 64-character SHA-256 hex recomputed deterministically from `parameters` via centralized helper `compute_parameters_digest`, verified via constant-time comparison (`hmac.compare_digest`), failing closed with `PendingApprovalTamperedError` on tampering and `PendingApprovalValueError` on invalid hex formatting.
+    * Self-validating human summary: derives privacy-safe human summary deterministically from the exact stored action via centralized helper `compute_human_summary`, enforcing `decision_contract.human_summary == expected_summary` and failing closed with `PendingApprovalValueError` if presentation prose diverges from runtime action facts.
+    * Timezone-aware UTC normalization and split-brain resolution: both `OneDecisionContract` and `PendingApproval` normalize `requested_at` to UTC and enforce strict timestamp equality (`decision_contract.requested_at == pending.requested_at`), failing closed with `PendingApprovalValueError` on split-brain timestamps.
+    * Explicit architectural serialization boundary: `OneDecisionContract.to_dict()` is the operator-facing privacy-safe presentation dictionary; `PendingApproval.to_dict()` is the internal domain entity serialization.
+  - Tested with 75 comprehensive adversarial and canonical unit tests in `tests/test_phase_p11_02_pending_approval.py`.
 - **P-11.03 through P-11.06**: `PENDING / NOT AUTHORIZED / NOT_RUN`.
 - **Last independently VERIFIED contiguous SHA**: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`.
 

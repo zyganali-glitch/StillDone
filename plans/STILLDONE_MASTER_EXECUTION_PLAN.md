@@ -1241,7 +1241,7 @@ reserve human attention for the meaningful boundary.
 Status: PASS (independent QA verified)
 
 ### P-11.02 — Implement pending approval object and one-decision UX contract
-Status: IMPLEMENTED / awaiting independent QA
+Status: REPAIRED / awaiting independent QA
 
 ### P-11.03 — Bind approval to exact mission/action/target/parameters/expiry
 Status: PENDING
