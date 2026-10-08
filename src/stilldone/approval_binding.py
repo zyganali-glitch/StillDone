@@ -140,9 +140,7 @@ class PendingApprovalRejection:
                 f"decision must be an ApprovalDecision instance, got {type(self.decision).__name__}"
             )
         if self.decision != ApprovalDecision.REJECT:
-            raise ApprovalBindingValueError(
-                f"PendingApprovalRejection decision must be REJECT, got {self.decision!r}"
-            )
+            raise ApprovalBindingValueError("PendingApprovalRejection decision must be REJECT")
         if not isinstance(self.rejected_at, datetime):
             raise ApprovalBindingTypeError(
                 f"rejected_at must be a datetime instance, got {type(self.rejected_at).__name__}"
@@ -359,12 +357,16 @@ def resolve_pending_approval(
     _validate_pending_approval_lineage(pending)
 
     # 3. Validate decision against closed-world enum
+    valid_decision: ApprovalDecision | None = None
     try:
         valid_decision = validate_approval_decision(decision)
-    except Exception as exc:
+    except Exception:
+        valid_decision = None
+
+    if valid_decision is None:
         raise ApprovalBindingValueError(
-            f"Invalid approval decision {decision!r}; must be exactly APPROVE or REJECT"
-        ) from exc
+            "Invalid approval decision; must be exactly APPROVE or REJECT"
+        )
 
     # 4. Validate and normalize validity window timestamps
     norm_issued, norm_expires = _normalize_and_validate_window(issued_at, expires_at)

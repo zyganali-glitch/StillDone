@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: IMPLEMENTED / awaiting batch QA | P-11.04: IMPLEMENTED / awaiting independent QA | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
+Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: REPAIRED / awaiting independent QA | P-11.04: REPAIRED / awaiting independent QA | P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,20 +74,20 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-11.04 — Reject stale, mismatched, replayed, or already-used approvals (IMPLEMENTED / awaiting independent QA)
+Active task: Consolidated same-scope repair for P-11.03 and P-11.04 (REPAIRED / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
-- P-11.03: IMPLEMENTED / awaiting batch QA
-- P-11.04: IMPLEMENTED / awaiting independent QA
+- P-11.03: REPAIRED / awaiting independent QA
+- P-11.04: REPAIRED / awaiting independent QA
 - P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`
-Current exact task: P-11.04 — Reject stale, mismatched, replayed, or already-used approvals (IMPLEMENTED / awaiting independent QA)
-Next exact task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (PENDING / NOT AUTHORIZED / NOT_RUN)
+Current exact task: Consolidated same-scope repair for P-11.03 and P-11.04 (REPAIRED / awaiting independent QA)
+Next exact task: Independent QA audit for P-11.03 and P-11.04
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -96,6 +96,31 @@ Architecture Truth — Dependency Isolation:
   2. Strands Planner Runtime (`runtimes/strands_planner/pyproject.toml`, `runtimes/strands_planner/uv.lock`): Pins `strands-agents==1.57.2` with its official resolver-compatible transitive MCP (`mcp==2.1.1`). Owns non-authoritative plan proposal generation and planner metadata only (strictly zero execution, mutation, read-back, or fact authority).
 - Packaging Purity: ONE repository, ONE canonical source tree (`src/stilldone`). No duplicated business logic or duplicate planner contracts.
 - CI Split & Test Accounting: CI workflow (`.github/workflows/ci.yml`) and `scripts/validate.py` validate both environments (`validate-core-mcp` with 1263 tests and `validate-strands-planner` with 971 tests). 100% of canonical tests (41 test files) are accounted for across the test ownership matrix; zero tests omitted.
+
+Consolidated Repair Scope (P-11.03, P-11.04) — Completed, Awaiting Independent QA:
+1. Defect 1 Repair (P-11.03 Decision Reflection Sanitization):
+   * Sanitized `InvalidDecisionError` and `ApprovalBindingValueError` to static bounded messages (`"Arbitrary decision text is not a valid ApprovalDecision; must be exactly APPROVE or REJECT"`).
+   * Guaranteed zero raw decision text or `repr` reflection across `str(exc)`, `repr(exc)`, `exc.__dict__`, `__cause__` (strictly `None`), `__context__` (strictly `None`), and formatted tracebacks.
+   * Preserved exact `APPROVE` and `REJECT` acceptance; added adversarial privacy test suite covering bearer tokens, secrets, emails, injected metadata, and model prose.
+2. Defect 2 Repair (Public Port Hydration):
+   * Extended `MissionLedgerPort` with canonical public query method `get_all_evidence(self) -> list[EvidenceRecord]`.
+   * Implemented `get_all_evidence()` across both canonical ledgers (`InMemoryNonDurableLedger` and `DurableFileLedger`).
+   * Rewrote `ApprovalLedger._hydrate_from_ledger()` to query strictly through public `self._ledger.get_all_evidence()`. Zero private attribute introspection (`_evidence`, `_missions`).
+   * Validated with `PublicApiOnlyAuditProxy` and `CustomPublicOnlyLedger` proving hydration without private storage fields.
+3. Defect 3 & Revocation Scope Repair (Fail-Closed Persistence & Lineage Integrity):
+   * Completely removed silent exception swallowing on durable persistence failure.
+   * Introduced typed persistence error hierarchy (`ApprovalPersistenceError`, `ApprovalConsumptionPersistenceError`, `ApprovalRevocationPersistenceError`).
+   * Durable consumption failure returns zero authorization and does not mutate runtime state; durable revocation failure raises `ApprovalRevocationPersistenceError` and does not mutate runtime state.
+   * Revocation requires exact canonical lineage (`mission_id`, `action_id`, `binding_hash`) from `ApprovalGrant` or known records; fails closed with `ApprovalConsumptionValueError` without fabricating dummy all-zero identities.
+4. Defect 4 Repair (Contradictory History & Closed-World Transitions):
+   * `_hydrate_from_ledger()` enforces lineage consistency across identical `approval_id`s (`mission_id`, `action_id`, `binding_hash`); raises `MalformedApprovalStateError` on contradictory history.
+   * Implemented explicit closed-world transition model: `UNUSED -> CONSUMED`, `UNUSED -> REVOKED`, `CONSUMED -> REVOKED`, `REVOKED -> REVOKED` (idempotent duplicate).
+   * Fails closed on `REVOKED -> CONSUMED`, duplicate `CONSUMED -> CONSUMED`, transitions to `UNUSED`, and malformed payloads.
+5. Invariants, Concurrency & Separation:
+   * Concurrency guarantee truth: thread-safe process-local via internal lock; durable across restart via append-only ledger; no multi-process distributed atomic single-use overclaims.
+   * Consumption ordering preserved: verify grant -> persist durable consumption -> record runtime consumption -> return authority-for-one-attempt.
+   * Zero external provider executions, zero verification claims (`is_verified=False`), zero READY assertions (`is_ready=False`).
+   * P-10 recovery separation intact; P-11.05 and P-11.06 remain strictly absent/unimplemented.
 
 Consolidated Repair Scope (P-07.03, P-07.04, P-07.05):
 1. P-07.03 Ingress Repair (`src/stilldone/planning/strands_agent.py`, `tests/planning/test_strands_agent.py`):

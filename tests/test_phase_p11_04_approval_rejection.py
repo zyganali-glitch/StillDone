@@ -27,6 +27,7 @@ Validates all 20 P-11.04 requirements:
 from __future__ import annotations
 
 import dataclasses
+import importlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -38,9 +39,13 @@ from stilldone.action_policy import ValidatedActionContract, validate_action_con
 from stilldone.approval_binding import bind_approval_grant
 from stilldone.approval_consumption import (
     APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+    APPROVAL_REVOCATION_EVIDENCE_TYPE,
     ApprovalAlreadyUsedError,
+    ApprovalConsumptionPersistenceError,
     ApprovalConsumptionResult,
+    ApprovalConsumptionValueError,
     ApprovalLedger,
+    ApprovalRevocationPersistenceError,
     ApprovalRevokedError,
     ApprovalUsageStatus,
     MalformedApprovalStateError,
@@ -67,17 +72,20 @@ from stilldone.domain.action import (
 )
 from stilldone.domain.authority import (
     ApprovalGrant,
+    ApprovalId,
     AuthorityClass,
     BindingHash,
 )
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+from stilldone.evidence import EvidenceId
 from stilldone.ledger import (
     ActionRecord,
     DurableFileLedger,
     EvidenceRecord,
     InMemoryNonDurableLedger,
+    MissionLedgerPort,
     MissionRecord,
 )
 from stilldone.pending_approval import (
@@ -466,3 +474,669 @@ class TestP1104DurableRestartResilience:
             approval_ledger_2.consume(grant, validated, at=_VALID_EVAL_AT + timedelta(minutes=1))
 
         assert str(grant.approval_id) in str(exc_info.value)
+
+
+class CustomPublicOnlyLedger(MissionLedgerPort):
+    """Custom MissionLedgerPort without _evidence or _missions private fields."""
+
+    def __init__(self) -> None:
+        self.evidence_list: list[EvidenceRecord] = []
+        self.missions_dict: dict[str, MissionRecord] = {}
+        self.actions_dict: dict[str, ActionRecord] = {}
+
+    def append_mission(self, record: MissionRecord) -> None:
+        self.missions_dict[str(record.mission_id)] = record
+
+    def get_mission(self, mission_id: MissionId) -> MissionRecord:
+        return self.missions_dict[str(mission_id)]
+
+    def append_action(self, record: ActionRecord) -> None:
+        self.actions_dict[str(record.action_id)] = record
+
+    def get_action(self, action_id: ActionId) -> ActionRecord:
+        return self.actions_dict[str(action_id)]
+
+    def get_actions_for_mission(self, mission_id: MissionId) -> list[ActionRecord]:
+        return [a for a in self.actions_dict.values() if a.mission_id == mission_id]
+
+    def append_evidence(self, record: EvidenceRecord) -> None:
+        self.evidence_list.append(record)
+
+    def get_evidence(self, evidence_id: EvidenceId) -> EvidenceRecord:
+        for ev in self.evidence_list:
+            if ev.evidence_id == evidence_id:
+                return ev
+        raise KeyError(str(evidence_id))
+
+    def get_evidence_for_action(self, action_id: ActionId) -> list[EvidenceRecord]:
+        return [ev for ev in self.evidence_list if ev.action_id == action_id]
+
+    def get_evidence_for_mission(self, mission_id: MissionId) -> list[EvidenceRecord]:
+        return [ev for ev in self.evidence_list if ev.mission_id == mission_id]
+
+    def get_all_evidence(self) -> list[EvidenceRecord]:
+        return list(self.evidence_list)
+
+
+class PublicApiOnlyAuditProxy(MissionLedgerPort):
+    """Proxy verifying only public methods (not starting with _) are accessed."""
+
+    def __init__(self, target: MissionLedgerPort) -> None:
+        self._target = target
+        self.accessed_attrs: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") and not name.startswith("__"):
+            raise AssertionError(f"Private implementation attribute {name!r} accessed on ledger!")
+        self.accessed_attrs.append(name)
+        return getattr(self._target, name)
+
+    def append_mission(self, record: MissionRecord) -> None:
+        self.accessed_attrs.append("append_mission")
+        self._target.append_mission(record)
+
+    def get_mission(self, mission_id: MissionId) -> MissionRecord:
+        self.accessed_attrs.append("get_mission")
+        return self._target.get_mission(mission_id)
+
+    def append_action(self, record: ActionRecord) -> None:
+        self.accessed_attrs.append("append_action")
+        self._target.append_action(record)
+
+    def get_action(self, action_id: ActionId) -> ActionRecord:
+        self.accessed_attrs.append("get_action")
+        return self._target.get_action(action_id)
+
+    def get_actions_for_mission(self, mission_id: MissionId) -> list[ActionRecord]:
+        self.accessed_attrs.append("get_actions_for_mission")
+        return self._target.get_actions_for_mission(mission_id)
+
+    def append_evidence(self, record: EvidenceRecord) -> None:
+        self.accessed_attrs.append("append_evidence")
+        self._target.append_evidence(record)
+
+    def get_evidence(self, evidence_id: EvidenceId) -> EvidenceRecord:
+        self.accessed_attrs.append("get_evidence")
+        return self._target.get_evidence(evidence_id)
+
+    def get_evidence_for_action(self, action_id: ActionId) -> list[EvidenceRecord]:
+        self.accessed_attrs.append("get_evidence_for_action")
+        return self._target.get_evidence_for_action(action_id)
+
+    def get_evidence_for_mission(self, mission_id: MissionId) -> list[EvidenceRecord]:
+        self.accessed_attrs.append("get_evidence_for_mission")
+        return self._target.get_evidence_for_mission(mission_id)
+
+    def get_all_evidence(self) -> list[EvidenceRecord]:
+        self.accessed_attrs.append("get_all_evidence")
+        return self._target.get_all_evidence()
+
+
+class TestP1104PublicPortHydrationAndDurability:
+    """Tests 1, 2, 3: Hydration exclusively through public MissionLedgerPort API."""
+
+    def test_hydration_works_through_public_api_only(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = InMemoryNonDurableLedger()
+        ledger.append_mission(
+            MissionRecord(
+                mission_id=grant.mission_id,
+                contract=MissionContract(
+                    mission_id=grant.mission_id,
+                    intent=UserIntentSnapshot(
+                        text="Test", captured_at=_NOW, mission_id=grant.mission_id
+                    ),
+                    created_at=_NOW,
+                ),
+                state=MissionState.DRAFT,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+        )
+        ledger.append_action(
+            ActionRecord(
+                action_id=validated.action.action_id,
+                mission_id=grant.mission_id,
+                action=validated.action,
+                approval_id=grant.approval_id,
+                created_at=_NOW,
+            )
+        )
+        # Append valid consumption evidence
+        payload = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(grant.approval_id),
+            "mission_id": str(grant.mission_id),
+            "action_id": str(validated.action.action_id),
+            "binding_hash": grant.binding_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ev = EvidenceRecord.create(
+            action_id=validated.action.action_id,
+            mission_id=grant.mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=_VALID_EVAL_AT
+            ),
+            payload=payload,
+            created_at=_VALID_EVAL_AT,
+        )
+        ledger.append_evidence(ev)
+
+        # Wrap in audit proxy that raises on private attribute access
+        audit_proxy = PublicApiOnlyAuditProxy(ledger)
+        appr_ledger = ApprovalLedger(ledger=audit_proxy)
+
+        # Verify consumed status was reconstructed
+        assert appr_ledger.check_status(grant.approval_id) == ApprovalUsageStatus.CONSUMED
+        # Verify get_all_evidence was called and zero private attributes accessed
+        assert "get_all_evidence" in audit_proxy.accessed_attrs
+        for attr in audit_proxy.accessed_attrs:
+            assert not attr.startswith("_")
+
+    def test_custom_mission_ledger_port_without_private_fields_reconstructs(self) -> None:
+        custom_ledger = CustomPublicOnlyLedger()
+        assert not hasattr(custom_ledger, "_evidence")
+        assert not hasattr(custom_ledger, "_missions")
+
+        _, validated, grant = _make_calendar_update_setup()
+        payload = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(grant.approval_id),
+            "mission_id": str(grant.mission_id),
+            "action_id": str(validated.action.action_id),
+            "binding_hash": grant.binding_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ev = EvidenceRecord.create(
+            action_id=validated.action.action_id,
+            mission_id=grant.mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=_VALID_EVAL_AT
+            ),
+            payload=payload,
+            created_at=_VALID_EVAL_AT,
+        )
+        custom_ledger.append_evidence(ev)
+
+        appr_ledger = ApprovalLedger.from_ledger(custom_ledger)
+        assert appr_ledger.check_status(grant.approval_id) == ApprovalUsageStatus.CONSUMED
+
+    def test_unsupported_ledger_without_get_all_evidence_fails_closed(self) -> None:
+        class IncompleteLedger:
+            pass
+
+        MissionLedgerPort.register(IncompleteLedger)
+        fake_ledger = IncompleteLedger()
+
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger(ledger=fake_ledger)  # type: ignore[arg-type]
+        assert "does not implement get_all_evidence" in str(exc_info.value)
+
+
+class TestP1104ContradictoryHistoryAndTransitions:
+    """Tests 4 to 8: Contradictory durable history and transition model fail-closed."""
+
+    def _setup_ledger_with_payloads(
+        self,
+        payloads: list[dict[str, Any]],
+        *,
+        action_id: ActionId | None = None,
+        mission_id: MissionId | None = None,
+    ) -> InMemoryNonDurableLedger:
+        ledger = InMemoryNonDurableLedger()
+        mid = mission_id or MissionId.generate()
+        act_id = action_id or ActionId.generate()
+
+        ledger.append_mission(
+            MissionRecord(
+                mission_id=mid,
+                contract=MissionContract(
+                    mission_id=mid,
+                    intent=UserIntentSnapshot(text="Test", captured_at=_NOW, mission_id=mid),
+                    created_at=_NOW,
+                ),
+                state=MissionState.DRAFT,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+        )
+        ledger.append_action(
+            ActionRecord(
+                action_id=act_id,
+                mission_id=mid,
+                action=ActionContract(
+                    action_id=act_id,
+                    mission_id=mid,
+                    action_type=ActionType.CALENDAR_UPDATE,
+                    target=TargetIdentity(
+                        system="google_calendar",
+                        resource_kind=ResourceKind.CALENDAR_EVENT,
+                        resource_id="evt-1",
+                    ),
+                    parameters=NormalizedParameters.from_dict({"summary": "Shift"}),
+                ),
+                approval_id=None,
+                created_at=_NOW,
+            )
+        )
+        for i, p in enumerate(payloads):
+            target_mid = MissionId(p["mission_id"]) if "mission_id" in p else mid
+            target_aid = ActionId(p["action_id"]) if "action_id" in p else act_id
+
+            # Ensure mission exists if payload references a different mission
+            try:
+                ledger.get_mission(target_mid)
+            except Exception:
+                ledger.append_mission(
+                    MissionRecord(
+                        mission_id=target_mid,
+                        contract=MissionContract(
+                            mission_id=target_mid,
+                            intent=UserIntentSnapshot(
+                                text="Test2", captured_at=_NOW, mission_id=target_mid
+                            ),
+                            created_at=_NOW,
+                        ),
+                        state=MissionState.DRAFT,
+                        created_at=_NOW,
+                        updated_at=_NOW,
+                    )
+                )
+            # Ensure action exists if payload references a different action
+            try:
+                ledger.get_action(target_aid)
+            except Exception:
+                ledger.append_action(
+                    ActionRecord(
+                        action_id=target_aid,
+                        mission_id=target_mid,
+                        action=ActionContract(
+                            action_id=target_aid,
+                            mission_id=target_mid,
+                            action_type=ActionType.CALENDAR_UPDATE,
+                            target=TargetIdentity(
+                                system="google_calendar",
+                                resource_kind=ResourceKind.CALENDAR_EVENT,
+                                resource_id="evt-other",
+                            ),
+                            parameters=NormalizedParameters.from_dict({"summary": "Other"}),
+                        ),
+                        approval_id=None,
+                        created_at=_NOW,
+                    )
+                )
+
+            ev = EvidenceRecord.create(
+                action_id=target_aid,
+                mission_id=target_mid,
+                origin=EvidenceOrigin(
+                    provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                    observed_at=_NOW + timedelta(seconds=i),
+                ),
+                payload=p,
+                created_at=_NOW + timedelta(seconds=i),
+            )
+            ledger.append_evidence(ev)
+        return ledger
+
+    def test_same_approval_id_different_mission_id_fails_closed(self) -> None:
+        aid = ApprovalId.generate()
+        mid1 = MissionId.generate()
+        mid2 = MissionId.generate()
+        act_id1 = ActionId.generate()
+        act_id2 = ActionId.generate()
+        b_hash = BindingHash("a" * 64)
+
+        p1 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid1),
+            "action_id": str(act_id1),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p2 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid2),
+            "action_id": str(act_id2),
+            "binding_hash": b_hash.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ledger = self._setup_ledger_with_payloads([p1, p2])
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger.from_ledger(ledger)
+        assert "Contradictory approval history" in str(exc_info.value)
+        assert "mission_id" in str(exc_info.value)
+
+    def test_same_approval_id_different_action_id_fails_closed(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act1 = ActionId.generate()
+        act2 = ActionId.generate()
+        b_hash = BindingHash("b" * 64)
+
+        p1 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act1),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p2 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act2),
+            "binding_hash": b_hash.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ledger = self._setup_ledger_with_payloads([p1, p2])
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger.from_ledger(ledger)
+        assert "Contradictory approval history" in str(exc_info.value)
+        assert "action_id" in str(exc_info.value)
+
+    def test_same_approval_id_different_binding_hash_fails_closed(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act = ActionId.generate()
+        h1 = BindingHash("1" * 64)
+        h2 = BindingHash("2" * 64)
+
+        p1 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": h1.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p2 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": h2.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ledger = self._setup_ledger_with_payloads([p1, p2])
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger.from_ledger(ledger)
+        assert "Contradictory approval history" in str(exc_info.value)
+        assert "binding_hash" in str(exc_info.value)
+
+    def test_revoked_to_consumed_transition_fails_closed(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act = ActionId.generate()
+        b_hash = BindingHash("3" * 64)
+
+        # REVOKED followed by CONSUMED is forbidden
+        p_revoked = {
+            "evidence_type": APPROVAL_REVOCATION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p_consumed = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ledger = self._setup_ledger_with_payloads([p_revoked, p_consumed])
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger.from_ledger(ledger)
+        assert "Forbidden approval status transition" in str(exc_info.value)
+        assert "REVOKED -> CONSUMED is prohibited" in str(exc_info.value)
+
+    def test_duplicate_consumed_in_history_fails_closed(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act = ActionId.generate()
+        b_hash = BindingHash("4" * 64)
+
+        p1 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p2 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 2,
+        }
+        ledger = self._setup_ledger_with_payloads([p1, p2])
+        with pytest.raises(MalformedApprovalStateError) as exc_info:
+            ApprovalLedger.from_ledger(ledger)
+        assert "Duplicate or replay consumption in durable history" in str(exc_info.value)
+
+    def test_consumed_to_revoked_transition_allowed_and_retains_revoked(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act = ActionId.generate()
+        b_hash = BindingHash("5" * 64)
+
+        p1 = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        p2 = {
+            "evidence_type": APPROVAL_REVOCATION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": (_VALID_EVAL_AT + timedelta(seconds=1)).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        ledger = self._setup_ledger_with_payloads([p1, p2])
+        appr_ledger = ApprovalLedger.from_ledger(ledger)
+        # Final status is REVOKED (permanently non-authorizing)
+        assert appr_ledger.check_status(aid) == ApprovalUsageStatus.REVOKED
+
+
+class TestP1104DurablePersistenceFailureAndLineage:
+    """Tests 9 to 12: Persistence failures fail-closed and lineage integrity."""
+
+    def test_durable_persistence_failure_during_consume_returns_no_authorization(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        failing_ledger = MagicMock(spec=MissionLedgerPort)
+        failing_ledger.get_all_evidence.return_value = []
+        failing_ledger.append_evidence.side_effect = OSError("Simulated disk full")
+
+        ledger = ApprovalLedger(ledger=failing_ledger)
+        with pytest.raises(ApprovalConsumptionPersistenceError) as exc_info:
+            ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+
+        assert "Failed to durably persist approval consumption" in str(exc_info.value)
+        # Proves no authorization is returned and registry does NOT record consumption
+        assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.UNUSED
+
+    def test_durable_persistence_failure_during_revoke_not_swallowed(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        failing_ledger = MagicMock(spec=MissionLedgerPort)
+        failing_ledger.get_all_evidence.return_value = []
+        failing_ledger.append_evidence.side_effect = OSError("Simulated disk write failure")
+
+        ledger = ApprovalLedger(ledger=failing_ledger)
+        with pytest.raises(ApprovalRevocationPersistenceError) as exc_info:
+            ledger.revoke(grant, at=_VALID_EVAL_AT, reason="Revoking")
+
+        assert "Failed to durably persist revocation" in str(exc_info.value)
+        # Proves not swallowed and memory state not updated
+        assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.UNUSED
+
+    def test_approval_id_only_revocation_cannot_fabricate_dummy_lineage(self) -> None:
+        unhydrated_id = ApprovalId.generate()
+        # Unknown approval with no lineage fails closed
+        with pytest.raises(ApprovalConsumptionValueError) as exc_info:
+            revoke_approval(unhydrated_id, at=_VALID_EVAL_AT)
+        assert "canonical lineage" in str(exc_info.value)
+
+    def test_restart_after_durable_revocation_remains_non_authorizing(self, tmp_path: Path) -> None:
+        ledger_file = tmp_path / "revocation_ledger.jsonl"
+        durable_ledger_1 = DurableFileLedger(file_path=ledger_file)
+
+        _, validated, grant = _make_calendar_update_setup()
+        durable_ledger_1.append_mission(
+            MissionRecord(
+                mission_id=grant.mission_id,
+                contract=MissionContract(
+                    mission_id=grant.mission_id,
+                    intent=UserIntentSnapshot(
+                        text="Test", captured_at=_NOW, mission_id=grant.mission_id
+                    ),
+                    created_at=_NOW,
+                ),
+                state=MissionState.DRAFT,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+        )
+        durable_ledger_1.append_action(
+            ActionRecord(
+                action_id=validated.action.action_id,
+                mission_id=grant.mission_id,
+                action=validated.action,
+                approval_id=grant.approval_id,
+                created_at=_NOW,
+            )
+        )
+
+        approval_ledger_1 = ApprovalLedger(ledger=durable_ledger_1)
+        approval_ledger_1.revoke(grant, at=_VALID_EVAL_AT, reason="User cancelled flight")
+        assert approval_ledger_1.check_status(grant.approval_id) == ApprovalUsageStatus.REVOKED
+
+        # Restart
+        durable_ledger_2 = DurableFileLedger(file_path=ledger_file)
+        approval_ledger_2 = ApprovalLedger.from_ledger(durable_ledger_2)
+        assert approval_ledger_2.check_status(grant.approval_id) == ApprovalUsageStatus.REVOKED
+
+        # Rejection of consumption in process 2
+        with pytest.raises(ApprovalRevokedError):
+            approval_ledger_2.consume(grant, validated, at=_VALID_EVAL_AT + timedelta(minutes=1))
+
+
+class TestP1104InvariantsAndSeparation:
+    """Tests 13 to 19: Terminal status, zero provider calls, P-10 separation."""
+
+    def test_consumed_approval_cannot_become_unused(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+        assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.CONSUMED
+        # Attempting revocation transitions it to REVOKED, never UNUSED
+        ledger.revoke(grant, at=_VALID_EVAL_AT + timedelta(seconds=1))
+        assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.REVOKED
+        assert ledger.check_status(grant.approval_id) != ApprovalUsageStatus.UNUSED
+
+    def test_revoked_approval_cannot_become_unused(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.revoke(grant, at=_VALID_EVAL_AT)
+        assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.REVOKED
+        # Cannot be reset or become UNUSED
+        assert ledger.check_status(grant.approval_id) != ApprovalUsageStatus.UNUSED
+
+    def test_revoked_approval_cannot_later_become_consumed(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.revoke(grant, at=_VALID_EVAL_AT)
+        with pytest.raises(ApprovalRevokedError):
+            ledger.consume(grant, validated, at=_VALID_EVAL_AT + timedelta(seconds=1))
+
+    def test_no_provider_execution_occurs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_http = MagicMock()
+        monkeypatch.setattr("urllib.request.urlopen", mock_http)
+
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        res = ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+        assert res.is_authorized is True
+        assert mock_http.call_count == 0
+
+    def test_no_verification_or_ready_asserted(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        res = ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+        assert res.is_verified is False
+        assert res.is_ready is False
+        assert res.execution_outcome is None
+
+    def test_p10_recovery_separation_intact(self, tmp_path: Path) -> None:
+        from stilldone.recovery.continuity import reconstruct_action_recovery_state
+
+        ledger_file = tmp_path / "p10_ledger.jsonl"
+        durable_ledger = DurableFileLedger(file_path=ledger_file)
+        _, validated, grant = _make_calendar_update_setup()
+
+        durable_ledger.append_mission(
+            MissionRecord(
+                mission_id=grant.mission_id,
+                contract=MissionContract(
+                    mission_id=grant.mission_id,
+                    intent=UserIntentSnapshot(
+                        text="Test", captured_at=_NOW, mission_id=grant.mission_id
+                    ),
+                    created_at=_NOW,
+                ),
+                state=MissionState.DRAFT,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+        )
+        durable_ledger.append_action(
+            ActionRecord(
+                action_id=validated.action.action_id,
+                mission_id=grant.mission_id,
+                action=validated.action,
+                approval_id=grant.approval_id,
+                created_at=_NOW,
+            )
+        )
+
+        recovery_state = reconstruct_action_recovery_state(
+            action=validated.action,
+            ledger=durable_ledger,
+        )
+        assert recovery_state.action_id == validated.action.action_id
+        # Reconstructing recovery state touches 0 approvals and does NOT consume grant
+        assert used_approval_registry.is_used(grant.approval_id) is False
+
+    def test_p11_05_and_p11_06_remain_absent(self) -> None:
+        with pytest.raises(ImportError):
+            importlib.import_module("stilldone.execution_gate_proof")
+        with pytest.raises(ImportError):
+            importlib.import_module("stilldone.p11_05")
+        with pytest.raises(ImportError):
+            importlib.import_module("stilldone.p11_06")

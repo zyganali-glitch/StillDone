@@ -57,6 +57,18 @@ class ApprovalConsumptionValueError(ApprovalConsumptionError, ValueError):
     """Raised when an argument has an invalid value."""
 
 
+class ApprovalPersistenceError(ApprovalConsumptionError):
+    """Base exception for approval durable persistence failures."""
+
+
+class ApprovalConsumptionPersistenceError(ApprovalPersistenceError):
+    """Raised when durably persisting approval consumption fails."""
+
+
+class ApprovalRevocationPersistenceError(ApprovalPersistenceError):
+    """Raised when durably persisting approval revocation fails."""
+
+
 class ApprovalAlreadyUsedError(ApprovalConsumptionError, ValueError):
     """Raised when an approval grant has already been consumed (replay attempt)."""
 
@@ -302,15 +314,35 @@ class UsedApprovalRegistry:
             b_hash = grant.binding_hash
         else:
             aid = grant if isinstance(grant, ApprovalId) else ApprovalId(str(grant))
-            mid = mission_id or MissionId("00000000-0000-0000-0000-000000000000")
-            act_id = action_id or ActionId("00000000-0000-0000-0000-000000000000")
-            b_hash = binding_hash or BindingHash("0" * 64)
+            existing_rec = self._records.get(str(aid))
+            if existing_rec is not None:
+                mid = mission_id or existing_rec.mission_id
+                act_id = action_id or existing_rec.action_id
+                b_hash = binding_hash or existing_rec.binding_hash
+            elif mission_id is not None and action_id is not None and binding_hash is not None:
+                mid = mission_id
+                act_id = action_id
+                b_hash = binding_hash
+            else:
+                raise ApprovalConsumptionValueError(
+                    f"Cannot revoke approval '{aid}': canonical lineage "
+                    "(mission_id, action_id, binding_hash) must be provided"
+                )
 
         key = str(aid)
         with self._lock:
             existing = self._records.get(key)
-            if existing is not None and existing.status == ApprovalUsageStatus.REVOKED:
-                return existing
+            if existing is not None:
+                if (
+                    existing.mission_id != mid
+                    or existing.action_id != act_id
+                    or existing.binding_hash != b_hash
+                ):
+                    raise MalformedApprovalStateError(
+                        f"Contradictory approval lineage during revocation of '{aid}'"
+                    )
+                if existing.status == ApprovalUsageStatus.REVOKED:
+                    return existing
 
             record = ApprovalConsumptionRecord(
                 approval_id=aid,
@@ -382,81 +414,163 @@ class ApprovalLedger:
         if self._ledger is None:
             return
 
-        evidence_records: list[EvidenceRecord] = []
-        if hasattr(self._ledger, "_evidence"):
-            evidence_records = list(getattr(self._ledger, "_evidence", {}).values())
-        elif hasattr(self._ledger, "_missions"):
-            for m in getattr(self._ledger, "_missions", {}).values():
-                evidence_records.extend(self._ledger.get_evidence_for_mission(m.mission_id))
+        if not hasattr(self._ledger, "get_all_evidence") or not callable(
+            getattr(self._ledger, "get_all_evidence", None)
+        ):
+            raise MalformedApprovalStateError(
+                f"Ledger {type(self._ledger).__name__} does not implement get_all_evidence; "
+                "cannot safely reconstruct durable approval history"
+            )
+
+        try:
+            evidence_records = self._ledger.get_all_evidence()
+        except Exception as exc:
+            raise MalformedApprovalStateError(
+                f"Failed to query evidence records from ledger: {exc}"
+            ) from exc
+
+        # Track history per approval_id during hydration to enforce closed-world transitions
+        # and fail closed on contradictory lineage.
+        hydrated_records: dict[str, ApprovalConsumptionRecord] = {}
 
         for ev in evidence_records:
             payload = ev.payload.to_dict() if hasattr(ev.payload, "to_dict") else dict(ev.payload)
             ev_type = payload.get("evidence_type")
-            if ev_type in {
+            if ev_type not in {
                 APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
                 APPROVAL_REVOCATION_EVIDENCE_TYPE,
             }:
-                try:
-                    raw_aid = payload.get("approval_id")
-                    if not raw_aid or not isinstance(raw_aid, str):
-                        raise MalformedApprovalStateError("Missing or invalid approval_id")
-                    aid = ApprovalId(raw_aid)
+                continue
 
-                    raw_mid = payload.get("mission_id")
-                    if not raw_mid or not isinstance(raw_mid, str):
-                        raise MalformedApprovalStateError("Missing or invalid mission_id")
-                    mid = MissionId(raw_mid)
-
-                    raw_act_id = payload.get("action_id")
-                    if not raw_act_id or not isinstance(raw_act_id, str):
-                        raise MalformedApprovalStateError("Missing or invalid action_id")
-                    act_id = ActionId(raw_act_id)
-
-                    raw_hash = payload.get("binding_hash")
-                    if not raw_hash or not isinstance(raw_hash, str):
-                        raise MalformedApprovalStateError("Missing or invalid binding_hash")
-                    b_hash = BindingHash(raw_hash)
-
-                    status_val = (
-                        ApprovalUsageStatus.CONSUMED
-                        if ev_type == APPROVAL_CONSUMPTION_EVIDENCE_TYPE
-                        else ApprovalUsageStatus.REVOKED
-                    )
-
-                    consumed_at_str = payload.get("consumed_at")
-                    if not consumed_at_str or not isinstance(consumed_at_str, str):
-                        raise MalformedApprovalStateError("Missing or invalid consumed_at")
-                    consumed_at = datetime.fromisoformat(consumed_at_str)
-                    if consumed_at.tzinfo is None:
-                        raise MalformedApprovalStateError("consumed_at must be timezone-aware")
-                    consumed_at_utc = (
-                        consumed_at if consumed_at.tzinfo == UTC else consumed_at.astimezone(UTC)
-                    )
-
-                    attempt_num = payload.get("consumed_for_attempt", 1)
-                    if (
-                        isinstance(attempt_num, bool)
-                        or not isinstance(attempt_num, int)
-                        or attempt_num < 1
-                    ):
-                        raise MalformedApprovalStateError("Invalid attempt number")
-
-                    rec = ApprovalConsumptionRecord(
-                        approval_id=aid,
-                        mission_id=mid,
-                        action_id=act_id,
-                        binding_hash=b_hash,
-                        status=status_val,
-                        consumed_at=consumed_at_utc,
-                        attempt_number=attempt_num,
-                        reason=payload.get("reason"),
-                    )
-                    # Store in registry
-                    self._registry._records[str(aid)] = rec
-                except Exception as exc:
+            try:
+                raw_aid = payload.get("approval_id")
+                if not raw_aid or not isinstance(raw_aid, str):
                     raise MalformedApprovalStateError(
-                        f"Corrupt or malformed approval consumption evidence: {exc}"
-                    ) from exc
+                        "Missing or invalid approval_id in approval evidence"
+                    )
+                aid = ApprovalId(raw_aid)
+
+                raw_mid = payload.get("mission_id")
+                if not raw_mid or not isinstance(raw_mid, str):
+                    raise MalformedApprovalStateError(
+                        "Missing or invalid mission_id in approval evidence"
+                    )
+                mid = MissionId(raw_mid)
+
+                raw_act_id = payload.get("action_id")
+                if not raw_act_id or not isinstance(raw_act_id, str):
+                    raise MalformedApprovalStateError(
+                        "Missing or invalid action_id in approval evidence"
+                    )
+                act_id = ActionId(raw_act_id)
+
+                raw_hash = payload.get("binding_hash")
+                if not raw_hash or not isinstance(raw_hash, str):
+                    raise MalformedApprovalStateError(
+                        "Missing or invalid binding_hash in approval evidence"
+                    )
+                b_hash = BindingHash(raw_hash)
+
+                # Header consistency: EvidenceRecord header must match payload
+                if ev.action_id != act_id or ev.mission_id != mid:
+                    raise MalformedApprovalStateError(
+                        f"EvidenceRecord header (action={ev.action_id}, mission={ev.mission_id}) "
+                        f"contradicts payload (action={act_id}, mission={mid})"
+                    )
+
+                status_val = (
+                    ApprovalUsageStatus.CONSUMED
+                    if ev_type == APPROVAL_CONSUMPTION_EVIDENCE_TYPE
+                    else ApprovalUsageStatus.REVOKED
+                )
+
+                consumed_at_str = payload.get("consumed_at")
+                if not consumed_at_str or not isinstance(consumed_at_str, str):
+                    raise MalformedApprovalStateError(
+                        "Missing or invalid consumed_at in approval evidence"
+                    )
+                consumed_at = datetime.fromisoformat(consumed_at_str)
+                if consumed_at.tzinfo is None:
+                    raise MalformedApprovalStateError("consumed_at must be timezone-aware")
+                consumed_at_utc = (
+                    consumed_at if consumed_at.tzinfo == UTC else consumed_at.astimezone(UTC)
+                )
+
+                attempt_num = payload.get("consumed_for_attempt", 1)
+                if (
+                    isinstance(attempt_num, bool)
+                    or not isinstance(attempt_num, int)
+                    or attempt_num < 1
+                ):
+                    raise MalformedApprovalStateError("Invalid attempt number in approval evidence")
+
+                key = str(aid)
+                if key in hydrated_records:
+                    existing = hydrated_records[key]
+
+                    # 1. Lineage consistency check:
+                    # For the same approval_id, canonical immutable lineage MUST NOT change.
+                    if existing.mission_id != mid:
+                        raise MalformedApprovalStateError(
+                            f"Contradictory approval history for '{aid}': mission_id "
+                            f"changed from '{existing.mission_id}' to '{mid}'"
+                        )
+                    if existing.action_id != act_id:
+                        raise MalformedApprovalStateError(
+                            f"Contradictory approval history for '{aid}': action_id "
+                            f"changed from '{existing.action_id}' to '{act_id}'"
+                        )
+                    if existing.binding_hash != b_hash:
+                        raise MalformedApprovalStateError(
+                            f"Contradictory approval history for '{aid}': binding_hash "
+                            f"changed from '{existing.binding_hash}' to '{b_hash}'"
+                        )
+
+                    # 2. Closed-world status transition validation:
+                    # Allowed:
+                    # UNUSED -> CONSUMED
+                    # UNUSED -> REVOKED
+                    # CONSUMED -> REVOKED
+                    # REVOKED -> REVOKED (idempotent duplicate revocation)
+                    # Forbidden:
+                    # REVOKED -> CONSUMED
+                    # CONSUMED -> CONSUMED (duplicate/replay consumption in durable history)
+                    if existing.status == ApprovalUsageStatus.REVOKED:
+                        if status_val == ApprovalUsageStatus.CONSUMED:
+                            raise MalformedApprovalStateError(
+                                f"Forbidden approval status transition for '{aid}': "
+                                "REVOKED -> CONSUMED is prohibited"
+                            )
+                        # REVOKED -> REVOKED retains REVOKED
+                    elif existing.status == ApprovalUsageStatus.CONSUMED:
+                        if status_val == ApprovalUsageStatus.CONSUMED:
+                            raise MalformedApprovalStateError(
+                                f"Duplicate or replay consumption in durable history for '{aid}': "
+                                "approval cannot be consumed multiple times"
+                            )
+                        # CONSUMED -> REVOKED transitions to REVOKED
+
+                rec = ApprovalConsumptionRecord(
+                    approval_id=aid,
+                    mission_id=mid,
+                    action_id=act_id,
+                    binding_hash=b_hash,
+                    status=status_val,
+                    consumed_at=consumed_at_utc,
+                    attempt_number=attempt_num,
+                    reason=payload.get("reason"),
+                )
+                hydrated_records[key] = rec
+            except MalformedApprovalStateError:
+                raise
+            except Exception as exc:
+                raise MalformedApprovalStateError(
+                    f"Corrupt or malformed approval consumption evidence: {exc}"
+                ) from exc
+
+        # Commit validated hydrated records into the registry
+        for key, rec in hydrated_records.items():
+            self._registry._records[key] = rec
 
     def check_status(self, approval_id: ApprovalId | str) -> ApprovalUsageStatus:
         """Check the current usage status of an approval ID."""
@@ -553,7 +667,14 @@ class ApprovalLedger:
                 payload=payload,
                 created_at=norm_at,
             )
-            self._ledger.append_evidence(ev_record)
+            try:
+                self._ledger.append_evidence(ev_record)
+            except Exception as exc:
+                msg = (
+                    f"Failed to durably persist approval consumption for "
+                    f"'{grant.approval_id}': {exc}"
+                )
+                raise ApprovalConsumptionPersistenceError(msg) from exc
 
         # 4. In-memory registry recording
         self._registry.record_consumption(
@@ -588,26 +709,28 @@ class ApprovalLedger:
             raise ApprovalConsumptionValueError("at must be timezone-aware")
 
         norm_at = at if at.tzinfo == UTC else at.astimezone(UTC)
-        aid = grant.approval_id if isinstance(grant, ApprovalGrant) else grant
-        if not isinstance(aid, ApprovalId):
+        if isinstance(grant, ApprovalGrant):
+            aid = grant.approval_id
+            mid = grant.mission_id
+            act_id = grant.action_id
+            b_hash = grant.binding_hash
+        elif isinstance(grant, ApprovalId):
+            aid = grant
+            existing_rec = self._registry.get_record(str(aid))
+            if existing_rec is not None:
+                mid = existing_rec.mission_id
+                act_id = existing_rec.action_id
+                b_hash = existing_rec.binding_hash
+            else:
+                raise ApprovalConsumptionValueError(
+                    f"Cannot revoke approval '{aid}': canonical lineage "
+                    "(mission_id, action_id, binding_hash) is unknown and cannot be resolved"
+                )
+        else:
             raise ApprovalConsumptionTypeError("grant must be ApprovalGrant or ApprovalId")
 
-        # Record in durable ledger if configured
+        # 1. Record in durable ledger first (if configured)
         if self._ledger is not None:
-            mid = (
-                grant.mission_id
-                if isinstance(grant, ApprovalGrant)
-                else MissionId("00000000-0000-0000-0000-000000000000")
-            )
-            act_id = (
-                grant.action_id
-                if isinstance(grant, ApprovalGrant)
-                else ActionId("00000000-0000-0000-0000-000000000000")
-            )
-            b_hash = (
-                grant.binding_hash if isinstance(grant, ApprovalGrant) else BindingHash("0" * 64)
-            )
-
             payload = {
                 "evidence_type": APPROVAL_REVOCATION_EVIDENCE_TYPE,
                 "approval_id": str(aid),
@@ -618,26 +741,30 @@ class ApprovalLedger:
                 "consumed_for_attempt": 1,
                 "reason": redact_text(reason) if reason is not None else None,
             }
+            ev_record = EvidenceRecord.create(
+                action_id=act_id,
+                mission_id=mid,
+                origin=EvidenceOrigin(
+                    provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                    observed_at=norm_at,
+                ),
+                payload=payload,
+                created_at=norm_at,
+            )
             try:
-                self._ledger.get_action(act_id)
-                self._ledger.get_mission(mid)
-                ev_record = EvidenceRecord.create(
-                    action_id=act_id,
-                    mission_id=mid,
-                    origin=EvidenceOrigin(
-                        provenance=EvidenceProvenance.LOCAL_EXECUTION,
-                        observed_at=norm_at,
-                    ),
-                    payload=payload,
-                    created_at=norm_at,
-                )
                 self._ledger.append_evidence(ev_record)
-            except Exception:
-                pass
+            except Exception as exc:
+                raise ApprovalRevocationPersistenceError(
+                    f"Failed to durably persist revocation for approval '{aid}': {exc}"
+                ) from exc
 
+        # 2. Record in memory registry only after durable append succeeds
         self._registry.revoke(
-            grant,
+            aid,
             at=norm_at,
+            mission_id=mid,
+            action_id=act_id,
+            binding_hash=b_hash,
             reason=reason,
         )
 
@@ -720,11 +847,14 @@ __all__ = [
     "APPROVAL_REVOCATION_EVIDENCE_TYPE",
     "ApprovalAlreadyUsedError",
     "ApprovalConsumptionError",
+    "ApprovalConsumptionPersistenceError",
     "ApprovalConsumptionRecord",
     "ApprovalConsumptionResult",
     "ApprovalConsumptionTypeError",
     "ApprovalConsumptionValueError",
     "ApprovalLedger",
+    "ApprovalPersistenceError",
+    "ApprovalRevocationPersistenceError",
     "ApprovalRevokedError",
     "ApprovalUsageStatus",
     "MalformedApprovalStateError",

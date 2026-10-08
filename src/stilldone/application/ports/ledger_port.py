@@ -374,6 +374,10 @@ class MissionLedgerPort(ABC):
     def get_evidence_for_mission(self, mission_id: MissionId) -> list[EvidenceRecord]:
         """List all evidence records belonging to a mission in append order."""
 
+    @abstractmethod
+    def get_all_evidence(self) -> list[EvidenceRecord]:
+        """List all evidence records in the ledger in append order."""
+
 
 class InMemoryNonDurableLedger(MissionLedgerPort):
     """Non-durable in-memory ledger implementation strictly for testing/runtime-local state.
@@ -535,6 +539,10 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         return [
             self.get_evidence(EvidenceId(e_key)) for e_key in self._mission_evidence.get(m_key, [])
         ]
+
+    def get_all_evidence(self) -> list[EvidenceRecord]:
+        """List all evidence records in the ledger in append order."""
+        return [self.get_evidence(EvidenceId(e_key)) for e_key in self._evidence]
 
 
 class DurableFileLedger(MissionLedgerPort):
@@ -914,3 +922,7 @@ class DurableFileLedger(MissionLedgerPort):
         return [
             self.get_evidence(EvidenceId(e_key)) for e_key in self._mission_evidence.get(m_key, [])
         ]
+
+    def get_all_evidence(self) -> list[EvidenceRecord]:
+        """List all evidence records in the ledger in append order."""
+        return [self.get_evidence(EvidenceId(e_key)) for e_key in self._evidence]

@@ -328,7 +328,7 @@ def validate_approval_decision(decision: Any) -> ApprovalDecision:
         if decision == ApprovalDecision.REJECT.value:
             return ApprovalDecision.REJECT
         raise InvalidDecisionError(
-            f"Arbitrary decision text {decision!r} is not a valid ApprovalDecision; "
+            "Arbitrary decision text is not a valid ApprovalDecision; "
             "must be exactly APPROVE or REJECT"
         )
     raise InvalidDecisionError(
