@@ -1247,10 +1247,10 @@ Status: PASS ✅ (independent QA verified)
 Status: PASS ✅ (independent QA verified)
 
 ### P-11.04 — Reject stale, mismatched, replayed, or already-used approvals
-Status: REPAIRED / awaiting independent QA
+Status: PASS ✅ (independent QA verified)
 
 ### P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval
-Status: PENDING
+Status: IMPLEMENTED / proof captured / awaiting independent QA
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
 Status: PENDING

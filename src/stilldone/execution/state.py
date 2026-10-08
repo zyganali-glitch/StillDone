@@ -566,6 +566,42 @@ class ExecutionStateTracker:
             error_message=msg,
         )
 
+    def record_not_run(
+        self,
+        action_id: ActionId,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """Explicitly record that an action remains NOT_RUN (e.g. unapproved mutation).
+
+        Raises:
+            ExecutionContractTypeError: If action_id is not an ActionId.
+            UnknownActionIdError: If action_id is not in contract.
+            ExecutionTransitionError: If action is not in NOT_RUN state.
+        """
+        self._require_known_action_id(action_id)
+        current = self._records[action_id].status
+        if current != ActionExecutionStatus.NOT_RUN:
+            raise ExecutionTransitionError(
+                f"Cannot record NOT_RUN for action {action_id} from state {current.value}: "
+                f"only NOT_RUN actions can remain NOT_RUN"
+            )
+        self._records[action_id] = StepExecutionRecord(
+            action_id=action_id,
+            status=ActionExecutionStatus.NOT_RUN,
+            error_message=reason,
+        )
+
+    def get_status(self, action_id: ActionId) -> ActionExecutionStatus:
+        """Get execution status of a specific action."""
+        self._require_known_action_id(action_id)
+        return self._records[action_id].status
+
+    def get_record(self, action_id: ActionId) -> StepExecutionRecord:
+        """Get execution record of a specific action."""
+        self._require_known_action_id(action_id)
+        return self._records[action_id]
+
     def _block_downstream_dependents(self, failed_action_id: ActionId) -> None:
         """Find all downstream actions depending on failed_action_id and mark BLOCKED."""
         to_block: list[ActionId] = []

@@ -74,7 +74,7 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-11.04 — Final surgical repair of process-local transaction concurrency and persistence error privacy (REPAIRED / awaiting independent QA)
+Active task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (IMPLEMENTED / proof captured / awaiting independent QA)
 
 Status:
 - P-00 through P-10: CLOSED — independent QA PASS ✅
@@ -82,12 +82,13 @@ Status:
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
 - P-11.03: CLOSED — independent QA PASS ✅
-- P-11.04: REPAIRED / awaiting independent QA
-- P-11.05+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-11.04: CLOSED — independent QA PASS ✅
+- P-11.05: IMPLEMENTED / proof captured / awaiting independent QA
+- P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`
-Current exact task: P-11.04 — Final surgical repair of process-local transaction concurrency and persistence error privacy (REPAIRED / awaiting independent QA)
-Next exact task: Independent QA audit for P-11.04
+Last Independently VERIFIED contiguous SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`
+Current exact task: P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (IMPLEMENTED / proof captured / awaiting independent QA)
+Next exact task: Independent QA audit for P-11.05
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
