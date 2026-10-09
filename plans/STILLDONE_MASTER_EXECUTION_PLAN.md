@@ -1265,7 +1265,7 @@ Acceptance:
 - P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: REPAIRED (Phase-Exit Evidence Continuity Repair complete) / awaiting independent QA review (Starting remote SHA: `b85f03b878eabede6d0e13798afa003fff40a603`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
+Status: REPAIRED (Final Two-Defect Evidence Integrity Repair complete) / awaiting independent QA review (Starting remote SHA: `8b31cf52355933c0b1810ff988d4ad7225d4350d`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
 
 Acceptance:
 - Complete 12-step approved sequence executed: INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED;
@@ -1279,6 +1279,8 @@ Acceptance:
 - Repair 6 (Provider-Dispatch Exception Evidence Continuity): wrapped `execute_gated_action` in exception guard inside `execute_approved_calendar_update`; post-dispatch exceptions (e.g. timeout-after-write) persist P-10-compatible `EXECUTION_ATTEMPT` (`success=False`, error classification) and `UNCERTAIN_POST_EXECUTION_FAILURE` in durable `mission_ledger`; secondary persistence failures raise `ApprovedExecutionPersistenceError` wrapping provider/attempt facts instead of masking; pre-dispatch exceptions create zero execution attempt or mutation records; process reload confirms consumed approval, reconstructs recovery state (`prior_attempt_count=1`, `is_ambiguous_outcome=True`, `requires_verification_before_retry=True`), and rejects replay with zero duplicate writes;
 - Repair 7 (Missing Durable Approval Evidence After Dispatch): if durable approval consumption record in `mission_ledger` is absent after dispatch, durable `EXECUTION_ATTEMPT` is recorded, `EVIDENCE_INTEGRITY_FAILURE` is appended to ledger, and `ApprovedExecutionPersistenceError` is raised fail-closed with `writes_performed=1` (preserving write truth and blocking replay);
 - Repair 8 (Mandatory Canonical Predicate Binding in Receipt Factory): `create_approved_action_receipt` strictly enforces `predicate is not None` (`ExecutionGateValueError` raised if omitted); validates predicate mission, predicate ID, operator, subject, expected value, and observation consistency;
+- Repair 9 (Deterministic Predicate Recomputation in Receipt Factory — Defect A): in `create_approved_action_receipt`, predicate truth is canonically recomputed using canonical P-09 verifier `evaluate_predicate` from `DesiredStatePredicate` and authoritative `VerificationObservation`; caller-supplied TRUE is rejected with `ExecutionGateValueError` if canonical recomputation does not return TRUE; fixed operator comparison bug where `PredicateOperator.EQUALS` was compared against `"EQUALS"` instead of its StrEnum value `"=="`; caller bypass with `observed_value=None` or forged `observed_value` matching expectation is deterministically detected and rejected; NOT_EQUALS and numeric operators with forged TRUE rejected; foreign predicate identity and wrong observation targets rejected fail-closed;
+- Repair 10 (Exact Attempt Identity Preservation on Secondary Persistence Failure — Defect B): in `execute_approved_calendar_update`, provider-dispatch exception handler preserves the exact original `ExecutionAttempt` captured from `execute_gated_action`; eliminated the fallback call to `create_execution_attempt` that previously invented a replacement attempt ID and idempotency key never used for dispatch; if original attempt identity is unestablished, reported truthfully as `attempt UNKNOWN` without fabricating identifiers; `ApprovedExecutionPersistenceError` and `gate_decision.attempt` contain the exact router-received attempt ID and idempotency key;
 - Dispatch exactly once through GoogleCalendarUpdateAdapter with matching If-Match ETag;
 - Negative control proof: provider success with read-back mismatch strictly results in `is_verified=False` and `is_ready=False`;
 - Replay prevention: replaying consumed grant fails closed with `ApprovalAlreadyUsedError` and 0 additional writes;
@@ -1287,7 +1289,7 @@ Acceptance:
 - Deep immutability enforced for `ApprovedActionReceipt` state summaries (`MappingProxyType`);
 - Live Google Calendar mutation gate truthfully reported as `NOT_RUN / BLOCKED` ($0.00 personal spend maintained);
 - Deterministic proof script `scripts/p11_06_proof.py` passing under standard, `python -O`, and `--json` modes;
-- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (60/60 tests, 366 tests across Phase P-11, 2,038 Core tests, 1,155 Planner tests, 3,193 total dual-runtime tests passing across Core and Planner).
+- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (67/67 tests, 373 tests across Phase P-11, 2,045 Core tests, 1,155 Planner tests, 3,200 total dual-runtime tests passing across Core and Planner).
 
 Phase exit:
 Phase P-11 implementation COMPLETE & REPAIRED — awaiting independent QA review. One meaningful approval replaces repeated confirmations.

@@ -143,7 +143,7 @@ class ApprovedExecutionPersistenceError(ExecutionGateError):
         message: str,
         *,
         provider_result: ProviderExecutionResult,
-        attempt: ExecutionAttempt,
+        attempt: ExecutionAttempt | None = None,
         gate_decision: ExecutionGateDecision,
     ) -> None:
         super().__init__(message)
@@ -1912,9 +1912,12 @@ def create_approved_action_receipt(
     - Computes verified truth deterministically:
       execution success + read-back match + predicate true.
     """
+    from stilldone.verifier.contracts import VerificationObservation
     from stilldone.verifier.predicates import (
         PredicateEvaluationResult,
         PredicateTruth,
+        _extract_observed_value,
+        evaluate_predicate,
     )
 
     if not isinstance(gate_decision, ExecutionGateDecision):
@@ -2199,28 +2202,74 @@ def create_approved_action_receipt(
                 "Contradictory predicate truth: is_true is True but truth is not TRUE"
             )
 
+    # Authoritative verified observation consistency:
+    # Recompute predicate truth deterministically using canonical P-09 verifier
+    authoritative_obs = readback_result.observation
+    obs_props: dict[str, Any] = {}
+    if authoritative_obs is not None:
+        obs_props = {
+            "summary": authoritative_obs.summary,
+            "start_time": authoritative_obs.start_time,
+            "end_time": authoritative_obs.end_time,
+            "all_day": authoritative_obs.all_day,
+            "etag": authoritative_obs.etag,
+            "status": authoritative_obs.status,
+        }
+
+    verification_obs = VerificationObservation(
+        target=actual_action.target,
+        observed_at=readback_result.verified_at,
+        exists=(
+            readback_result.status != CalendarReadbackStatus.NOT_FOUND
+            and authoritative_obs is not None
+        ),
+        properties=obs_props,
+        provenance=after_read_provenance,
+        raw_observation=authoritative_obs,
+    )
+
+    canonical_eval = evaluate_predicate(
+        predicate,
+        verification_obs,
+        expected_target=actual_action.target,
+        at=readback_result.verified_at,
+    )
+
+    # Reject caller-supplied TRUE if canonical recomputation does not return TRUE
+    if (
+        predicate_result.truth == PredicateTruth.TRUE
+        and canonical_eval.truth != PredicateTruth.TRUE
+    ):
+        reason_str = canonical_eval.reason or "predicate unsatisfied by authoritative observation"
+        raise ExecutionGateValueError(
+            f"Forged predicate truth: predicate_result claims TRUE for predicate "
+            f"'{predicate.predicate_id}', but canonical recomputation yields "
+            f"{canonical_eval.truth.value} ({reason_str})"
+        )
+
+    # Reject contradictory truth between supplied result and canonical evaluation
+    if predicate_result.truth != canonical_eval.truth:
+        raise ExecutionGateValueError(
+            f"predicate_result truth '{predicate_result.truth.value}' contradicts "
+            f"canonically recomputed truth '{canonical_eval.truth.value}'"
+        )
+
     # Authoritative observation consistency:
     # predicate observed_value must match readback observation
-    if readback_result.observation is not None:
-        prop_name = predicate.subject.split(".")[-1]
-        if hasattr(readback_result.observation, prop_name):
-            obs_val = getattr(readback_result.observation, prop_name)
-            if predicate_result.observed_value is not None and str(obs_val) != str(
-                predicate_result.observed_value
-            ):
-                raise ExecutionGateValueError(
-                    f"Predicate observed_value '{predicate_result.observed_value}' contradicts "
-                    f"readback observation {prop_name} '{obs_val}'"
-                )
-            if (
-                predicate_result.truth == PredicateTruth.TRUE
-                and str(predicate.operator) in ("EQUALS", "PredicateOperator.EQUALS")
-                and str(obs_val) != str(predicate.expected_value)
-            ):
-                raise ExecutionGateValueError(
-                    f"Contradictory observation: readback observation {prop_name} '{obs_val}' "
-                    f"contradicts predicate expected_value '{predicate.expected_value}'"
-                )
+    found_obs, authoritative_obs_val = _extract_observed_value(verification_obs, predicate.subject)
+    if found_obs:
+        if predicate_result.observed_value is not None and str(
+            predicate_result.observed_value
+        ) != str(authoritative_obs_val):
+            raise ExecutionGateValueError(
+                f"Predicate observed_value '{predicate_result.observed_value}' contradicts "
+                f"readback observation '{authoritative_obs_val}'"
+            )
+    elif predicate_result.observed_value is not None:
+        raise ExecutionGateValueError(
+            f"Predicate observed_value '{predicate_result.observed_value}' contradicts "
+            "readback observation (property absent in observation)"
+        )
 
     # Resource matches
     if (
@@ -2272,6 +2321,7 @@ def create_approved_action_receipt(
         gate_decision.status == ActionExecutionStatus.EXECUTION_SUCCEEDED
         and readback_result.status == CalendarReadbackStatus.MATCH
         and predicate_result.truth == PredicateTruth.TRUE
+        and canonical_eval.truth == PredicateTruth.TRUE
     )
 
     # Unpersisted READY check: cannot claim READY without persisted transition
@@ -2525,6 +2575,14 @@ def execute_approved_calendar_update(
         installed_spy_locally = True
 
     # 7. Gated execution: gate evaluation, attempt prep, consumption, dispatch
+    captured_attempt: ExecutionAttempt | None = None
+
+    def attempt_capture_generator(aid: ActionId) -> ExecutionAttempt:
+        nonlocal captured_attempt
+        att = create_execution_attempt(aid)
+        captured_attempt = att
+        return att
+
     try:
         gate_decision = execute_gated_action(
             validated,
@@ -2534,6 +2592,7 @@ def execute_approved_calendar_update(
             pending_approval=pending_approval,
             at=norm_eval_at,
             ledger=ledger,
+            attempt_generator=attempt_capture_generator,
         )
     except Exception as exc:
         consumed_rec = ledger.get_record(approval.approval_id)
@@ -2544,32 +2603,58 @@ def execute_approved_calendar_update(
         router_dispatched = mutation_obs.router_mutation_invocations > 0
 
         if (is_consumed or router_dispatched) and mission_ledger is not None:
-            att_num = consumed_rec.attempt_number if consumed_rec else 1
+            att_num = (
+                captured_attempt.attempt_number
+                if captured_attempt is not None
+                else (consumed_rec.attempt_number if consumed_rec else 1)
+            )
             from stilldone.recovery.retry import classify_error
 
             try:
                 # Durably record P-10 compatible EXECUTION_ATTEMPT
+                ev_attempt_payload: dict[str, Any] = {
+                    "evidence_type": "EXECUTION_ATTEMPT",
+                    "attempt_number": att_num,
+                    "action_id": str(actual_action.action_id),
+                    "mission_id": str(actual_action.mission_id),
+                    "action_type": actual_action.action_type.value,
+                    "success": False,
+                    "classification": classify_error(exc).value,
+                    "error_message": redact_text(str(exc)),
+                    "writes_performed": mutation_obs.transport_writes,
+                    "recorded_at": norm_eval_at.isoformat(),
+                }
+                if captured_attempt is not None:
+                    ev_attempt_payload["attempt_id"] = str(captured_attempt.attempt_id)
+                    ev_attempt_payload["idempotency_key"] = str(
+                        captured_attempt.idempotency_key.value
+                    )
+
                 ev_attempt = EvidenceRecord.create(
                     action_id=actual_action.action_id,
                     mission_id=actual_action.mission_id,
                     origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
-                    payload={
-                        "evidence_type": "EXECUTION_ATTEMPT",
-                        "attempt_number": att_num,
-                        "action_id": str(actual_action.action_id),
-                        "mission_id": str(actual_action.mission_id),
-                        "action_type": actual_action.action_type.value,
-                        "success": False,
-                        "classification": classify_error(exc).value,
-                        "error_message": redact_text(str(exc)),
-                        "writes_performed": mutation_obs.transport_writes,
-                        "recorded_at": norm_eval_at.isoformat(),
-                    },
+                    payload=ev_attempt_payload,
                     created_at=norm_eval_at,
                 )
                 mission_ledger.append_evidence(ev_attempt)
 
                 # Durably record UNCERTAIN_POST_EXECUTION_FAILURE capturing mutation facts
+                ev_uncertain_payload: dict[str, Any] = {
+                    "evidence_type": "UNCERTAIN_POST_EXECUTION_FAILURE",
+                    "attempt_number": att_num,
+                    "router_mutation_invocations": (mutation_obs.router_mutation_invocations),
+                    "transport_mutation_invocations": (mutation_obs.transport_mutation_invocations),
+                    "transport_writes": mutation_obs.transport_writes,
+                    "error_type": type(exc).__name__,
+                    "error_message": redact_text(str(exc)),
+                }
+                if captured_attempt is not None:
+                    ev_uncertain_payload["attempt_id"] = str(captured_attempt.attempt_id)
+                    ev_uncertain_payload["idempotency_key"] = str(
+                        captured_attempt.idempotency_key.value
+                    )
+
                 ev_uncertain = EvidenceRecord.create(
                     action_id=actual_action.action_id,
                     mission_id=actual_action.mission_id,
@@ -2577,25 +2662,12 @@ def execute_approved_calendar_update(
                         provenance=provenance,
                         observed_at=norm_eval_at,
                     ),
-                    payload={
-                        "evidence_type": "UNCERTAIN_POST_EXECUTION_FAILURE",
-                        "attempt_number": att_num,
-                        "router_mutation_invocations": (mutation_obs.router_mutation_invocations),
-                        "transport_mutation_invocations": (
-                            mutation_obs.transport_mutation_invocations
-                        ),
-                        "transport_writes": mutation_obs.transport_writes,
-                        "error_type": type(exc).__name__,
-                        "error_message": redact_text(str(exc)),
-                    },
+                    payload=ev_uncertain_payload,
                     created_at=norm_eval_at,
                 )
                 mission_ledger.append_evidence(ev_uncertain)
             except Exception as persist_exc:
-                att_obj = create_execution_attempt(
-                    action_id=actual_action.action_id,
-                    attempt_number=att_num,
-                )
+                att_obj = captured_attempt
                 prov_res = ProviderExecutionResult(
                     action_type=actual_action.action_type,
                     success=False,
@@ -2603,13 +2675,16 @@ def execute_approved_calendar_update(
                     writes_performed=mutation_obs.transport_writes,
                     error_message=redact_text(str(exc)),
                 )
+                att_desc = (
+                    f"attempt {att_obj.attempt_id}" if att_obj is not None else "attempt UNKNOWN"
+                )
                 dec = ExecutionGateDecision(
                     action_id=actual_action.action_id,
                     action_type=actual_action.action_type,
                     authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
                     status=ActionExecutionStatus.EXECUTION_FAILED,
                     is_authorized=True,
-                    reason=f"Dispatch failed: {type(exc).__name__}",
+                    reason=f"Dispatch failed: {type(exc).__name__} ({att_desc})",
                     evaluated_at=norm_eval_at,
                     attempt=att_obj,
                     provider_result=prov_res,

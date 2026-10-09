@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 
 - **Task**: `P-11.06 — Prove approved Calendar update executes once and verifies`
-- **Starting Audited Remote SHA**: `b85f03b878eabede6d0e13798afa003fff40a603`
+- **Starting Audited Remote SHA**: `8b31cf52355933c0b1810ff988d4ad7225d4350d`
 - **Parent Verified SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`
 - **Target Event Identity**: `evt_leave_for_school_001` on dedicated demo calendar `c_1880abc123demo@group.calendar.google.com`
 - **Action Type**: `ActionType.CALENDAR_UPDATE` (`calendar.update`)
@@ -117,6 +117,20 @@ The audited implementation underwent six comprehensive architectural repairs to 
    - Validates predicate mission, predicate ID, operator, subject, expected value, and read-back observation consistency.
    - Enforces `is_ready_claimed=False` until a real persisted READY transition exists.
 
+10. **Deterministic Predicate Recomputation in Receipt Factory (Defect A)**:
+    - `create_approved_action_receipt` deterministically recomputes predicate truth using canonical P-09 verifier `evaluate_predicate` against authoritative `VerificationObservation`.
+    - Caller-supplied `truth == TRUE` is rejected with `ExecutionGateValueError` if canonical recomputation yields `FALSE`.
+    - Fixed operator comparison bug where `PredicateOperator.EQUALS` was compared against `"EQUALS"` instead of its StrEnum value `"=="`.
+    - Detects and rejects bypass attempts with `observed_value=None` or forged `observed_value` matching expectation.
+    - NOT_EQUALS and numeric comparison operators with forged TRUE rejected.
+    - Foreign predicate identity and wrong observation targets rejected fail-closed.
+
+11. **Exact Attempt Identity Preservation on Secondary Persistence Failure (Defect B)**:
+    - `execute_approved_calendar_update` captures the exact original `ExecutionAttempt` from `execute_gated_action`.
+    - Eliminated fallback call to `create_execution_attempt` on secondary persistence failure that previously invented a replacement attempt ID and idempotency key.
+    - Preserves router-received attempt ID and idempotency key in `ApprovedExecutionPersistenceError` and `gate_decision.attempt`.
+    - If attempt identity was unestablished, reported truthfully as `attempt UNKNOWN` without fabricating identifiers.
+
 ---
 
 ## 3. Exactly-Once & Adversarial Safety Matrix
@@ -134,6 +148,13 @@ The audited implementation underwent six comprehensive architectural repairs to 
 | **Missing Receipt Predicate** | Factory requires canonical predicate | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
 | **Foreign Receipt Predicate** | Factory validates predicate mission and ID | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
 | **Contradictory Receipt Observation** | Factory checks observation against readback | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **EQUALS Mismatch with None Observed Value** | Canonical recomputation catches forged TRUE | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **EQUALS Mismatch with Forged Observed Value** | Contradicts readback observation | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **NOT_EQUALS / Numeric with Forged TRUE** | Canonical recomputation catches forged TRUE | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **Valid Canonical TRUE Proof** | Authoritative observation satisfies predicate | `is_verified=True`, `is_ready_claimed=False` | 1 | PASS |
+| **Wrong Predicate Identity / Target** | Factory rejects foreign predicate or target | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **Post-Dispatch Timeout Secondary Failure** | Preserves exact attempt from dispatch | `ApprovedExecutionPersistenceError` matches attempt ID | 1 | PASS |
+| **Secondary Failure Unknown Attempt** | Reports UNKNOWN without fabricating attempt | `attempt UNKNOWN` in gate decision reason, `attempt=None` | 0 | PASS |
 | **Expired Grant** | Temporal validity check | `ApprovalExpiredError` raised | 0 | PASS |
 | **Not-Yet-Valid Grant** | Future timestamp rejected | `ApprovalNotYetValidError` raised | 0 | PASS |
 | **Revoked Grant** | Revocation check in ledger | `ApprovalRevokedError` raised | 0 | PASS |
@@ -209,7 +230,7 @@ Output:
 ```json
 {
   "task": "P-11.06 -- Prove approved Calendar update executes once and verifies",
-  "current_git_sha": "86d7c5facf003a15e47de65c6e5c6629d7175844",
+  "current_git_sha": "8b31cf52355933c0b1810ff988d4ad7225d4350d",
   "last_verified_parent_sha": "864cfa4e2b47ade72d1f4095e78e06f309372320",
   "worktree_clean": false,
   "source_provenance_mode": "LOCAL_DIRTY_WORKTREE",
@@ -247,8 +268,8 @@ Output:
 ```
 
 ### Pytest Suite
-- `tests/test_phase_p11_06_approved_calendar_update.py`: 60 tests passing (100%)
-- Phase P-11 suite: 366 tests passing (100%)
-- Core regression suite: 2,038 tests passing (100%)
+- `tests/test_phase_p11_06_approved_calendar_update.py`: 67 tests passing (100%)
+- Phase P-11 suite: 373 tests passing (100%)
+- Core regression suite: 2,045 tests passing (100%)
 - Strands planner suite: 1,155 tests passing (100%)
-- Combined dual-runtime validation: 3,193 tests passing across both runtimes (`scripts/validate.py`)
+- Combined dual-runtime validation: 3,200 tests passing across both runtimes (`scripts/validate.py`)
