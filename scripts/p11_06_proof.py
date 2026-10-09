@@ -386,8 +386,17 @@ def run_p11_06_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         )
     if not outcome.is_verified:
         raise ProofVerificationError("Outcome is_verified is False")
-    if not outcome.is_ready:
-        raise ProofVerificationError("Outcome is_ready is False")
+    # Mission READY transition is unpersisted in P-11.06 (deferred to P-12).
+    # Truth invariant: Action is verified (is_verified=True), but mission is_ready is False,
+    # mission_ready_status is NOT_ESTABLISHED, and readiness determination computed is_ready=True.
+    if outcome.is_ready is not False:
+        raise ProofVerificationError("Outcome is_ready must be False (unpersisted in P-11.06)")
+    if outcome.mission_ready_status != "NOT_ESTABLISHED":
+        raise ProofVerificationError(
+            f"Outcome mission_ready_status != NOT_ESTABLISHED: {outcome.mission_ready_status}"
+        )
+    if outcome.readiness_determination is None or not outcome.readiness_determination.is_ready:
+        raise ProofVerificationError("Readiness determination was not computed as READY")
 
     # -------------------------------------------------------------------------
     # Step 10: Validate Immutable Durable Receipt
@@ -399,8 +408,10 @@ def run_p11_06_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         )
     if not receipt.is_verified:
         raise ProofVerificationError("Receipt is_verified is False")
-    if not receipt.is_ready_claimed:
-        raise ProofVerificationError("Receipt is_ready_claimed is False")
+    if receipt.is_ready_claimed:
+        raise ProofVerificationError(
+            "Receipt is_ready_claimed must be False (unpersisted in P-11.06)"
+        )
     if receipt.provider_writes != 1:
         raise ProofVerificationError(f"Receipt provider_writes != 1: {receipt.provider_writes}")
 
@@ -486,6 +497,10 @@ def run_p11_06_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         "predicate_truth": outcome.predicate_result.truth.value,
         "is_verified": outcome.is_verified,
         "is_ready": outcome.is_ready,
+        "mission_ready_status": outcome.mission_ready_status,
+        "readiness_determination_ready": (
+            outcome.readiness_determination.is_ready if outcome.readiness_determination else None
+        ),
         "receipt": receipt_dict,
         "replay_prevention_verified": replay_blocked,
         "durable_hydration_verified": True,
@@ -535,7 +550,12 @@ def main() -> None:
     print(f"Readback Status:              {result['readback_status']}")
     print(f"Predicate Truth:              {result['predicate_truth']}")
     print(f"Verified Outcome:             {result['is_verified']}")
-    print(f"Mission Ready State:          {result['is_ready']}")
+    ready_line = (
+        f"Mission Ready State:          {result['is_ready']} "
+        f"(Status: {result['mission_ready_status']}, "
+        f"Readiness: {result['readiness_determination_ready']})"
+    )
+    print(ready_line)
     print(f"Replay Blocked (Zero Writes): {result['replay_prevention_verified']}")
     print(f"Durable Hydration Reload:     {result['durable_hydration_verified']}")
     print(f"Live Mutation Gate Status:    {result['live_gate_status']['status']}")

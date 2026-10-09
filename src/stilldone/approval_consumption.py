@@ -436,6 +436,11 @@ class ApprovalLedger:
             with self._lock:
                 self._hydrate_from_ledger()
 
+    @property
+    def ledger(self) -> MissionLedgerPort | None:
+        """The underlying MissionLedgerPort backing this ApprovalLedger, if any."""
+        return self._ledger
+
     @classmethod
     def from_ledger(cls, ledger: MissionLedgerPort) -> ApprovalLedger:
         """Construct an ApprovalLedger hydrated from an existing MissionLedgerPort.

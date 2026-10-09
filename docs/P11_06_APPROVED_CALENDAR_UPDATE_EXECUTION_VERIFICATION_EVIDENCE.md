@@ -3,7 +3,8 @@
 ## 1. Executive Summary
 
 - **Task**: `P-11.06 — Prove approved Calendar update executes once and verifies`
-- **Starting Remote SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`
+- **Starting Audited Remote SHA**: `86d7c5facf003a15e47de65c6e5c6629d7175844`
+- **Parent Verified SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`
 - **Target Event Identity**: `evt_leave_for_school_001` on dedicated demo calendar `c_1880abc123demo@group.calendar.google.com`
 - **Action Type**: `ActionType.CALENDAR_UPDATE` (`calendar.update`)
 - **Authority Classification**: `AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`
@@ -25,18 +26,19 @@
   - `DesiredStatePredicate` evaluated against fresh independent read-back observation
   - Subject: `start_time`, Operator: `EQUALS`, Expected: `2026-10-09T07:30:00+03:00`
   - Predicate Truth: `PredicateTruth.TRUE` (`is_true=True`)
-- **Lawful Verification & Readiness Promotion**:
+- **Lawful Verification & Mission Ready Truth**:
   - `is_verified == True` for action-level execution
-  - `is_ready == True` ONLY when canonical mission lifecycle requirements are satisfied (`MissionState.VERIFYING`, all mission predicates TRUE, fresh observations, and durable ledger backing)
-  - Action verification and mission readiness are strictly decoupled: `is_ready` is NEVER inferred from `is_verified` alone; non-durable or DRAFT/PLANNED/EXECUTING states strictly report `is_ready == False`
+  - `is_ready == False` (Mission Ready Status: `NOT_ESTABLISHED`; unpersisted in P-11.06)
+  - Action verification and mission readiness are strictly decoupled: action verification proves the mutation and independent read-back succeeded; mission readiness cannot be claimed without a canonical persisted transition in a durable mission repository (deferred to P-12). `outcome.is_ready` is strictly `False` and `receipt.is_ready_claimed` is strictly `False`.
 - **Durable Action Receipt**:
   - `ApprovedActionReceipt` created and validated with deep immutability (`MappingProxyType`)
   - Captures complete before-state (`start_time: 2026-10-09T07:45:00+03:00`) and after-state (`start_time: 2026-10-09T07:30:00+03:00`)
 - **Replay Prevention**:
   - Replay of consumed grant fails closed with `ApprovalAlreadyUsedError`
   - Zero additional provider writes performed on replay attempt (`writes_count` remains 1)
-- **Durable Hydration**:
+- **Durable Hydration & Ledger Binding**:
   - Consumption records persist across process reload via `DurableFileLedger` and `ApprovalLedger.from_ledger`
+  - Canonical `mission_ledger` and `approval_ledger.ledger` must share the same durable backing; durable approval consumption record must be verified in the mission evidence stream
 - **Live Google Calendar Boundary**:
   - `LIVE_MUTATION = NOT_RUN / BLOCKED`
   - Missing per-event operator consent, disposable event ID, and OAuth credentials in headless environment
@@ -185,9 +187,16 @@ Output:
 ```json
 {
   "task": "P-11.06 -- Prove approved Calendar update executes once and verifies",
+  "current_git_sha": "86d7c5facf003a15e47de65c6e5c6629d7175844",
+  "last_verified_parent_sha": "864cfa4e2b47ade72d1f4095e78e06f309372320",
+  "worktree_clean": false,
+  "source_provenance_mode": "LOCAL_DIRTY_WORKTREE",
+  "target_class": "CalendarEvent (Leave for school demo event)",
   "target_event_id": "evt_leave_for_school_001",
   "calendar_id": "c_1880abc123demo@group.calendar.google.com",
   "authority_classification": "REVERSIBLE_APPROVAL_REQUIRED",
+  "approval_id": "b8bb9c43-3687-4d43-9b42-520858e6881e",
+  "binding_hash": "39d333658e87ba31f5b8f02d08969bf2420e4091523cb7a6d4b0fcc560389246",
   "consumption_status": "CONSUMED",
   "execution_status": "EXECUTION_SUCCEEDED",
   "provider_writes_performed": 1,
@@ -197,7 +206,13 @@ Output:
   "readback_status": "MATCH",
   "predicate_truth": "TRUE",
   "is_verified": true,
-  "is_ready": true,
+  "is_ready": false,
+  "mission_ready_status": "NOT_ESTABLISHED",
+  "readiness_determination_ready": true,
+  "receipt": {
+    "is_verified": true,
+    "is_ready_claimed": false
+  },
   "replay_prevention_verified": true,
   "durable_hydration_verified": true,
   "live_gate_status": {
@@ -210,7 +225,8 @@ Output:
 ```
 
 ### Pytest Suite
-- `tests/test_phase_p11_06_approved_calendar_update.py`: 34 tests passing (100%)
-- Core regression suite: 2,011 tests passing (100%)
+- `tests/test_phase_p11_06_approved_calendar_update.py`: 53 tests passing (100%)
+- Phase P-11 suite: 359 tests passing (100%)
+- Core regression suite: 2,030 tests passing (100%)
 - Strands planner suite: 1,155 tests passing (100%)
-- Combined dual-runtime validation: 3,166 tests passing across both runtimes (`scripts/validate.py`)
+- Combined dual-runtime validation: 3,185 tests passing across both runtimes (`scripts/validate.py`)

@@ -1265,17 +1265,17 @@ Acceptance:
 - P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: REPAIRED (Consolidated Execution-Truth Repair complete) / awaiting independent QA review (Audited SHA: `cb3a9d70f781ad5f7b59297b9445e2ccedf58a57`)
+Status: REPAIRED (Phase-Exit Truth Repair complete) / awaiting independent QA review (Starting remote SHA: `86d7c5facf003a15e47de65c6e5c6629d7175844`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
 
 Acceptance:
 - Complete 12-step approved sequence executed: INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED;
 - Authority gate validates action contract, target identity, and frozen P-11.01 policy (`REVERSIBLE_APPROVAL_REQUIRED`);
 - Human-originated ApprovalGrant cryptographically bound to exact parameters, target, and validity window verified via constant-time HMAC check;
-- Repair 1 (Decouple Action Verification from Mission Readiness): eliminated `is_ready = is_verified` conflation; action verification decoupled from mission readiness; canonical `compute_mission_readiness` enforced; missions in `DRAFT`, `PLANNED`, or `EXECUTING` states, or lacking durable ledger backing, strictly report `is_ready=False`;
-- Repair 2 (Conflicting Observation Handling): post-execution coordinator read and verifier read cross-validated; successive discrepancies raise `ConflictingReadbackObservationError` fail-closed; verifier observation bound as authoritative source;
-- Repair 3 (Attempt Preparation vs Consumption Ordering): canonical `ExecutionAttempt` generated and validated before atomic `ApprovalLedger.consume()`; attempt generation failure preserves unconsumed grant; ambiguous provider timeout preserves consumed grant without improper refund;
-- Repair 4 (Measured Provider Facts Integrity): synthetic fallback eliminated; `CalendarMutationSpy` automatically discovers adapter transport and tracks delta writes (`current - initial`); truthfully reports 0 writes on idempotent no-ops or provider failures;
-- Repair 5 (Receipt & Ledger Truth): non-durable action execution (`is_durable=False`) distinguished from durable mission proof (`is_durable=True`); durable persistence failure wraps in `ApprovedExecutionPersistenceError` preserving executed provider write truth;
+- Repair 1 (Mission READY Authority): separated action `is_verified=True` from mission `is_ready=False`; caller-supplied context cannot declare durable READY without canonical persisted transition in durable mission ledger (deferred to P-12); unpersisted READY records `mission_ready_status="NOT_ESTABLISHED"` with `is_ready_claimed=False`; caller contradictions (persisted DRAFT vs supplied VERIFYING, omitted predicates, terminal states) rejected fail-closed;
+- Repair 2 (Durable Approval & Mission Evidence Binding): `ApprovalLedger` exposes public `ledger`; requires same durable backing (`approval_ledger.ledger is mission_ledger`); exact approval consumption record (`ApprovalRecord`) verified present in canonical mission ledger; process-local ledger + file ledger cannot claim durable approved completion (`is_durable=False`);
+- Repair 3 (External Effect Preservation Across Post-Dispatch Failures): post-dispatch exceptions (read timeouts, verifier exceptions, conflicting successive read-backs, evidence append failures) preserve durable execution attempt and write facts (`UNCERTAIN_POST_EXECUTION_FAILURE` evidence) before re-raising; consumed grant is never refunded or duplicate-retried; sensitive data recursively redacted;
+- Repair 4 (Verified Receipt Lineage): `create_approved_action_receipt` binds read-back event and calendar ID to action target, binds predicate ID/subject/operator/expected value to canonical `DesiredStatePredicate`, requires identical observation timestamps, and rejects forged MATCH, foreign predicates, or unpersisted READY;
+- Repair 5 (Transport-Independent Mutation Measurement): `CalendarMutationSpy` tracks transport method invocations directly without assuming fixture `writes_count` (`fixture_writes_count: int | None = None`); counter resets or decrements fail closed with `ExecutionGateValueError` instead of masking with `max(0, delta)`;
 - Dispatch exactly once through GoogleCalendarUpdateAdapter with matching If-Match ETag;
 - Negative control proof: provider success with read-back mismatch strictly results in `is_verified=False` and `is_ready=False`;
 - Replay prevention: replaying consumed grant fails closed with `ApprovalAlreadyUsedError` and 0 additional writes;
@@ -1284,7 +1284,7 @@ Acceptance:
 - Deep immutability enforced for `ApprovedActionReceipt` state summaries (`MappingProxyType`);
 - Live Google Calendar mutation gate truthfully reported as `NOT_RUN / BLOCKED` ($0.00 personal spend maintained);
 - Deterministic proof script `scripts/p11_06_proof.py` passing under standard, `python -O`, and `--json` modes;
-- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (34/34 tests, 3,166 total dual-runtime tests passing across Core and Planner).
+- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (53/53 tests, 359 tests across Phase P-11, 3,185 total dual-runtime tests passing across Core and Planner).
 
 Phase exit:
 Phase P-11 implementation COMPLETE & REPAIRED — awaiting independent QA review. One meaningful approval replaces repeated confirmations.

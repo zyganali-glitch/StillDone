@@ -22,6 +22,7 @@ import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from stilldone.action_policy import ValidatedActionContract, validate_action_contract
@@ -36,6 +37,7 @@ from stilldone.adapters.calendar import (
 )
 from stilldone.approval_binding import verify_approval_binding
 from stilldone.approval_consumption import (
+    APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
     ApprovalAlreadyUsedError,
     ApprovalConsumptionRecord,
     ApprovalLedger,
@@ -73,7 +75,7 @@ from stilldone.execution.state import (
     MissionExecutionRecord,
     ProviderExecutionResult,
 )
-from stilldone.ledger import EvidenceRecord, MissionLedgerPort
+from stilldone.ledger import EvidenceRecord, MissionLedgerPort, RecordNotFoundError
 from stilldone.pending_approval import (
     PendingApproval,
     PendingApprovalId,
@@ -368,6 +370,7 @@ class ProviderMutationObservation:
     handler_mutation_invocations: int = 0
     transport_mutation_invocations: int = 0
     transport_writes: int = 0
+    fixture_writes_count: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -387,6 +390,21 @@ class ProviderMutationObservation:
             raise ExecutionGateValueError(
                 "transport_writes cannot exceed transport_mutation_invocations"
             )
+        if self.fixture_writes_count is not None:
+            if isinstance(self.fixture_writes_count, bool) or not isinstance(
+                self.fixture_writes_count, int
+            ):
+                fwc_type = type(self.fixture_writes_count).__name__
+                raise ExecutionGateTypeError(
+                    f"fixture_writes_count must be an integer or None, got {fwc_type}"
+                )
+            if self.fixture_writes_count < 0:
+                raise ExecutionGateValueError("fixture_writes_count must be a non-negative integer")
+
+    @property
+    def is_fixture_counter_available(self) -> bool:
+        """True if the underlying transport exposed a fixture writes counter."""
+        return self.fixture_writes_count is not None
 
     @property
     def total_mutation_invocations(self) -> int:
@@ -402,13 +420,14 @@ class ProviderMutationObservation:
         """True if zero mutation method invocations occurred and zero writes took place."""
         return self.total_mutation_invocations == 0 and self.transport_writes == 0
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert observation to a serializable dictionary."""
         return {
             "router_mutation_invocations": self.router_mutation_invocations,
             "handler_mutation_invocations": self.handler_mutation_invocations,
             "transport_mutation_invocations": self.transport_mutation_invocations,
             "transport_writes": self.transport_writes,
+            "fixture_writes_count": self.fixture_writes_count,
             "total_mutation_invocations": self.total_mutation_invocations,
         }
 
@@ -430,6 +449,7 @@ class CalendarMutationSpy:
         self.router_invocations: int = 0
         self.handler_invocations: int = 0
         self.transport_invocations: int = 0
+        self.transport_completed_invocations: int = 0
         self._router = router
         self._handler = handler
         self._transport = transport
@@ -448,9 +468,17 @@ class CalendarMutationSpy:
             self._transport = getattr(self._handler, "_transport", None)
             if self._transport is None and hasattr(self._handler, "_adapter"):
                 self._transport = getattr(self._handler._adapter, "_transport", None)
-        self._initial_writes: int = (
-            getattr(self._transport, "writes_count", 0) if self._transport is not None else 0
-        )
+
+        self._initial_writes_count: int | None = None
+        self._has_fixture_counter: bool = False
+        if self._transport is not None and hasattr(self._transport, "writes_count"):
+            init_c = self._transport.writes_count
+            if isinstance(init_c, bool) or not isinstance(init_c, int) or init_c < 0:
+                raise ExecutionGateValueError(
+                    "Transport writes_count must be a non-negative integer"
+                )
+            self._has_fixture_counter = True
+            self._initial_writes_count = init_c
         self._installed = False
         self._orig_router_execute: Any = None
         self._orig_handler_execute: Any = None
@@ -462,9 +490,16 @@ class CalendarMutationSpy:
         if self._installed:
             return
 
-        self._initial_writes = (
-            getattr(self._transport, "writes_count", 0) if self._transport is not None else 0
-        )
+        self._initial_writes_count = None
+        self._has_fixture_counter = False
+        if self._transport is not None and hasattr(self._transport, "writes_count"):
+            init_c = self._transport.writes_count
+            if isinstance(init_c, bool) or not isinstance(init_c, int) or init_c < 0:
+                raise ExecutionGateValueError(
+                    "Transport writes_count must be a non-negative integer"
+                )
+            self._has_fixture_counter = True
+            self._initial_writes_count = init_c
 
         if self._router is not None and hasattr(self._router, "execute"):
             self._orig_router_execute = self._router.execute
@@ -492,7 +527,9 @@ class CalendarMutationSpy:
 
             def _spy_transport_update(*args: Any, **kwargs: Any) -> Any:
                 self.transport_invocations += 1
-                return self._orig_transport_update(*args, **kwargs)
+                res = self._orig_transport_update(*args, **kwargs)
+                self.transport_completed_invocations += 1
+                return res
 
             self._transport.update_event = _spy_transport_update
 
@@ -512,15 +549,38 @@ class CalendarMutationSpy:
 
     def observe(self) -> ProviderMutationObservation:
         """Capture current observation snapshot."""
-        current_writes = (
-            getattr(self._transport, "writes_count", 0) if self._transport is not None else 0
-        )
-        writes = max(0, current_writes - self._initial_writes)
+        if self._has_fixture_counter and self._transport is not None:
+            current_writes = getattr(self._transport, "writes_count", None)
+            if (
+                isinstance(current_writes, bool)
+                or not isinstance(current_writes, int)
+                or current_writes < 0
+            ):
+                raise ExecutionGateValueError(
+                    "Transport writes_count must be a non-negative integer"
+                )
+            if (
+                self._initial_writes_count is not None
+                and current_writes < self._initial_writes_count
+            ):
+                raise ExecutionGateValueError(
+                    "Observed transport write counter decreased or reset: "
+                    f"current ({current_writes}) < initial ({self._initial_writes_count})"
+                )
+            initial = self._initial_writes_count if self._initial_writes_count is not None else 0
+            delta: int = current_writes - initial
+            fixture_delta: int | None = delta
+            writes = delta
+        else:
+            fixture_delta = None
+            writes = self.transport_completed_invocations
+
         return ProviderMutationObservation(
             router_mutation_invocations=self.router_invocations,
             handler_mutation_invocations=self.handler_invocations,
             transport_mutation_invocations=self.transport_invocations,
             transport_writes=writes,
+            fixture_writes_count=fixture_delta,
         )
 
 
@@ -1832,6 +1892,7 @@ def create_approved_action_receipt(
     source_sha: str,
     ledger: ApprovalLedger,
     mutation_observation: ProviderMutationObservation,
+    predicate: DesiredStatePredicate | None = None,
     before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
@@ -1985,21 +2046,6 @@ def create_approved_action_receipt(
             "before_read and after_read observations must be separate instances"
         )
 
-    # Observation consistency check: after_read and readback_result must not contradict each other
-    if readback_result.observation is not None:
-        r_obs = readback_result.observation
-        if (
-            after_obs.summary != r_obs.summary
-            or after_obs.start_time != r_obs.start_time
-            or after_obs.end_time != r_obs.end_time
-            or after_obs.all_day != r_obs.all_day
-            or after_obs.etag != r_obs.etag
-            or after_obs.status != r_obs.status
-        ):
-            raise ExecutionGateValueError(
-                "after_read observation contradicts readback_result observation"
-            )
-
     # Timezone awareness
     if before_read.read_at.tzinfo is None or before_read.read_at.utcoffset() is None:
         raise ExecutionGateValueError("before_read.read_at must be timezone-aware")
@@ -2012,6 +2058,16 @@ def create_approved_action_receipt(
         raise ExecutionGateValueError("consumption_record.consumed_at must be timezone-aware")
     if gate_decision.evaluated_at.tzinfo is None or gate_decision.evaluated_at.utcoffset() is None:
         raise ExecutionGateValueError("gate_decision.evaluated_at must be timezone-aware")
+    if (
+        predicate_result.evaluated_at.tzinfo is None
+        or predicate_result.evaluated_at.utcoffset() is None
+    ):
+        raise ExecutionGateValueError("predicate_result.evaluated_at must be timezone-aware")
+    if (
+        readback_result.verified_at.tzinfo is None
+        or readback_result.verified_at.utcoffset() is None
+    ):
+        raise ExecutionGateValueError("readback_result.verified_at must be timezone-aware")
 
     b_read_at = (
         before_read.read_at
@@ -2033,6 +2089,16 @@ def create_approved_action_receipt(
         if gate_decision.evaluated_at.tzinfo == UTC
         else gate_decision.evaluated_at.astimezone(UTC)
     )
+    p_eval_at = (
+        predicate_result.evaluated_at
+        if predicate_result.evaluated_at.tzinfo == UTC
+        else predicate_result.evaluated_at.astimezone(UTC)
+    )
+    r_ver_at = (
+        readback_result.verified_at
+        if readback_result.verified_at.tzinfo == UTC
+        else readback_result.verified_at.astimezone(UTC)
+    )
 
     if b_read_at == a_read_at:
         raise ExecutionGateValueError(
@@ -2047,6 +2113,114 @@ def create_approved_action_receipt(
         raise ExecutionGateValueError("before_read occurred after gate evaluation")
     if a_read_at < g_eval_at:
         raise ExecutionGateValueError("after_read occurred before gate evaluation")
+    if p_eval_at < r_ver_at:
+        raise ExecutionGateValueError(
+            "predicate_result evaluated_at cannot precede readback_result verified_at"
+        )
+
+    # Readback target resource matches
+    if readback_result.event_id != actual_action.target.resource_id:
+        raise ExecutionGateValueError(
+            "readback_result event_id does not match action target resource_id"
+        )
+    if readback_result.observation is not None:
+        if readback_result.observation.event_id != actual_action.target.resource_id:
+            raise ExecutionGateValueError(
+                "readback_result observation event_id does not match action target resource_id"
+            )
+        if readback_result.observation.calendar_id != actual_action.target.parent_id:
+            raise ExecutionGateValueError(
+                "readback_result observation calendar_id does not match action target parent_id"
+            )
+
+    # Forged MATCH checks and readback status consistency
+    if readback_result.status == CalendarReadbackStatus.MATCH:
+        if not readback_result.is_match:
+            raise ExecutionGateValueError("Forged MATCH: readback_result.is_match is False")
+        if len(readback_result.mismatches) > 0:
+            raise ExecutionGateValueError("Forged MATCH: readback_result contains mismatches")
+        if readback_result.observation is None:
+            raise ExecutionGateValueError("Forged MATCH: readback_result observation is None")
+    else:
+        if readback_result.is_match:
+            raise ExecutionGateValueError(
+                "Contradictory readback result: is_match is True but status is not MATCH"
+            )
+
+    # Observation consistency check: after_read and readback_result must not contradict each other
+    if readback_result.observation is not None:
+        r_obs = readback_result.observation
+        if (
+            after_obs.summary != r_obs.summary
+            or after_obs.start_time != r_obs.start_time
+            or after_obs.end_time != r_obs.end_time
+            or after_obs.all_day != r_obs.all_day
+            or after_obs.etag != r_obs.etag
+            or after_obs.status != r_obs.status
+        ):
+            raise ExecutionGateValueError(
+                "after_read observation contradicts readback_result observation"
+            )
+
+    # Predicate lineage and result checks
+    if predicate is not None:
+        if not isinstance(predicate, DesiredStatePredicate):
+            raise ExecutionGateTypeError(
+                f"predicate must be DesiredStatePredicate, got {type(predicate).__name__}"
+            )
+        if predicate.mission_id != actual_action.mission_id:
+            raise ExecutionGateValueError("predicate mission_id does not match action mission_id")
+        if predicate_result.predicate_id != predicate.predicate_id:
+            raise ExecutionGateValueError(
+                "predicate_result predicate_id does not match predicate predicate_id"
+            )
+        if predicate_result.operator != predicate.operator:
+            raise ExecutionGateValueError(
+                "predicate_result operator does not match predicate operator"
+            )
+        if predicate_result.expected_value != predicate.expected_value:
+            raise ExecutionGateValueError(
+                "predicate_result expected_value does not match predicate expected_value"
+            )
+        if predicate_result.subject != predicate.subject:
+            raise ExecutionGateValueError(
+                "predicate_result subject does not match predicate subject"
+            )
+
+    # Predicate truth internal consistency
+    if predicate_result.truth == PredicateTruth.TRUE:
+        if not predicate_result.is_true:
+            raise ExecutionGateValueError(
+                "Contradictory predicate truth: truth is TRUE but is_true is False"
+            )
+    else:
+        if predicate_result.is_true:
+            raise ExecutionGateValueError(
+                "Contradictory predicate truth: is_true is True but truth is not TRUE"
+            )
+
+    # Authoritative observation consistency:
+    # predicate observed_value must match readback observation
+    if predicate is not None and readback_result.observation is not None:
+        prop_name = predicate.subject.split(".")[-1]
+        if hasattr(readback_result.observation, prop_name):
+            obs_val = getattr(readback_result.observation, prop_name)
+            if predicate_result.observed_value is not None and str(obs_val) != str(
+                predicate_result.observed_value
+            ):
+                raise ExecutionGateValueError(
+                    f"Predicate observed_value '{predicate_result.observed_value}' contradicts "
+                    f"readback observation {prop_name} '{obs_val}'"
+                )
+            if (
+                predicate_result.truth == PredicateTruth.TRUE
+                and str(predicate.operator) in ("EQUALS", "PredicateOperator.EQUALS")
+                and str(obs_val) != str(predicate.expected_value)
+            ):
+                raise ExecutionGateValueError(
+                    f"Contradictory observation: readback observation {prop_name} '{obs_val}' "
+                    f"contradicts predicate expected_value '{predicate.expected_value}'"
+                )
 
     # Resource matches
     if (
@@ -2100,15 +2274,13 @@ def create_approved_action_receipt(
         and predicate_result.truth == PredicateTruth.TRUE
     )
 
-    # Action-level verification NEVER automatically promotes mission readiness!
-    if is_ready_claimed is None:
-        computed_ready = False
-    else:
-        if is_ready_claimed and not is_verified:
-            raise ExecutionGateValueError(
-                "Cannot claim is_ready_claimed=True when is_verified is False"
-            )
-        computed_ready = is_ready_claimed
+    # Unpersisted READY check: cannot claim READY without persisted transition
+    if is_ready_claimed is True:
+        raise ExecutionGateValueError(
+            "Unpersisted READY: cannot claim mission READY without a persisted READY "
+            "transition in canonical ledger"
+        )
+    computed_ready = False
 
     now = recorded_at or datetime.now(UTC)
     if now.tzinfo is None or now.utcoffset() is None:
@@ -2116,6 +2288,8 @@ def create_approved_action_receipt(
     norm_now = now if now.tzinfo == UTC else now.astimezone(UTC)
     if norm_now < a_read_at:
         raise ExecutionGateValueError("recorded_at cannot precede after_read timestamp")
+    if norm_now < p_eval_at:
+        raise ExecutionGateValueError("recorded_at cannot precede predicate_result evaluated_at")
 
     return ApprovedActionReceipt(
         source_sha=source_sha,
@@ -2168,6 +2342,7 @@ class ApprovedCalendarUpdateOutcome:
     mutation_observation: ProviderMutationObservation
     readiness_determination: MissionReadinessDetermination | None = None
     is_durable: bool = False
+    mission_ready_status: str = "NOT_ESTABLISHED"
 
 
 def execute_approved_calendar_update(
@@ -2247,7 +2422,71 @@ def execute_approved_calendar_update(
             f"predicate must be DesiredStatePredicate, got {type(predicate).__name__}"
         )
 
-    # 3. Establish before-state read if not supplied
+    # 3. Bind approval durability to mission evidence durability
+    if mission_ledger is not None and ledger.ledger is not None:
+        if hasattr(ledger.ledger, "file_path") and hasattr(mission_ledger, "file_path"):
+            if Path(ledger.ledger.file_path).resolve() != Path(mission_ledger.file_path).resolve():
+                raise ExecutionGateValueError(
+                    "ApprovalLedger backing ledger does not match mission_ledger"
+                )
+        elif ledger.ledger is not mission_ledger:
+            raise ExecutionGateValueError(
+                "ApprovalLedger backing ledger does not match mission_ledger"
+            )
+
+    # 4. Canonical persisted mission context authority checks
+    if mission_state is not None:
+        norm_supplied_state = (
+            MissionState(mission_state) if isinstance(mission_state, str) else mission_state
+        )
+        if norm_supplied_state == MissionState.READY:
+            raise ExecutionGateValueError(
+                "Unpersisted READY: cannot supply mission_state=READY during action execution"
+            )
+
+    if mission_predicates is not None:
+        if len(mission_predicates) == 0:
+            raise ExecutionGateValueError("Caller-supplied mission_predicates cannot be empty")
+        pred_ids = {p.predicate_id for p in mission_predicates}
+        if predicate.predicate_id not in pred_ids:
+            raise ExecutionGateValueError(
+                "Caller-supplied mission_predicates does not contain "
+                "the required predicate for this action"
+            )
+
+    if mission_ledger is not None:
+        try:
+            persisted_mission = mission_ledger.get_mission(actual_action.mission_id)
+        except RecordNotFoundError:
+            persisted_mission = None
+
+        if mission_state is not None:
+            if persisted_mission is None:
+                raise ExecutionGateValueError(
+                    f"Mission '{actual_action.mission_id}' not found in canonical mission ledger"
+                )
+            if persisted_mission.state != norm_supplied_state:
+                raise ExecutionGateValueError(
+                    f"Persisted mission state '{persisted_mission.state.value}' contradicts "
+                    f"caller-supplied mission_state '{norm_supplied_state.value}'"
+                )
+
+        if persisted_mission is not None:
+            # Check terminal / unexecutable states
+            if persisted_mission.state in (MissionState.CANCELLED, MissionState.FAILED):
+                raise ExecutionGateValueError(
+                    f"Unsupported lifecycle transition: cannot execute action on mission in "
+                    f"'{persisted_mission.state.value}' state"
+                )
+
+    if mission_execution_record is not None:
+        if mission_execution_record.mission_id != actual_action.mission_id:
+            raise ExecutionGateValueError(
+                f"mission_execution_record mission_id '{mission_execution_record.mission_id}' "
+                f"does not match action mission_id '{actual_action.mission_id}'"
+            )
+
+    # 5. Establish before-state read if not supplied
     if before_read is None:
         before_action = ActionContract.create(
             mission_id=actual_action.mission_id,
@@ -2270,7 +2509,7 @@ def execute_approved_calendar_update(
     if norm_eval_at < before_read.read_at:
         norm_eval_at = before_read.read_at
 
-    # 4. Explicit real instrumentation (no synthetic fallback)
+    # 6. Explicit real instrumentation (no synthetic fallback)
     installed_spy_locally = False
     active_spy = spy
     if active_spy is None:
@@ -2285,7 +2524,7 @@ def execute_approved_calendar_update(
         active_spy = CalendarMutationSpy(router=router, handler=handler, transport=transport)
         installed_spy_locally = True
 
-    # 5. Gated execution: gate evaluation, attempt prep, consumption, dispatch
+    # 7. Gated execution: gate evaluation, attempt prep, consumption, dispatch
     try:
         gate_decision = execute_gated_action(
             validated,
@@ -2312,234 +2551,47 @@ def execute_approved_calendar_update(
     if consumption_record is None:
         raise ExecutionGateValueError("Approval consumption record missing from ledger")
 
-    # 6. Capture and validate real mutation facts
-    mutation_obs = active_spy.observe()
-    if gate_decision.is_authorized:
-        if mutation_obs.router_mutation_invocations < 1:
+    # 8. Durable consumption evidence verification in canonical mission ledger
+    if mission_ledger is not None and ledger.ledger is not None:
+        actions_evidence = mission_ledger.get_evidence_for_action(actual_action.action_id)
+        matching_consumption = False
+        for ev in actions_evidence:
+            p = ev.payload.to_dict() if hasattr(ev.payload, "to_dict") else dict(ev.payload)
+            if (
+                p.get("evidence_type") == APPROVAL_CONSUMPTION_EVIDENCE_TYPE
+                and p.get("approval_id") == str(approval.approval_id)
+                and p.get("action_id") == str(actual_action.action_id)
+                and p.get("mission_id") == str(actual_action.mission_id)
+                and p.get("binding_hash") == approval.binding_hash.value
+                and p.get("consumed_for_attempt") == consumption_record.attempt_number
+                and ev.action_id == actual_action.action_id
+                and ev.mission_id == actual_action.mission_id
+            ):
+                matching_consumption = True
+                break
+        if not matching_consumption:
             raise ExecutionGateValueError(
-                "Authorized gate decision requires router_mutation_invocations >= 1"
+                f"Approval consumption evidence for approval '{approval.approval_id}' "
+                "is missing from canonical mission ledger"
             )
-    if active_spy._handler is not None:
-        if mutation_obs.handler_mutation_invocations != mutation_obs.router_mutation_invocations:
-            raise ExecutionGateValueError(
-                "Handler mutation invocations contradict router invocations"
-            )
-    if mutation_obs.transport_writes > mutation_obs.transport_mutation_invocations:
-        raise ExecutionGateValueError(
-            "transport_writes cannot exceed transport_mutation_invocations"
-        )
-    if provider_result.writes_performed != mutation_obs.transport_writes:
-        raise ExecutionGateValueError(
-            f"provider_result.writes_performed ({provider_result.writes_performed}) "
-            f"contradicts mutation_obs.transport_writes ({mutation_obs.transport_writes})"
-        )
 
-    # 7. Independent read-back & conflicting observation detection
-    if after_read is None:
-        after_action = ActionContract.create(
-            mission_id=actual_action.mission_id,
-            action_type=ActionType.CALENDAR_READ,
-            target=actual_action.target,
-            parameters={},
-        )
-        first_read = read_adapter.read_event(after_action)
-    else:
-        first_read = after_read
-
-    params = actual_action.parameters.to_dict()
-    summary_val = params.get("summary")
-    start_time_val = params.get("start_time")
-    all_day_val = params.get("all_day")
-    expected = ExpectedCalendarState(
-        summary=summary_val if isinstance(summary_val, str) else None,
-        start_time=start_time_val if isinstance(start_time_val, str) else None,
-        all_day=all_day_val if isinstance(all_day_val, bool) else None,
-    )
-    verifier = GoogleCalendarReadbackVerifier(read_adapter)
-    readback_result = verifier.verify(actual_action, expected)
-
-    # Detect conflicting successive post-execution reads
-    if (
-        first_read.observation is not None
-        and readback_result.observation is not None
-        and (
-            first_read.observation.summary != readback_result.observation.summary
-            or first_read.observation.start_time != readback_result.observation.start_time
-            or first_read.observation.end_time != readback_result.observation.end_time
-            or first_read.observation.all_day != readback_result.observation.all_day
-            or first_read.observation.etag != readback_result.observation.etag
-            or first_read.observation.status != readback_result.observation.status
-        )
-    ):
-        raise ConflictingReadbackObservationError(
-            "Conflicting post-execution observations detected: "
-            "event state changed between successive post-execution reads"
-        )
-
-    # Authoritative observation for predicate evaluation and receipt is the verifier's observation
-    authoritative_obs = readback_result.observation
-
-    # 8. Predicate evaluation
-    from stilldone.verifier.contracts import (
-        VerificationObservation,
-        VerificationRequest,
-    )
-    from stilldone.verifier.predicates import (
-        PredicateTruth,
-        evaluate_predicate,
-    )
-    from stilldone.verifier.readiness import (
-        compute_mission_readiness,
-    )
-
-    obs_props: dict[str, Any] = {}
-    if authoritative_obs is not None:
-        obs_props = {
-            "summary": authoritative_obs.summary,
-            "start_time": authoritative_obs.start_time,
-            "end_time": authoritative_obs.end_time,
-            "all_day": authoritative_obs.all_day,
-            "etag": authoritative_obs.etag,
-            "status": authoritative_obs.status,
-        }
-
-    verification_obs = VerificationObservation(
-        target=actual_action.target,
-        observed_at=readback_result.verified_at,
-        exists=(
-            readback_result.status != CalendarReadbackStatus.NOT_FOUND
-            and authoritative_obs is not None
-        ),
-        properties=obs_props,
-        provenance=after_read_provenance,
-        raw_observation=authoritative_obs,
-    )
-    predicate_result = evaluate_predicate(
-        predicate,
-        verification_obs,
-        expected_target=actual_action.target,
-        at=readback_result.verified_at,
-    )
-
-    # 9. Deterministic action-level verification truth
-    is_verified = (
-        gate_decision.status == ActionExecutionStatus.EXECUTION_SUCCEEDED
-        and provider_result.success
-        and readback_result.status == CalendarReadbackStatus.MATCH
-        and predicate_result.truth == PredicateTruth.TRUE
-    )
-
-    # 10. Mission-level readiness truth (decoupled from action verification)
-    readiness_determination: MissionReadinessDetermination | None = None
-    is_ready = False
-    is_durable = (
-        getattr(mission_ledger, "IS_DURABLE", False) if mission_ledger is not None else False
-    )
-
-    # Mission READY requires: action is verified, mission context supplied, and durable ledger
-    if is_verified and mission_state is not None and is_durable:
-        req = VerificationRequest.create(
-            action=actual_action,
-            predicate=predicate,
-        )
-        preds = list(mission_predicates) if mission_predicates is not None else [predicate]
-        readiness_eval_at = max(norm_eval_at, readback_result.verified_at)
-        readiness_determination = compute_mission_readiness(
-            mission_id=actual_action.mission_id,
-            predicates=preds,
-            verification_requests={predicate.predicate_id: req},
-            predicate_evaluations={predicate.predicate_id: predicate_result},
-            observations={predicate.predicate_id: verification_obs},
-            execution_record=mission_execution_record,
-            current_state=mission_state,
-            at=readiness_eval_at,
-        )
-        is_ready = readiness_determination.is_ready
-
-    # 11. Durable receipt creation
-    receipt = create_approved_action_receipt(
-        gate_decision=gate_decision,
-        action=validated,
-        approval=approval,
-        consumption_record=consumption_record,
-        before_read=before_read,
-        after_read=first_read,
-        readback_result=readback_result,
-        predicate_result=predicate_result,
-        source_sha=source_sha,
-        ledger=ledger,
-        mutation_observation=mutation_obs,
-        before_read_provenance=before_read_provenance,
-        after_read_provenance=after_read_provenance,
-        provenance=provenance,
-        is_ready_claimed=is_ready,
-    )
-
-    # 12. Durable ledger persistence with honest post-write failure handling
     if mission_ledger is not None:
+        # Persist execution attempt immediately to durably preserve dispatch and write facts
+        ev_attempt = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
+            payload={
+                "evidence_type": "EXECUTION_ATTEMPT",
+                "attempt_id": str(attempt.attempt_id),
+                "attempt_number": attempt.attempt_number,
+                "status": gate_decision.status.value,
+                "writes_performed": provider_result.writes_performed,
+            },
+            created_at=norm_eval_at,
+        )
         try:
-            ev_attempt = EvidenceRecord.create(
-                action_id=actual_action.action_id,
-                mission_id=actual_action.mission_id,
-                origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
-                payload={
-                    "evidence_type": "EXECUTION_ATTEMPT",
-                    "attempt_id": str(attempt.attempt_id),
-                    "attempt_number": attempt.attempt_number,
-                    "status": gate_decision.status.value,
-                },
-                created_at=norm_eval_at,
-            )
             mission_ledger.append_evidence(ev_attempt)
-
-            ev_readback = EvidenceRecord.create(
-                action_id=actual_action.action_id,
-                mission_id=actual_action.mission_id,
-                origin=EvidenceOrigin(
-                    provenance=after_read_provenance,
-                    observed_at=readback_result.verified_at,
-                ),
-                payload={
-                    "evidence_type": "INDEPENDENT_READBACK",
-                    "readback_status": readback_result.status.value,
-                    "is_match": readback_result.is_match,
-                    "mismatches": list(readback_result.mismatches),
-                },
-                created_at=readback_result.verified_at,
-            )
-            mission_ledger.append_evidence(ev_readback)
-
-            ev_predicate = EvidenceRecord.create(
-                action_id=actual_action.action_id,
-                mission_id=actual_action.mission_id,
-                origin=EvidenceOrigin(
-                    provenance=provenance,
-                    observed_at=predicate_result.evaluated_at,
-                ),
-                payload={
-                    "evidence_type": "PREDICATE_EVALUATION",
-                    "predicate_id": str(predicate.predicate_id),
-                    "truth": predicate_result.truth.value,
-                    "is_true": predicate_result.is_true,
-                },
-                created_at=predicate_result.evaluated_at,
-            )
-            mission_ledger.append_evidence(ev_predicate)
-
-            ev_receipt = EvidenceRecord.create(
-                action_id=actual_action.action_id,
-                mission_id=actual_action.mission_id,
-                origin=EvidenceOrigin(
-                    provenance=provenance,
-                    observed_at=receipt.recorded_at,
-                ),
-                payload={
-                    "evidence_type": "APPROVED_CALENDAR_UPDATE_RECEIPT",
-                    "receipt": receipt.to_dict(),
-                },
-                created_at=receipt.recorded_at,
-            )
-            mission_ledger.append_evidence(ev_receipt)
         except Exception as exc:
             msg = (
                 f"Provider mutation executed successfully "
@@ -2552,6 +2604,271 @@ def execute_approved_calendar_update(
                 attempt=attempt,
                 gate_decision=gate_decision,
             ) from exc
+
+    # 9. Post-dispatch sequence protected by honest failure recovery
+    try:
+        mutation_obs = active_spy.observe()
+        if gate_decision.is_authorized:
+            if mutation_obs.router_mutation_invocations < 1:
+                raise ExecutionGateValueError(
+                    "Authorized gate decision requires router_mutation_invocations >= 1"
+                )
+        if active_spy._handler is not None:
+            if (
+                mutation_obs.handler_mutation_invocations
+                != mutation_obs.router_mutation_invocations
+            ):
+                raise ExecutionGateValueError(
+                    "Handler mutation invocations contradict router invocations"
+                )
+        if mutation_obs.transport_writes > mutation_obs.transport_mutation_invocations:
+            raise ExecutionGateValueError(
+                "transport_writes cannot exceed transport_mutation_invocations"
+            )
+        if provider_result.writes_performed != mutation_obs.transport_writes:
+            raise ExecutionGateValueError(
+                f"provider_result.writes_performed ({provider_result.writes_performed}) "
+                f"contradicts mutation_obs.transport_writes ({mutation_obs.transport_writes})"
+            )
+
+        # Independent read-back & conflicting observation detection
+        if after_read is None:
+            after_action = ActionContract.create(
+                mission_id=actual_action.mission_id,
+                action_type=ActionType.CALENDAR_READ,
+                target=actual_action.target,
+                parameters={},
+            )
+            first_read = read_adapter.read_event(after_action)
+        else:
+            first_read = after_read
+
+        params = actual_action.parameters.to_dict()
+        summary_val = params.get("summary")
+        start_time_val = params.get("start_time")
+        all_day_val = params.get("all_day")
+        expected = ExpectedCalendarState(
+            summary=summary_val if isinstance(summary_val, str) else None,
+            start_time=start_time_val if isinstance(start_time_val, str) else None,
+            all_day=all_day_val if isinstance(all_day_val, bool) else None,
+        )
+        verifier = GoogleCalendarReadbackVerifier(read_adapter)
+        readback_result = verifier.verify(actual_action, expected)
+
+        # Detect conflicting successive post-execution reads
+        if (
+            first_read.observation is not None
+            and readback_result.observation is not None
+            and (
+                first_read.observation.summary != readback_result.observation.summary
+                or first_read.observation.start_time != readback_result.observation.start_time
+                or first_read.observation.end_time != readback_result.observation.end_time
+                or first_read.observation.all_day != readback_result.observation.all_day
+                or first_read.observation.etag != readback_result.observation.etag
+                or first_read.observation.status != readback_result.observation.status
+            )
+        ):
+            raise ConflictingReadbackObservationError(
+                "Conflicting post-execution observations detected: "
+                "event state changed between successive post-execution reads"
+            )
+
+        # Authoritative observation for predicate evaluation and receipt
+        # is the verifier's observation
+        authoritative_obs = readback_result.observation
+
+        # Predicate evaluation
+        from stilldone.verifier.contracts import (
+            VerificationObservation,
+            VerificationRequest,
+        )
+        from stilldone.verifier.predicates import (
+            PredicateTruth,
+            evaluate_predicate,
+        )
+        from stilldone.verifier.readiness import (
+            compute_mission_readiness,
+        )
+
+        obs_props: dict[str, Any] = {}
+        if authoritative_obs is not None:
+            obs_props = {
+                "summary": authoritative_obs.summary,
+                "start_time": authoritative_obs.start_time,
+                "end_time": authoritative_obs.end_time,
+                "all_day": authoritative_obs.all_day,
+                "etag": authoritative_obs.etag,
+                "status": authoritative_obs.status,
+            }
+
+        verification_obs = VerificationObservation(
+            target=actual_action.target,
+            observed_at=readback_result.verified_at,
+            exists=(
+                readback_result.status != CalendarReadbackStatus.NOT_FOUND
+                and authoritative_obs is not None
+            ),
+            properties=obs_props,
+            provenance=after_read_provenance,
+            raw_observation=authoritative_obs,
+        )
+        predicate_result = evaluate_predicate(
+            predicate,
+            verification_obs,
+            expected_target=actual_action.target,
+            at=readback_result.verified_at,
+        )
+
+        # Deterministic action-level verification truth
+        is_verified = (
+            gate_decision.status == ActionExecutionStatus.EXECUTION_SUCCEEDED
+            and provider_result.success
+            and readback_result.status == CalendarReadbackStatus.MATCH
+            and predicate_result.truth == PredicateTruth.TRUE
+        )
+
+        # Mission-level readiness truth (decoupled from action verification)
+        readiness_determination: MissionReadinessDetermination | None = None
+        is_durable = (
+            getattr(mission_ledger, "IS_DURABLE", False)
+            and ledger.ledger is not None
+            and getattr(ledger.ledger, "IS_DURABLE", False)
+            if mission_ledger is not None
+            else False
+        )
+
+        # Compute readiness determination using P-09 compute_mission_readiness if context supplied
+        if is_verified and mission_state is not None:
+            req = VerificationRequest.create(
+                action=actual_action,
+                predicate=predicate,
+            )
+            preds = list(mission_predicates) if mission_predicates is not None else [predicate]
+            readiness_eval_at = max(norm_eval_at, readback_result.verified_at)
+            readiness_determination = compute_mission_readiness(
+                mission_id=actual_action.mission_id,
+                predicates=preds,
+                verification_requests={predicate.predicate_id: req},
+                predicate_evaluations={predicate.predicate_id: predicate_result},
+                observations={predicate.predicate_id: verification_obs},
+                execution_record=mission_execution_record,
+                current_state=mission_state,
+                at=readiness_eval_at,
+            )
+
+        # Mission READY is unpersisted in P-11.06 (deferred to P-12).
+        # Action-level is_verified is True, but mission is_ready is False and NOT_ESTABLISHED.
+        is_ready = False
+        mission_ready_status = "NOT_ESTABLISHED"
+
+        # Durable receipt creation (strictly is_ready_claimed=False)
+        receipt = create_approved_action_receipt(
+            gate_decision=gate_decision,
+            action=validated,
+            approval=approval,
+            consumption_record=consumption_record,
+            before_read=before_read,
+            after_read=first_read,
+            readback_result=readback_result,
+            predicate_result=predicate_result,
+            predicate=predicate,
+            source_sha=source_sha,
+            ledger=ledger,
+            mutation_observation=mutation_obs,
+            before_read_provenance=before_read_provenance,
+            after_read_provenance=after_read_provenance,
+            provenance=provenance,
+            is_ready_claimed=False,
+        )
+
+        # Durable ledger persistence for readback, predicate, and receipt
+        if mission_ledger is not None:
+            try:
+                ev_readback = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=after_read_provenance,
+                        observed_at=readback_result.verified_at,
+                    ),
+                    payload={
+                        "evidence_type": "INDEPENDENT_READBACK",
+                        "readback_status": readback_result.status.value,
+                        "is_match": readback_result.is_match,
+                        "mismatches": list(readback_result.mismatches),
+                    },
+                    created_at=readback_result.verified_at,
+                )
+                mission_ledger.append_evidence(ev_readback)
+
+                ev_predicate = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=provenance,
+                        observed_at=predicate_result.evaluated_at,
+                    ),
+                    payload={
+                        "evidence_type": "PREDICATE_EVALUATION",
+                        "predicate_id": str(predicate.predicate_id),
+                        "truth": predicate_result.truth.value,
+                        "is_true": predicate_result.is_true,
+                    },
+                    created_at=predicate_result.evaluated_at,
+                )
+                mission_ledger.append_evidence(ev_predicate)
+
+                ev_receipt = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=provenance,
+                        observed_at=receipt.recorded_at,
+                    ),
+                    payload={
+                        "evidence_type": "APPROVED_CALENDAR_UPDATE_RECEIPT",
+                        "receipt": receipt.to_dict(),
+                    },
+                    created_at=receipt.recorded_at,
+                )
+                mission_ledger.append_evidence(ev_receipt)
+            except Exception as exc:
+                msg = (
+                    f"Provider mutation executed successfully "
+                    f"({provider_result.writes_performed} write), "
+                    f"but durable mission ledger persistence failed: {type(exc).__name__}"
+                )
+                raise ApprovedExecutionPersistenceError(
+                    msg,
+                    provider_result=provider_result,
+                    attempt=attempt,
+                    gate_decision=gate_decision,
+                ) from exc
+    except Exception as exc:
+        if mission_ledger is not None and not isinstance(exc, ApprovedExecutionPersistenceError):
+            try:
+                ev_failure = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=provenance,
+                        observed_at=datetime.now(UTC),
+                    ),
+                    payload={
+                        "evidence_type": "UNCERTAIN_POST_EXECUTION_FAILURE",
+                        "attempt_id": str(attempt.attempt_id),
+                        "attempt_number": attempt.attempt_number,
+                        "status": gate_decision.status.value,
+                        "writes_performed": provider_result.writes_performed,
+                        "error_type": type(exc).__name__,
+                        "error_message": redact_text(str(exc)),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+                mission_ledger.append_evidence(ev_failure)
+            except Exception:
+                pass
+        raise
 
     return ApprovedCalendarUpdateOutcome(
         gate_decision=gate_decision,
@@ -2568,6 +2885,7 @@ def execute_approved_calendar_update(
         mutation_observation=mutation_obs,
         readiness_determination=readiness_determination,
         is_durable=is_durable,
+        mission_ready_status=mission_ready_status,
     )
 
 
