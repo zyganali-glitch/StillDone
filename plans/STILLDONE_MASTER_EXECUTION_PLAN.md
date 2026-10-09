@@ -1265,10 +1265,32 @@ Acceptance:
 - P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: PENDING / NOT AUTHORIZED / NOT_RUN
+Status: DONE — pending independent QA review (Starting SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
+
+Acceptance:
+- Complete 12-step approved sequence executed: INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED;
+- Authority gate validates action contract, target identity, and frozen P-11.01 policy (`REVERSIBLE_APPROVAL_REQUIRED`);
+- Human-originated ApprovalGrant cryptographically bound to exact parameters, target, and validity window verified via constant-time HMAC check;
+- Atomic grant consumption enforced through ApprovalLedger prior to router execution;
+- Fail-closed behavior on ledger persistence error (raises `ApprovalConsumptionPersistenceError` with zero provider writes);
+- Exactly one canonical execution attempt generated (`attempt_number=1`);
+- Dispatch exactly once through GoogleCalendarUpdateAdapter with matching If-Match ETag;
+- Measured provider writes strictly 1 (`writes_count == 1`); zero blind overwrites;
+- Fresh independent read-back executed via GoogleCalendarReadAdapter (separate instance, fresh timestamp);
+- Readback result status `CalendarReadbackStatus.MATCH` with zero field mismatches;
+- Predicate evaluated against fresh read-back: `PredicateTruth.TRUE` for target start time;
+- Lawful promotion to `VERIFIED` and `READY` achieved only upon satisfaction of all predicate, readback, and evidence rules;
+- Negative control proof: provider success with read-back mismatch strictly results in `is_verified=False` and `is_ready=False`;
+- Replay prevention: replaying consumed grant fails closed with `ApprovalAlreadyUsedError` and 0 additional writes;
+- Concurrency safety: multi-threaded concurrent execution attempts result in exactly 1 winner and losers failing closed;
+- Durable hydration: consumed grant records survive process reload via `DurableFileLedger` and `ApprovalLedger.from_ledger`;
+- Deep immutability enforced for `ApprovedActionReceipt` state summaries (`MappingProxyType`);
+- Live Google Calendar mutation gate truthfully reported as `NOT_RUN / BLOCKED` ($0.00 personal spend maintained);
+- Deterministic proof script `scripts/p11_06_proof.py` passing under standard and `python -O` modes;
+- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (18/18 tests, 324 total P-11 tests passing).
 
 Phase exit:
-one meaningful approval replaces repeated confirmations.
+Phase P-11 implementation COMPLETE — pending independent QA review. One meaningful approval replaces repeated confirmations.
 
 ---
 

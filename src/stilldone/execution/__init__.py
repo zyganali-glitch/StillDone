@@ -42,6 +42,8 @@ from stilldone.execution.contracts import (
     UnsupportedActionError,
 )
 from stilldone.execution.gate import (
+    ApprovedActionReceipt,
+    ApprovedCalendarUpdateOutcome,
     CalendarMutationSpy,
     ExecutionGateDecision,
     ExecutionGateError,
@@ -53,8 +55,10 @@ from stilldone.execution.gate import (
     UnapprovedActionReceipt,
     UnapprovedMutationBlockedError,
     UnexpectedApprovalGrantError,
+    create_approved_action_receipt,
     create_unapproved_action_receipt,
     evaluate_execution_gate,
+    execute_approved_calendar_update,
     execute_gated_action,
 )
 from stilldone.execution.router import (
@@ -86,6 +90,8 @@ __all__ = [
     "ActionExecutionStatus",
     "ActionHandler",
     "AdapterRouter",
+    "ApprovedActionReceipt",
+    "ApprovedCalendarUpdateOutcome",
     "CalendarMutationSpy",
     "CalendarReadHandler",
     "CalendarUpdateHandler",
@@ -125,10 +131,12 @@ __all__ = [
     "UnsupportedActionRouteError",
     "WeatherReadHandler",
     "compile_candidate_plan",
+    "create_approved_action_receipt",
     "create_execution_attempt",
     "create_production_adapter_router",
     "create_unapproved_action_receipt",
     "evaluate_execution_gate",
+    "execute_approved_calendar_update",
     "execute_gated_action",
     "record_calendar_read_result",
     "record_calendar_update_result",

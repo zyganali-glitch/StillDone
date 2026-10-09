@@ -660,6 +660,18 @@ class ApprovalLedger:
         with self._lock:
             return self._registry.get_consumed_records_for_action(action_id)
 
+    def get_record(self, approval_id: ApprovalId | str) -> ApprovalConsumptionRecord | None:
+        """Retrieve the approval consumption/revocation record for an approval ID, if present.
+
+        Thread-safe read-only query bounded to the target approval ID.
+        """
+        if not isinstance(approval_id, (ApprovalId, str)):
+            raise ApprovalConsumptionTypeError(
+                f"approval_id must be an ApprovalId or str, got {type(approval_id).__name__}"
+            )
+        with self._lock:
+            return self._registry.get_record(approval_id)
+
     def consume(
         self,
         grant: ApprovalGrant,

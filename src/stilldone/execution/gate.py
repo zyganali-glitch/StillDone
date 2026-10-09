@@ -26,10 +26,22 @@ from typing import Any
 
 from stilldone.action_policy import ValidatedActionContract, validate_action_contract
 from stilldone.adapters.calendar import (
+    CalendarReadbackResult,
+    CalendarReadbackStatus,
     CalendarReadResult,
     CalendarReadStatus,
+    ExpectedCalendarState,
+    GoogleCalendarReadAdapter,
+    GoogleCalendarReadbackVerifier,
 )
-from stilldone.approval_consumption import ApprovalLedger
+from stilldone.approval_binding import verify_approval_binding
+from stilldone.approval_consumption import (
+    ApprovalAlreadyUsedError,
+    ApprovalConsumptionRecord,
+    ApprovalLedger,
+    ApprovalRevokedError,
+    ApprovalUsageStatus,
+)
 from stilldone.authority_policy import (
     ActionAuthorityPolicy,
     AuthorityPolicyTypeError,
@@ -39,10 +51,16 @@ from stilldone.authority_policy import (
     get_action_authority_policy,
 )
 from stilldone.domain.action import ActionContract, ActionId, ActionType
-from stilldone.domain.authority import ApprovalGrant, AuthorityClass
+from stilldone.domain.authority import (
+    ApprovalGrant,
+    ApprovalId,
+    AuthorityClass,
+    BindingHash,
+)
+from stilldone.domain.desired_state import DesiredStatePredicate
 from stilldone.domain.execution import ExecutionAttempt
 from stilldone.domain.mission import MissionId
-from stilldone.domain.provenance import EvidenceProvenance
+from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.execution.attempts import (
     create_execution_attempt,
     record_provider_exception,
@@ -53,6 +71,7 @@ from stilldone.execution.state import (
     ExecutionStateTracker,
     ProviderExecutionResult,
 )
+from stilldone.ledger import EvidenceRecord, MissionLedgerPort
 from stilldone.pending_approval import (
     PendingApproval,
     PendingApprovalId,
@@ -62,6 +81,12 @@ from stilldone.pending_approval import (
 )
 from stilldone.redaction import redact_text
 from stilldone.serialization import to_canonical_primitive
+from stilldone.verifier.contracts import VerificationObservation
+from stilldone.verifier.predicates import (
+    PredicateEvaluationResult,
+    PredicateTruth,
+    evaluate_predicate,
+)
 
 # ===========================================================================
 # Exception Hierarchy
@@ -694,6 +719,7 @@ def evaluate_execution_gate(
     approval: ApprovalGrant | None = None,
     pending_approval: PendingApproval | None = None,
     at: datetime | None = None,
+    ledger: ApprovalLedger | None = None,
 ) -> ExecutionGateDecision:
     """Evaluate whether an action is authorized to execute or must remain NOT_RUN.
 
@@ -706,17 +732,21 @@ def evaluate_execution_gate(
        - If action requires bound approval (CALENDAR_UPDATE):
          * If approval is None: returns ActionExecutionStatus.NOT_RUN with is_authorized=False.
            Crucially: Does NOT mark execution as FAILED. Does NOT attempt provider call.
-         * If approval is provided: raises NotImplementedError because P-11.06 approved
-           execution path is strictly pending authorization and NOT implemented here.
+         * If approval is provided:
+           - Requires ApprovalLedger (fails closed if None).
+           - Validates exact action binding, temporal validity, and cryptographic binding hash.
+           - Checks single-use and revocation status against ledger (rejects replay/revocation).
+           - Returns is_authorized=True (IN_PROGRESS).
        - If action does not require bound approval (READ_ONLY, REVERSIBLE_AUTO):
          * If approval grant is unexpectedly provided: raises UnexpectedApprovalGrantError.
          * Returns is_authorized=True, eligible for execution.
 
     Args:
         action: ValidatedActionContract or ActionContract.
-        approval: Optional ApprovalGrant (strictly None for P-11.05 unapproved proof).
+        approval: Optional ApprovalGrant (strictly None for unapproved proof).
         pending_approval: Optional PendingApproval object.
         at: Optional timezone-aware UTC datetime.
+        ledger: Optional ApprovalLedger for verifying usage and revocation status.
 
     Returns:
         ExecutionGateDecision capturing authorization status and deterministic reason.
@@ -728,6 +758,8 @@ def evaluate_execution_gate(
             assert_not_planner_for_authority(approval, parameter_name="approval")
         if pending_approval is not None:
             assert_not_planner_for_authority(pending_approval, parameter_name="pending_approval")
+        if ledger is not None:
+            assert_not_planner_for_authority(ledger, parameter_name="ledger")
     except PlannerAuthorityError as exc:
         raise PlannerGateAuthorityError(str(exc)) from None
 
@@ -849,11 +881,49 @@ def evaluate_execution_gate(
                 provider_result=None,
             )
 
-        # Approval is present: Enforce Rule 12 / P-11.06 lock
-        # P-11.06 approved execution path is NOT implemented here!
-        raise NotImplementedError(
-            "P-11.06 approved execution path is not implemented in P-11.05 "
-            "(P-11.06 remains PENDING / NOT AUTHORIZED / NOT_RUN)"
+        # Approval is present
+        if ledger is None:
+            raise NotImplementedError(
+                "P-11.06 approved execution path is not implemented in P-11.05 "
+                "without ApprovalLedger"
+            )
+
+        if not isinstance(ledger, ApprovalLedger):
+            raise ExecutionGateTypeError(
+                f"ledger must be an ApprovalLedger instance, got {type(ledger).__name__}"
+            )
+
+        if approval.authority_class != policy.authority_class:
+            raise ExecutionGateValueError(
+                f"ApprovalGrant authority_class '{approval.authority_class.value}' does not match "
+                f"policy authority_class '{policy.authority_class.value}'"
+            )
+
+        # Verify cryptographic binding and temporal validity
+        verify_approval_binding(validated, approval, at=norm_at)
+
+        # Verify usage status in ledger (check for replay / revocation)
+        if ledger.is_consumed(approval.approval_id):
+            raise ApprovalAlreadyUsedError(
+                f"Approval '{approval.approval_id}' was already consumed in ledger"
+            )
+        if ledger.is_revoked(approval.approval_id):
+            raise ApprovalRevokedError(f"Approval '{approval.approval_id}' was revoked in ledger")
+
+        return ExecutionGateDecision(
+            action_id=validated.action_id,
+            action_type=validated.action_type,
+            authority_class=policy.authority_class,
+            status=ActionExecutionStatus.IN_PROGRESS,
+            is_authorized=True,
+            reason=(
+                f"Action '{validated.action_type.value}' is authorized by valid bound "
+                f"ApprovalGrant '{approval.approval_id}'."
+            ),
+            pending_approval_id=paid,
+            evaluated_at=norm_at,
+            attempt=None,
+            provider_result=None,
         )
 
     # Action does not require bound approval (READ_ONLY or REVERSIBLE_AUTO)
@@ -895,6 +965,7 @@ def execute_gated_action(
     approval: ApprovalGrant | None = None,
     pending_approval: PendingApproval | None = None,
     at: datetime | None = None,
+    ledger: ApprovalLedger | None = None,
 ) -> ExecutionGateDecision:
     """Coordinate the execution of an action through the authority gate.
 
@@ -907,7 +978,9 @@ def execute_gated_action(
        - Crucially: action is NOT marked EXECUTION_FAILED or FAILED!
        - Returns ExecutionGateDecision with status=NOT_RUN.
     2. If the authority gate determines authorized:
-       - Generates ExecutionAttempt FIRST (failing before tracker mutation if attempt fails).
+       - If action requires bound approval, atomically consumes grant through ApprovalLedger FIRST
+         (failing closed with zero mutation if durable persistence fails or already used).
+       - Generates ExecutionAttempt (failing before tracker mutation if attempt fails).
        - Marks tracker in progress (if supplied).
        - Invokes router to execute action.
        - Records success or failure on tracker.
@@ -921,6 +994,7 @@ def execute_gated_action(
         approval: Optional ApprovalGrant.
         pending_approval: Optional PendingApproval.
         at: Optional timezone-aware UTC datetime.
+        ledger: Optional ApprovalLedger for consuming approval grant.
 
     Returns:
         ExecutionGateDecision capturing final state.
@@ -930,6 +1004,7 @@ def execute_gated_action(
         approval=approval,
         pending_approval=pending_approval,
         at=at,
+        ledger=ledger,
     )
 
     # Branch 1: Action is NOT_RUN (approval absent)
@@ -940,6 +1015,17 @@ def execute_gated_action(
         return gate_decision
 
     # Branch 2: Action is authorized to proceed
+    # If action requires bound approval, atomically consume through ApprovalLedger BEFORE mutation!
+    if gate_decision.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED:
+        if approval is None:
+            raise ExecutionGateValueError("ApprovalGrant required for execution")
+        if ledger is None:
+            raise ExecutionGateValueError("ApprovalLedger required for atomic consumption")
+        # Atomically consume through existing P-11.04 ApprovalLedger before provider mutation.
+        # Fails closed if durable consumption cannot be persisted
+        # (raises ApprovalConsumptionPersistenceError).
+        ledger.consume(approval, action, at=gate_decision.evaluated_at, attempt_number=1)
+
     # Generate attempt FIRST to prevent premature IN_PROGRESS transition if attempt generation fails
     gen = attempt_generator or create_execution_attempt
     attempt = gen(action.action_id)
@@ -1373,7 +1459,873 @@ def create_unapproved_action_receipt(
     )
 
 
+# ===========================================================================
+# Approved Action Receipt Model
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class ApprovedActionReceipt:
+    """Immutable evidence receipt proving an approved Calendar update executed and verified.
+
+    Captures complete deterministic authority facts and provider truth:
+    - exact source SHA (40 hex characters);
+    - mission ID;
+    - action ID;
+    - action type (ActionType.CALENDAR_UPDATE);
+    - authority class (AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED);
+    - target event identity in privacy-safe form;
+    - approval ID;
+    - binding hash;
+    - consumed at timestamp;
+    - attempt number;
+    - execution status;
+    - provider mutation invocations;
+    - provider writes;
+    - before read provenance;
+    - after read provenance;
+    - before state summary (deep frozen);
+    - after state summary (deep frozen);
+    - readback status;
+    - predicate truth;
+    - is_verified;
+    - is_ready_claimed;
+    - provenance;
+    - recorded at timestamp;
+    - mutation observation (ProviderMutationObservation).
+    """
+
+    source_sha: str
+    mission_id: MissionId
+    action_id: ActionId
+    action_type: ActionType
+    authority_class: AuthorityClass
+    target_event_id: str
+    approval_id: ApprovalId
+    binding_hash: BindingHash
+    consumed_at: datetime
+    attempt_number: int
+    execution_status: ActionExecutionStatus
+    provider_mutation_invocations: int
+    provider_writes: int
+    before_read_provenance: EvidenceProvenance
+    after_read_provenance: EvidenceProvenance
+    before_state_summary: Mapping[str, Any]
+    after_state_summary: Mapping[str, Any]
+    readback_status: CalendarReadbackStatus
+    predicate_truth: PredicateTruth
+    is_verified: bool
+    is_ready_claimed: bool
+    provenance: EvidenceProvenance
+    recorded_at: datetime
+    mutation_observation: ProviderMutationObservation
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_sha, str) or not self.source_sha.strip():
+            raise ExecutionGateValueError("source_sha must be a non-empty string")
+        sha_clean = self.source_sha.strip().lower()
+        if len(sha_clean) != 40 or not all(c in "0123456789abcdef" for c in sha_clean):
+            raise ExecutionGateValueError(
+                "source_sha must be a 40-character hexadecimal git commit SHA"
+            )
+        object.__setattr__(self, "source_sha", sha_clean)
+
+        if not isinstance(self.mission_id, MissionId):
+            raise ExecutionGateTypeError(
+                f"mission_id must be a MissionId, got {type(self.mission_id).__name__}"
+            )
+        if not isinstance(self.action_id, ActionId):
+            raise ExecutionGateTypeError(
+                f"action_id must be an ActionId, got {type(self.action_id).__name__}"
+            )
+        if not isinstance(self.action_type, ActionType):
+            raise ExecutionGateTypeError(
+                f"action_type must be an ActionType, got {type(self.action_type).__name__}"
+            )
+        if self.action_type != ActionType.CALENDAR_UPDATE:
+            raise ExecutionGateValueError(
+                "ApprovedActionReceipt strictly applies to CALENDAR_UPDATE, "
+                f"got {self.action_type.value}"
+            )
+        if not isinstance(self.authority_class, AuthorityClass):
+            ac_name = type(self.authority_class).__name__
+            msg = f"authority_class must be an AuthorityClass, got {ac_name}"
+            raise ExecutionGateTypeError(msg)
+        if self.authority_class != AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED:
+            raise ExecutionGateValueError(
+                "ApprovedActionReceipt strictly requires "
+                "authority_class=REVERSIBLE_APPROVAL_REQUIRED, "
+                f"got {self.authority_class.value}"
+            )
+        if not isinstance(self.target_event_id, str) or not self.target_event_id.strip():
+            raise ExecutionGateValueError("target_event_id must be a non-empty string")
+        if not isinstance(self.approval_id, ApprovalId):
+            raise ExecutionGateTypeError(
+                f"approval_id must be an ApprovalId, got {type(self.approval_id).__name__}"
+            )
+        if not isinstance(self.binding_hash, BindingHash):
+            raise ExecutionGateTypeError(
+                f"binding_hash must be a BindingHash, got {type(self.binding_hash).__name__}"
+            )
+        if not isinstance(self.consumed_at, datetime):
+            raise ExecutionGateTypeError(
+                f"consumed_at must be a datetime, got {type(self.consumed_at).__name__}"
+            )
+        if self.consumed_at.tzinfo is None or self.consumed_at.utcoffset() is None:
+            raise ExecutionGateValueError("consumed_at must be timezone-aware")
+        if self.consumed_at.tzinfo != UTC:
+            object.__setattr__(self, "consumed_at", self.consumed_at.astimezone(UTC))
+
+        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
+            raise ExecutionGateTypeError("attempt_number must be an integer")
+        if self.attempt_number < 1:
+            raise ExecutionGateValueError("attempt_number must be >= 1")
+
+        if not isinstance(self.execution_status, ActionExecutionStatus):
+            raise ExecutionGateTypeError(
+                f"execution_status must be an ActionExecutionStatus, "
+                f"got {type(self.execution_status).__name__}"
+            )
+        if (
+            isinstance(self.provider_mutation_invocations, bool)
+            or not isinstance(self.provider_mutation_invocations, int)
+            or self.provider_mutation_invocations < 0
+        ):
+            raise ExecutionGateValueError("provider_mutation_invocations must be non-negative int")
+        if (
+            isinstance(self.provider_writes, bool)
+            or not isinstance(self.provider_writes, int)
+            or self.provider_writes < 0
+        ):
+            raise ExecutionGateValueError("provider_writes must be non-negative int")
+
+        if not isinstance(self.before_read_provenance, EvidenceProvenance):
+            raise ExecutionGateTypeError(
+                f"before_read_provenance must be an EvidenceProvenance, "
+                f"got {type(self.before_read_provenance).__name__}"
+            )
+        if not isinstance(self.after_read_provenance, EvidenceProvenance):
+            raise ExecutionGateTypeError(
+                f"after_read_provenance must be an EvidenceProvenance, "
+                f"got {type(self.after_read_provenance).__name__}"
+            )
+        if not isinstance(self.before_state_summary, Mapping):
+            raise ExecutionGateTypeError("before_state_summary must be a Mapping")
+        if not isinstance(self.after_state_summary, Mapping):
+            raise ExecutionGateTypeError("after_state_summary must be a Mapping")
+        _validate_mapping_keys(self.before_state_summary, "before_state_summary")
+        _validate_mapping_keys(self.after_state_summary, "after_state_summary")
+
+        if not isinstance(self.readback_status, CalendarReadbackStatus):
+            raise ExecutionGateTypeError(
+                f"readback_status must be a CalendarReadbackStatus, "
+                f"got {type(self.readback_status).__name__}"
+            )
+        if not isinstance(self.predicate_truth, PredicateTruth):
+            raise ExecutionGateTypeError(
+                f"predicate_truth must be a PredicateTruth, "
+                f"got {type(self.predicate_truth).__name__}"
+            )
+        if type(self.is_verified) is not bool:
+            raise ExecutionGateTypeError("is_verified must be a bool")
+        if type(self.is_ready_claimed) is not bool:
+            raise ExecutionGateTypeError("is_ready_claimed must be a bool")
+        if not isinstance(self.provenance, EvidenceProvenance):
+            raise ExecutionGateTypeError(
+                f"provenance must be an EvidenceProvenance, got {type(self.provenance).__name__}"
+            )
+        if not isinstance(self.recorded_at, datetime):
+            raise ExecutionGateTypeError(
+                f"recorded_at must be a datetime, got {type(self.recorded_at).__name__}"
+            )
+        if self.recorded_at.tzinfo is None or self.recorded_at.utcoffset() is None:
+            raise ExecutionGateValueError("recorded_at must be timezone-aware")
+        if self.recorded_at.tzinfo != UTC:
+            object.__setattr__(self, "recorded_at", self.recorded_at.astimezone(UTC))
+
+        if not isinstance(self.mutation_observation, ProviderMutationObservation):
+            raise ExecutionGateTypeError(
+                f"mutation_observation must be a ProviderMutationObservation instance, "
+                f"got {type(self.mutation_observation).__name__}"
+            )
+        if self.mutation_observation.transport_writes != self.provider_writes:
+            raise ExecutionGateValueError(
+                "provider_writes contradicts mutation_observation.transport_writes"
+            )
+
+        # Deep freeze state summaries to guarantee complete immutability
+        object.__setattr__(
+            self, "before_state_summary", _deep_freeze_mapping(self.before_state_summary)
+        )
+        object.__setattr__(
+            self, "after_state_summary", _deep_freeze_mapping(self.after_state_summary)
+        )
+
+        # Core StillDone Invariant: Verification Truth
+        if self.is_verified:
+            if self.execution_status != ActionExecutionStatus.EXECUTION_SUCCEEDED:
+                raise ExecutionGateValueError(
+                    "Verified receipt requires execution_status=EXECUTION_SUCCEEDED"
+                )
+            if self.readback_status != CalendarReadbackStatus.MATCH:
+                raise ExecutionGateValueError(
+                    f"Verified receipt requires readback_status=MATCH, "
+                    f"got {self.readback_status.value}"
+                )
+            if self.predicate_truth != PredicateTruth.TRUE:
+                raise ExecutionGateValueError(
+                    f"Verified receipt requires predicate_truth=TRUE, "
+                    f"got {self.predicate_truth.value}"
+                )
+            if not self.is_ready_claimed:
+                raise ExecutionGateValueError("Verified receipt must claim is_ready_claimed=True")
+        else:
+            if self.is_ready_claimed:
+                raise ExecutionGateValueError(
+                    "Unverified receipt cannot claim is_ready_claimed=True"
+                )
+
+        # Zero false-live claims: Fixture proof must NOT claim LIVE_*
+        live_provenances = (
+            EvidenceProvenance.LIVE_AWS,
+            EvidenceProvenance.LIVE_GOOGLE,
+            EvidenceProvenance.LIVE_EXTERNAL,
+        )
+        if self.provenance in live_provenances:
+            raise ExecutionGateValueError(
+                f"P-11.06 deterministic proof cannot claim live provenance "
+                f"'{self.provenance.value}'"
+            )
+        if self.before_read_provenance in live_provenances:
+            raise ExecutionGateValueError(
+                "before_read_provenance cannot claim live provenance without exercised live access"
+            )
+        if self.after_read_provenance in live_provenances:
+            raise ExecutionGateValueError(
+                "after_read_provenance cannot claim live provenance without exercised live access"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert receipt to a serializable, privacy-safe dictionary."""
+        return {
+            "source_sha": self.source_sha,
+            "mission_id": str(self.mission_id),
+            "action_id": str(self.action_id),
+            "action_type": self.action_type.value,
+            "authority_class": self.authority_class.value,
+            "target_event_id": redact_text(self.target_event_id),
+            "approval_id": str(self.approval_id),
+            "binding_hash": self.binding_hash.value,
+            "consumed_at": self.consumed_at.isoformat(),
+            "attempt_number": self.attempt_number,
+            "execution_status": self.execution_status.value,
+            "provider_mutation_invocations": self.provider_mutation_invocations,
+            "provider_writes": self.provider_writes,
+            "before_read_provenance": self.before_read_provenance.value,
+            "after_read_provenance": self.after_read_provenance.value,
+            "before_state_summary": _sanitize_summary_mapping(self.before_state_summary),
+            "after_state_summary": _sanitize_summary_mapping(self.after_state_summary),
+            "readback_status": self.readback_status.value,
+            "predicate_truth": self.predicate_truth.value,
+            "is_verified": self.is_verified,
+            "is_ready_claimed": self.is_ready_claimed,
+            "provenance": self.provenance.value,
+            "recorded_at": self.recorded_at.isoformat(),
+            "mutation_observation": self.mutation_observation.to_dict(),
+        }
+
+
+# ===========================================================================
+# Approved Action Receipt Factory Function
+# ===========================================================================
+
+
+def create_approved_action_receipt(
+    *,
+    gate_decision: ExecutionGateDecision,
+    action: ValidatedActionContract | ActionContract,
+    approval: ApprovalGrant,
+    consumption_record: ApprovalConsumptionRecord,
+    before_read: CalendarReadResult,
+    after_read: CalendarReadResult,
+    readback_result: CalendarReadbackResult,
+    predicate_result: PredicateEvaluationResult,
+    source_sha: str,
+    ledger: ApprovalLedger,
+    mutation_observation: ProviderMutationObservation,
+    before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+    after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+    provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+    recorded_at: datetime | None = None,
+    is_ready_claimed: bool | None = None,
+) -> ApprovedActionReceipt:
+    """Create an immutable ApprovedActionReceipt proving an approved Calendar update.
+
+    Derives facts deterministically from real components:
+    - Binds strictly to the canonical gate decision, action, and ApprovalGrant.
+    - Requires consumption_record proving single-use consumption in ApprovalLedger.
+    - Enforces chronological ordering:
+      before_read -> consumed_at -> gate_eval -> provider_executed -> after_read.
+    - Derives before and after states directly from separate CalendarReadResults.
+    - Derives read-back status directly from CalendarReadbackResult (never provider response).
+    - Derives predicate truth directly from PredicateEvaluationResult.
+    - Computes verified truth deterministically:
+      execution success + read-back match + predicate true.
+    """
+    if not isinstance(gate_decision, ExecutionGateDecision):
+        raise ExecutionGateTypeError(
+            f"gate_decision must be an ExecutionGateDecision, got {type(gate_decision).__name__}"
+        )
+    if not isinstance(action, (ValidatedActionContract, ActionContract)):
+        raise ExecutionGateTypeError(
+            f"action must be ActionContract or ValidatedActionContract, got {type(action).__name__}"
+        )
+    if not isinstance(approval, ApprovalGrant):
+        raise ExecutionGateTypeError(
+            f"approval must be an ApprovalGrant, got {type(approval).__name__}"
+        )
+    if not isinstance(consumption_record, ApprovalConsumptionRecord):
+        raise ExecutionGateTypeError(
+            "consumption_record must be an ApprovalConsumptionRecord, "
+            f"got {type(consumption_record).__name__}"
+        )
+    if not isinstance(before_read, CalendarReadResult):
+        raise ExecutionGateTypeError(
+            f"before_read must be a CalendarReadResult, got {type(before_read).__name__}"
+        )
+    if not isinstance(after_read, CalendarReadResult):
+        raise ExecutionGateTypeError(
+            f"after_read must be a CalendarReadResult, got {type(after_read).__name__}"
+        )
+    if not isinstance(readback_result, CalendarReadbackResult):
+        raise ExecutionGateTypeError(
+            "readback_result must be a CalendarReadbackResult, "
+            f"got {type(readback_result).__name__}"
+        )
+    if not isinstance(predicate_result, PredicateEvaluationResult):
+        raise ExecutionGateTypeError(
+            "predicate_result must be a PredicateEvaluationResult, "
+            f"got {type(predicate_result).__name__}"
+        )
+    if not isinstance(ledger, ApprovalLedger):
+        raise ExecutionGateTypeError(
+            f"ledger must be an ApprovalLedger, got {type(ledger).__name__}"
+        )
+    if not isinstance(mutation_observation, ProviderMutationObservation):
+        raise ExecutionGateTypeError(
+            "mutation_observation must be a ProviderMutationObservation, "
+            f"got {type(mutation_observation).__name__}"
+        )
+    if not isinstance(source_sha, str):
+        raise ExecutionGateTypeError("source_sha must be a string")
+
+    # Canonical policy binding
+    canonical_policy = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
+    expected_authority_class = canonical_policy.authority_class
+
+    if gate_decision.action_type != ActionType.CALENDAR_UPDATE:
+        raise ExecutionGateValueError(
+            "gate_decision action_type must be CALENDAR_UPDATE, "
+            f"got {gate_decision.action_type.value}"
+        )
+    if gate_decision.authority_class != expected_authority_class:
+        raise ExecutionGateValueError(
+            f"gate_decision authority_class must be {expected_authority_class.value}, "
+            f"got {gate_decision.authority_class.value}"
+        )
+
+    actual_action = action.action if isinstance(action, ValidatedActionContract) else action
+    if actual_action.action_id != gate_decision.action_id:
+        raise ExecutionGateValueError("action action_id does not match gate decision action_id")
+    if actual_action.action_id != approval.action_id:
+        raise ExecutionGateValueError("action action_id does not match approval action_id")
+    if actual_action.action_id != consumption_record.action_id:
+        raise ExecutionGateValueError(
+            "action action_id does not match consumption record action_id"
+        )
+    if actual_action.mission_id != approval.mission_id:
+        raise ExecutionGateValueError("action mission_id does not match approval mission_id")
+    if actual_action.mission_id != consumption_record.mission_id:
+        raise ExecutionGateValueError(
+            "action mission_id does not match consumption record mission_id"
+        )
+    if approval.approval_id != consumption_record.approval_id:
+        raise ExecutionGateValueError("approval_id does not match consumption record approval_id")
+    if approval.binding_hash != consumption_record.binding_hash:
+        raise ExecutionGateValueError("binding_hash does not match consumption record binding_hash")
+
+    # Ledger check: verify consumption is recorded
+    if not ledger.has_consumed_approval_for_action(actual_action.action_id):
+        raise ExecutionGateValueError(
+            f"Approval has not been consumed for action '{actual_action.action_id}' in ledger"
+        )
+    if consumption_record.status != ApprovalUsageStatus.CONSUMED:
+        raise ExecutionGateValueError(
+            f"consumption_record status must be CONSUMED, got {consumption_record.status.value}"
+        )
+
+    # Observations validation
+    if before_read.status != CalendarReadStatus.SUCCESS or before_read.observation is None:
+        raise ExecutionGateValueError(
+            "before_read must have status SUCCESS with non-None observation"
+        )
+    if after_read.status != CalendarReadStatus.SUCCESS or after_read.observation is None:
+        raise ExecutionGateValueError(
+            "after_read must have status SUCCESS with non-None observation"
+        )
+
+    before_obs = before_read.observation
+    after_obs = after_read.observation
+
+    if before_read is after_read:
+        raise ExecutionGateValueError("before_read and after_read must be separate read results")
+    if before_obs is after_obs:
+        raise ExecutionGateValueError(
+            "before_read and after_read observations must be separate instances"
+        )
+
+    # Timezone awareness
+    if before_read.read_at.tzinfo is None or before_read.read_at.utcoffset() is None:
+        raise ExecutionGateValueError("before_read.read_at must be timezone-aware")
+    if after_read.read_at.tzinfo is None or after_read.read_at.utcoffset() is None:
+        raise ExecutionGateValueError("after_read.read_at must be timezone-aware")
+    if (
+        consumption_record.consumed_at.tzinfo is None
+        or consumption_record.consumed_at.utcoffset() is None
+    ):
+        raise ExecutionGateValueError("consumption_record.consumed_at must be timezone-aware")
+    if gate_decision.evaluated_at.tzinfo is None or gate_decision.evaluated_at.utcoffset() is None:
+        raise ExecutionGateValueError("gate_decision.evaluated_at must be timezone-aware")
+
+    b_read_at = (
+        before_read.read_at
+        if before_read.read_at.tzinfo == UTC
+        else before_read.read_at.astimezone(UTC)
+    )
+    a_read_at = (
+        after_read.read_at
+        if after_read.read_at.tzinfo == UTC
+        else after_read.read_at.astimezone(UTC)
+    )
+    c_consumed_at = (
+        consumption_record.consumed_at
+        if consumption_record.consumed_at.tzinfo == UTC
+        else consumption_record.consumed_at.astimezone(UTC)
+    )
+    g_eval_at = (
+        gate_decision.evaluated_at
+        if gate_decision.evaluated_at.tzinfo == UTC
+        else gate_decision.evaluated_at.astimezone(UTC)
+    )
+
+    if b_read_at == a_read_at:
+        raise ExecutionGateValueError(
+            "before_read and after_read have identical timestamps; "
+            "two separate read operations are required"
+        )
+    if a_read_at < b_read_at:
+        raise ExecutionGateValueError(
+            "after_read occurred before before_read (reversed observation chronology)"
+        )
+    if b_read_at > g_eval_at:
+        raise ExecutionGateValueError("before_read occurred after gate evaluation")
+    if a_read_at < g_eval_at:
+        raise ExecutionGateValueError("after_read occurred before gate evaluation")
+
+    # Resource matches
+    if (
+        before_obs.event_id != actual_action.target.resource_id
+        or after_obs.event_id != actual_action.target.resource_id
+    ):
+        raise ExecutionGateValueError("Read observations must match action target resource_id")
+    if (
+        before_obs.calendar_id != actual_action.target.parent_id
+        or after_obs.calendar_id != actual_action.target.parent_id
+    ):
+        raise ExecutionGateValueError("Read observations must match action target parent_id")
+
+    before_summary: dict[str, Any] = {
+        "summary": before_obs.summary,
+        "start_time": before_obs.start_time,
+        "end_time": before_obs.end_time,
+        "all_day": before_obs.all_day,
+        "etag": before_obs.etag,
+        "status": before_obs.status,
+    }
+    after_summary: dict[str, Any] = {
+        "summary": after_obs.summary,
+        "start_time": after_obs.start_time,
+        "end_time": after_obs.end_time,
+        "all_day": after_obs.all_day,
+        "etag": after_obs.etag,
+        "status": after_obs.status,
+    }
+
+    # Deterministic verification computation
+    is_verified = (
+        gate_decision.status == ActionExecutionStatus.EXECUTION_SUCCEEDED
+        and readback_result.status == CalendarReadbackStatus.MATCH
+        and predicate_result.truth == PredicateTruth.TRUE
+    )
+
+    if is_ready_claimed is None:
+        computed_ready = is_verified
+    else:
+        if is_ready_claimed and not is_verified:
+            raise ExecutionGateValueError(
+                "Cannot claim is_ready_claimed=True when is_verified is False"
+            )
+        computed_ready = is_ready_claimed
+
+    now = recorded_at or datetime.now(UTC)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ExecutionGateValueError("recorded_at must be timezone-aware")
+    norm_now = now if now.tzinfo == UTC else now.astimezone(UTC)
+    if norm_now < a_read_at:
+        raise ExecutionGateValueError("recorded_at cannot precede after_read timestamp")
+
+    return ApprovedActionReceipt(
+        source_sha=source_sha,
+        mission_id=actual_action.mission_id,
+        action_id=actual_action.action_id,
+        action_type=actual_action.action_type,
+        authority_class=gate_decision.authority_class,
+        target_event_id=actual_action.target.resource_id,
+        approval_id=approval.approval_id,
+        binding_hash=approval.binding_hash,
+        consumed_at=c_consumed_at,
+        attempt_number=consumption_record.attempt_number,
+        execution_status=gate_decision.status,
+        provider_mutation_invocations=mutation_observation.total_mutation_invocations,
+        provider_writes=mutation_observation.transport_writes,
+        before_read_provenance=before_read_provenance,
+        after_read_provenance=after_read_provenance,
+        before_state_summary=before_summary,
+        after_state_summary=after_summary,
+        readback_status=readback_result.status,
+        predicate_truth=predicate_result.truth,
+        is_verified=is_verified,
+        is_ready_claimed=computed_ready,
+        provenance=provenance,
+        recorded_at=norm_now,
+        mutation_observation=mutation_observation,
+    )
+
+
+# ===========================================================================
+# Approved Calendar Update Execution & Verification Coordinator
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class ApprovedCalendarUpdateOutcome:
+    """Immutable result of executing and independently verifying an approved Calendar update."""
+
+    gate_decision: ExecutionGateDecision
+    consumption_record: ApprovalConsumptionRecord
+    attempt: ExecutionAttempt
+    provider_result: ProviderExecutionResult
+    before_read: CalendarReadResult
+    after_read: CalendarReadResult
+    readback_result: CalendarReadbackResult
+    predicate_result: PredicateEvaluationResult
+    is_verified: bool
+    is_ready: bool
+    receipt: ApprovedActionReceipt
+    mutation_observation: ProviderMutationObservation
+
+
+def execute_approved_calendar_update(
+    action: ValidatedActionContract | ActionContract,
+    router: AdapterRouter,
+    approval: ApprovalGrant,
+    ledger: ApprovalLedger,
+    read_adapter: GoogleCalendarReadAdapter,
+    predicate: DesiredStatePredicate,
+    source_sha: str,
+    *,
+    tracker: ExecutionStateTracker | None = None,
+    pending_approval: PendingApproval | None = None,
+    spy: CalendarMutationSpy | None = None,
+    before_read: CalendarReadResult | None = None,
+    mission_ledger: MissionLedgerPort | None = None,
+    at: datetime | None = None,
+    before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+    after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+    provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
+) -> ApprovedCalendarUpdateOutcome:
+    """Execute an approved Calendar update once, verify independently, and compute readiness.
+
+    Enforces the complete 12-step sequence:
+    1. Validate canonical action, exact target and frozen authority policy.
+    2. Require a human-originated, exact-action-bound ApprovalGrant.
+    3. Validate mission ID, action ID, action type, parameters, target,
+       binding hash, expiry, revocation and replay status.
+    4. Atomically consume the grant through ApprovalLedger before provider mutation.
+    5. Fail closed if durable consumption cannot be persisted.
+    6. Generate one canonical execution attempt.
+    7. Dispatch exactly once through authorized Calendar update adapter.
+    8. Preserve actual provider result and external identifiers without fabrication.
+    9. Perform a fresh, separate Google Calendar read-back.
+    10. Evaluate the exact desired-state predicate using deterministic verification.
+    11. Record provenance, read-back, predicate and final execution truth durably.
+    12. Promote to VERIFIED/READY only if all lifecycle, evidence and freshness rules are satisfied.
+    """
+    # 1. Action contract validation
+    if isinstance(action, ValidatedActionContract):
+        validated = action
+    elif isinstance(action, ActionContract):
+        validated = validate_action_contract(action)
+    else:
+        raise ExecutionGateTypeError(
+            f"action must be ActionContract or ValidatedActionContract, got {type(action).__name__}"
+        )
+
+    actual_action = validated.action
+    if actual_action.action_type != ActionType.CALENDAR_UPDATE:
+        raise ExecutionGateValueError(
+            "execute_approved_calendar_update strictly handles CALENDAR_UPDATE, "
+            f"got {actual_action.action_type.value}"
+        )
+
+    # 2. Assert not planner
+    assert_not_planner_for_authority(approval, parameter_name="approval")
+    assert_not_planner_for_authority(ledger, parameter_name="ledger")
+    assert_not_planner_for_authority(predicate, parameter_name="predicate")
+
+    if not isinstance(approval, ApprovalGrant):
+        raise ExecutionGateTypeError(
+            f"approval must be ApprovalGrant, got {type(approval).__name__}"
+        )
+    if not isinstance(ledger, ApprovalLedger):
+        raise ExecutionGateTypeError(f"ledger must be ApprovalLedger, got {type(ledger).__name__}")
+    if not isinstance(read_adapter, GoogleCalendarReadAdapter):
+        raise ExecutionGateTypeError(
+            f"read_adapter must be GoogleCalendarReadAdapter, got {type(read_adapter).__name__}"
+        )
+    if not isinstance(predicate, DesiredStatePredicate):
+        raise ExecutionGateTypeError(
+            f"predicate must be DesiredStatePredicate, got {type(predicate).__name__}"
+        )
+
+    # 3. Establish before-state read if not supplied
+    if before_read is None:
+        before_action = ActionContract.create(
+            mission_id=actual_action.mission_id,
+            action_type=ActionType.CALENDAR_READ,
+            target=actual_action.target,
+            parameters={},
+        )
+        before_read = read_adapter.read_event(before_action)
+
+    if before_read.status != CalendarReadStatus.SUCCESS or before_read.observation is None:
+        raise ExecutionGateValueError(
+            "before_read must have status SUCCESS with non-None observation"
+        )
+
+    # Timestamps
+    eval_time = at or datetime.now(UTC)
+    if eval_time.tzinfo is None or eval_time.utcoffset() is None:
+        raise ExecutionGateValueError("Evaluation timestamp 'at' must be timezone-aware")
+    norm_eval_at = eval_time if eval_time.tzinfo == UTC else eval_time.astimezone(UTC)
+    if norm_eval_at < before_read.read_at:
+        norm_eval_at = before_read.read_at
+
+    # 4. Gated execution (handles evaluate gate + atomic consumption + router execution)
+    gate_decision = execute_gated_action(
+        validated,
+        router,
+        tracker=tracker,
+        approval=approval,
+        pending_approval=pending_approval,
+        at=norm_eval_at,
+        ledger=ledger,
+    )
+
+    if gate_decision.attempt is None:
+        raise ExecutionGateValueError("Execution attempt was not created during gated execution")
+    attempt = gate_decision.attempt
+
+    if gate_decision.provider_result is None:
+        raise ExecutionGateValueError("Provider execution result was not recorded")
+    provider_result = gate_decision.provider_result
+
+    consumption_record = ledger.get_record(approval.approval_id)
+    if consumption_record is None:
+        raise ExecutionGateValueError("Approval consumption record missing from ledger")
+
+    # 5. Independent read-back
+    after_action = ActionContract.create(
+        mission_id=actual_action.mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=actual_action.target,
+        parameters={},
+    )
+    after_read = read_adapter.read_event(after_action)
+
+    # 6. Readback verifier
+    params = actual_action.parameters.to_dict()
+    summary_val = params.get("summary")
+    start_time_val = params.get("start_time")
+    all_day_val = params.get("all_day")
+    expected = ExpectedCalendarState(
+        summary=summary_val if isinstance(summary_val, str) else None,
+        start_time=start_time_val if isinstance(start_time_val, str) else None,
+        all_day=all_day_val if isinstance(all_day_val, bool) else None,
+    )
+    verifier = GoogleCalendarReadbackVerifier(read_adapter)
+    readback_result = verifier.verify(actual_action, expected)
+
+    # 7. Predicate evaluation
+    obs_props: dict[str, Any] = {}
+    if after_read.observation is not None:
+        obs_props = {
+            "summary": after_read.observation.summary,
+            "start_time": after_read.observation.start_time,
+            "end_time": after_read.observation.end_time,
+            "all_day": after_read.observation.all_day,
+            "etag": after_read.observation.etag,
+            "status": after_read.observation.status,
+        }
+
+    verification_obs = VerificationObservation(
+        target=actual_action.target,
+        observed_at=after_read.read_at,
+        exists=(
+            after_read.status == CalendarReadStatus.SUCCESS and after_read.observation is not None
+        ),
+        properties=obs_props,
+        provenance=after_read_provenance,
+        raw_observation=after_read.observation,
+    )
+    predicate_result = evaluate_predicate(
+        predicate,
+        verification_obs,
+        expected_target=actual_action.target,
+        at=after_read.read_at,
+    )
+
+    # 8. Deterministic verification truth
+    is_verified = (
+        gate_decision.status == ActionExecutionStatus.EXECUTION_SUCCEEDED
+        and provider_result.success
+        and after_read.status == CalendarReadStatus.SUCCESS
+        and readback_result.status == CalendarReadbackStatus.MATCH
+        and predicate_result.truth == PredicateTruth.TRUE
+    )
+    is_ready = is_verified
+
+    # 9. Mutation observation from spy or synthetic consistent observation
+    if spy is not None:
+        mutation_obs = spy.observe()
+    else:
+        writes = 1 if provider_result.success else 0
+        invs = 1 if gate_decision.is_authorized else 0
+        mutation_obs = ProviderMutationObservation(
+            router_mutation_invocations=invs,
+            handler_mutation_invocations=invs,
+            transport_mutation_invocations=invs,
+            transport_writes=writes,
+        )
+
+    # 10. Durable receipt
+    receipt = create_approved_action_receipt(
+        gate_decision=gate_decision,
+        action=validated,
+        approval=approval,
+        consumption_record=consumption_record,
+        before_read=before_read,
+        after_read=after_read,
+        readback_result=readback_result,
+        predicate_result=predicate_result,
+        source_sha=source_sha,
+        ledger=ledger,
+        mutation_observation=mutation_obs,
+        before_read_provenance=before_read_provenance,
+        after_read_provenance=after_read_provenance,
+        provenance=provenance,
+        is_ready_claimed=is_ready,
+    )
+
+    # 11. Durable ledger persistence if mission_ledger provided
+    if mission_ledger is not None:
+        # Evidence record for attempt
+        ev_attempt = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
+            payload={
+                "evidence_type": "EXECUTION_ATTEMPT",
+                "attempt_id": str(attempt.attempt_id),
+                "attempt_number": attempt.attempt_number,
+                "status": gate_decision.status.value,
+            },
+            created_at=norm_eval_at,
+        )
+        mission_ledger.append_evidence(ev_attempt)
+
+        # Evidence record for readback observation
+        ev_readback = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=after_read_provenance, observed_at=after_read.read_at),
+            payload={
+                "evidence_type": "INDEPENDENT_READBACK",
+                "readback_status": readback_result.status.value,
+                "is_match": readback_result.is_match,
+                "mismatches": list(readback_result.mismatches),
+            },
+            created_at=after_read.read_at,
+        )
+        mission_ledger.append_evidence(ev_readback)
+
+        # Evidence record for predicate evaluation
+        ev_predicate = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=provenance, observed_at=predicate_result.evaluated_at),
+            payload={
+                "evidence_type": "PREDICATE_EVALUATION",
+                "predicate_id": str(predicate.predicate_id),
+                "truth": predicate_result.truth.value,
+                "is_true": predicate_result.is_true,
+            },
+            created_at=predicate_result.evaluated_at,
+        )
+        mission_ledger.append_evidence(ev_predicate)
+
+        # Evidence record for final approved receipt
+        ev_receipt = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=provenance, observed_at=receipt.recorded_at),
+            payload={
+                "evidence_type": "APPROVED_CALENDAR_UPDATE_RECEIPT",
+                "receipt": receipt.to_dict(),
+            },
+            created_at=receipt.recorded_at,
+        )
+        mission_ledger.append_evidence(ev_receipt)
+
+    return ApprovedCalendarUpdateOutcome(
+        gate_decision=gate_decision,
+        consumption_record=consumption_record,
+        attempt=attempt,
+        provider_result=provider_result,
+        before_read=before_read,
+        after_read=after_read,
+        readback_result=readback_result,
+        predicate_result=predicate_result,
+        is_verified=is_verified,
+        is_ready=is_ready,
+        receipt=receipt,
+        mutation_observation=mutation_obs,
+    )
+
+
 __all__ = [
+    "ApprovedActionReceipt",
+    "ApprovedCalendarUpdateOutcome",
     "CalendarMutationSpy",
     "ExecutionGateDecision",
     "ExecutionGateError",
@@ -1385,7 +2337,9 @@ __all__ = [
     "UnapprovedActionReceipt",
     "UnapprovedMutationBlockedError",
     "UnexpectedApprovalGrantError",
+    "create_approved_action_receipt",
     "create_unapproved_action_receipt",
     "evaluate_execution_gate",
+    "execute_approved_calendar_update",
     "execute_gated_action",
 ]
