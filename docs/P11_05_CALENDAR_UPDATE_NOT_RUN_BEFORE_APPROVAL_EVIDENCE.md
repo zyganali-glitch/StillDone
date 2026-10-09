@@ -70,9 +70,9 @@ The execution authority gate (`evaluate_execution_gate` / `execute_gated_action`
 
 ---
 
-## 3. Consolidated Evidence-Integrity Repairs (Defects 1–5)
+## 3. Consolidated Evidence-Integrity Repairs (Repairs A–E)
 
-### Defect 1 — Observation Chronology Enforcement
+### Repair A / Defect 1 — Observation Chronology Enforcement
 - **Ordering Constraint**: `create_unapproved_action_receipt()` and `scripts/p11_05_proof.py` strictly enforce:
   `before_read.read_at <= gate_decision.evaluated_at <= after_read.read_at`
 - **Distinct Observations**: Rejects pre-gate after-reads, reversed reads (`before_read.read_at > after_read.read_at`), and same-operation reads (identical observation objects or identical timestamps).
@@ -81,38 +81,31 @@ The execution authority gate (`evaluate_execution_gate` / `execute_gated_action`
 - **Instrumented Proof**: Proof script explicitly performs two separate Calendar reads separated by the gate decision.
 - **Regression Suite**: Automated regression tests verify that two reads taken before gate evaluation cannot produce a valid receipt.
 
-### Defect 2 — Approval Ledger Identity & Bounds Correction
-- **Identity Distinction**: Fixed improper use of `PendingApprovalId` as an `ApprovalId` in ledger lookups.
-- **Ledger Verification**: Inspects `ApprovalLedger` records to verify that zero consumed approvals exist for the target `action_id`.
-- **Negative Proof Scope**: Accurately bounds negative proof to:
-  1. No `ApprovalGrant` supplied;
-  2. No approval-consumption operations performed for the target action in the supplied ledger;
-  3. No authorization granted.
-- **Fail-Closed on Missing Evidence**: Rejects `ledger=None` fail-closed with `ExecutionGateValueError`.
-- **Adversarial Tests**: Added adversarial tests verifying rejection of consumed approvals for the target action, permission of consumed approvals for unrelated actions, and failure on absent ledgers.
+### Repair B / Defect 3 — Mandatory Mutation Observation
+- **Mandatory Explicit Observation**: Eliminated unverified defaults (`measured_provider_mutations=0`, `mutation_observation=None`). Receipts strictly require an explicit `ProviderMutationObservation`.
+- **Counter Consistency**: Enforces `transport_writes <= transport_mutation_invocations` and rejects negative or boolean counters.
+- **Runtime Instrumentation Truth**: Clearly documents that `ProviderMutationObservation` represents local process runtime instrumentation (`LOCAL_EXECUTION` / `FIXTURE`), not cryptographic hardware proof.
+- **CalendarMutationSpy**: Captures method invocations across router, handler, transport, and completed writes. Accurately records method invocations that raise before completing writes (e.g., target error during `update_event`), which the receipt factory strictly rejects.
+- **Adversarial Tests**: Comprehensive tests verify rejection of missing observations, non-observation types, conflicting counts, and non-zero invocations.
 
-### Defect 3 — Provider Invocation Proof & Spy Instrumentation
-- **CalendarMutationSpy**: Implemented wrapper capturing invocations across:
-  1. `AdapterRouter` (`router_mutation_invocations`)
-  2. `CalendarUpdateHandler` (`handler_mutation_invocations`)
-  3. `FakeGoogleCalendarTransport.update_event` (`transport_mutation_invocations`)
-  4. Transport write count (`transport_writes`)
-- **Invocation vs Write Separation**: Spies distinguish method invocation count from successful-write count. If an adapter method is called but raises an exception before incrementing writes (e.g. invalid `If-Match` raising `CalendarTargetError`), the invocation is accurately captured.
-- **Contradiction Rejection**: `create_unapproved_action_receipt()` strictly validates `mutation_observation.is_zero_mutation`, rejecting any contradictory observation where invocations $> 0$ or writes $> 0$.
+### Repair C / Defect 2 — Restored ApprovalLedger Public Boundary
+- **Encapsulation Restored**: Completely eliminated private-member access (`_lock`, `_registry`, `_records`) from `gate.py` and proof scripts.
+- **Minimal Read-Only Public API**: Added thread-safe public queries `has_consumed_approval_for_action(action_id)` and `get_consumed_records_for_action(action_id)` to both `UsedApprovalRegistry` and `ApprovalLedger`.
+- **Identity Distinction**: Preserves strict separation between `PendingApprovalId` and `ApprovalId`.
+- **Scoped Negative Proof**: Verifies that no approval has been consumed for the denied action in the ledger, while safely permitting unrelated historical approvals.
+- **Durable History Consistency**: Verified that reloaded durable ledgers hydrated via `ApprovalLedger.from_ledger` reject consumed actions and allow unrelated actions.
 
-### Defect 4 — Source Provenance and Exact-SHA Proof
-- **Runtime Checks Under `-O`**: `scripts/p11_05_proof.py` uses `ProofVerificationError` instead of bare assertions, remaining fully effective under `python -O`.
-- **Exact-SHA Verification**: Script accepts `--expected-sha` and validates against checked-out Git HEAD.
-- **Cleanliness Enforcement**: Rejects `--expected-sha` fail-closed when working tree is dirty (`"Cannot claim exact-SHA committed-source proof when git worktree is dirty"`).
-- **Provenance Modes**: Accurately distinguishes `COMMITTED_SOURCE` (clean worktree) from `LOCAL_DIRTY_WORKTREE`.
-- **Automated CI Path**: `tests/test_phase_p11_05_calendar_update_not_run.py` automatically exercises `--expected-sha` with checked-out HEAD when the worktree is clean, guaranteeing exact-SHA validation in CI.
+### Repair D — Receipt Authority Consistency
+- **Canonical Policy Binding**: `create_unapproved_action_receipt` enforces that `gate_decision.action_type == ActionType.CALENDAR_UPDATE` and `gate_decision.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED`, matching the frozen P-11.01 policy table.
+- **Contradictory Decision Rejection**: Fails closed if gate decisions are manually constructed with mismatched authority classes (e.g. `READ_ONLY`, `REVERSIBLE_AUTO`), wrong action types (e.g. `TASK_CREATE`), or mismatched action/pending IDs.
+- **Pending Approval Binding**: Rejects pending approvals with mismatched authority class, action type, target, or parameters.
+- **Constructor Validation**: `UnapprovedActionReceipt` constructor enforces canonical action type and authority class directly.
 
-### Defect 5 — Privacy and State Integrity
-- **Recursive Sanitization**: Enhanced `to_dict()` sanitization with recursive traversal across nested mappings, lists, tuples, and sets, scrubbing sensitive strings (emails, bearer tokens, passwords) using `redact_text`.
-- **Hostile Sentinel Tests**: Tested hostile objects and sentinels (`HOSTILE_SECRET_KEY_99999`) in nested structures, verifying their absence from serialized receipts and exception messages.
-- **Exception Isolation**: All gate exceptions raised using `raise ... from None` to eliminate leakage via `__cause__` or `__context__`.
-- **Synchronous Exception Handling**: `execute_gated_action` wraps router execution in `try...except`; synchronous router or provider exceptions update the tracker to `EXECUTION_FAILED`, preventing misleading terminal-looking `IN_PROGRESS` states.
-- **Truthful Status**: Pre-execution approval denial remains strictly `NOT_RUN` without fabricating an execution attempt (`attempt=None`).
+### Repair E / Defect 5 — Complete Privacy and State Integrity
+- **Raw Repr Elimination**: Removed `{val!r}` string formatting from `ProviderMutationObservation` exception messages, using type names only to prevent secret reflection.
+- **Deep Key & Value Sanitization**: Sanitizes nested mappings, lists, tuples, and sets. Recursively validates that all mapping keys are strings; non-string keys fail closed with `ExecutionGateTypeError` without raw value or repr leakage.
+- **Hostile Sentinel Immunity**: Tested hostile objects with malicious `__str__` and `__repr__` implementations as keys and values. Verified zero leakage in exception messages, exception causes (`from None`), and serialized JSON receipts.
+- **Synchronous Exception Handling**: `execute_gated_action` marks tracker as `EXECUTION_FAILED` on synchronous exceptions, preventing misleading terminal-looking `IN_PROGRESS` states.
 
 ---
 

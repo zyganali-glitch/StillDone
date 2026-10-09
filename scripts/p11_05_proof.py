@@ -58,7 +58,6 @@ from stilldone.adapters.weather import (  # noqa: E402
 )
 from stilldone.approval_consumption import (  # noqa: E402
     ApprovalLedger,
-    ApprovalUsageStatus,
     UsedApprovalRegistry,
 )
 from stilldone.authority_policy import (  # noqa: E402
@@ -302,15 +301,8 @@ def run_p11_05_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
     # Step 5 & 6: Enforce NO approval grant and NO approval consumption
     registry = UsedApprovalRegistry()
     approval_ledger = ApprovalLedger(registry=registry)
-    with approval_ledger._lock:
-        for rec in registry._records.values():
-            if (
-                rec.action_id == update_action.action_id
-                and rec.status == ApprovalUsageStatus.CONSUMED
-            ):
-                raise ProofVerificationError(
-                    "Approval consumption record exists in ledger for this action"
-                )
+    if approval_ledger.has_consumed_approval_for_action(update_action.action_id):
+        raise ProofVerificationError("Approval consumption record exists in ledger for this action")
 
     # Step 7: Send candidate action through execution authority gate
     exec_contract = MissionExecutionContract(

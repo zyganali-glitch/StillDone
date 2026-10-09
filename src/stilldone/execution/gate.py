@@ -29,7 +29,7 @@ from stilldone.adapters.calendar import (
     CalendarReadResult,
     CalendarReadStatus,
 )
-from stilldone.approval_consumption import ApprovalLedger, ApprovalUsageStatus
+from stilldone.approval_consumption import ApprovalLedger
 from stilldone.authority_policy import (
     ActionAuthorityPolicy,
     AuthorityPolicyTypeError,
@@ -112,22 +112,54 @@ def _deep_freeze_mapping(val: Any) -> Any:
     return val
 
 
+def _validate_mapping_keys(mapping: Mapping[Any, Any], field_name: str) -> None:
+    """Recursively validate that all mapping keys are strings."""
+    for k, v in mapping.items():
+        if not isinstance(k, str):
+            raise ExecutionGateTypeError(
+                f"{field_name} keys must be strings, got {type(k).__name__}"
+            )
+        if isinstance(v, Mapping):
+            _validate_mapping_keys(v, field_name)
+
+
+def _sanitize_key(key: Any) -> str:
+    """Validate and sanitize mapping keys for privacy-safe serialization.
+
+    Rejects non-string keys fail-closed without raw value reflection.
+    Redacts sensitive text (emails, bearer tokens, etc.) from string keys.
+    """
+    if not isinstance(key, str):
+        raise ExecutionGateTypeError(f"Mapping key must be a string, got {type(key).__name__}")
+    return redact_text(key)
+
+
 def _sanitize_value(val: Any) -> Any:
-    """Recursively sanitize arbitrary nested structures for privacy-safe serialization."""
+    """Recursively sanitize arbitrary nested structures for privacy-safe serialization.
+
+    Rejects unsupported types fail-closed without raw value reflection.
+    Redacts sensitive text from strings.
+    Recursively validates and sanitizes nested mappings and sequences.
+    """
     if isinstance(val, str):
         return redact_text(val)
     if isinstance(val, Mapping):
-        return {str(k): _sanitize_value(v) for k, v in val.items()}
+        return {_sanitize_key(k): _sanitize_value(v) for k, v in val.items()}
     if isinstance(val, (list, tuple, set, frozenset)):
         return [_sanitize_value(item) for item in val]
-    return to_canonical_primitive(val)
+    try:
+        return to_canonical_primitive(val)
+    except (TypeError, ValueError):
+        raise ExecutionGateTypeError(
+            f"Unsupported value type for receipt serialization: {type(val).__name__}"
+        ) from None
 
 
 def _sanitize_summary_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
-    """Recursively sanitize mapping values for privacy-safe serialization."""
+    """Recursively sanitize mapping keys and values for privacy-safe serialization."""
     if not isinstance(mapping, Mapping):
         return {}
-    return {str(k): _sanitize_value(v) for k, v in mapping.items()}
+    return {_sanitize_key(k): _sanitize_value(v) for k, v in mapping.items()}
 
 
 # ===========================================================================
@@ -263,6 +295,10 @@ class ExecutionGateDecision:
 class ProviderMutationObservation:
     """Immutable observation of mutation entry points across router, handler, and transport.
 
+    Captures in-memory runtime instrumentation (LOCAL_EXECUTION / FIXTURE)
+    measuring whether mutation methods were entered or completed writes occurred.
+    This instrumentation represents local runtime observation, not cryptographic or hardware proof.
+
     Distinguishes method invocation count from successful-write count:
     - router_mutation_invocations: number of router execution dispatches for mutation.
     - handler_mutation_invocations: number of CalendarUpdateHandler.execute calls.
@@ -283,10 +319,16 @@ class ProviderMutationObservation:
             "transport_writes",
         ):
             val = getattr(self, field_name)
-            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
-                raise ExecutionGateValueError(
-                    f"{field_name} must be a non-negative integer, got {val!r}"
+            if isinstance(val, bool) or not isinstance(val, int):
+                raise ExecutionGateTypeError(
+                    f"{field_name} must be an integer, got {type(val).__name__}"
                 )
+            if val < 0:
+                raise ExecutionGateValueError(f"{field_name} must be a non-negative integer")
+        if self.transport_writes > self.transport_mutation_invocations:
+            raise ExecutionGateValueError(
+                "transport_writes cannot exceed transport_mutation_invocations"
+            )
 
     @property
     def total_mutation_invocations(self) -> int:
@@ -450,7 +492,7 @@ class UnapprovedActionReceipt:
     is_ready_claimed: bool
     provenance: EvidenceProvenance
     recorded_at: datetime
-    mutation_observation: ProviderMutationObservation | None = None
+    mutation_observation: ProviderMutationObservation
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_sha, str) or not self.source_sha.strip():
@@ -474,10 +516,21 @@ class UnapprovedActionReceipt:
             raise ExecutionGateTypeError(
                 f"action_type must be an ActionType, got {type(self.action_type).__name__}"
             )
+        if self.action_type != ActionType.CALENDAR_UPDATE:
+            raise ExecutionGateValueError(
+                "UnapprovedActionReceipt strictly applies to CALENDAR_UPDATE, "
+                f"got {self.action_type.value}"
+            )
         if not isinstance(self.authority_class, AuthorityClass):
             ac_name = type(self.authority_class).__name__
             msg = f"authority_class must be an AuthorityClass, got {ac_name}"
             raise ExecutionGateTypeError(msg)
+        if self.authority_class != AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED:
+            raise ExecutionGateValueError(
+                "UnapprovedActionReceipt strictly requires "
+                "authority_class=REVERSIBLE_APPROVAL_REQUIRED, "
+                f"got {self.authority_class.value}"
+            )
         if not isinstance(self.target_event_id, str) or not self.target_event_id.strip():
             raise ExecutionGateValueError("target_event_id must be a non-empty string")
         if not isinstance(self.pending_approval_id, PendingApprovalId):
@@ -519,6 +572,8 @@ class UnapprovedActionReceipt:
             raise ExecutionGateTypeError("before_state_summary must be a Mapping")
         if not isinstance(self.after_state_summary, Mapping):
             raise ExecutionGateTypeError("after_state_summary must be a Mapping")
+        _validate_mapping_keys(self.before_state_summary, "before_state_summary")
+        _validate_mapping_keys(self.after_state_summary, "after_state_summary")
         if type(self.state_unchanged) is not bool:
             raise ExecutionGateTypeError("state_unchanged must be a bool")
         if type(self.is_ready_claimed) is not bool:
@@ -536,16 +591,15 @@ class UnapprovedActionReceipt:
         if self.recorded_at.tzinfo != UTC:
             object.__setattr__(self, "recorded_at", self.recorded_at.astimezone(UTC))
 
-        if self.mutation_observation is not None:
-            if not isinstance(self.mutation_observation, ProviderMutationObservation):
-                raise ExecutionGateTypeError(
-                    "mutation_observation must be a ProviderMutationObservation or None, "
-                    f"got {type(self.mutation_observation).__name__}"
-                )
-            if not self.mutation_observation.is_zero_mutation:
-                raise ExecutionGateValueError(
-                    "P-11.05 receipt requires mutation_observation to record zero mutations"
-                )
+        if not isinstance(self.mutation_observation, ProviderMutationObservation):
+            raise ExecutionGateTypeError(
+                "mutation_observation must be a ProviderMutationObservation instance, "
+                f"got {type(self.mutation_observation).__name__}"
+            )
+        if not self.mutation_observation.is_zero_mutation:
+            raise ExecutionGateValueError(
+                "P-11.05 receipt requires mutation_observation to record zero mutations"
+            )
 
         # Deep freeze state summaries to guarantee complete immutability
         object.__setattr__(
@@ -624,9 +678,8 @@ class UnapprovedActionReceipt:
             "is_ready_claimed": self.is_ready_claimed,
             "provenance": self.provenance.value,
             "recorded_at": self.recorded_at.isoformat(),
+            "mutation_observation": self.mutation_observation.to_dict(),
         }
-        if self.mutation_observation is not None:
-            d["mutation_observation"] = self.mutation_observation.to_dict()
         return d
 
 
@@ -962,9 +1015,9 @@ def create_unapproved_action_receipt(
     before_read: CalendarReadResult,
     after_read: CalendarReadResult,
     source_sha: str,
-    ledger: ApprovalLedger | None = None,
-    measured_provider_mutations: int = 0,
-    mutation_observation: ProviderMutationObservation | None = None,
+    ledger: ApprovalLedger,
+    measured_provider_mutations: int,
+    mutation_observation: ProviderMutationObservation,
     before_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     after_read_provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
     provenance: EvidenceProvenance = EvidenceProvenance.LOCAL_EXECUTION,
@@ -974,10 +1027,12 @@ def create_unapproved_action_receipt(
 
     Enforces all P-11.05 invariants and derives facts from observed reality:
     - Binds strictly to the canonical gate decision, action, and pending approval.
-    - Rejects contradictory action identity, pending identity, or gate decision.
-    - Requires measured_provider_mutations == 0 and validates
-      ProviderMutationObservation if supplied.
-    - Verifies zero approval consumption operations occurred in ledger for this action.
+    - Rejects contradictory action identity, pending identity, authority class, or gate decision.
+    - Requires measured_provider_mutations == 0 and validates explicit
+      ProviderMutationObservation instrumenting router, handler, and transport.
+    - Eliminates unverified defaults and optional observation bypasses.
+    - Verifies zero approval consumption operations occurred in ledger for this action
+      using public ApprovalLedger query methods.
     - Rejects absent ledger evidence (ledger=None fails closed).
     - Enforces chronological ordering: before_read -> gate_decision -> independent after_read.
     - Validates timezone-aware read_at and observed_at consistency.
@@ -1009,6 +1064,24 @@ def create_unapproved_action_receipt(
         raise ExecutionGateTypeError(
             f"after_read must be a CalendarReadResult, got {type(after_read).__name__}"
         )
+    if ledger is None:
+        raise ExecutionGateValueError(
+            "ledger evidence is required to verify absence of approval consumption; "
+            "absent ledger evidence cannot be accepted"
+        )
+    if not isinstance(ledger, ApprovalLedger):
+        raise ExecutionGateTypeError(
+            f"ledger must be an ApprovalLedger instance, got {type(ledger).__name__}"
+        )
+    if mutation_observation is None:
+        raise ExecutionGateValueError(
+            "mutation_observation is required; unverified observation bypass is prohibited"
+        )
+    if not isinstance(mutation_observation, ProviderMutationObservation):
+        raise ExecutionGateTypeError(
+            "mutation_observation must be a ProviderMutationObservation instance, "
+            f"got {type(mutation_observation).__name__}"
+        )
     if isinstance(measured_provider_mutations, bool) or not isinstance(
         measured_provider_mutations, int
     ):
@@ -1018,6 +1091,10 @@ def create_unapproved_action_receipt(
         raise ExecutionGateTypeError(
             f"source_sha must be a string, got {type(source_sha).__name__}"
         )
+
+    # Authority consistency against canonical P-11.01 policy
+    canonical_policy = get_action_authority_policy(ActionType.CALENDAR_UPDATE)
+    expected_authority_class = canonical_policy.authority_class
 
     # Gate decision validations
     if gate_decision.status != ActionExecutionStatus.NOT_RUN:
@@ -1030,6 +1107,16 @@ def create_unapproved_action_receipt(
         raise ExecutionGateValueError("Receipt requires gate decision attempt=None")
     if gate_decision.provider_result is not None:
         raise ExecutionGateValueError("Receipt requires gate decision provider_result=None")
+    if gate_decision.action_type != ActionType.CALENDAR_UPDATE:
+        raise ExecutionGateValueError(
+            "gate_decision action_type must be CALENDAR_UPDATE, "
+            f"got {gate_decision.action_type.value}"
+        )
+    if gate_decision.authority_class != expected_authority_class:
+        raise ExecutionGateValueError(
+            f"gate_decision authority_class must match canonical policy "
+            f"({expected_authority_class.value}), got {gate_decision.authority_class.value}"
+        )
 
     # Action binding
     actual_action = action.action if isinstance(action, ValidatedActionContract) else action
@@ -1048,87 +1135,68 @@ def create_unapproved_action_receipt(
         raise ExecutionGateValueError(
             f"pending_approval status must be PENDING, got {pending_approval.status.value}"
         )
+    if pending_approval.action_type != ActionType.CALENDAR_UPDATE:
+        raise ExecutionGateValueError(
+            "pending_approval action_type must be CALENDAR_UPDATE, "
+            f"got {pending_approval.action_type.value}"
+        )
+    if pending_approval.authority_class != expected_authority_class:
+        raise ExecutionGateValueError(
+            f"pending_approval authority_class must match canonical policy "
+            f"({expected_authority_class.value}), got {pending_approval.authority_class.value}"
+        )
     if pending_approval.action_id != actual_action.action_id:
         raise ExecutionGateValueError("pending_approval action_id does not match action action_id")
     if pending_approval.mission_id != actual_action.mission_id:
         raise ExecutionGateValueError(
             "pending_approval mission_id does not match action mission_id"
         )
-    if pending_approval.action_type != actual_action.action_type:
-        raise ExecutionGateValueError(
-            "pending_approval action_type does not match action action_type"
-        )
     if pending_approval.target != actual_action.target:
         raise ExecutionGateValueError("pending_approval target does not match action target")
     if pending_approval.parameters != actual_action.parameters:
         raise ExecutionGateValueError("pending_approval parameters do not match action parameters")
+
+    expected_paid = compute_pending_approval_id(
+        mission_id=actual_action.mission_id,
+        action_id=actual_action.action_id,
+        action_type=actual_action.action_type,
+        authority_class=expected_authority_class,
+        target=actual_action.target,
+        parameters=actual_action.parameters,
+    )
+    if pending_approval.pending_approval_id != expected_paid:
+        raise ExecutionGateValueError(
+            "pending_approval pending_approval_id does not match canonical computed identity"
+        )
     if gate_decision.pending_approval_id != pending_approval.pending_approval_id:
         raise ExecutionGateValueError(
             "gate_decision pending_approval_id does not match pending_approval"
         )
 
-    # Defect 2: Require legitimate ledger evidence to prove absence of approval consumption
-    if ledger is None:
+    # Scoped negative proof: query public ApprovalLedger API for target action
+    if ledger.has_consumed_approval_for_action(actual_action.action_id):
         raise ExecutionGateValueError(
-            "ledger evidence is required to verify absence of approval consumption; "
-            "absent ledger evidence cannot be accepted"
+            f"Approval has already been consumed for action '{actual_action.action_id}' "
+            "in ledger; cannot create receipt"
         )
-    if not isinstance(ledger, ApprovalLedger):
-        raise ExecutionGateTypeError(
-            f"ledger must be an ApprovalLedger instance, got {type(ledger).__name__}"
-        )
-
-    # Check that zero approval consumption records exist for this action in ledger
-    with ledger._lock:
-        for rec in ledger._registry._records.values():
-            if (
-                rec.action_id == actual_action.action_id
-                and rec.status == ApprovalUsageStatus.CONSUMED
-            ):
-                raise ExecutionGateValueError(
-                    f"Approval '{rec.approval_id}' was consumed for action "
-                    f"'{actual_action.action_id}' in ledger; cannot create receipt"
-                )
 
     # Measured provider mutations must come from instrumentation and be 0
     if measured_provider_mutations != 0:
-        raise ExecutionGateValueError(
-            f"Measured provider mutations must be 0 for NOT_RUN action, "
-            f"got {measured_provider_mutations}"
-        )
+        raise ExecutionGateValueError("Measured provider mutations must be 0 for NOT_RUN action")
 
-    # Defect 3: Validate ProviderMutationObservation if provided
-    if mutation_observation is not None:
-        if not isinstance(mutation_observation, ProviderMutationObservation):
-            raise ExecutionGateTypeError(
-                "mutation_observation must be a ProviderMutationObservation instance, "
-                f"got {type(mutation_observation).__name__}"
-            )
-        if mutation_observation.router_mutation_invocations != 0:
-            raise ExecutionGateValueError(
-                f"Router mutation invocations must be 0 for NOT_RUN action, "
-                f"got {mutation_observation.router_mutation_invocations}"
-            )
-        if mutation_observation.handler_mutation_invocations != 0:
-            raise ExecutionGateValueError(
-                f"Handler mutation invocations must be 0 for NOT_RUN action, "
-                f"got {mutation_observation.handler_mutation_invocations}"
-            )
-        if mutation_observation.transport_mutation_invocations != 0:
-            raise ExecutionGateValueError(
-                f"Transport mutation invocations must be 0 for NOT_RUN action, "
-                f"got {mutation_observation.transport_mutation_invocations}"
-            )
-        if mutation_observation.transport_writes != 0:
-            raise ExecutionGateValueError(
-                f"Transport writes must be 0 for NOT_RUN action, "
-                f"got {mutation_observation.transport_writes}"
-            )
-        if measured_provider_mutations != mutation_observation.transport_writes:
-            raise ExecutionGateValueError(
-                f"measured_provider_mutations ({measured_provider_mutations}) contradicts "
-                f"mutation_observation.transport_writes ({mutation_observation.transport_writes})"
-            )
+    # Validate ProviderMutationObservation
+    if mutation_observation.router_mutation_invocations != 0:
+        raise ExecutionGateValueError("Router mutation invocations must be 0 for NOT_RUN action")
+    if mutation_observation.handler_mutation_invocations != 0:
+        raise ExecutionGateValueError("Handler mutation invocations must be 0 for NOT_RUN action")
+    if mutation_observation.transport_mutation_invocations != 0:
+        raise ExecutionGateValueError("Transport mutation invocations must be 0 for NOT_RUN action")
+    if mutation_observation.transport_writes != 0:
+        raise ExecutionGateValueError("Transport writes must be 0 for NOT_RUN action")
+    if measured_provider_mutations != mutation_observation.transport_writes:
+        raise ExecutionGateValueError(
+            "measured_provider_mutations contradicts mutation_observation.transport_writes"
+        )
 
     # Read observations verification
     if before_read.status != CalendarReadStatus.SUCCESS or before_read.observation is None:

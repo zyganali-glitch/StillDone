@@ -32,6 +32,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -56,8 +57,8 @@ from stilldone.adapters.weather import (
     WeatherLocationConfig,
 )
 from stilldone.approval_consumption import (
+    APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
     ApprovalLedger,
-    ApprovalUsageStatus,
     UsedApprovalRegistry,
 )
 from stilldone.authority_policy import (
@@ -77,6 +78,7 @@ from stilldone.domain.authority import (
     ApprovalGrant,
     ApprovalId,
     AuthorityClass,
+    BindingHash,
 )
 from stilldone.domain.execution import ExecutionAttempt
 from stilldone.domain.lifecycle import MissionState, StepEvidenceState
@@ -111,6 +113,7 @@ from stilldone.execution.state import (
     ActionExecutionStatus,
     ExecutionStateTracker,
 )
+from stilldone.ledger import MissionLedgerPort
 from stilldone.pending_approval import (
     PendingApprovalStatus,
     create_pending_approval,
@@ -300,10 +303,9 @@ class TestPhaseP1105CoreRequirements:
         decision = evaluate_execution_gate(action, approval=None, pending_approval=pending)
         assert decision.status == ActionExecutionStatus.NOT_RUN
 
-        # Registry must have zero records for this pending approval ID or any approval ID
-        assert ledger.is_used(pending.pending_approval_id.value) is False
-        assert ledger.is_consumed(pending.pending_approval_id.value) is False
-        assert ledger.check_status(pending.pending_approval_id.value) == ApprovalUsageStatus.UNUSED
+        # Ledger must have zero consumed approval records for this action
+        assert ledger.has_consumed_approval_for_action(action.action_id) is False
+        assert len(ledger.get_consumed_records_for_action(action.action_id)) == 0
 
     def test_req_04_no_execution_attempt_evidence_is_fabricated(
         self,
@@ -776,6 +778,7 @@ class TestObservedFactsReceiptIntegrity:
             before_read=before_result,
             after_read=after_result,
             measured_provider_mutations=seeded_calendar_transport.writes_count,
+            mutation_observation=ProviderMutationObservation(),
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
             ledger=ledger,
         )
@@ -819,6 +822,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -850,10 +854,13 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=1,  # Contradictory measured count!
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
-        assert "Measured provider mutations must be 0" in str(exc_info.value)
+        assert "measured_provider_mutations contradicts" in str(
+            exc_info.value
+        ) or "Measured provider mutations must be 0" in str(exc_info.value)
 
     def test_receipt_rejects_mutated_after_observation(
         self,
@@ -901,6 +908,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result_mutated,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -953,6 +961,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result_executed,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -983,6 +992,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
                 provenance=EvidenceProvenance.LIVE_GOOGLE,
@@ -1015,6 +1025,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="invalid_short_sha",
                 ledger=ledger,
             )
@@ -1045,6 +1056,7 @@ class TestObservedFactsReceiptIntegrity:
             before_read=before_result,
             after_read=after_result,
             measured_provider_mutations=0,
+            mutation_observation=ProviderMutationObservation(),
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
             ledger=ledger,
         )
@@ -1080,6 +1092,7 @@ class TestObservedFactsReceiptIntegrity:
             before_read=before_result,
             after_read=after_result,
             measured_provider_mutations=0,
+            mutation_observation=ProviderMutationObservation(),
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
             ledger=ledger,
         )
@@ -1121,6 +1134,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -1194,6 +1208,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -1260,6 +1275,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -1311,6 +1327,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -1350,6 +1367,7 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=naive_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
@@ -1384,8 +1402,9 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
-                ledger=None,  # Absent!
+                ledger=None,  # type: ignore[arg-type] # Absent!
             )
         assert "ledger evidence is required" in str(exc_info.value)
 
@@ -1428,10 +1447,11 @@ class TestObservedFactsReceiptIntegrity:
                 before_read=before_result,
                 after_read=after_result,
                 measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
                 source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
                 ledger=ledger,
             )
-        assert "was consumed for action" in str(exc_info.value)
+        assert "consumed for action" in str(exc_info.value)
 
     def test_receipt_permits_consumed_approval_for_different_action(
         self,
@@ -1478,6 +1498,7 @@ class TestObservedFactsReceiptIntegrity:
             before_read=before_result,
             after_read=after_result,
             measured_provider_mutations=0,
+            mutation_observation=ProviderMutationObservation(),
             source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
             ledger=ledger,
         )
@@ -1602,6 +1623,7 @@ class TestObservedFactsReceiptIntegrity:
             consumption_present=False,
             execution_state=ActionExecutionStatus.NOT_RUN,
             provider_mutation_invocations=0,
+            mutation_observation=ProviderMutationObservation(),
             before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
             after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
             before_state_summary={
@@ -1880,3 +1902,623 @@ class TestProofScriptExecution:
         )
         assert res.returncode != 0
         assert "ProofVerificationError" in res.stderr
+
+
+# ===========================================================================
+# Dedicated Tests for Bounded Contract Closure (Repairs B–E)
+# ===========================================================================
+
+
+class TestPhaseP1105MandatoryMutationObservationRepairs:
+    """Repair B: Mandatory explicit ProviderMutationObservation and consistency checks."""
+
+    def test_receipt_rejects_none_mutation_observation(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=None,  # type: ignore[arg-type]
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "mutation_observation is required" in str(exc_info.value)
+
+    def test_receipt_rejects_invalid_mutation_observation_type(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        for invalid_obs in ("not_an_obs", 0, {"router_mutation_invocations": 0}, [0, 0, 0, 0]):
+            with pytest.raises(ExecutionGateTypeError) as exc_info:
+                create_unapproved_action_receipt(
+                    gate_decision=gate_decision,
+                    action=update_action,
+                    pending_approval=pending,
+                    before_read=before_result,
+                    after_read=after_result,
+                    measured_provider_mutations=0,
+                    mutation_observation=invalid_obs,  # type: ignore[arg-type]
+                    source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                    ledger=ledger,
+                )
+            assert "mutation_observation must be a ProviderMutationObservation instance" in str(
+                exc_info.value
+            )
+
+    def test_provider_mutation_observation_rejects_writes_exceeding_invocations(self) -> None:
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            ProviderMutationObservation(
+                transport_mutation_invocations=1,
+                transport_writes=2,
+            )
+        assert "transport_writes cannot exceed transport_mutation_invocations" in str(
+            exc_info.value
+        )
+
+    def test_provider_mutation_observation_rejects_boolean_and_negative_counters(self) -> None:
+        for invalid in (True, False, "0", 1.5):
+            with pytest.raises(ExecutionGateTypeError) as exc_info:
+                ProviderMutationObservation(router_mutation_invocations=invalid)  # type: ignore[arg-type]
+            assert "router_mutation_invocations must be an integer" in str(exc_info.value)
+            assert str(invalid) not in str(exc_info.value)  # No raw value reflection
+
+        with pytest.raises(ExecutionGateValueError) as val_exc_info:
+            ProviderMutationObservation(router_mutation_invocations=-1)
+        assert "router_mutation_invocations must be a non-negative integer" in str(
+            val_exc_info.value
+        )
+
+    def test_receipt_rejects_nonzero_router_invocations(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        obs = ProviderMutationObservation(router_mutation_invocations=1)
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=obs,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "Router mutation invocations must be 0" in str(exc_info.value)
+
+    def test_receipt_rejects_mismatch_between_measured_and_observation_writes(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        obs = ProviderMutationObservation(
+            transport_mutation_invocations=1,
+            transport_writes=1,
+        )
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=obs,
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "Transport mutation invocations must be 0" in str(
+            exc_info.value
+        ) or "Transport writes must be 0" in str(exc_info.value)
+
+
+class TestPhaseP1105ApprovalLedgerPublicBoundaryRepairs:
+    """Repair C: Enforce ApprovalLedger public boundary without private member access."""
+
+    def test_receipt_creation_does_not_access_private_ledger_members(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        class MonitoredLedger(ApprovalLedger):
+            accessed_private: bool = False
+
+            def __getattribute__(self, name: str) -> Any:
+                if name in ("_lock", "_registry", "_records"):
+                    import inspect
+
+                    frame = inspect.currentframe()
+                    if frame and frame.f_back and "gate.py" in frame.f_back.f_code.co_filename:
+                        MonitoredLedger.accessed_private = True
+                return super().__getattribute__(name)
+
+        monitored_ledger = MonitoredLedger()
+        receipt = create_unapproved_action_receipt(
+            gate_decision=gate_decision,
+            action=update_action,
+            pending_approval=pending,
+            before_read=before_result,
+            after_read=after_result,
+            measured_provider_mutations=0,
+            mutation_observation=ProviderMutationObservation(),
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=monitored_ledger,
+        )
+        assert receipt is not None
+        assert MonitoredLedger.accessed_private is False
+
+    def test_receipt_creation_with_reloaded_durable_ledger_consumed_action_rejected(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        aid = ApprovalId.generate()
+        payload = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(update_action.mission_id),
+            "action_id": str(update_action.action_id),
+            "binding_hash": BindingHash("8" * 64).value,
+            "consumed_at": datetime.now(UTC).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        mock_port = MagicMock(spec=MissionLedgerPort)
+        ev_mock = MagicMock()
+        ev_mock.action_id = update_action.action_id
+        ev_mock.mission_id = update_action.mission_id
+        ev_mock.payload = payload
+        mock_port.get_all_evidence.return_value = [ev_mock]
+
+        reloaded_ledger = ApprovalLedger.from_ledger(mock_port)
+        assert reloaded_ledger.has_consumed_approval_for_action(update_action.action_id) is True
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=reloaded_ledger,
+            )
+        assert "consumed for action" in str(exc_info.value)
+
+    def test_receipt_creation_with_reloaded_durable_ledger_unrelated_action_allowed(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+
+        aid = ApprovalId.generate()
+        unrelated_act_id = ActionId.generate()
+        payload = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(update_action.mission_id),
+            "action_id": str(unrelated_act_id),
+            "binding_hash": BindingHash("9" * 64).value,
+            "consumed_at": datetime.now(UTC).isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        mock_port = MagicMock(spec=MissionLedgerPort)
+        ev_mock = MagicMock()
+        ev_mock.action_id = unrelated_act_id
+        ev_mock.mission_id = update_action.mission_id
+        ev_mock.payload = payload
+        mock_port.get_all_evidence.return_value = [ev_mock]
+
+        reloaded_ledger = ApprovalLedger.from_ledger(mock_port)
+        assert reloaded_ledger.has_consumed_approval_for_action(update_action.action_id) is False
+        assert reloaded_ledger.has_consumed_approval_for_action(unrelated_act_id) is True
+
+        receipt = create_unapproved_action_receipt(
+            gate_decision=gate_decision,
+            action=update_action,
+            pending_approval=pending,
+            before_read=before_result,
+            after_read=after_result,
+            measured_provider_mutations=0,
+            mutation_observation=ProviderMutationObservation(),
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            ledger=reloaded_ledger,
+        )
+        assert receipt.consumption_present is False
+
+
+class TestPhaseP1105ReceiptAuthorityConsistencyRepairs:
+    """Repair D: Enforce canonical authority policy and reject contradictory gate decisions."""
+
+    def test_receipt_rejects_gate_decision_with_wrong_authority_class(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        for forbidden_ac in (
+            AuthorityClass.READ_ONLY,
+            AuthorityClass.REVERSIBLE_AUTO,
+            AuthorityClass.IRREVERSIBLE_BLOCKED_OR_HUMAN_REQUIRED,
+        ):
+            contradictory_gate = ExecutionGateDecision(
+                action_id=update_action.action_id,
+                action_type=ActionType.CALENDAR_UPDATE,
+                authority_class=forbidden_ac,
+                status=ActionExecutionStatus.NOT_RUN,
+                is_authorized=False,
+                reason="Tampered gate decision",
+                pending_approval_id=pending.pending_approval_id,
+                evaluated_at=datetime.now(UTC),
+            )
+            with pytest.raises(ExecutionGateValueError) as exc_info:
+                create_unapproved_action_receipt(
+                    gate_decision=contradictory_gate,
+                    action=update_action,
+                    pending_approval=pending,
+                    before_read=before_result,
+                    after_read=after_result,
+                    measured_provider_mutations=0,
+                    mutation_observation=ProviderMutationObservation(),
+                    source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                    ledger=ledger,
+                )
+            assert "authority_class must match canonical policy" in str(exc_info.value)
+
+    def test_receipt_rejects_gate_decision_with_wrong_action_type(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        contradictory_gate = ExecutionGateDecision(
+            action_id=update_action.action_id,
+            action_type=ActionType.TASK_CREATE,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            status=ActionExecutionStatus.NOT_RUN,
+            is_authorized=False,
+            reason="Contradictory action type",
+            pending_approval_id=pending.pending_approval_id,
+            evaluated_at=datetime.now(UTC),
+        )
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=contradictory_gate,
+                action=update_action,
+                pending_approval=pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "gate_decision action_type must be CALENDAR_UPDATE" in str(exc_info.value)
+
+    def test_receipt_rejects_pending_approval_with_mismatched_authority_class(
+        self,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+    ) -> None:
+        read_action = _make_calendar_read_action()
+        update_action = _make_calendar_update_action()
+        before_result = calendar_read_adapter.read_event(read_action)
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+        gate_decision = evaluate_execution_gate(
+            update_action, approval=None, pending_approval=pending
+        )
+        after_result = calendar_read_adapter.read_event(read_action)
+        ledger = ApprovalLedger()
+
+        import copy
+
+        tampered_pending = copy.copy(pending)
+        object.__setattr__(tampered_pending, "authority_class", AuthorityClass.REVERSIBLE_AUTO)
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_unapproved_action_receipt(
+                gate_decision=gate_decision,
+                action=update_action,
+                pending_approval=tampered_pending,
+                before_read=before_result,
+                after_read=after_result,
+                measured_provider_mutations=0,
+                mutation_observation=ProviderMutationObservation(),
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                ledger=ledger,
+            )
+        assert "pending_approval authority_class must match canonical policy" in str(exc_info.value)
+
+    def test_direct_unapproved_action_receipt_constructor_strictly_enforces_calendar_update(
+        self,
+    ) -> None:
+        aid = ActionId.generate()
+        mid = MissionId.generate()
+        obs = ProviderMutationObservation()
+
+        for forbidden_type in (
+            ActionType.CALENDAR_READ,
+            ActionType.TASK_CREATE,
+            ActionType.TASK_READ,
+        ):
+            with pytest.raises(ExecutionGateValueError) as exc_info:
+                UnapprovedActionReceipt(
+                    source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                    mission_id=mid,
+                    action_id=aid,
+                    action_type=forbidden_type,
+                    authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+                    target_event_id=DEMO_EVENT_ID,
+                    pending_approval_id=create_pending_approval(
+                        validate_action_contract(_make_calendar_update_action(mid, aid)),
+                        requested_at=datetime.now(UTC),
+                    ).pending_approval_id,
+                    approval_status=PendingApprovalStatus.PENDING,
+                    grant_present=False,
+                    consumption_present=False,
+                    execution_state=ActionExecutionStatus.NOT_RUN,
+                    provider_mutation_invocations=0,
+                    mutation_observation=obs,
+                    before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                    after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                    before_state_summary={"summary": "test"},
+                    after_state_summary={"summary": "test"},
+                    state_unchanged=True,
+                    is_ready_claimed=False,
+                    provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                    recorded_at=datetime.now(UTC),
+                )
+            assert "strictly applies to CALENDAR_UPDATE" in str(exc_info.value)
+
+
+class TestPhaseP1105PrivacySanitizationAdversarialRepairs:
+    """Repair E: Hostile sentinel tests across keys, values, errors, and serialized output."""
+
+    def test_provider_mutation_observation_error_does_not_leak_hostile_sentinel_repr(self) -> None:
+        hostile_secret = "SECRET_BEARER_TOKEN_IN_COUNTER_XYZ_9999"
+
+        with pytest.raises(ExecutionGateTypeError) as exc_info:
+            ProviderMutationObservation(router_mutation_invocations=hostile_secret)  # type: ignore[arg-type]
+
+        err_msg = str(exc_info.value)
+        assert hostile_secret not in err_msg
+        assert "router_mutation_invocations must be an integer, got str" in err_msg
+
+    def test_receipt_sanitization_redacts_hostile_sentinel_in_mapping_key(self) -> None:
+        obs = ProviderMutationObservation()
+        update_action = _make_calendar_update_action()
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+
+        receipt = UnapprovedActionReceipt(
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            mission_id=update_action.mission_id,
+            action_id=update_action.action_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            target_event_id=DEMO_EVENT_ID,
+            pending_approval_id=pending.pending_approval_id,
+            approval_status=PendingApprovalStatus.PENDING,
+            grant_present=False,
+            consumption_present=False,
+            execution_state=ActionExecutionStatus.NOT_RUN,
+            provider_mutation_invocations=0,
+            mutation_observation=obs,
+            before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            before_state_summary={"header_admin@secret.corp": "ok"},
+            after_state_summary={"header_admin@secret.corp": "ok"},
+            state_unchanged=True,
+            is_ready_claimed=False,
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            recorded_at=datetime.now(UTC),
+        )
+
+        d = receipt.to_dict()
+        import json
+
+        serialized = json.dumps(d)
+        assert "admin@secret.corp" not in serialized
+        assert "[REDACTED_EMAIL]" in d["before_state_summary"]
+
+    def test_receipt_sanitization_rejects_non_string_keys_fail_closed_without_repr_leakage(
+        self,
+    ) -> None:
+        hostile_secret = "EVIL_SECRET_KEY_PAYLOAD_8888"
+
+        class HostileKey:
+            def __str__(self) -> str:
+                return hostile_secret
+
+            def __repr__(self) -> str:
+                return f"HostileKey({hostile_secret})"
+
+            def __hash__(self) -> int:
+                return 42
+
+            def __eq__(self, other: Any) -> bool:
+                return isinstance(other, HostileKey)
+
+        obs = ProviderMutationObservation()
+        update_action = _make_calendar_update_action()
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+
+        with pytest.raises(ExecutionGateTypeError) as exc_info:
+            UnapprovedActionReceipt(
+                source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+                mission_id=update_action.mission_id,
+                action_id=update_action.action_id,
+                action_type=ActionType.CALENDAR_UPDATE,
+                authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+                target_event_id=DEMO_EVENT_ID,
+                pending_approval_id=pending.pending_approval_id,
+                approval_status=PendingApprovalStatus.PENDING,
+                grant_present=False,
+                consumption_present=False,
+                execution_state=ActionExecutionStatus.NOT_RUN,
+                provider_mutation_invocations=0,
+                mutation_observation=obs,
+                before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                before_state_summary={HostileKey(): "value"},  # type: ignore[dict-item]
+                after_state_summary={"summary": "value"},
+                state_unchanged=True,
+                is_ready_claimed=False,
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                recorded_at=datetime.now(UTC),
+            )
+
+        err_msg = str(exc_info.value)
+        assert hostile_secret not in err_msg
+        assert "keys must be strings, got HostileKey" in err_msg
+
+    def test_receipt_sanitization_rejects_unsupported_value_type_without_repr_leakage(
+        self,
+    ) -> None:
+        hostile_secret = "EVIL_SECRET_VALUE_PAYLOAD_7777"
+
+        class HostileValue:
+            def __str__(self) -> str:
+                return hostile_secret
+
+            def __repr__(self) -> str:
+                return f"HostileValue({hostile_secret})"
+
+        obs = ProviderMutationObservation()
+        update_action = _make_calendar_update_action()
+        pending = create_pending_approval(
+            validate_action_contract(update_action), requested_at=datetime.now(UTC)
+        )
+
+        receipt = UnapprovedActionReceipt(
+            source_sha="12b42e4f0f92a08518b1e6efe4fd030912477bc9",
+            mission_id=update_action.mission_id,
+            action_id=update_action.action_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            target_event_id=DEMO_EVENT_ID,
+            pending_approval_id=pending.pending_approval_id,
+            approval_status=PendingApprovalStatus.PENDING,
+            grant_present=False,
+            consumption_present=False,
+            execution_state=ActionExecutionStatus.NOT_RUN,
+            provider_mutation_invocations=0,
+            mutation_observation=obs,
+            before_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            after_read_provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            before_state_summary={"custom_obj": HostileValue()},
+            after_state_summary={"custom_obj": HostileValue()},
+            state_unchanged=True,
+            is_ready_claimed=False,
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            recorded_at=datetime.now(UTC),
+        )
+
+        with pytest.raises(ExecutionGateTypeError) as exc_info:
+            receipt.to_dict()
+
+        err_msg = str(exc_info.value)
+        assert hostile_secret not in err_msg
+        assert "Unsupported value type for receipt serialization: HostileValue" in err_msg

@@ -362,6 +362,35 @@ class UsedApprovalRegistry:
         with self._lock:
             self._records.clear()
 
+    def has_consumed_approval_for_action(self, action_id: ActionId | str) -> bool:
+        """Check if any approval has been consumed for the given action ID."""
+        if not isinstance(action_id, (ActionId, str)):
+            raise ApprovalConsumptionTypeError(
+                f"action_id must be an ActionId or str, got {type(action_id).__name__}"
+            )
+        act_id = action_id if isinstance(action_id, ActionId) else ActionId(action_id)
+        with self._lock:
+            return any(
+                rec.action_id == act_id and rec.status == ApprovalUsageStatus.CONSUMED
+                for rec in self._records.values()
+            )
+
+    def get_consumed_records_for_action(
+        self, action_id: ActionId | str
+    ) -> tuple[ApprovalConsumptionRecord, ...]:
+        """Retrieve all consumed approval records for the given action ID."""
+        if not isinstance(action_id, (ActionId, str)):
+            raise ApprovalConsumptionTypeError(
+                f"action_id must be an ActionId or str, got {type(action_id).__name__}"
+            )
+        act_id = action_id if isinstance(action_id, ActionId) else ActionId(action_id)
+        with self._lock:
+            return tuple(
+                rec
+                for rec in self._records.values()
+                if rec.action_id == act_id and rec.status == ApprovalUsageStatus.CONSUMED
+            )
+
 
 # Default process-local registry instance
 used_approval_registry: UsedApprovalRegistry = UsedApprovalRegistry()
@@ -604,6 +633,32 @@ class ApprovalLedger:
         """Check if an approval ID has been revoked."""
         with self._lock:
             return self._registry.is_revoked(approval_id)
+
+    def has_consumed_approval_for_action(self, action_id: ActionId | str) -> bool:
+        """Check if any approval has been consumed for the given action ID.
+
+        Thread-safe read-only query bounded to the target action.
+        """
+        if not isinstance(action_id, (ActionId, str)):
+            raise ApprovalConsumptionTypeError(
+                f"action_id must be an ActionId or str, got {type(action_id).__name__}"
+            )
+        with self._lock:
+            return self._registry.has_consumed_approval_for_action(action_id)
+
+    def get_consumed_records_for_action(
+        self, action_id: ActionId | str
+    ) -> tuple[ApprovalConsumptionRecord, ...]:
+        """Retrieve all consumed approval records for the given action ID.
+
+        Thread-safe read-only query returning an immutable tuple of records.
+        """
+        if not isinstance(action_id, (ActionId, str)):
+            raise ApprovalConsumptionTypeError(
+                f"action_id must be an ActionId or str, got {type(action_id).__name__}"
+            )
+        with self._lock:
+            return self._registry.get_consumed_records_for_action(action_id)
 
     def consume(
         self,

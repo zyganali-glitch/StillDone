@@ -45,6 +45,7 @@ from stilldone.approval_consumption import (
     ApprovalAlreadyUsedError,
     ApprovalConsumptionPersistenceError,
     ApprovalConsumptionResult,
+    ApprovalConsumptionTypeError,
     ApprovalConsumptionValueError,
     ApprovalLedger,
     ApprovalRevocationPersistenceError,
@@ -1496,3 +1497,82 @@ class TestP1104HostilePersistencePrivacy:
         assert ledger.check_status(grant.approval_id) == ApprovalUsageStatus.UNUSED
         # Durable state is unchanged
         assert len(hostile_ledger.get_all_evidence()) == 0
+
+
+class TestP1104PublicActionQueryCompatibility:
+    """Focused compatibility tests for ApprovalLedger public action queries."""
+
+    def test_has_consumed_approval_for_action_empty(self) -> None:
+        ledger = ApprovalLedger()
+        action_id = ActionId.generate()
+        assert ledger.has_consumed_approval_for_action(action_id) is False
+        assert ledger.get_consumed_records_for_action(action_id) == ()
+
+    def test_has_consumed_approval_for_action_consumed(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+
+        assert ledger.has_consumed_approval_for_action(validated.action_id) is True
+        assert ledger.has_consumed_approval_for_action(str(validated.action_id)) is True
+        records = ledger.get_consumed_records_for_action(validated.action_id)
+        assert len(records) == 1
+        assert records[0].approval_id == grant.approval_id
+        assert records[0].action_id == validated.action_id
+        assert records[0].status == ApprovalUsageStatus.CONSUMED
+
+    def test_has_consumed_approval_for_action_unrelated_action(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.consume(grant, validated, at=_VALID_EVAL_AT)
+
+        unrelated_action_id = ActionId.generate()
+        assert ledger.has_consumed_approval_for_action(unrelated_action_id) is False
+        assert ledger.get_consumed_records_for_action(unrelated_action_id) == ()
+
+    def test_has_consumed_approval_for_action_revoked(self) -> None:
+        _, validated, grant = _make_calendar_update_setup()
+        ledger = ApprovalLedger()
+        ledger.revoke(grant, at=_VALID_EVAL_AT, reason="Revoking")
+
+        # Revocation is not consumption
+        assert ledger.has_consumed_approval_for_action(validated.action_id) is False
+        assert ledger.get_consumed_records_for_action(validated.action_id) == ()
+
+    def test_has_consumed_approval_for_action_durable_hydration(self) -> None:
+        aid = ApprovalId.generate()
+        mid = MissionId.generate()
+        act = ActionId.generate()
+        b_hash = BindingHash("7" * 64)
+
+        payload = {
+            "evidence_type": APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
+            "approval_id": str(aid),
+            "mission_id": str(mid),
+            "action_id": str(act),
+            "binding_hash": b_hash.value,
+            "consumed_at": _VALID_EVAL_AT.isoformat(),
+            "consumed_for_attempt": 1,
+        }
+        mock_ledger = MagicMock(spec=MissionLedgerPort)
+        ev_mock = MagicMock()
+        ev_mock.action_id = act
+        ev_mock.mission_id = mid
+        ev_mock.payload = payload
+        mock_ledger.get_all_evidence.return_value = [ev_mock]
+
+        appr_ledger = ApprovalLedger.from_ledger(mock_ledger)
+        assert appr_ledger.has_consumed_approval_for_action(act) is True
+        records = appr_ledger.get_consumed_records_for_action(act)
+        assert len(records) == 1
+        assert records[0].approval_id == aid
+        assert records[0].action_id == act
+
+    def test_action_query_type_validation(self) -> None:
+        ledger = ApprovalLedger()
+        invalid_inputs: tuple[Any, ...] = (None, 123, 45.6, True, [], {})
+        for invalid in invalid_inputs:
+            with pytest.raises(ApprovalConsumptionTypeError):
+                ledger.has_consumed_approval_for_action(invalid)
+            with pytest.raises(ApprovalConsumptionTypeError):
+                ledger.get_consumed_records_for_action(invalid)
