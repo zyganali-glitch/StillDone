@@ -34,6 +34,7 @@ from stilldone.adapters.tasks import GoogleTasksReadAdapter
 from stilldone.domain.action import ActionContract, ActionType, ResourceKind, TargetIdentity
 from stilldone.domain.desired_state import DesiredStatePredicate, PredicateId
 from stilldone.domain.mission import MissionId
+from stilldone.redaction import redact_text
 from stilldone.verifier.contracts import (
     VerificationObservation,
     VerificationRequest,
@@ -309,6 +310,7 @@ def revalidate_mission(
     target_reader: (
         Callable[[TargetIdentity, str], VerificationObservation] | StandardTargetReader
     ),
+    actions: Sequence[ActionContract] | None = None,
     at: datetime | None = None,
     max_reads_per_call: int = 10,
     historical_observations: Mapping[PredicateId, VerificationObservation] | None = None,
@@ -325,15 +327,35 @@ def revalidate_mission(
     assert_not_planner_for_revalidation(mission_id, parameter_name="mission_id")
     assert_not_planner_for_revalidation(predicates, parameter_name="predicates")
     assert_not_planner_for_revalidation(target_map, parameter_name="target_map")
+    if actions is not None:
+        assert_not_planner_for_revalidation(actions, parameter_name="actions")
 
     if not isinstance(mission_id, MissionId):
         raise RevalidationTypeError("mission_id must be MissionId")
     if not isinstance(predicates, Sequence):
         raise RevalidationTypeError("predicates must be a Sequence")
+    if len(predicates) == 0:
+        raise RevalidationValueError(
+            "Cannot revalidate mission with zero predicates; fail closed against vacuous truth"
+        )
     if not isinstance(target_map, Mapping):
         raise RevalidationTypeError("target_map must be a Mapping")
+    if not callable(target_reader) and not isinstance(target_reader, StandardTargetReader):
+        raise RevalidationTypeError(
+            "target_reader must be a callable or StandardTargetReader instance"
+        )
     if max_reads_per_call < 1:
         raise RevalidationValueError("max_reads_per_call must be >= 1")
+
+    # If actions are supplied, validate that targets in target_map belong to mission actions
+    if actions is not None:
+        known_action_targets = {a.target for a in actions if a.mission_id == mission_id}
+        for pid, tgt in target_map.items():
+            if tgt not in known_action_targets:
+                raise RevalidationValueError(
+                    f"Target for predicate {pid} ({tgt}) does not match any action target "
+                    f"for mission {mission_id}"
+                )
 
     eval_at = at or datetime.now(UTC)
     if eval_at.tzinfo is None:
@@ -364,6 +386,14 @@ def revalidate_mission(
         target = target_map[pred.predicate_id]
         if not isinstance(target, TargetIdentity):
             raise RevalidationTypeError("target_map values must be TargetIdentity")
+        if not target.resource_id or not target.resource_id.strip():
+            raise RevalidationValueError(
+                f"Target resource_id for predicate {pred.predicate_id} cannot be empty"
+            )
+        if not target.parent_id or not target.parent_id.strip():
+            raise RevalidationValueError(
+                f"Target parent_id for predicate {pred.predicate_id} cannot be empty"
+            )
 
         # Work budget check
         if reads_done >= max_reads_per_call:
@@ -389,7 +419,7 @@ def revalidate_mission(
                     f"Reader returned {type(obs).__name__}, expected VerificationObservation"
                 )
         except (VerifierReadError, Exception) as exc:
-            provider_error_msg = str(exc)
+            provider_error_msg = redact_text(str(exc))
 
         if provider_error_msg is not None or obs is None:
             outcomes[pred.predicate_id] = PredicateRevalidationOutcome(
@@ -471,8 +501,10 @@ def revalidate_mission(
         )
 
     # Compute overall aggregates
-    all_true = len(outcomes) == len(predicates) and all(
-        o.status == RevalidationPredicateStatus.TRUE for o in outcomes.values()
+    all_true = (
+        len(predicates) > 0
+        and len(outcomes) == len(predicates)
+        and all(o.status == RevalidationPredicateStatus.TRUE for o in outcomes.values())
     )
     has_false = any(o.status == RevalidationPredicateStatus.FALSE for o in outcomes.values())
     has_stale = any(o.status == RevalidationPredicateStatus.STALE for o in outcomes.values())

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -433,3 +434,202 @@ def test_resume_session_creates_fresh_isolated_instances(
     assert session_a.snapshot == session_b.snapshot
     assert session_a.reloaded_writes_performed == 0
     assert session_b.reloaded_writes_performed == 0
+
+
+def test_resume_session_ledger_read_failure_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    cal_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When reading evidence from ledger fails during resume, raises SessionRestoreError."""
+    from stilldone.session import SessionRestoreError
+
+    ledger_path = tmp_path / "mission.ledger"
+    storage_path = tmp_path / "snapshots"
+    now = datetime(2026, 10, 3, 6, 25, 0, tzinfo=UTC)
+
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.DRAFT,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=cal_action.action_id,
+            mission_id=mission_id,
+            action=cal_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    repo = DurableSnapshotRepository(storage_path, ledger=ledger)
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[cal_action],
+        created_at=now,
+    )
+    repo.save_snapshot(snapshot)
+
+    # Monkeypatch DurableFileLedger.get_evidence_for_mission to simulate I/O or storage failure
+    def _broken_get_evidence(self: Any, mid: MissionId) -> Any:
+        raise OSError("Disk read error while fetching evidence")
+
+    monkeypatch.setattr(DurableFileLedger, "get_evidence_for_mission", _broken_get_evidence)
+
+    with pytest.raises(SessionRestoreError, match="Failed to read evidence records from ledger"):
+        resume_mission_session(
+            storage_path=storage_path,
+            ledger_path=ledger_path,
+            mission_id=mission_id,
+        )
+
+
+def test_resume_session_consumed_approval_disagreement_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    cal_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """When snapshot consumed approval is missing from ApprovalLedger, resume fails closed."""
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+    from stilldone.session import SessionRestoreError
+
+    ledger_path = tmp_path / "mission.ledger"
+    storage_path = tmp_path / "snapshots"
+    now = datetime(2026, 10, 3, 6, 25, 0, tzinfo=UTC)
+
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.DRAFT,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=cal_action.action_id,
+            mission_id=mission_id,
+            action=cal_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    repo = DurableSnapshotRepository(storage_path, ledger=ledger)
+
+    # Synthetic consumed approval in snapshot not present in ledger
+    foreign_consumed = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=cal_action.action_id,
+        binding_hash=BindingHash("a" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Phantom approval",
+    )
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[cal_action],
+        consumed_approvals=[foreign_consumed],
+        created_at=now,
+    )
+    repo.save_snapshot(snapshot)
+
+    with pytest.raises(SessionRestoreError, match="not found in durable approval ledger"):
+        resume_mission_session(
+            storage_path=storage_path,
+            ledger_path=ledger_path,
+            mission_id=mission_id,
+        )
+
+
+def test_resume_session_interrupted_attempt_newer_than_snapshot_detected(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    cal_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """An attempt logged to ledger after snapshot creation is recognized by P-10 recovery."""
+    ledger_path = tmp_path / "mission.ledger"
+    storage_path = tmp_path / "snapshots"
+    t0 = datetime(2026, 10, 3, 6, 20, 0, tzinfo=UTC)
+    t1 = t0 + timedelta(minutes=5)
+
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.EXECUTING,
+            created_at=t0,
+            updated_at=t0,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=cal_action.action_id,
+            mission_id=mission_id,
+            action=cal_action,
+            approval_id=None,
+            created_at=t0,
+        )
+    )
+
+    # Snapshot saved at t0 without attempts
+    repo = DurableSnapshotRepository(storage_path, ledger=ledger)
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.EXECUTING,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[cal_action],
+        created_at=t0,
+    )
+    repo.save_snapshot(snapshot)
+
+    # After snapshot was created, an execution attempt occurred at t1 with ambiguous timeout
+    from stilldone.recovery.continuity import record_execution_attempt
+
+    record_execution_attempt(
+        ledger=ledger,
+        action=cal_action,
+        attempt_number=1,
+        error=TimeoutError("Network timeout during provider dispatch"),
+        observed_at=t1,
+    )
+
+    # Resume session
+    session = resume_mission_session(
+        storage_path=storage_path,
+        ledger_path=ledger_path,
+        mission_id=mission_id,
+    )
+
+    # Even though snapshot predates the attempt, canonical recovery state from ledger detects it
+    assert session.is_ambiguous_outcome(cal_action.action_id) is True
+    assert session.requires_read_before_retry(cal_action.action_id) is True
+    with pytest.raises(
+        UncertainMutationRequiresReadbackError, match="read-back is strictly required"
+    ):
+        session.assert_can_attempt_mutation(cal_action.action_id)

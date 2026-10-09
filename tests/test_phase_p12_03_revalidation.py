@@ -377,3 +377,97 @@ def test_deterministic_proof_path_with_standard_target_reader(
     assert result.writes_performed == 0
     assert result.outcomes[pred.predicate_id].status == RevalidationPredicateStatus.TRUE
     assert result.outcomes[pred.predicate_id].observed_value == "Verified Event"
+
+
+def test_revalidation_empty_predicates_fails_closed(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+) -> None:
+    """Vacuous revalidation with empty predicates is rejected fail-closed."""
+    from stilldone.revalidation import RevalidationValueError
+
+    with pytest.raises(RevalidationValueError, match="zero predicates"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[],
+            target_map={},
+            target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
+        )
+
+
+def test_revalidation_foreign_target_fails_closed(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+) -> None:
+    """When actions are provided, target_map must reference targets belonging to those actions."""
+    from stilldone.domain.action import ActionContract, ActionId, ActionType, NormalizedParameters
+    from stilldone.revalidation import RevalidationValueError
+
+    mission_action = ActionContract(
+        action_id=ActionId.generate(),
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=target_calendar,
+        parameters=NormalizedParameters.from_dict({}),
+    )
+
+    foreign_target = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="evt_foreign_123",
+        parent_id="foreign_cal",
+    )
+
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Verified Event",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    with pytest.raises(RevalidationValueError, match="does not match any action target"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: foreign_target},
+            target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
+            actions=[mission_action],
+        )
+
+
+def test_revalidation_redacts_error_message(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+) -> None:
+    """Provider error messages must have secrets and emails redacted."""
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Secret Meeting",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    def leaking_reader(target: TargetIdentity, subject: str) -> None:
+        raise RuntimeError("Failed to contact user@example.com with bearer secret_token_xyz")
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        target_map={pred.predicate_id: target_calendar},
+        target_reader=leaking_reader,  # type: ignore[arg-type]
+    )
+
+    assert result.all_true is False
+    outcome = result.outcomes[pred.predicate_id]
+    assert outcome.status == RevalidationPredicateStatus.PROVIDER_ERROR
+    assert outcome.error_message is not None
+    assert "user@example.com" not in outcome.error_message
+    assert "secret_token_xyz" not in outcome.error_message
+    assert "[REDACTED_EMAIL]" in outcome.error_message
+    assert "[REDACTED_SECRET]" in outcome.error_message

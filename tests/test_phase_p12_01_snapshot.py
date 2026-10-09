@@ -178,13 +178,38 @@ def test_durable_snapshot_round_trip_file_mode(
     log_file = tmp_path / "snapshots.jsonl"
     repo = DurableSnapshotRepository(log_file)
 
+    now = datetime(2026, 10, 3, 6, 15, 0, tzinfo=UTC)
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    provider_result = ProviderExecutionResult(
+        action_type=ActionType.CALENDAR_UPDATE,
+        success=True,
+        status_name="UPDATED",
+        writes_performed=1,
+        captured_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=provider_result,
+    )
+    evidence_id = EvidenceId("e" * 64)
+
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
         contract=contract,
         desired_state=[sample_predicate],
         actions=[sample_action],
-        created_at=datetime(2026, 10, 3, 6, 15, 0, tzinfo=UTC),
+        step_records={sample_action.action_id: step_rec},
+        execution_attempts=[attempt],
+        evidence_ids=[evidence_id],
+        created_at=now,
     )
 
     repo.save_snapshot(snapshot)
@@ -194,6 +219,11 @@ def test_durable_snapshot_round_trip_file_mode(
     loaded = fresh_repo.load_snapshot(mission_id)
     assert loaded.mission_id == mission_id
     assert loaded.state == MissionState.READY
+    assert (
+        loaded.step_records[sample_action.action_id].status
+        == ActionExecutionStatus.EXECUTION_SUCCEEDED
+    )
+    assert loaded.evidence_ids == (evidence_id,)
 
 
 def test_inconsistent_identity_and_lineage_rejection(
@@ -461,3 +491,304 @@ def test_rich_snapshot_round_trip_with_approvals_and_attempts(
     assert step_record.provider_result is not None
     assert step_record.provider_result.writes_performed == 1
     assert reloaded.evidence_ids == (evidence_id,)
+
+
+def test_ready_snapshot_missing_step_records_rejected(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Cannot fabricate a READY snapshot without step execution records."""
+    with pytest.raises(SnapshotIntegrityError, match="missing step records"):
+        create_mission_snapshot(
+            mission_id=mission_id,
+            state=MissionState.READY,
+            contract=contract,
+            desired_state=[sample_predicate],
+            actions=[sample_action],
+            step_records=None,
+        )
+
+
+def test_ready_snapshot_not_run_step_status_rejected(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Cannot mark a snapshot READY if step status is NOT_RUN."""
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.NOT_RUN,
+    )
+    with pytest.raises(SnapshotIntegrityError, match="non-succeeded status"):
+        create_mission_snapshot(
+            mission_id=mission_id,
+            state=MissionState.READY,
+            contract=contract,
+            desired_state=[sample_predicate],
+            actions=[sample_action],
+            step_records={sample_action.action_id: step_rec},
+            evidence_ids=[EvidenceId("e" * 64)],
+        )
+
+
+def test_ready_snapshot_zero_evidence_rejected(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Cannot mark a snapshot READY with actions but zero evidence IDs."""
+    now = datetime(2026, 10, 3, 6, 30, 0, tzinfo=UTC)
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr = ProviderExecutionResult(
+        action_type=ActionType.CALENDAR_UPDATE,
+        success=True,
+        status_name="UPDATED",
+        writes_performed=1,
+        captured_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=pr,
+    )
+    with pytest.raises(SnapshotIntegrityError, match="zero evidence IDs"):
+        create_mission_snapshot(
+            mission_id=mission_id,
+            state=MissionState.READY,
+            contract=contract,
+            desired_state=[sample_predicate],
+            actions=[sample_action],
+            step_records={sample_action.action_id: step_rec},
+            evidence_ids=(),
+        )
+
+
+def test_forged_ready_over_persisted_draft_rejected(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """DurableSnapshotRepository rejects saving a READY snapshot when ledger records DRAFT."""
+    ledger_path = tmp_path / "mission.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    snap_repo = DurableSnapshotRepository(tmp_path / "snapshots", ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.DRAFT,
+            created_at=contract.created_at,
+            updated_at=contract.created_at,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=contract.created_at,
+        )
+    )
+
+    now = datetime(2026, 10, 3, 6, 30, 0, tzinfo=UTC)
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr = ProviderExecutionResult(
+        action_type=ActionType.CALENDAR_UPDATE,
+        success=True,
+        status_name="UPDATED",
+        writes_performed=1,
+        captured_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=pr,
+    )
+    forged_ready_snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        step_records={sample_action.action_id: step_rec},
+        execution_attempts=[attempt],
+        evidence_ids=[EvidenceId("e" * 64)],
+    )
+
+    with pytest.raises(SnapshotLedgerConflictError, match="contradicts ledger state"):
+        snap_repo.save_snapshot(forged_ready_snapshot)
+
+
+def test_snapshot_ledger_foreign_evidence_rejected(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Snapshot with evidence not belonging to mission/action is rejected by ledger check."""
+    from stilldone.domain.provenance import EvidenceOrigin
+    from stilldone.ledger import EvidenceRecord
+
+    ledger_path = tmp_path / "mission.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    snap_repo = DurableSnapshotRepository(tmp_path / "snapshots", ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.READY,
+            created_at=contract.created_at,
+            updated_at=contract.created_at,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=contract.created_at,
+        )
+    )
+
+    now = datetime(2026, 10, 3, 6, 30, 0, tzinfo=UTC)
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr = ProviderExecutionResult(
+        action_type=ActionType.CALENDAR_UPDATE,
+        success=True,
+        status_name="UPDATED",
+        writes_performed=1,
+        captured_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=pr,
+    )
+
+    # Append foreign mission and action to ledger first
+    foreign_mission_id = MissionId.generate()
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=foreign_mission_id,
+            contract=MissionContract.create(text="Foreign mission", mission_id=foreign_mission_id),
+            state=MissionState.DRAFT,
+            created_at=contract.created_at,
+            updated_at=contract.created_at,
+        )
+    )
+    foreign_action = ActionContract(
+        action_id=ActionId.generate(),
+        mission_id=foreign_mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=sample_action.target,
+        parameters=NormalizedParameters.from_dict({}),
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=foreign_action.action_id,
+            mission_id=foreign_mission_id,
+            action=foreign_action,
+            approval_id=None,
+            created_at=contract.created_at,
+        )
+    )
+
+    foreign_ev_record = EvidenceRecord.create(
+        action_id=foreign_action.action_id,
+        mission_id=foreign_mission_id,
+        origin=EvidenceOrigin.fixture(),
+        payload={"summary": "Foreign event"},
+    )
+    ledger.append_evidence(foreign_ev_record)
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        step_records={sample_action.action_id: step_rec},
+        execution_attempts=[attempt],
+        evidence_ids=[foreign_ev_record.evidence_id],
+    )
+
+    with pytest.raises(SnapshotLedgerConflictError, match="expected snapshot mission"):
+        snap_repo.save_snapshot(snapshot)
+
+
+def test_snapshot_corrupted_boolean_string_rejected(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """String 'false' must raise SnapshotCorruptionError instead of bool() coercion."""
+    snap = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+    )
+    data = snap.to_dict()
+    # Corrupt required boolean with string "false"
+    data["desired_state"][0]["required"] = "false"
+    with pytest.raises(SnapshotCorruptionError, match="must be a boolean"):
+        MissionSnapshot.from_dict(data)
+
+
+def test_snapshot_tampered_pending_approval_rejected(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Tampering with serialized pending approval fields raises SnapshotIntegrityError."""
+    from stilldone.action_policy import validate_action_contract
+    from stilldone.pending_approval import create_pending_approval
+
+    now = datetime(2026, 10, 3, 6, 30, 0, tzinfo=UTC)
+    pa = create_pending_approval(validate_action_contract(sample_action), requested_at=now)
+
+    snap = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        pending_approvals=[pa],
+    )
+    data = snap.to_dict()
+    # Tamper with authority class
+    data["pending_approvals"][0]["authority_class"] = "READ_ONLY"
+    with pytest.raises(SnapshotIntegrityError, match="does not match"):
+        MissionSnapshot.from_dict(data)

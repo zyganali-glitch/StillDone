@@ -339,6 +339,17 @@ class MissionLedgerPort(ABC):
     def append_mission(self, record: MissionRecord) -> None:
         """Append a mission record. Fails closed on duplicates or conflicts."""
 
+    def update_mission_state(
+        self,
+        mission_id: MissionId,
+        new_state: MissionState,
+        updated_at: datetime | None = None,
+    ) -> MissionRecord:
+        """Update a mission's lifecycle state in the ledger.
+        Raises RecordNotFoundError if absent.
+        """
+        raise NotImplementedError("update_mission_state not implemented by this ledger")
+
     @abstractmethod
     def get_mission(self, mission_id: MissionId) -> MissionRecord:
         """Retrieve a mission record by ID. Raises RecordNotFoundError if missing."""
@@ -416,6 +427,28 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         self._missions[key] = record
         self._mission_actions.setdefault(key, [])
         self._mission_evidence.setdefault(key, [])
+
+    def update_mission_state(
+        self,
+        mission_id: MissionId,
+        new_state: MissionState,
+        updated_at: datetime | None = None,
+    ) -> MissionRecord:
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        old = self._missions[key]
+        now = updated_at or datetime.now(UTC)
+        norm_now = _normalize_utc(now, "updated_at")
+        updated = MissionRecord(
+            mission_id=old.mission_id,
+            contract=old.contract,
+            state=new_state,
+            created_at=old.created_at,
+            updated_at=norm_now,
+        )
+        self._missions[key] = updated
+        return updated
 
     def get_mission(self, mission_id: MissionId) -> MissionRecord:
         key = str(mission_id)
@@ -635,6 +668,23 @@ class DurableFileLedger(MissionLedgerPort):
                     self._missions[m_key] = record
                     self._mission_actions.setdefault(m_key, [])
                     self._mission_evidence.setdefault(m_key, [])
+                elif rec_type == "mission_state_update":
+                    m_id = MissionId(entry["mission_id"])
+                    m_key = str(m_id)
+                    if m_key not in self._missions:
+                        raise RecordNotFoundError(
+                            f"Mission state update references absent mission {m_key} "
+                            "during durable log replay."
+                        )
+                    old_m = self._missions[m_key]
+                    updated_m = MissionRecord(
+                        mission_id=old_m.mission_id,
+                        contract=old_m.contract,
+                        state=MissionState(entry["state"]),
+                        created_at=old_m.created_at,
+                        updated_at=datetime.fromisoformat(entry["updated_at"]),
+                    )
+                    self._missions[m_key] = updated_m
                 elif rec_type == "action":
                     a_id = ActionId(entry["action_id"])
                     m_id = MissionId(entry["mission_id"])
@@ -770,6 +820,35 @@ class DurableFileLedger(MissionLedgerPort):
         self._missions[key] = record
         self._mission_actions.setdefault(key, [])
         self._mission_evidence.setdefault(key, [])
+
+    def update_mission_state(
+        self,
+        mission_id: MissionId,
+        new_state: MissionState,
+        updated_at: datetime | None = None,
+    ) -> MissionRecord:
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        old = self._missions[key]
+        now = updated_at or datetime.now(UTC)
+        norm_now = _normalize_utc(now, "updated_at")
+        updated = MissionRecord(
+            mission_id=old.mission_id,
+            contract=old.contract,
+            state=new_state,
+            created_at=old.created_at,
+            updated_at=norm_now,
+        )
+        entry = {
+            "record_type": "mission_state_update",
+            "mission_id": key,
+            "state": new_state.value,
+            "updated_at": norm_now.isoformat(),
+        }
+        self._write_entry(entry)
+        self._missions[key] = updated
+        return updated
 
     def get_mission(self, mission_id: MissionId) -> MissionRecord:
         key = str(mission_id)

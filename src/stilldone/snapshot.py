@@ -153,6 +153,15 @@ def assert_not_planner_for_snapshot(obj: Any, *, parameter_name: str = "argument
             )
 
 
+def _parse_bool(val: Any, field_name: str) -> bool:
+    """Parse and strictly enforce boolean type fail-closed against string coercion."""
+    if isinstance(val, bool):
+        return val
+    raise SnapshotCorruptionError(
+        f"Field {field_name!r} must be a boolean, got {type(val).__name__} ({val!r})"
+    )
+
+
 # ===========================================================================
 # Mission Snapshot Aggregate
 # ===========================================================================
@@ -339,6 +348,40 @@ class MissionSnapshot:
             raise SnapshotValueError("created_at must be timezone-aware (UTC required)")
         if self.created_at.tzinfo != UTC:
             object.__setattr__(self, "created_at", self.created_at.astimezone(UTC))
+
+        # Enforce READY state invariants fail-closed:
+        # Snapshots must never create or confer mission READY authority independently.
+        if self.state == MissionState.READY:
+            if len(self.actions) > 0 and len(self.evidence_ids) == 0:
+                raise SnapshotIntegrityError(
+                    "Mission cannot be in READY state with zero evidence records"
+                )
+            for act in self.actions:
+                if act.action_id not in self.step_records:
+                    raise SnapshotIntegrityError(
+                        f"Action {act.action_id} missing step execution record in READY snapshot"
+                    )
+                srec = self.step_records[act.action_id]
+                if srec.status != ActionExecutionStatus.EXECUTION_SUCCEEDED:
+                    raise SnapshotIntegrityError(
+                        f"Action {act.action_id} has non-succeeded status {srec.status.value} "
+                        "in READY snapshot"
+                    )
+                if srec.attempt is None:
+                    raise SnapshotIntegrityError(
+                        f"Action {act.action_id} missing execution attempt in READY snapshot"
+                    )
+                if srec.provider_result is None or not srec.provider_result.success:
+                    raise SnapshotIntegrityError(
+                        f"Action {act.action_id} missing successful provider "
+                        "result in READY snapshot"
+                    )
+            for pa in self.pending_approvals:
+                if pa.status == PendingApprovalStatus.PENDING:
+                    raise SnapshotIntegrityError(
+                        f"Pending approval {pa.pending_approval_id} is still "
+                        "PENDING in READY snapshot"
+                    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert snapshot to deterministic serializable dictionary."""
@@ -528,6 +571,7 @@ class MissionSnapshot:
             # Desired state
             preds: list[DesiredStatePredicate] = []
             for pd in data["desired_state"]:
+                req_val = _parse_bool(pd.get("required", True), "required")
                 preds.append(
                     DesiredStatePredicate(
                         predicate_id=PredicateId(pd["predicate_id"]),
@@ -539,7 +583,7 @@ class MissionSnapshot:
                             mode=FreshnessMode(pd["freshness"]["mode"]),
                             max_age_seconds=pd["freshness"].get("max_age_seconds"),
                         ),
-                        required=bool(pd.get("required", True)),
+                        required=req_val,
                     )
                 )
 
@@ -586,9 +630,10 @@ class MissionSnapshot:
                 pr_obj: ProviderExecutionResult | None = None
                 if sd.get("provider_result") is not None:
                     prd = sd["provider_result"]
+                    succ_val = _parse_bool(prd["success"], "success")
                     pr_obj = ProviderExecutionResult(
                         action_type=ActionType(prd["action_type"]),
-                        success=bool(prd["success"]),
+                        success=succ_val,
                         status_name=str(prd["status_name"]),
                         writes_performed=int(prd.get("writes_performed", 0)),
                         captured_at=datetime.fromisoformat(prd["captured_at"]),
@@ -623,6 +668,50 @@ class MissionSnapshot:
                 base_pa = create_pending_approval(
                     validate_action_contract(matched_act), requested_at=req_at
                 )
+
+                # Strict fail-closed verification against serialized fields
+                if pad.get("pending_approval_id") != str(base_pa.pending_approval_id):
+                    raise SnapshotIntegrityError(
+                        f"Tampered pending_approval_id: {pad.get('pending_approval_id')} "
+                        f"!= {base_pa.pending_approval_id}"
+                    )
+                if pad.get("mission_id") != str(base_pa.mission_id):
+                    raise SnapshotLineageError(
+                        f"PendingApproval mission_id {pad.get('mission_id')} "
+                        f"does not match base {base_pa.mission_id}"
+                    )
+                if pad.get("action_type") != base_pa.action_type.value:
+                    raise SnapshotIntegrityError(
+                        f"PendingApproval action_type {pad.get('action_type')} "
+                        f"does not match {base_pa.action_type.value}"
+                    )
+                if pad.get("authority_class") != base_pa.authority_class.value:
+                    raise SnapshotIntegrityError(
+                        f"PendingApproval authority_class {pad.get('authority_class')} "
+                        f"does not match {base_pa.authority_class.value}"
+                    )
+                if pad.get("parameters_digest") != base_pa.parameters_digest:
+                    raise SnapshotIntegrityError("PendingApproval parameters_digest was tampered")
+                base_contract_dict = (
+                    base_pa.decision_contract.to_dict()
+                    if hasattr(base_pa.decision_contract, "to_dict")
+                    else base_pa.decision_contract
+                )
+                if pad.get("decision_contract") != base_contract_dict:
+                    raise SnapshotIntegrityError("PendingApproval decision_contract was tampered")
+
+                ser_target = pad.get("target")
+                if not isinstance(ser_target, dict) or ser_target != {
+                    "system": base_pa.target.system,
+                    "resource_kind": base_pa.target.resource_kind.value,
+                    "resource_id": base_pa.target.resource_id,
+                    "parent_id": base_pa.target.parent_id,
+                }:
+                    raise SnapshotIntegrityError("PendingApproval target was tampered")
+
+                if pad.get("parameters") != base_pa.parameters.to_dict():
+                    raise SnapshotIntegrityError("PendingApproval parameters was tampered")
+
                 status_val = PendingApprovalStatus(pad.get("status", "PENDING"))
                 if base_pa.status != status_val:
                     reconstructed_pa = dataclasses.replace(base_pa, status=status_val)
@@ -718,16 +807,45 @@ def create_mission_snapshot(
         for aid, dlist in action_dependencies.items():
             deps_map[aid] = tuple(dlist)
 
-    # Default step records to NOT_RUN for any action missing one
+    # Step records handling
     step_map: dict[ActionId, StepExecutionRecord] = {}
     if step_records is not None:
         step_map.update(step_records)
-    for act in actions:
-        if act.action_id not in step_map:
-            step_map[act.action_id] = StepExecutionRecord(
-                action_id=act.action_id,
-                status=ActionExecutionStatus.NOT_RUN,
+
+    if state == MissionState.READY:
+        if step_records is None:
+            raise SnapshotIntegrityError(
+                "Cannot construct READY snapshot with missing step records"
             )
+        for act in actions:
+            if act.action_id not in step_map:
+                raise SnapshotIntegrityError(
+                    f"Action {act.action_id} missing step execution record in READY snapshot"
+                )
+            srec = step_map[act.action_id]
+            if srec.status != ActionExecutionStatus.EXECUTION_SUCCEEDED:
+                raise SnapshotIntegrityError(
+                    f"Action {act.action_id} has non-succeeded status {srec.status.value} "
+                    "in READY snapshot"
+                )
+            if srec.attempt is None:
+                raise SnapshotIntegrityError(
+                    f"Action {act.action_id} missing execution attempt in READY snapshot"
+                )
+            if srec.provider_result is None or not srec.provider_result.success:
+                raise SnapshotIntegrityError(
+                    f"Action {act.action_id} missing successful provider result in READY snapshot"
+                )
+        if len(actions) > 0 and (not evidence_ids or len(evidence_ids) == 0):
+            raise SnapshotIntegrityError("Cannot construct READY snapshot with zero evidence IDs")
+    else:
+        # Default step records to NOT_RUN for any action missing one in non-READY states
+        for act in actions:
+            if act.action_id not in step_map:
+                step_map[act.action_id] = StepExecutionRecord(
+                    action_id=act.action_id,
+                    status=ActionExecutionStatus.NOT_RUN,
+                )
 
     return MissionSnapshot(
         snapshot_id=snap_id,
@@ -807,12 +925,19 @@ class DurableSnapshotRepository:
                 f"Mission {snapshot.mission_id} in snapshot does not exist in ledger"
             ) from exc
 
-        if m_rec.contract.mission_id != snapshot.contract.mission_id:
+        if m_rec.contract != snapshot.contract:
             raise SnapshotLedgerConflictError(
                 f"Snapshot mission {snapshot.mission_id} contract does not match ledger"
             )
 
+        if m_rec.state != snapshot.state:
+            raise SnapshotLedgerConflictError(
+                f"Snapshot state {snapshot.state.value} contradicts "
+                f"ledger state {m_rec.state.value}"
+            )
+
         # 2. Every action in snapshot must exist in ledger
+        known_action_ids: set[ActionId] = set()
         for act in snapshot.actions:
             try:
                 a_rec = target_ledger.get_action(act.action_id)
@@ -824,15 +949,36 @@ class DurableSnapshotRepository:
                 raise SnapshotLedgerConflictError(
                     f"Snapshot action {act.action_id} contract differs from ledger action"
                 )
+            known_action_ids.add(act.action_id)
 
-        # 3. Every evidence_id in snapshot must exist in ledger
+        # 3. Every evidence_id in snapshot must exist in ledger and match mission/action lineage
         for eid in snapshot.evidence_ids:
             try:
-                target_ledger.get_evidence(eid)
+                ev_rec = target_ledger.get_evidence(eid)
             except RecordNotFoundError as exc:
                 raise SnapshotLedgerConflictError(
                     f"Snapshot evidence {eid} does not exist in ledger"
                 ) from exc
+            if ev_rec.mission_id != snapshot.mission_id:
+                raise SnapshotLedgerConflictError(
+                    f"Snapshot evidence {eid} belongs to mission {ev_rec.mission_id}, "
+                    f"expected snapshot mission {snapshot.mission_id}"
+                )
+            if ev_rec.action_id not in known_action_ids:
+                raise SnapshotLedgerConflictError(
+                    f"Snapshot evidence {eid} belongs to action {ev_rec.action_id} "
+                    "not present in snapshot actions"
+                )
+
+        # 4. If snapshot claims READY, verify authoritative verification lineage in ledger
+        if snapshot.state == MissionState.READY:
+            for act in snapshot.actions:
+                act_evidences = target_ledger.get_evidence_for_action(act.action_id)
+                if not act_evidences:
+                    raise SnapshotLedgerConflictError(
+                        f"Action {act.action_id} lacks durable verification evidence in ledger "
+                        "for READY mission"
+                    )
 
     def save_snapshot(self, snapshot: MissionSnapshot) -> None:
         """Save a snapshot durably with atomic write and fsync.

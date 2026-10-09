@@ -49,6 +49,10 @@ from stilldone.ledger import (
     MissionLedgerPort,
 )
 from stilldone.pending_approval import PendingApproval
+from stilldone.recovery.continuity import (
+    RecoveryContinuityError,
+    reconstruct_action_recovery_state,
+)
 from stilldone.snapshot import (
     DurableSnapshotRepository,
     MissionSnapshot,
@@ -171,13 +175,14 @@ class RestoredMissionSession:
         """Return True if an action execution ended in an uncertain/ambiguous state.
 
         An outcome is ambiguous if:
-        1. An execution attempt was recorded but no successful provider_result exists; OR
-        2. UNCERTAIN_POST_EXECUTION_FAILURE evidence was recorded in the ledger.
+        1. UNCERTAIN_POST_EXECUTION_FAILURE evidence was recorded in the ledger; OR
+        2. Canonical P-10 recovery state indicates ambiguous outcome or verification requirement; OR
+        3. Snapshot step records indicate non-success or ambiguous timeout.
         """
         if not isinstance(action_id, ActionId):
             raise SessionTypeError("action_id must be ActionId")
 
-        # Check ledger evidence for UNCERTAIN_POST_EXECUTION_FAILURE
+        # 1. Check ledger evidence for UNCERTAIN_POST_EXECUTION_FAILURE
         aid_str = str(action_id)
         for ev in self.evidence_records:
             if str(ev.action_id) == aid_str:
@@ -185,9 +190,28 @@ class RestoredMissionSession:
                 if ev_type == UNCERTAIN_POST_EXECUTION_FAILURE:
                     return True
 
-        # Check step records
+        # 2. Check canonical P-10 recovery state from durable ledger
+        # (handles attempts newer than snapshot)
+        matched_act = next((a for a in self.snapshot.actions if a.action_id == action_id), None)
+        if matched_act is not None:
+            try:
+                rec_state = reconstruct_action_recovery_state(
+                    action=matched_act,
+                    ledger=self.ledger,
+                )
+                if rec_state.is_ambiguous_outcome:
+                    return True
+                if rec_state.requires_verification_before_retry:
+                    return True
+            except RecoveryContinuityError:
+                # Contradictory, unreadable, or corrupted recovery history: fail-closed as ambiguous
+                return True
+
+        # 3. Check step records in snapshot
         if action_id in self.snapshot.step_records:
             srec = self.snapshot.step_records[action_id]
+            if srec.status == ActionExecutionStatus.EXECUTION_FAILED:
+                return True
             if srec.attempt is not None:
                 if srec.provider_result is None or not srec.provider_result.success:
                     return True
@@ -196,7 +220,22 @@ class RestoredMissionSession:
 
     def requires_read_before_retry(self, action_id: ActionId) -> bool:
         """Return True if an interrupted mutation requires read-back before any retry."""
-        return self.is_ambiguous_outcome(action_id)
+        if not isinstance(action_id, ActionId):
+            raise SessionTypeError("action_id must be ActionId")
+        if self.is_ambiguous_outcome(action_id):
+            return True
+        matched_act = next((a for a in self.snapshot.actions if a.action_id == action_id), None)
+        if matched_act is not None:
+            try:
+                rec_state = reconstruct_action_recovery_state(
+                    action=matched_act,
+                    ledger=self.ledger,
+                )
+                if rec_state.requires_verification_before_retry:
+                    return True
+            except RecoveryContinuityError:
+                return True
+        return False
 
     def assert_can_attempt_mutation(self, action_id: ActionId) -> None:
         """Assert that a mutation may be attempted, failing closed on replay or unverified retry."""
@@ -250,11 +289,31 @@ def resume_mission_session(
     # 4. Rehydrate ApprovalLedger from fresh durable ledger
     fresh_approval_ledger = ApprovalLedger.from_ledger(fresh_ledger)
 
-    # 5. Extract evidence records for mission from fresh ledger
+    # 5. Extract evidence records for mission from fresh ledger fail-closed
     try:
         evidence_records = tuple(fresh_ledger.get_evidence_for_mission(mission_id))
-    except Exception:
-        evidence_records = ()
+    except Exception as exc:
+        raise SessionRestoreError(
+            f"Failed to read evidence records from ledger for mission {mission_id}: {exc}"
+        ) from exc
+
+    # 6. Reconcile snapshot consumed approvals against durable approval ledger
+    for ca in snapshot.consumed_approvals:
+        ledger_rec = fresh_approval_ledger.get_record(ca.approval_id)
+        if ledger_rec is None:
+            raise SessionRestoreError(
+                f"Snapshot consumed approval {ca.approval_id} not found in durable approval ledger"
+            )
+        if (
+            ledger_rec.status != ca.status
+            or ledger_rec.action_id != ca.action_id
+            or ledger_rec.binding_hash != ca.binding_hash
+            or ledger_rec.attempt_number != ca.attempt_number
+            or ledger_rec.mission_id != ca.mission_id
+        ):
+            raise SessionRestoreError(
+                f"Snapshot consumed approval {ca.approval_id} contradicts durable approval ledger"
+            )
 
     return RestoredMissionSession(
         snapshot=snapshot,

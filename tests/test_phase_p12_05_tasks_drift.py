@@ -16,6 +16,7 @@ Validates:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,7 @@ from stilldone.domain.desired_state import (
     PredicateId,
     PredicateOperator,
 )
+from stilldone.domain.execution import ExecutionAttempt, IdempotencyKey
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
 from stilldone.drift import (
@@ -44,6 +46,12 @@ from stilldone.drift import (
     detect_calendar_drift,
     detect_tasks_drift,
     record_drift_in_snapshot,
+)
+from stilldone.evidence import EvidenceId
+from stilldone.execution.state import (
+    ActionExecutionStatus,
+    ProviderExecutionResult,
+    StepExecutionRecord,
 )
 from stilldone.snapshot import (
     DurableSnapshotRepository,
@@ -120,12 +128,45 @@ def _make_ready_tasks_snapshot(
         created_at=datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC),
     )
 
+    step_records = None
+    execution_attempts = None
+    evidence_ids = None
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    if state == MissionState.READY:
+        attempt = ExecutionAttempt(
+            action_id=action.action_id,
+            idempotency_key=IdempotencyKey.generate(),
+            attempt_number=1,
+            started_at=now,
+        )
+        provider_result = ProviderExecutionResult(
+            action_type=action.action_type,
+            success=True,
+            status_name="READ_OK",
+            writes_performed=0,
+            captured_at=now,
+        )
+        step_rec = StepExecutionRecord(
+            action_id=action.action_id,
+            status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+            attempt=attempt,
+            provider_result=provider_result,
+        )
+        step_records = {action.action_id: step_rec}
+        execution_attempts = [attempt]
+        evidence_ids = [EvidenceId("e" * 64)]
+
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=state,
         contract=contract,
         desired_state=(pred_status, pred_title),
         actions=(action,),
+        step_records=step_records,
+        execution_attempts=execution_attempts,
+        evidence_ids=evidence_ids,
+        created_at=now,
     )
     return snapshot, pred_status, pred_title
 
@@ -372,16 +413,41 @@ def test_cross_provider_parity_calendar_and_tasks(
         target=cal_target,
         parameters={},
     )
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    att_cal = ExecutionAttempt(
+        action_id=action_cal.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr_cal = ProviderExecutionResult(
+        action_type=action_cal.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step_cal = StepExecutionRecord(
+        action_id=action_cal.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att_cal,
+        provider_result=pr_cal,
+    )
+
     cal_snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
         contract=MissionContract.create(
             text="Parity calendar check",
             mission_id=mission_id,
-            created_at=datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC),
+            created_at=now,
         ),
         desired_state=(pred_cal,),
         actions=(action_cal,),
+        step_records={action_cal.action_id: step_cal},
+        execution_attempts=(att_cal,),
+        evidence_ids=(EvidenceId("e" * 64),),
+        created_at=now,
     )
 
     # Tasks setup
@@ -409,16 +475,40 @@ def test_cross_provider_parity_calendar_and_tasks(
         target=tasks_target,
         parameters={},
     )
+    att_tasks = ExecutionAttempt(
+        action_id=action_tasks.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr_tasks = ProviderExecutionResult(
+        action_type=action_tasks.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step_tasks = StepExecutionRecord(
+        action_id=action_tasks.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att_tasks,
+        provider_result=pr_tasks,
+    )
+
     tasks_snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
         contract=MissionContract.create(
             text="Parity task check",
             mission_id=mission_id,
-            created_at=datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC),
+            created_at=now,
         ),
         desired_state=(pred_tasks,),
         actions=(action_tasks,),
+        step_records={action_tasks.action_id: step_tasks},
+        execution_attempts=(att_tasks,),
+        evidence_ids=(EvidenceId("e" * 64),),
+        created_at=now,
     )
 
     cal_res = detect_calendar_drift(snapshot=cal_snapshot, calendar_adapter=cal_adapter)
@@ -432,3 +522,188 @@ def test_cross_provider_parity_calendar_and_tasks(
     assert tasks_res.reconciliation is not None
     assert cal_res.reconciliation.status == ReconciliationStatus.STILL_TRUE
     assert tasks_res.reconciliation.status == ReconciliationStatus.STILL_TRUE
+
+
+def test_tasks_drift_ambiguous_targets_fails_closed(
+    mission_id: MissionId,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """Multiple tasks actions without explicit target fails closed with DriftTargetMismatchError."""
+    fake_tasks_transport = FakeGoogleTasksTransport()
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=fake_tasks_transport)
+
+    task_pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="title",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Task 1",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    target2 = TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK,
+        resource_id="task_pack_backpacks_002",
+        parent_id=tasks_target.parent_id,
+    )
+
+    action1 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=tasks_target,
+        parameters={},
+    )
+    action2 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=target2,
+        parameters={},
+    )
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    att1 = ExecutionAttempt(
+        action_id=action1.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr1 = ProviderExecutionResult(
+        action_type=action1.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step1 = StepExecutionRecord(
+        action_id=action1.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att1,
+        provider_result=pr1,
+    )
+    att2 = ExecutionAttempt(
+        action_id=action2.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr2 = ProviderExecutionResult(
+        action_type=action2.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step2 = StepExecutionRecord(
+        action_id=action2.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att2,
+        provider_result=pr2,
+    )
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=MissionContract.create("Multi-tasks", mission_id=mission_id),
+        desired_state=(task_pred,),
+        actions=(action1, action2),
+        step_records={action1.action_id: step1, action2.action_id: step2},
+        execution_attempts=(att1, att2),
+        evidence_ids=(EvidenceId("e" * 64),),
+        created_at=now,
+    )
+
+    with pytest.raises(DriftTargetMismatchError, match="Ambiguous target for predicate"):
+        detect_tasks_drift(snapshot=snapshot, tasks_adapter=tasks_adapter)
+
+
+def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
+    tmp_path: Path,
+    mission_id: MissionId,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """When repo has attached ledger, record_drift updates state and appends evidence."""
+    from stilldone.domain.provenance import EvidenceOrigin
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    ledger_path = tmp_path / "mission.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    snapshot, _, _ = _make_ready_tasks_snapshot(mission_id, tasks_target)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=snapshot.contract,
+            state=MissionState.READY,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    for act in snapshot.actions:
+        ledger.append_action(
+            ActionRecord(
+                action_id=act.action_id,
+                mission_id=mission_id,
+                action=act,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    for _eid in snapshot.evidence_ids:
+        ledger.append_evidence(
+            EvidenceRecord.create(
+                action_id=snapshot.actions[0].action_id,
+                mission_id=mission_id,
+                origin=EvidenceOrigin.fixture(),
+                payload={"initial_verification": True},
+                created_at=now,
+            )
+        )
+    # Re-align snapshot evidence_ids with ledger evidence
+    ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=[e.evidence_id for e in ev_recs],
+        created_at=now,
+    )
+
+    fake_transport = FakeGoogleTasksTransport()
+    # Task completion reversal: status changed to "needsAction"
+    fake_transport.seed_task(
+        task_list_id=tasks_target.parent_id or "",
+        task_id=tasks_target.resource_id,
+        title="Pack backpacks",
+        status="needsAction",
+    )
+    adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=fake_transport)
+    result = detect_tasks_drift(snapshot=snapshot, tasks_adapter=adapter)
+    assert result.is_drifted is True
+
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
+    drifted_snap = record_drift_in_snapshot(repo, snapshot, result)
+
+    assert drifted_snap is not None
+    assert drifted_snap.state == MissionState.DRIFTED
+    # Check ledger state was updated to DRIFTED
+    m_rec = ledger.get_mission(mission_id)
+    assert m_rec is not None
+    assert m_rec.state == MissionState.DRIFTED
+    # Check drift evidence was appended
+    ev_records = tuple(ledger.get_evidence_for_mission(mission_id))
+    assert len(ev_records) > 0
+    drift_ev = next(
+        (e for e in ev_records if e.payload.get("evidence_type") == "MISSION_DRIFT"), None
+    )
+    assert drift_ev is not None
+    assert drift_ev.payload.get("new_state") == "DRIFTED"
