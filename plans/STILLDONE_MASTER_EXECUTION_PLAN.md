@@ -1302,19 +1302,19 @@ Goal:
 make missions survive sessions and reality changes.
 
 ### P-12.01 — Implement durable mission snapshot repository using the P-01-approved persistence path
-Status: IN PROGRESS (Bounded Execution Batch)
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 ### P-12.02 — Implement reload/resume across a fresh process/session
-Status: IN PROGRESS (Bounded Execution Batch)
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 ### P-12.03 — Implement bounded revalidation command/tool
-Status: IN PROGRESS (Bounded Execution Batch)
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 ### P-12.04 — Implement external-change drift detection on Calendar
-Status: IN PROGRESS (Bounded Execution Batch)
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 ### P-12.05 — Implement external-change drift detection on Tasks
-Status: IN PROGRESS (Bounded Execution Batch)
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 ### P-12.06 — Preserve historical receipt while publishing current truth
 Status: PENDING
