@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-10: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01: CLOSED (independent QA PASS ✅) | P-11.02: CLOSED (independent QA PASS ✅) | P-11.03: CLOSED (independent QA PASS ✅) | P-11.04: CLOSED (independent QA PASS ✅) | P-11.05: CLOSED (independent QA PASS ✅) | P-11.06: IMPLEMENTED (awaiting independent QA review) | P-12+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`**
+Current repository state: **P-00 through P-11: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01 through P-11.06: CLOSED (independent QA PASS ✅) | P-12.01 through P-12.05: IN PROGRESS (Bounded Execution Batch) | P-12.06+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,23 +74,25 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-11.06 — Prove approved Calendar update executes once and verifies (IMPLEMENTED / awaiting independent QA review)
+Active task: P-12.01 through P-12.05 Bounded Execution Batch (Phase P-12: Durable Mission Continuity & Drift)
 
 Status:
-- P-00 through P-10: CLOSED — independent QA PASS ✅
+- P-00 through P-11: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
 - P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
 - P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
 - P-11.03: CLOSED — independent QA PASS ✅ (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`)
 - P-11.04: CLOSED — independent QA PASS ✅ (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`)
 - P-11.05: CLOSED — independent QA PASS ✅ (Verified closure SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
-- P-11.06: REPAIRED (Phase-Exit Evidence Continuity Repair complete; 60/60 tests, proof script passing; awaiting independent QA review)
-- P-12+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-11.06: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
+- Phase P-11 exit: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
+- P-12.01 through P-12.05: IN PROGRESS (Bounded Execution Batch)
+- P-12.06+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`
-Audited remote baseline SHA: `b85f03b878eabede6d0e13798afa003fff40a603`
-Current exact task: P-11.06 — Prove approved Calendar update executes once and verifies (REPAIRED / awaiting independent QA review)
-Next exact task: Independent QA audit for P-11.06
+Last Independently VERIFIED contiguous SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`
+Audited remote baseline SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`
+Current exact task: P-12.01 through P-12.05 Bounded Execution Batch
+Next exact task: Independent QA audit for P-12.01 through P-12.05 batch
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

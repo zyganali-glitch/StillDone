@@ -1250,7 +1250,7 @@ Status: PASS ✅ (independent QA verified)
 Status: PASS ✅ (independent QA verified)
 
 ### P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval
-Status: REPAIRED (Final Bounded Contract Closure Repairs B–E complete) / awaiting independent QA
+Status: PASS ✅ (independent QA verified)
 
 Acceptance:
 - 12-step negative proof chain executed deterministically proving an unapproved `CALENDAR_UPDATE` action remains strictly `NOT_RUN`;
@@ -1265,7 +1265,7 @@ Acceptance:
 - P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: REPAIRED (Final Two-Defect Evidence Integrity Repair complete) / awaiting independent QA review (Starting remote SHA: `8b31cf52355933c0b1810ff988d4ad7225d4350d`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
+Status: PASS ✅ (independent QA verified; Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
 
 Acceptance:
 - Complete 12-step approved sequence executed: INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED;
@@ -1292,7 +1292,7 @@ Acceptance:
 - Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (67/67 tests, 373 tests across Phase P-11, 2,045 Core tests, 1,155 Planner tests, 3,200 total dual-runtime tests passing across Core and Planner).
 
 Phase exit:
-Phase P-11 implementation COMPLETE & REPAIRED — awaiting independent QA review. One meaningful approval replaces repeated confirmations.
+Phase P-11 is CLOSED — independent QA PASS (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`). One meaningful approval replaces repeated confirmations. Phase P-12 is authorized to start.
 
 ---
 
@@ -1302,19 +1302,19 @@ Goal:
 make missions survive sessions and reality changes.
 
 ### P-12.01 — Implement durable mission snapshot repository using the P-01-approved persistence path
-Status: PENDING
+Status: IN PROGRESS (Bounded Execution Batch)
 
 ### P-12.02 — Implement reload/resume across a fresh process/session
-Status: PENDING
+Status: IN PROGRESS (Bounded Execution Batch)
 
 ### P-12.03 — Implement bounded revalidation command/tool
-Status: PENDING
+Status: IN PROGRESS (Bounded Execution Batch)
 
 ### P-12.04 — Implement external-change drift detection on Calendar
-Status: PENDING
+Status: IN PROGRESS (Bounded Execution Batch)
 
 ### P-12.05 — Implement external-change drift detection on Tasks
-Status: PENDING
+Status: IN PROGRESS (Bounded Execution Batch)
 
 ### P-12.06 — Preserve historical receipt while publishing current truth
 Status: PENDING
