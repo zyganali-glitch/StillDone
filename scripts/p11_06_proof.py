@@ -243,7 +243,7 @@ def run_p11_06_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
                 ),
                 created_at=now,
             ),
-            state=MissionState.DRAFT,
+            state=MissionState.VERIFYING,
             created_at=now,
             updated_at=now,
         )
@@ -320,6 +320,7 @@ def run_p11_06_proof(*, expected_sha: str | None = None) -> dict[str, Any]:
         spy=spy,
         before_read=before_result,
         mission_ledger=durable_ledger,
+        mission_state=MissionState.VERIFYING,
     )
 
     # -------------------------------------------------------------------------

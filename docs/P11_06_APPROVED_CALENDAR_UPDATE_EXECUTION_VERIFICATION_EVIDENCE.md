@@ -26,9 +26,9 @@
   - Subject: `start_time`, Operator: `EQUALS`, Expected: `2026-10-09T07:30:00+03:00`
   - Predicate Truth: `PredicateTruth.TRUE` (`is_true=True`)
 - **Lawful Verification & Readiness Promotion**:
-  - `is_verified == True`
-  - `is_ready == True`
-  - Promoted strictly because all required conditions are satisfied: execution success + write == 1 + read-back match + predicate true
+  - `is_verified == True` for action-level execution
+  - `is_ready == True` ONLY when canonical mission lifecycle requirements are satisfied (`MissionState.VERIFYING`, all mission predicates TRUE, fresh observations, and durable ledger backing)
+  - Action verification and mission readiness are strictly decoupled: `is_ready` is NEVER inferred from `is_verified` alone; non-durable or DRAFT/PLANNED/EXECUTING states strictly report `is_ready == False`
 - **Durable Action Receipt**:
   - `ApprovedActionReceipt` created and validated with deep immutability (`MappingProxyType`)
   - Captures complete before-state (`start_time: 2026-10-09T07:45:00+03:00`) and after-state (`start_time: 2026-10-09T07:30:00+03:00`)
@@ -57,15 +57,47 @@ StillDone enforces the foundational invariant:
 1. **Validate Canonical Action**: Validate action contract, exact target identity (`google_calendar`, `calendar_event`, `evt_leave_for_school_001`), and normalized parameters against frozen P-11.01 policy (`REVERSIBLE_APPROVAL_REQUIRED`).
 2. **Require Bound Approval**: Verify presence of valid `ApprovalGrant` cryptographically bound to mission, action, target, parameters, and validity window.
 3. **Validate Grant Invariants**: Verify grant expiry, not-yet-valid timestamps, authority class, and 64-char hex `BindingHash`.
-4. **Atomic Consumption**: Atomically consume grant in `ApprovalLedger` before dispatching to provider.
-5. **Fail-Closed Persistence**: If consumption persistence in ledger fails, abort immediately with zero provider invocations and zero writes.
-6. **Execution Attempt**: Generate one canonical `ExecutionAttempt` (`attempt_number=1`).
+4. **Execution Attempt Preparation**: Generate and validate canonical `ExecutionAttempt` (`attempt_number=1`) before ledger mutation.
+5. **Atomic Consumption**: Atomically consume grant in `ApprovalLedger` before dispatching to provider.
+6. **Fail-Closed Persistence**: If consumption persistence in ledger fails, abort immediately with zero provider invocations and zero writes.
 7. **Single Provider Dispatch**: Dispatch conditional update through `GoogleCalendarUpdateAdapter` with matching `If-Match` ETag.
 8. **Preserve External Facts**: Record actual provider response without fabricating external IDs.
 9. **Separate Independent Read-Back**: Execute a fresh read query via `GoogleCalendarReadAdapter` (never recycling provider response).
 10. **Deterministic Predicate Evaluation**: Evaluate `DesiredStatePredicate` against fresh read observation using deterministic verification.
-11. **Durable Evidence Persistence**: Append attempt, readback, predicate, and receipt evidence records to mission ledger.
-12. **Lawful Promotion**: Transition to `VERIFIED` and `READY` only when all lifecycle, evidence, and freshness invariants are met.
+11. **Durable Evidence Persistence**: Append attempt, readback, predicate, and receipt evidence records to mission ledger; raise `ApprovedExecutionPersistenceError` fail-closed if ledger append fails.
+12. **Lawful Promotion**: Transition to action `is_verified` and evaluate canonical mission readiness via `compute_mission_readiness` only when full mission lifecycle, predicates, and durable ledger backing are present.
+
+### 2.2 Consolidated Execution-Truth Repairs
+The audited implementation underwent six comprehensive architectural repairs to guarantee uncompromising execution truth:
+
+1. **Decouple Action Verification from Mission Readiness**:
+   - Eliminated `is_ready = is_verified` conflation.
+   - Action verification proves external state mutation and predicate satisfaction for one action.
+   - Mission readiness requires canonical `compute_mission_readiness`, `MissionState.VERIFYING`, all mission predicates satisfied, fresh observations, and durable ledger backing.
+   - Missions in `DRAFT`, `PLANNED`, or `EXECUTING` states, or lacking durable ledger backing, strictly report `is_ready = False`.
+
+2. **Observation Conflict Detection & Strict Binding**:
+   - Coordinator read and `GoogleCalendarReadbackVerifier` read are cross-validated.
+   - Any successive discrepancy between the post-execution reads raises `ConflictingReadbackObservationError` fail-closed.
+   - Authoritative verifier observation is the single bound source of truth for predicate evaluation and durable receipt.
+
+3. **Attempt Generation vs Consumption Ordering**:
+   - `ExecutionAttempt` is prepared and validated *before* atomic consumption in `ApprovalLedger`.
+   - Pre-dispatch validation or attempt creation failure aborts before consumption, preserving unconsumed grant status.
+   - Consumption strictly precedes provider network dispatch; ambiguous provider outcomes or timeouts preserve consumed status without improper refund.
+
+4. **Mandatory Measured Provider Facts & Delta Tracking**:
+   - Synthetic fallback (`writes = 1 if success else 0`) completely eliminated.
+   - `CalendarMutationSpy` automatically discovers adapter transport and tracks delta writes (`current - initial`).
+   - Truthfully reports 0 writes on idempotent no-ops or provider failures without fabrication.
+
+5. **Receipt & Ledger Truth**:
+   - Non-durable action execution (`is_durable=False`) distinguished from durable mission proof (`is_durable=True`).
+   - Lineage verified against public `ApprovalLedger.get_record()` API.
+   - Durable persistence failure wraps in `ApprovedExecutionPersistenceError` preserving executed provider write truth.
+
+6. **Live Google Calendar Safety Gate**:
+   - Maintained strict `LIVE_MUTATION = NOT_RUN / BLOCKED` ($0.00 personal spend).
 
 ---
 
@@ -85,10 +117,17 @@ StillDone enforces the foundational invariant:
 | **Wrong Target Grant** | Binding check against action target | `ApprovalBindingMismatchError` raised | 0 | PASS |
 | **Model Prose ("yes")** | Model prose confers zero authority | `TypeError` raised fail-closed | 0 | PASS |
 | **Planner Proposal Object** | Proposal rejected at authority gate | `PlannerGateAuthorityError` raised | 0 | PASS |
-| **Persistence Failure** | Ledger append error fails closed | `ApprovalConsumptionPersistenceError` raised | 0 | PASS |
+| **Consumption Persistence Failure** | Ledger append error fails closed | `ApprovalConsumptionPersistenceError` raised | 0 | PASS |
 | **ETag Mismatch / Conflict** | Precondition check prevents blind overwrite | Provider reports `CONFLICT`, gate reports `EXECUTION_FAILED` | 0 | PASS |
 | **Read-Back Mismatch** | Fresh read contradicts desired predicate | `readback=MISMATCH`, `predicate=FALSE`, `is_verified=False`, `is_ready=False` | 1 | PASS |
 | **Chronological Inversion** | After-read earlier than before-read | `ExecutionGateValueError` raised | 0 | PASS |
+| **Observation Discrepancy** | Post-execution reads contradict | `ConflictingReadbackObservationError` raised | 1 | PASS |
+| **Attempt Generation Failure** | Pre-dispatch attempt preparation fails | Exception raised, grant unconsumed | 0 | PASS |
+| **Contradictory Instrumentation** | Router vs handler invocation mismatch | `ExecutionGateValueError` raised | 0 | PASS |
+| **Durable Ledger Persistence Error** | Evidence record append fails post-mutation | `ApprovedExecutionPersistenceError` wraps and preserves write count | 1 | PASS |
+| **Draft / Non-Durable Mission** | Action verified without durable ready context | `is_verified=True`, `is_ready=False`, `is_durable=False` | 1 | PASS |
+| **Timeout After Write** | Ambiguous timeout post-write | Preserves consumed status without improper refund | 1 | PASS |
+| **Idempotent No-Op** | Mutation yields zero writes | Truthfully reports `writes=0`, `writes_performed=0` | 0 | PASS |
 
 ---
 
@@ -140,43 +179,38 @@ Implementation authorization for P-11.06 does NOT constitute authorization for u
 
 ### Deterministic Proof Script
 ```bash
-uv run python scripts/p11_06_proof.py
+uv run python scripts/p11_06_proof.py --json
 ```
 Output:
-```
-======================================================================
-P-11.06 PROOF: APPROVED CALENDAR UPDATE EXECUTES ONCE AND VERIFIES
-======================================================================
-Task:                         P-11.06 -- Prove approved Calendar update executes once and verifies
-Current Git SHA:              864cfa4e2b47ade72d1f4095e78e06f309372320
-Parent Verified SHA:          864cfa4e2b47ade72d1f4095e78e06f309372320
-Worktree Clean:               False
-Source Provenance:            LOCAL_DIRTY_WORKTREE
-Target Event:                 evt_leave_for_school_001
-Calendar ID:                  c_1880abc123demo@group.calendar.google.com
-Authority Class:              REVERSIBLE_APPROVAL_REQUIRED
-Approval ID:                  1c8c1207-6d83-4d55-932e-344ed82f0acd
-Binding Hash:                 fe9ce873927fc265... (valid 64-char hex)
-Approval Consumption:         CONSUMED
-Execution Gate Status:        EXECUTION_SUCCEEDED
-Provider Writes Performed:    1
-Total Transport Writes:       1
-Before Start Time:            2026-10-09T07:45:00+03:00
-After Start Time:             2026-10-09T07:30:00+03:00
-Readback Status:              MATCH
-Predicate Truth:              TRUE
-Verified Outcome:             True
-Mission Ready State:          True
-Replay Blocked (Zero Writes): True
-Durable Hydration Reload:     True
-Live Mutation Gate Status:    NOT_RUN / BLOCKED
-Live Mutation Gate Reason:    Per-event human operator approval for exact disposable event ID absent; headless test environment contains no OAuth tokens; zero personal spend law strictly enforces $0.00.
-======================================================================
-PROOF CHAIN VERIFIED: APPROVED EXECUTION & INDEPENDENT VERIFICATION PROVEN CONCLUSIVELY.
-======================================================================
+```json
+{
+  "task": "P-11.06 -- Prove approved Calendar update executes once and verifies",
+  "target_event_id": "evt_leave_for_school_001",
+  "calendar_id": "c_1880abc123demo@group.calendar.google.com",
+  "authority_classification": "REVERSIBLE_APPROVAL_REQUIRED",
+  "consumption_status": "CONSUMED",
+  "execution_status": "EXECUTION_SUCCEEDED",
+  "provider_writes_performed": 1,
+  "total_transport_writes": 1,
+  "before_start_time": "2026-10-09T07:45:00+03:00",
+  "after_start_time": "2026-10-09T07:30:00+03:00",
+  "readback_status": "MATCH",
+  "predicate_truth": "TRUE",
+  "is_verified": true,
+  "is_ready": true,
+  "replay_prevention_verified": true,
+  "durable_hydration_verified": true,
+  "live_gate_status": {
+    "status": "NOT_RUN / BLOCKED",
+    "reason": "Per-event human operator approval for exact disposable event ID absent; headless test environment contains no OAuth tokens; zero personal spend law strictly enforces $0.00.",
+    "live_mutation_permitted": false,
+    "live_writes_performed": 0
+  }
+}
 ```
 
 ### Pytest Suite
-- `tests/test_phase_p11_06_approved_calendar_update.py`: 18 tests passing (100%)
-- Full Phase P-11 suite: 324 tests passing (100%)
-- Core regression suite: 1996+ tests passing
+- `tests/test_phase_p11_06_approved_calendar_update.py`: 34 tests passing (100%)
+- Core regression suite: 2,011 tests passing (100%)
+- Strands planner suite: 1,155 tests passing (100%)
+- Combined dual-runtime validation: 3,166 tests passing across both runtimes (`scripts/validate.py`)

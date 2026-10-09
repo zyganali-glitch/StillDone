@@ -84,11 +84,12 @@ Status:
 - P-11.03: CLOSED — independent QA PASS ✅ (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`)
 - P-11.04: CLOSED — independent QA PASS ✅ (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`)
 - P-11.05: CLOSED — independent QA PASS ✅ (Verified closure SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
-- P-11.06: IMPLEMENTED (18/18 tests, proof script passing; awaiting independent QA review)
+- P-11.06: REPAIRED (Consolidated Execution-Truth Repair complete; 34/34 tests, proof script passing; awaiting independent QA review)
 - P-12+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`
-Current exact task: P-11.06 — Prove approved Calendar update executes once and verifies (IMPLEMENTED / awaiting independent QA review)
+Audited implementation SHA: `cb3a9d70f781ad5f7b59297b9445e2ccedf58a57`
+Current exact task: P-11.06 — Prove approved Calendar update executes once and verifies (REPAIRED / awaiting independent QA review)
 Next exact task: Independent QA audit for P-11.06
 
 Architecture Truth — Dependency Isolation:
@@ -255,15 +256,15 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Last independently VERIFIED contiguous SHA
 
-`4ec4475f006207ec5840880bb9476f6d169442cd`
+`864cfa4e2b47ade72d1f4095e78e06f309372320`
 
 ## Current exact task
 
-P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval (REPAIRED / awaiting independent QA).
+P-11.06 — Prove approved Calendar update executes once and verifies (REPAIRED / awaiting independent QA review).
 
 ## Next exact task
 
-Independent QA audit for P-11.05 (P-11.06 remains PENDING / NOT AUTHORIZED / NOT_RUN).
+Independent QA audit for P-11.06 (P-12+ remains PENDING / NOT AUTHORIZED / NOT_RUN).
 
 ---
 
@@ -287,17 +288,20 @@ Independent QA audit for P-11.05 (P-11.06 remains PENDING / NOT AUTHORIZED / NOT
   - Tested with 75 comprehensive adversarial and canonical unit tests in `tests/test_phase_p11_02_pending_approval.py`.
 - **P-11.03 — Bind approval to exact mission/action/target/parameters/expiry**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`).
 - **P-11.04 — Reject stale, mismatched, replayed, or already-used approvals**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`).
-- **P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval**: `REPAIRED (Consolidated Defects 1–5 complete) / awaiting independent QA`.
+- **P-11.05 — Prove Calendar existing-event update remains NOT_RUN before approval**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`).
   - Proves unapproved `CALENDAR_UPDATE` halts immediately at execution authority gate returning `ActionExecutionStatus.NOT_RUN` with `is_authorized=False` and `attempt=None`.
-  - Defect 1: Strictly enforced monotonic observation chronology (`before_read.read_at <= gate_decision.evaluated_at <= after_read.read_at`), non-identical timestamps, distinct observation instances, and timezone awareness across all observation timestamps.
-  - Defect 2: Approval ledger identity & bounds: eliminated invalid `PendingApprovalId` lookups as `ApprovalId`; accurately bounded negative proof to: no `ApprovalGrant` supplied, zero approval-consumption operations in `ApprovalLedger` for target action, and no authorization granted; absent ledger (`ledger=None`) fails closed.
-  - Defect 3: Provider mutation instrumentation: `CalendarMutationSpy` instruments all three mutation entry points (router, handler, transport update_event); separates method entry count from writes count; validates all entry points and writes are strictly 0; rejects contradictory observations.
-  - Defect 4: Source provenance & exact-SHA proof: runtime validation under `python -O` via `ProofVerificationError`; `--expected-sha` verified against clean worktree (`COMMITTED_SOURCE`); dirty worktree rejected fail-closed; CI suite executes proof with checked-out HEAD.
-  - Defect 5: Privacy & state integrity: recursive redaction across nested mappings, lists, tuples, and sets; hostile sentinels tested and absent; synchronous router/provider exceptions trapped in `execute_gated_action` to record `EXECUTION_FAILED`, preventing misleading terminal-looking `IN_PROGRESS` states.
-  - External event state unchanged across bounded observed fields (`summary`, `start_time`, `end_time`, `all_day`, `etag`, `status`) on `FakeGoogleCalendarTransport`.
+  - Enforced monotonic observation chronology, strictly separated public `ApprovalLedger` queries, instrumented provider mutations via `CalendarMutationSpy`, runtime exact-SHA source validation, and recursive redaction.
   - Zero personal spend ($0.00 observed API spend); zero live writes.
-- **P-11.06+: PENDING / NOT AUTHORIZED / NOT_RUN**.
-- **Last independently VERIFIED contiguous SHA**: `4ec4475f006207ec5840880bb9476f6d169442cd`.
+- **P-11.06 — Prove approved Calendar update executes once and verifies**: `REPAIRED (Consolidated Execution-Truth Repair complete) / awaiting independent QA review` (Audited implementation SHA: `cb3a9d70f781ad5f7b59297b9445e2ccedf58a57`).
+  - Repair 1: Decoupled action verification from mission readiness; `is_ready = is_verified` conflation removed; canonical `compute_mission_readiness` invoked; missions in `DRAFT`, `PLANNED`, `EXECUTING`, or non-durable ledger context produce `is_ready=False`.
+  - Repair 2: Observation conflict handling; post-execution coordinator read and verifier read cross-validated; successive discrepancies raise `ConflictingReadbackObservationError` fail-closed; verifier observation bound as single authoritative source.
+  - Repair 3: Attempt preparation and validation precedes atomic `ledger.consume()`; invalid attempts leave grant unconsumed; ambiguous provider timeout preserves consumed grant without improper refund.
+  - Repair 4: Measured provider facts integrity; synthetic fallback eliminated; `CalendarMutationSpy` automatically discovers adapter transport and tracks delta writes (`current - initial`); supports truthful 0-write outcomes.
+  - Repair 5: Receipt and ledger truth; non-durable action execution (`is_durable=False`) distinguished from durable mission proof (`is_durable=True`); ledger append failure raises `ApprovedExecutionPersistenceError` preserving write count.
+  - Repair 6: Live Google Calendar gate truthfully reported as `NOT_RUN / BLOCKED` ($0.00 personal spend maintained).
+  - 34/34 tests passing in `tests/test_phase_p11_06_approved_calendar_update.py`. Proof script passes under standard, `python -O`, and `--json` modes.
+- **P-12+: PENDING / NOT AUTHORIZED / NOT_RUN**.
+- **Last independently VERIFIED contiguous SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`.
 
 ### Phase P-10 Closure Summary
 Phase P-10 (Idempotency, Retry & Recovery) successfully closed with independent QA PASS:
