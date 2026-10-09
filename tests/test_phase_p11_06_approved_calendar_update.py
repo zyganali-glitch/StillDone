@@ -2230,7 +2230,7 @@ class TestPhaseP1106TruthRepairAdversarialAndRegressions:
 
         monkeypatch.setattr(durable_ledger, "append_evidence", selective_append)
 
-        with pytest.raises(ExecutionGateValueError) as exc_info:
+        with pytest.raises(ApprovedExecutionPersistenceError) as exc_info:
             execute_approved_calendar_update(
                 action,
                 test_router,
@@ -2242,8 +2242,11 @@ class TestPhaseP1106TruthRepairAdversarialAndRegressions:
                 mission_ledger=durable_ledger,
             )
 
-        assert "Approval consumption evidence" in str(exc_info.value)
+        assert "approval consumption evidence" in str(exc_info.value).lower()
         assert "missing from canonical mission ledger" in str(exc_info.value)
+        assert exc_info.value.provider_result.writes_performed == 1
+        assert exc_info.value.attempt.attempt_number == 1
+        assert appr_ledger.is_consumed(grant.approval_id) is True
 
     def test_process_local_approval_ledger_with_durable_mission_ledger_not_durable(
         self,
@@ -2773,3 +2776,367 @@ class TestPhaseP1106TruthRepairAdversarialAndRegressions:
             spy.observe()
 
         assert "decreased or reset" in str(exc_info.value)
+
+    def test_post_dispatch_timeout_durable_recovery_and_zero_duplicate_write(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        seeded_calendar_transport: FakeGoogleCalendarTransport,
+        tmp_path: Path,
+    ) -> None:
+        """One Calendar write succeeds, router raises TimeoutError afterward.
+
+        Proves:
+        1. Exception is caught, P-10 uncertainty evidence is persisted in durable ledger.
+        2. In new process/session, approval is consumed and uncertainty is reconstructed.
+        3. No second write occurs (zero duplicate write).
+        """
+        from stilldone.recovery.continuity import reconstruct_action_recovery_state
+
+        durable_ledger = DurableFileLedger(tmp_path / "ledger.jsonl")
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        _seed_verifying_mission_and_action(durable_ledger, action, grant.approval_id)
+        appr_ledger = ApprovalLedger(ledger=durable_ledger)
+
+        orig_execute = test_router.execute
+
+        def execute_write_then_timeout(*args: Any, **kwargs: Any) -> Any:
+            orig_execute(*args, **kwargs)
+            raise TimeoutError("Simulated network timeout after provider write")
+
+        test_router.execute = execute_write_then_timeout  # type: ignore[method-assign]
+
+        try:
+            with pytest.raises(TimeoutError) as exc_info:
+                execute_approved_calendar_update(
+                    action,
+                    test_router,
+                    grant,
+                    appr_ledger,
+                    calendar_read_adapter,
+                    predicate,
+                    source_sha=DUMMY_SOURCE_SHA,
+                    mission_ledger=durable_ledger,
+                )
+            assert "timeout after provider write" in str(exc_info.value)
+        finally:
+            test_router.execute = orig_execute  # type: ignore[method-assign]
+
+        # Single write was executed on transport
+        assert seeded_calendar_transport.writes_count == 1
+
+        # Reload in a new process/session representation
+        durable_ledger2 = DurableFileLedger(tmp_path / "ledger.jsonl")
+        appr_ledger2 = ApprovalLedger.from_ledger(durable_ledger2)
+
+        # Check approval consumption survives reload
+        assert appr_ledger2.is_consumed(grant.approval_id) is True
+        with pytest.raises(ApprovalAlreadyUsedError):
+            appr_ledger2.consume(grant, action, at=datetime.now(UTC), attempt_number=1)
+
+        # Check recoverable uncertainty via reconstruct_action_recovery_state
+        recovery_state = reconstruct_action_recovery_state(action=action, ledger=durable_ledger2)
+        assert recovery_state.prior_attempt_count == 1
+        assert recovery_state.is_ambiguous_outcome is True
+        assert recovery_state.requires_verification_before_retry is True
+
+        # Evidence checks
+        evs = durable_ledger2.get_evidence_for_action(action.action_id)
+        ev_types = [ev.payload.get("evidence_type") for ev in evs]
+        assert "EXECUTION_ATTEMPT" in ev_types
+        assert "UNCERTAIN_POST_EXECUTION_FAILURE" in ev_types
+
+        # Prove no second write occurs upon attempted re-execution
+        with pytest.raises(ApprovalAlreadyUsedError):
+            execute_approved_calendar_update(
+                action,
+                test_router,
+                grant,
+                appr_ledger2,
+                calendar_read_adapter,
+                predicate,
+                source_sha=DUMMY_SOURCE_SHA,
+                mission_ledger=durable_ledger2,
+            )
+        assert seeded_calendar_transport.writes_count == 1
+
+    def test_exception_before_provider_dispatch_creates_no_completed_mutation_evidence(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        seeded_calendar_transport: FakeGoogleCalendarTransport,
+        tmp_path: Path,
+    ) -> None:
+        """Exception before provider dispatch creates no execution attempt or completed mutation."""
+        durable_ledger = DurableFileLedger(tmp_path / "ledger.jsonl")
+        action = _make_calendar_update_action()
+        t_past = datetime.now(UTC) - timedelta(hours=2)
+        expired_grant = _make_bound_approval_grant(
+            action, issued_at=t_past, expires_at=t_past + timedelta(minutes=10)
+        )
+        predicate = _make_predicate(action)
+        _seed_verifying_mission_and_action(durable_ledger, action, expired_grant.approval_id)
+        appr_ledger = ApprovalLedger(ledger=durable_ledger)
+
+        with pytest.raises(ApprovalExpiredError):
+            execute_approved_calendar_update(
+                action,
+                test_router,
+                expired_grant,
+                appr_ledger,
+                calendar_read_adapter,
+                predicate,
+                source_sha=DUMMY_SOURCE_SHA,
+                mission_ledger=durable_ledger,
+            )
+
+        # Verify zero writes performed
+        assert seeded_calendar_transport.writes_count == 0
+
+        # Verify no execution attempt or uncertain failure evidence in ledger
+        evs = durable_ledger.get_evidence_for_action(action.action_id)
+        ev_types = [ev.payload.get("evidence_type") for ev in evs]
+        assert "EXECUTION_ATTEMPT" not in ev_types
+        assert "UNCERTAIN_POST_EXECUTION_FAILURE" not in ev_types
+        assert "APPROVED_CALENDAR_UPDATE_RECEIPT" not in ev_types
+
+    def test_injected_missing_approval_evidence_after_dispatch_preserves_attempt_and_blocks_replay(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        seeded_calendar_transport: FakeGoogleCalendarTransport,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When approval evidence is missing after dispatch, attempt is kept and replay blocked."""
+        durable_ledger = DurableFileLedger(tmp_path / "ledger.jsonl")
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        _seed_verifying_mission_and_action(durable_ledger, action, grant.approval_id)
+        appr_ledger = ApprovalLedger(ledger=durable_ledger)
+
+        orig_append = durable_ledger.append_evidence
+
+        def selective_append(record: EvidenceRecord) -> None:
+            p = (
+                record.payload.to_dict()
+                if hasattr(record.payload, "to_dict")
+                else dict(record.payload)
+            )
+            # Omit consumption evidence to simulate missing record
+            if p.get("evidence_type") == APPROVAL_CONSUMPTION_EVIDENCE_TYPE:
+                return
+            orig_append(record)
+
+        monkeypatch.setattr(durable_ledger, "append_evidence", selective_append)
+
+        with pytest.raises(ApprovedExecutionPersistenceError) as exc_info:
+            execute_approved_calendar_update(
+                action,
+                test_router,
+                grant,
+                appr_ledger,
+                calendar_read_adapter,
+                predicate,
+                source_sha=DUMMY_SOURCE_SHA,
+                mission_ledger=durable_ledger,
+            )
+
+        # Check preserved provider and attempt facts
+        assert exc_info.value.provider_result.writes_performed == 1
+        assert exc_info.value.attempt.attempt_number == 1
+        assert "missing from canonical mission ledger" in str(exc_info.value)
+
+        # Check durable ledger has EXECUTION_ATTEMPT and EVIDENCE_INTEGRITY_FAILURE
+        evs = durable_ledger.get_evidence_for_action(action.action_id)
+        ev_types = [ev.payload.get("evidence_type") for ev in evs]
+        assert "EXECUTION_ATTEMPT" in ev_types
+        assert "EVIDENCE_INTEGRITY_FAILURE" in ev_types
+
+        # Check replay is not authorized
+        assert appr_ledger.is_consumed(grant.approval_id) is True
+        assert seeded_calendar_transport.writes_count == 1
+
+    def test_receipt_factory_rejects_missing_predicate(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        approval_ledger: ApprovalLedger,
+    ) -> None:
+        """Receipt factory rejects missing predicate with ExecutionGateValueError."""
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        outcome = execute_approved_calendar_update(
+            action,
+            test_router,
+            grant,
+            approval_ledger,
+            calendar_read_adapter,
+            predicate,
+            source_sha=DUMMY_SOURCE_SHA,
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_approved_action_receipt(
+                gate_decision=outcome.gate_decision,
+                action=action,
+                approval=grant,
+                consumption_record=outcome.consumption_record,
+                before_read=outcome.before_read,
+                after_read=outcome.after_read,
+                readback_result=outcome.readback_result,
+                predicate_result=outcome.predicate_result,
+                predicate=None,  # Missing predicate!
+                source_sha=DUMMY_SOURCE_SHA,
+                ledger=approval_ledger,
+                mutation_observation=outcome.mutation_observation,
+            )
+
+        assert "Canonical DesiredStatePredicate is mandatory" in str(exc_info.value)
+
+    def test_receipt_factory_rejects_foreign_predicate_mission(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        approval_ledger: ApprovalLedger,
+    ) -> None:
+        """Receipt factory rejects predicate bound to a different mission ID."""
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        outcome = execute_approved_calendar_update(
+            action,
+            test_router,
+            grant,
+            approval_ledger,
+            calendar_read_adapter,
+            predicate,
+            source_sha=DUMMY_SOURCE_SHA,
+        )
+
+        foreign_pred = DesiredStatePredicate.create(
+            mission_id=MissionId.generate(),  # foreign mission
+            subject="start_time",
+            operator=PredicateOperator.EQUALS,
+            expected_value="2026-10-09T07:30:00+03:00",
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_approved_action_receipt(
+                gate_decision=outcome.gate_decision,
+                action=action,
+                approval=grant,
+                consumption_record=outcome.consumption_record,
+                before_read=outcome.before_read,
+                after_read=outcome.after_read,
+                readback_result=outcome.readback_result,
+                predicate_result=outcome.predicate_result,
+                predicate=foreign_pred,
+                source_sha=DUMMY_SOURCE_SHA,
+                ledger=approval_ledger,
+                mutation_observation=outcome.mutation_observation,
+            )
+
+        assert "predicate mission_id does not match" in str(exc_info.value)
+
+    def test_receipt_factory_rejects_mismatched_predicate_id(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        approval_ledger: ApprovalLedger,
+    ) -> None:
+        """Receipt factory rejects when predicate_result.predicate_id does not match predicate."""
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        outcome = execute_approved_calendar_update(
+            action,
+            test_router,
+            grant,
+            approval_ledger,
+            calendar_read_adapter,
+            predicate,
+            source_sha=DUMMY_SOURCE_SHA,
+        )
+
+        # Mismatched predicate result with foreign predicate_id
+        mismatched_result = PredicateEvaluationResult(
+            predicate_id=PredicateId.generate(),  # Different ID!
+            truth=PredicateTruth.TRUE,
+            subject=predicate.subject,
+            operator=predicate.operator,
+            expected_value=predicate.expected_value,
+            observed_value=outcome.predicate_result.observed_value,
+            evaluated_at=outcome.predicate_result.evaluated_at,
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_approved_action_receipt(
+                gate_decision=outcome.gate_decision,
+                action=action,
+                approval=grant,
+                consumption_record=outcome.consumption_record,
+                before_read=outcome.before_read,
+                after_read=outcome.after_read,
+                readback_result=outcome.readback_result,
+                predicate_result=mismatched_result,
+                predicate=predicate,
+                source_sha=DUMMY_SOURCE_SHA,
+                ledger=approval_ledger,
+                mutation_observation=outcome.mutation_observation,
+            )
+
+        assert "predicate_result predicate_id does not match" in str(exc_info.value)
+
+    def test_receipt_factory_rejects_contradictory_observed_value(
+        self,
+        test_router: AdapterRouter,
+        calendar_read_adapter: GoogleCalendarReadAdapter,
+        approval_ledger: ApprovalLedger,
+    ) -> None:
+        """Receipt factory rejects when predicate_result contradicts readback observation."""
+        action = _make_calendar_update_action()
+        grant = _make_bound_approval_grant(action)
+        predicate = _make_predicate(action)
+        outcome = execute_approved_calendar_update(
+            action,
+            test_router,
+            grant,
+            approval_ledger,
+            calendar_read_adapter,
+            predicate,
+            source_sha=DUMMY_SOURCE_SHA,
+        )
+
+        # Contradictory observed_value in predicate result
+        contradictory_result = PredicateEvaluationResult(
+            predicate_id=predicate.predicate_id,
+            truth=PredicateTruth.TRUE,
+            subject=predicate.subject,
+            operator=predicate.operator,
+            expected_value=predicate.expected_value,
+            observed_value="2026-10-09T09:00:00+03:00",  # Contradicts readback observation (07:30)!
+            evaluated_at=outcome.predicate_result.evaluated_at,
+        )
+
+        with pytest.raises(ExecutionGateValueError) as exc_info:
+            create_approved_action_receipt(
+                gate_decision=outcome.gate_decision,
+                action=action,
+                approval=grant,
+                consumption_record=outcome.consumption_record,
+                before_read=outcome.before_read,
+                after_read=outcome.after_read,
+                readback_result=outcome.readback_result,
+                predicate_result=contradictory_result,
+                predicate=predicate,
+                source_sha=DUMMY_SOURCE_SHA,
+                ledger=approval_ledger,
+                mutation_observation=outcome.mutation_observation,
+            )
+
+        assert "contradicts readback observation" in str(exc_info.value)

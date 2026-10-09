@@ -84,11 +84,11 @@ Status:
 - P-11.03: CLOSED — independent QA PASS ✅ (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`)
 - P-11.04: CLOSED — independent QA PASS ✅ (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`)
 - P-11.05: CLOSED — independent QA PASS ✅ (Verified closure SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
-- P-11.06: REPAIRED (Consolidated Execution-Truth Repair complete; 34/34 tests, proof script passing; awaiting independent QA review)
+- P-11.06: REPAIRED (Phase-Exit Evidence Continuity Repair complete; 60/60 tests, proof script passing; awaiting independent QA review)
 - P-12+: PENDING / NOT AUTHORIZED / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`
-Audited implementation SHA: `cb3a9d70f781ad5f7b59297b9445e2ccedf58a57`
+Audited remote baseline SHA: `b85f03b878eabede6d0e13798afa003fff40a603`
 Current exact task: P-11.06 — Prove approved Calendar update executes once and verifies (REPAIRED / awaiting independent QA review)
 Next exact task: Independent QA audit for P-11.06
 
@@ -292,13 +292,16 @@ Independent QA audit for P-11.06 (P-12+ remains PENDING / NOT AUTHORIZED / NOT_R
   - Proves unapproved `CALENDAR_UPDATE` halts immediately at execution authority gate returning `ActionExecutionStatus.NOT_RUN` with `is_authorized=False` and `attempt=None`.
   - Enforced monotonic observation chronology, strictly separated public `ApprovalLedger` queries, instrumented provider mutations via `CalendarMutationSpy`, runtime exact-SHA source validation, and recursive redaction.
   - Zero personal spend ($0.00 observed API spend); zero live writes.
-- **P-11.06 — Prove approved Calendar update executes once and verifies**: `REPAIRED (Phase-Exit Truth Repair complete) / awaiting independent QA review` (Starting remote SHA: `86d7c5facf003a15e47de65c6e5c6629d7175844`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`).
+- **P-11.06 — Prove approved Calendar update executes once and verifies**: `REPAIRED (Phase-Exit Evidence Continuity Repair complete) / awaiting independent QA review` (Starting remote SHA: `b85f03b878eabede6d0e13798afa003fff40a603`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`).
   - Repair 1 (Mission READY Authority): Separated action `is_verified=True` from mission `is_ready=False`; caller-supplied context cannot declare durable READY without canonical persisted transition in durable mission ledger (deferred to P-12); unpersisted READY records `mission_ready_status="NOT_ESTABLISHED"` with `is_ready_claimed=False`; caller contradictions (persisted DRAFT vs supplied VERIFYING, omitted predicates, terminal states) rejected fail-closed.
   - Repair 2 (Durable Approval & Mission Evidence Binding): `ApprovalLedger` exposes public `ledger`; requires same durable backing (`approval_ledger.ledger is mission_ledger`); exact approval consumption record (`ApprovalRecord`) verified present in canonical mission ledger; process-local ledger + file ledger cannot claim durable approved completion (`is_durable=False`).
   - Repair 3 (External Effect Preservation Across Post-Dispatch Failures): Post-dispatch exceptions (read timeouts, verifier exceptions, conflicting successive read-backs, evidence append failures) preserve durable execution attempt and write facts (`UNCERTAIN_POST_EXECUTION_FAILURE` evidence) before re-raising; consumed grant is never refunded or duplicate-retried; sensitive data recursively redacted.
   - Repair 4 (Verified Receipt Lineage): `create_approved_action_receipt` binds read-back event and calendar ID to action target, binds predicate ID/subject/operator/expected value to canonical `DesiredStatePredicate`, requires identical observation timestamps, and rejects forged MATCH, foreign predicates, or unpersisted READY.
   - Repair 5 (Transport-Independent Mutation Measurement): `CalendarMutationSpy` tracks transport method invocations directly without assuming fixture `writes_count` (`fixture_writes_count: int | None = None`); counter resets or decrements fail closed with `ExecutionGateValueError` instead of masking with `max(0, delta)`.
-  - 53/53 tests passing in `tests/test_phase_p11_06_approved_calendar_update.py`. 359 tests passing across Phase P-11. Proof script `scripts/p11_06_proof.py` passes under standard, `python -O`, and `--json` modes.
+  - Repair 6 (Provider-Dispatch Exception Evidence Continuity): Wrapped `execute_gated_action` in exception guard inside `execute_approved_calendar_update`. If router or provider raises post-dispatch (e.g. timeout-after-write), P-10-compatible `EXECUTION_ATTEMPT` (`success=False`, error classification) and `UNCERTAIN_POST_EXECUTION_FAILURE` are appended to durable `mission_ledger`. Secondary persistence failures raise `ApprovedExecutionPersistenceError` wrapping provider/attempt facts instead of masking. Pre-dispatch exceptions create zero execution attempt or mutation records. Process reload confirms consumed approval, reconstructs recovery state (`prior_attempt_count=1`, `is_ambiguous_outcome=True`, `requires_verification_before_retry=True`), and rejects replay with zero duplicate writes.
+  - Repair 7 (Missing Durable Approval Evidence After Dispatch): If durable approval consumption record in `mission_ledger` is absent after dispatch, durable `EXECUTION_ATTEMPT` is recorded, `EVIDENCE_INTEGRITY_FAILURE` is appended to ledger, and `ApprovedExecutionPersistenceError` is raised fail-closed with `writes_performed=1` (preserving write truth and blocking replay).
+  - Repair 8 (Mandatory Canonical Predicate Binding in Receipt Factory): `create_approved_action_receipt` strictly enforces `predicate is not None` (`ExecutionGateValueError` raised if omitted). Validates predicate mission, predicate ID, operator, subject, expected value, and observation consistency.
+  - 60/60 tests passing in `tests/test_phase_p11_06_approved_calendar_update.py`. 366 tests passing across Phase P-11. Proof script `scripts/p11_06_proof.py` passes under standard, `python -O`, and `--json` modes. Core suite: 2,038 passing. Strands planner suite: 1,155 passing. Combined: 3,193 passing across dual runtimes.
 - **P-12+: PENDING / NOT AUTHORIZED / NOT_RUN**.
 - **Last independently VERIFIED contiguous SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`.
 

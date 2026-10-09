@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 
 - **Task**: `P-11.06 — Prove approved Calendar update executes once and verifies`
-- **Starting Audited Remote SHA**: `86d7c5facf003a15e47de65c6e5c6629d7175844`
+- **Starting Audited Remote SHA**: `b85f03b878eabede6d0e13798afa003fff40a603`
 - **Parent Verified SHA**: `864cfa4e2b47ade72d1f4095e78e06f309372320`
 - **Target Event Identity**: `evt_leave_for_school_001` on dedicated demo calendar `c_1880abc123demo@group.calendar.google.com`
 - **Action Type**: `ActionType.CALENDAR_UPDATE` (`calendar.update`)
@@ -101,6 +101,22 @@ The audited implementation underwent six comprehensive architectural repairs to 
 6. **Live Google Calendar Safety Gate**:
    - Maintained strict `LIVE_MUTATION = NOT_RUN / BLOCKED` ($0.00 personal spend).
 
+7. **Provider-Dispatch Exception Evidence Continuity**:
+   - Wrapped `execute_gated_action` in exception guard inside `execute_approved_calendar_update`.
+   - Post-dispatch exceptions (e.g. timeout-after-write) durably persist P-10-compatible `EXECUTION_ATTEMPT` (`success=False`, error classification) and `UNCERTAIN_POST_EXECUTION_FAILURE` into canonical `mission_ledger`.
+   - If secondary ledger persistence fails, raises `ApprovedExecutionPersistenceError` preserving write count and attempt facts rather than hiding the failure.
+   - Pre-dispatch failures (e.g. expired grant) create zero execution attempt or mutation evidence records.
+   - On process reload, approval consumption survives and `reconstruct_action_recovery_state` yields `prior_attempt_count=1`, `is_ambiguous_outcome=True`, and `requires_verification_before_retry=True`; replay attempts fail closed with zero duplicate writes.
+
+8. **Missing Durable Approval Evidence After Dispatch**:
+   - If durable approval consumption record in `mission_ledger` is absent after dispatch, durable `EXECUTION_ATTEMPT` is recorded, `EVIDENCE_INTEGRITY_FAILURE` is appended to ledger, and `ApprovedExecutionPersistenceError` is raised fail-closed with `writes_performed=1`.
+   - External mutation is not described as unexecuted; replay is blocked.
+
+9. **Mandatory Canonical Predicate Binding in Receipt Factory**:
+   - `create_approved_action_receipt` strictly requires `predicate is not None` (`ExecutionGateValueError` raised if omitted).
+   - Validates predicate mission, predicate ID, operator, subject, expected value, and read-back observation consistency.
+   - Enforces `is_ready_claimed=False` until a real persisted READY transition exists.
+
 ---
 
 ## 3. Exactly-Once & Adversarial Safety Matrix
@@ -112,6 +128,12 @@ The audited implementation underwent six comprehensive architectural repairs to 
 | **Same Grant Replay** | Single-use ledger enforces replay rejection | `ApprovalAlreadyUsedError` raised | 0 additional (1 total) | PASS |
 | **Process-Local Concurrency** | Process-local lock serializes consumption | Exactly 1 winner, 1 loser with `ApprovalAlreadyUsedError` | 1 | PASS |
 | **Durable Reload / Restart** | Hydration from file log retains consumed status | Replay in new session fails with `ApprovalAlreadyUsedError` | 0 additional (1 total) | PASS |
+| **Post-Dispatch Timeout Recovery** | Timeout after write persists P-10 uncertainty | Ledger reloaded: `is_ambiguous=True`, zero duplicate writes | 1 | PASS |
+| **Exception Before Dispatch** | Pre-dispatch validation failure aborts cleanly | Grant remains unconsumed, 0 attempt records, 0 writes | 0 | PASS |
+| **Missing Durable Approval Evidence** | Missing consumption record post-dispatch | `EVIDENCE_INTEGRITY_FAILURE` recorded, `writes=1` preserved | 1 | PASS |
+| **Missing Receipt Predicate** | Factory requires canonical predicate | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **Foreign Receipt Predicate** | Factory validates predicate mission and ID | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
+| **Contradictory Receipt Observation** | Factory checks observation against readback | `ExecutionGateValueError` raised fail-closed | 1 | PASS |
 | **Expired Grant** | Temporal validity check | `ApprovalExpiredError` raised | 0 | PASS |
 | **Not-Yet-Valid Grant** | Future timestamp rejected | `ApprovalNotYetValidError` raised | 0 | PASS |
 | **Revoked Grant** | Revocation check in ledger | `ApprovalRevokedError` raised | 0 | PASS |
@@ -225,8 +247,8 @@ Output:
 ```
 
 ### Pytest Suite
-- `tests/test_phase_p11_06_approved_calendar_update.py`: 53 tests passing (100%)
-- Phase P-11 suite: 359 tests passing (100%)
-- Core regression suite: 2,030 tests passing (100%)
+- `tests/test_phase_p11_06_approved_calendar_update.py`: 60 tests passing (100%)
+- Phase P-11 suite: 366 tests passing (100%)
+- Core regression suite: 2,038 tests passing (100%)
 - Strands planner suite: 1,155 tests passing (100%)
-- Combined dual-runtime validation: 3,185 tests passing across both runtimes (`scripts/validate.py`)
+- Combined dual-runtime validation: 3,193 tests passing across both runtimes (`scripts/validate.py`)

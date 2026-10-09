@@ -1265,7 +1265,7 @@ Acceptance:
 - P-11.06 approved execution path remains strictly PENDING / NOT AUTHORIZED / NOT_RUN (`NotImplementedError` enforced).
 
 ### P-11.06 — Prove approved Calendar update executes once and verifies
-Status: REPAIRED (Phase-Exit Truth Repair complete) / awaiting independent QA review (Starting remote SHA: `86d7c5facf003a15e47de65c6e5c6629d7175844`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
+Status: REPAIRED (Phase-Exit Evidence Continuity Repair complete) / awaiting independent QA review (Starting remote SHA: `b85f03b878eabede6d0e13798afa003fff40a603`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
 
 Acceptance:
 - Complete 12-step approved sequence executed: INTENT → CONTRACT → AUTHORITY → EXECUTE → INDEPENDENT READBACK → PREDICATE EVALUATION → VERIFIED;
@@ -1276,6 +1276,9 @@ Acceptance:
 - Repair 3 (External Effect Preservation Across Post-Dispatch Failures): post-dispatch exceptions (read timeouts, verifier exceptions, conflicting successive read-backs, evidence append failures) preserve durable execution attempt and write facts (`UNCERTAIN_POST_EXECUTION_FAILURE` evidence) before re-raising; consumed grant is never refunded or duplicate-retried; sensitive data recursively redacted;
 - Repair 4 (Verified Receipt Lineage): `create_approved_action_receipt` binds read-back event and calendar ID to action target, binds predicate ID/subject/operator/expected value to canonical `DesiredStatePredicate`, requires identical observation timestamps, and rejects forged MATCH, foreign predicates, or unpersisted READY;
 - Repair 5 (Transport-Independent Mutation Measurement): `CalendarMutationSpy` tracks transport method invocations directly without assuming fixture `writes_count` (`fixture_writes_count: int | None = None`); counter resets or decrements fail closed with `ExecutionGateValueError` instead of masking with `max(0, delta)`;
+- Repair 6 (Provider-Dispatch Exception Evidence Continuity): wrapped `execute_gated_action` in exception guard inside `execute_approved_calendar_update`; post-dispatch exceptions (e.g. timeout-after-write) persist P-10-compatible `EXECUTION_ATTEMPT` (`success=False`, error classification) and `UNCERTAIN_POST_EXECUTION_FAILURE` in durable `mission_ledger`; secondary persistence failures raise `ApprovedExecutionPersistenceError` wrapping provider/attempt facts instead of masking; pre-dispatch exceptions create zero execution attempt or mutation records; process reload confirms consumed approval, reconstructs recovery state (`prior_attempt_count=1`, `is_ambiguous_outcome=True`, `requires_verification_before_retry=True`), and rejects replay with zero duplicate writes;
+- Repair 7 (Missing Durable Approval Evidence After Dispatch): if durable approval consumption record in `mission_ledger` is absent after dispatch, durable `EXECUTION_ATTEMPT` is recorded, `EVIDENCE_INTEGRITY_FAILURE` is appended to ledger, and `ApprovedExecutionPersistenceError` is raised fail-closed with `writes_performed=1` (preserving write truth and blocking replay);
+- Repair 8 (Mandatory Canonical Predicate Binding in Receipt Factory): `create_approved_action_receipt` strictly enforces `predicate is not None` (`ExecutionGateValueError` raised if omitted); validates predicate mission, predicate ID, operator, subject, expected value, and observation consistency;
 - Dispatch exactly once through GoogleCalendarUpdateAdapter with matching If-Match ETag;
 - Negative control proof: provider success with read-back mismatch strictly results in `is_verified=False` and `is_ready=False`;
 - Replay prevention: replaying consumed grant fails closed with `ApprovalAlreadyUsedError` and 0 additional writes;
@@ -1284,7 +1287,7 @@ Acceptance:
 - Deep immutability enforced for `ApprovedActionReceipt` state summaries (`MappingProxyType`);
 - Live Google Calendar mutation gate truthfully reported as `NOT_RUN / BLOCKED` ($0.00 personal spend maintained);
 - Deterministic proof script `scripts/p11_06_proof.py` passing under standard, `python -O`, and `--json` modes;
-- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (53/53 tests, 359 tests across Phase P-11, 3,185 total dual-runtime tests passing across Core and Planner).
+- Comprehensive test suite `tests/test_phase_p11_06_approved_calendar_update.py` passing (60/60 tests, 366 tests across Phase P-11, 2,038 Core tests, 1,155 Planner tests, 3,193 total dual-runtime tests passing across Core and Planner).
 
 Phase exit:
 Phase P-11 implementation COMPLETE & REPAIRED — awaiting independent QA review. One meaningful approval replaces repeated confirmations.

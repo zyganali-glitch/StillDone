@@ -2163,29 +2163,29 @@ def create_approved_action_receipt(
             )
 
     # Predicate lineage and result checks
-    if predicate is not None:
-        if not isinstance(predicate, DesiredStatePredicate):
-            raise ExecutionGateTypeError(
-                f"predicate must be DesiredStatePredicate, got {type(predicate).__name__}"
-            )
-        if predicate.mission_id != actual_action.mission_id:
-            raise ExecutionGateValueError("predicate mission_id does not match action mission_id")
-        if predicate_result.predicate_id != predicate.predicate_id:
-            raise ExecutionGateValueError(
-                "predicate_result predicate_id does not match predicate predicate_id"
-            )
-        if predicate_result.operator != predicate.operator:
-            raise ExecutionGateValueError(
-                "predicate_result operator does not match predicate operator"
-            )
-        if predicate_result.expected_value != predicate.expected_value:
-            raise ExecutionGateValueError(
-                "predicate_result expected_value does not match predicate expected_value"
-            )
-        if predicate_result.subject != predicate.subject:
-            raise ExecutionGateValueError(
-                "predicate_result subject does not match predicate subject"
-            )
+    if predicate is None:
+        raise ExecutionGateValueError(
+            "Canonical DesiredStatePredicate is mandatory for verified receipt issuance"
+        )
+
+    if not isinstance(predicate, DesiredStatePredicate):
+        raise ExecutionGateTypeError(
+            f"predicate must be DesiredStatePredicate, got {type(predicate).__name__}"
+        )
+    if predicate.mission_id != actual_action.mission_id:
+        raise ExecutionGateValueError("predicate mission_id does not match action mission_id")
+    if predicate_result.predicate_id != predicate.predicate_id:
+        raise ExecutionGateValueError(
+            "predicate_result predicate_id does not match predicate predicate_id"
+        )
+    if predicate_result.operator != predicate.operator:
+        raise ExecutionGateValueError("predicate_result operator does not match predicate operator")
+    if predicate_result.expected_value != predicate.expected_value:
+        raise ExecutionGateValueError(
+            "predicate_result expected_value does not match predicate expected_value"
+        )
+    if predicate_result.subject != predicate.subject:
+        raise ExecutionGateValueError("predicate_result subject does not match predicate subject")
 
     # Predicate truth internal consistency
     if predicate_result.truth == PredicateTruth.TRUE:
@@ -2201,7 +2201,7 @@ def create_approved_action_receipt(
 
     # Authoritative observation consistency:
     # predicate observed_value must match readback observation
-    if predicate is not None and readback_result.observation is not None:
+    if readback_result.observation is not None:
         prop_name = predicate.subject.split(".")[-1]
         if hasattr(readback_result.observation, prop_name):
             obs_val = getattr(readback_result.observation, prop_name)
@@ -2535,6 +2535,99 @@ def execute_approved_calendar_update(
             at=norm_eval_at,
             ledger=ledger,
         )
+    except Exception as exc:
+        consumed_rec = ledger.get_record(approval.approval_id)
+        is_consumed = (
+            consumed_rec is not None and consumed_rec.status == ApprovalUsageStatus.CONSUMED
+        )
+        mutation_obs = active_spy.observe()
+        router_dispatched = mutation_obs.router_mutation_invocations > 0
+
+        if (is_consumed or router_dispatched) and mission_ledger is not None:
+            att_num = consumed_rec.attempt_number if consumed_rec else 1
+            from stilldone.recovery.retry import classify_error
+
+            try:
+                # Durably record P-10 compatible EXECUTION_ATTEMPT
+                ev_attempt = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
+                    payload={
+                        "evidence_type": "EXECUTION_ATTEMPT",
+                        "attempt_number": att_num,
+                        "action_id": str(actual_action.action_id),
+                        "mission_id": str(actual_action.mission_id),
+                        "action_type": actual_action.action_type.value,
+                        "success": False,
+                        "classification": classify_error(exc).value,
+                        "error_message": redact_text(str(exc)),
+                        "writes_performed": mutation_obs.transport_writes,
+                        "recorded_at": norm_eval_at.isoformat(),
+                    },
+                    created_at=norm_eval_at,
+                )
+                mission_ledger.append_evidence(ev_attempt)
+
+                # Durably record UNCERTAIN_POST_EXECUTION_FAILURE capturing mutation facts
+                ev_uncertain = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=provenance,
+                        observed_at=norm_eval_at,
+                    ),
+                    payload={
+                        "evidence_type": "UNCERTAIN_POST_EXECUTION_FAILURE",
+                        "attempt_number": att_num,
+                        "router_mutation_invocations": (mutation_obs.router_mutation_invocations),
+                        "transport_mutation_invocations": (
+                            mutation_obs.transport_mutation_invocations
+                        ),
+                        "transport_writes": mutation_obs.transport_writes,
+                        "error_type": type(exc).__name__,
+                        "error_message": redact_text(str(exc)),
+                    },
+                    created_at=norm_eval_at,
+                )
+                mission_ledger.append_evidence(ev_uncertain)
+            except Exception as persist_exc:
+                att_obj = create_execution_attempt(
+                    action_id=actual_action.action_id,
+                    attempt_number=att_num,
+                )
+                prov_res = ProviderExecutionResult(
+                    action_type=actual_action.action_type,
+                    success=False,
+                    status_name="TIMEOUT" if isinstance(exc, TimeoutError) else "FAILED",
+                    writes_performed=mutation_obs.transport_writes,
+                    error_message=redact_text(str(exc)),
+                )
+                dec = ExecutionGateDecision(
+                    action_id=actual_action.action_id,
+                    action_type=actual_action.action_type,
+                    authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+                    status=ActionExecutionStatus.EXECUTION_FAILED,
+                    is_authorized=True,
+                    reason=f"Dispatch failed: {type(exc).__name__}",
+                    evaluated_at=norm_eval_at,
+                    attempt=att_obj,
+                    provider_result=prov_res,
+                )
+                msg = (
+                    f"Provider dispatch failed with {type(exc).__name__} "
+                    f"({mutation_obs.transport_writes} writes observed), "
+                    f"and durable mission ledger uncertainty persistence failed: "
+                    f"{type(persist_exc).__name__}"
+                )
+                raise ApprovedExecutionPersistenceError(
+                    msg,
+                    provider_result=prov_res,
+                    attempt=att_obj,
+                    gate_decision=dec,
+                ) from persist_exc
+
+        raise
     finally:
         if installed_spy_locally:
             active_spy.uninstall()
@@ -2550,6 +2643,42 @@ def execute_approved_calendar_update(
     consumption_record = ledger.get_record(approval.approval_id)
     if consumption_record is None:
         raise ExecutionGateValueError("Approval consumption record missing from ledger")
+
+    # Persist execution attempt FIRST to ensure the external dispatch and provider write facts
+    # are never lost, even if subsequent evidence checks fail
+    if mission_ledger is not None:
+        ev_attempt = EvidenceRecord.create(
+            action_id=actual_action.action_id,
+            mission_id=actual_action.mission_id,
+            origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
+            payload={
+                "evidence_type": "EXECUTION_ATTEMPT",
+                "attempt_id": str(attempt.attempt_id),
+                "attempt_number": attempt.attempt_number,
+                "action_id": str(actual_action.action_id),
+                "mission_id": str(actual_action.mission_id),
+                "action_type": actual_action.action_type.value,
+                "success": provider_result.success,
+                "status": gate_decision.status.value,
+                "writes_performed": provider_result.writes_performed,
+                "recorded_at": norm_eval_at.isoformat(),
+            },
+            created_at=norm_eval_at,
+        )
+        try:
+            mission_ledger.append_evidence(ev_attempt)
+        except Exception as exc:
+            msg = (
+                f"Provider mutation executed successfully "
+                f"({provider_result.writes_performed} write), "
+                f"but durable mission ledger persistence failed: {type(exc).__name__}"
+            )
+            raise ApprovedExecutionPersistenceError(
+                msg,
+                provider_result=provider_result,
+                attempt=attempt,
+                gate_decision=gate_decision,
+            ) from exc
 
     # 8. Durable consumption evidence verification in canonical mission ledger
     if mission_ledger is not None and ledger.ledger is not None:
@@ -2570,40 +2699,40 @@ def execute_approved_calendar_update(
                 matching_consumption = True
                 break
         if not matching_consumption:
-            raise ExecutionGateValueError(
-                f"Approval consumption evidence for approval '{approval.approval_id}' "
-                "is missing from canonical mission ledger"
-            )
-
-    if mission_ledger is not None:
-        # Persist execution attempt immediately to durably preserve dispatch and write facts
-        ev_attempt = EvidenceRecord.create(
-            action_id=actual_action.action_id,
-            mission_id=actual_action.mission_id,
-            origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
-            payload={
-                "evidence_type": "EXECUTION_ATTEMPT",
-                "attempt_id": str(attempt.attempt_id),
-                "attempt_number": attempt.attempt_number,
-                "status": gate_decision.status.value,
-                "writes_performed": provider_result.writes_performed,
-            },
-            created_at=norm_eval_at,
-        )
-        try:
-            mission_ledger.append_evidence(ev_attempt)
-        except Exception as exc:
+            # Record explicit recoverable evidence-integrity failure
+            try:
+                ev_integrity = EvidenceRecord.create(
+                    action_id=actual_action.action_id,
+                    mission_id=actual_action.mission_id,
+                    origin=EvidenceOrigin(provenance=provenance, observed_at=norm_eval_at),
+                    payload={
+                        "evidence_type": "EVIDENCE_INTEGRITY_FAILURE",
+                        "failure_reason": "MISSING_DURABLE_APPROVAL_EVIDENCE",
+                        "approval_id": str(approval.approval_id),
+                        "attempt_number": attempt.attempt_number,
+                        "writes_performed": provider_result.writes_performed,
+                        "error_message": (
+                            f"Provider mutation executed ({provider_result.writes_performed} "
+                            f"write), but approval consumption evidence for "
+                            f"'{approval.approval_id}' is missing from canonical mission ledger"
+                        ),
+                    },
+                    created_at=norm_eval_at,
+                )
+                mission_ledger.append_evidence(ev_integrity)
+            except Exception:
+                pass
             msg = (
-                f"Provider mutation executed successfully "
-                f"({provider_result.writes_performed} write), "
-                f"but durable mission ledger persistence failed: {type(exc).__name__}"
+                f"Provider mutation executed ({provider_result.writes_performed} write), "
+                f"but approval consumption evidence for approval '{approval.approval_id}' "
+                "is missing from canonical mission ledger"
             )
             raise ApprovedExecutionPersistenceError(
                 msg,
                 provider_result=provider_result,
                 attempt=attempt,
                 gate_decision=gate_decision,
-            ) from exc
+            )
 
     # 9. Post-dispatch sequence protected by honest failure recovery
     try:
@@ -2866,8 +2995,19 @@ def execute_approved_calendar_update(
                     created_at=datetime.now(UTC),
                 )
                 mission_ledger.append_evidence(ev_failure)
-            except Exception:
-                pass
+            except Exception as persist_exc:
+                msg = (
+                    f"Provider mutation executed ({provider_result.writes_performed} write), "
+                    f"post-dispatch operation failed with {type(exc).__name__}, "
+                    f"and durable mission ledger failure persistence failed: "
+                    f"{type(persist_exc).__name__}"
+                )
+                raise ApprovedExecutionPersistenceError(
+                    msg,
+                    provider_result=provider_result,
+                    attempt=attempt,
+                    gate_decision=gate_decision,
+                ) from persist_exc
         raise
 
     return ApprovedCalendarUpdateOutcome(
