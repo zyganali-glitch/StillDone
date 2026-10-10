@@ -56,6 +56,41 @@ class ReceiptHashMismatchError(ReceiptError):
     """Raised when the bound receipt hash does not match computed projection hash."""
 
 
+class ReceiptNotFoundError(ReceiptError, KeyError):
+    """Raised when a requested receipt is not found."""
+
+
+class PlannerCurrentStateAuthorityError(ReceiptError, TypeError):
+    """Raised when a planner/model proposal object is passed as authority for current state."""
+
+
+# Detect planner/model classes if available to reject model authority injections
+try:
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        PlannerInput,
+    )
+
+    _PLANNER_TYPES: tuple[type, ...] = (
+        CandidatePlanProposal,
+        CandidateActionProposal,
+        PlannerInput,
+    )
+except ImportError:
+    _PLANNER_TYPES = ()
+
+
+def assert_not_planner_for_current_state(obj: Any, *, parameter_name: str = "argument") -> None:
+    """Reject planner/model proposals fail-closed."""
+    for pt in _PLANNER_TYPES:
+        if isinstance(obj, pt):
+            raise PlannerCurrentStateAuthorityError(
+                f"Model/planner proposal {type(obj).__name__} has ZERO authority "
+                f"over current-state projections ({parameter_name})"
+            )
+
+
 def _validate_hex_digest(value: str, name: str) -> None:
     """Validate that a string is a 64-character lowercase hexadecimal digest."""
     if not isinstance(value, str):
@@ -466,3 +501,451 @@ class ReceiptProjection:
 
     def to_dict(self) -> dict[str, Any]:
         return self.to_canonical()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReceiptProjection:
+        """Construct and validate a ReceiptProjection from a dictionary.
+
+        Fails closed on missing keys, tampered hashes, or invalid types.
+        """
+        if not isinstance(data, dict):
+            raise TypeError(f"Receipt data must be a dict, got {type(data).__name__}")
+        for req in (
+            "mission_id",
+            "mission_content_hash",
+            "evidence_ids",
+            "state_at_projection",
+            "projected_at",
+            "receipt_hash",
+        ):
+            if req not in data:
+                raise ReceiptMismatchError(f"Missing required receipt key: {req!r}")
+
+        m_id = MissionId(str(data["mission_id"]))
+        m_hash = MissionContentHash(
+            value=str(data["mission_content_hash"]),
+            mission_id=m_id,
+        )
+        raw_eids = data["evidence_ids"]
+        if not isinstance(raw_eids, (list, tuple)):
+            raise TypeError("evidence_ids must be a sequence")
+        eids = tuple(EvidenceId(str(e)) for e in raw_eids)
+        st = MissionState(str(data["state_at_projection"]))
+        proj_at = datetime.fromisoformat(str(data["projected_at"]))
+        r_hash = ReceiptHash(str(data["receipt_hash"]))
+        meta = CanonicalPayload(data.get("metadata", {}))
+        is_hist = data.get("is_historical", True)
+        if not is_hist:
+            raise ValueError("Receipt projections must always have is_historical=True")
+
+        return cls(
+            mission_id=m_id,
+            mission_content_hash=m_hash,
+            evidence_ids=eids,
+            state_at_projection=st,
+            projected_at=proj_at,
+            receipt_hash=r_hash,
+            metadata=meta,
+            is_historical=True,
+        )
+
+
+def create_mission_ready_receipt(
+    snapshot: Any,
+    *,
+    projected_at: datetime | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ReceiptProjection:
+    """Create an immutable ReceiptProjection from a verified READY snapshot.
+
+    Fails closed if the snapshot is not in MissionState.READY.
+    """
+    assert_not_planner_for_current_state(snapshot, parameter_name="snapshot")
+    from stilldone.snapshot import MissionSnapshot
+
+    if not isinstance(snapshot, MissionSnapshot):
+        raise TypeError(f"snapshot must be a MissionSnapshot, got {type(snapshot).__name__}")
+    if snapshot.state != MissionState.READY:
+        raise ReceiptMismatchError(
+            f"Cannot create READY receipt for snapshot in non-READY state {snapshot.state.value}"
+        )
+
+    mission_content_hash = compute_mission_content_hash(snapshot.contract)
+    meta = {
+        "snapshot_id": snapshot.snapshot_id,
+        "snapshot_version": snapshot.snapshot_version,
+        **(metadata or {}),
+    }
+    return ReceiptProjection.create(
+        mission_id=snapshot.mission_id,
+        mission_content_hash=mission_content_hash,
+        evidence_ids=snapshot.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=projected_at or snapshot.created_at,
+        metadata=meta,
+    )
+
+
+CURRENT_STATE_HASH_DOMAIN_SEPARATOR: str = "stilldone:current-state-projection:v1"
+
+
+@dataclass(frozen=True)
+class CurrentStateHash:
+    """Immutable content-addressed hash of an authoritative current-state projection."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        _validate_hex_digest(self.value, "CurrentStateHash")
+
+    def to_canonical(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
+
+
+def compute_current_state_hash(
+    *,
+    mission_id: MissionId,
+    state: MissionState,
+    snapshot_id: str,
+    evidence_ids: tuple[EvidenceId, ...],
+    as_of: datetime,
+    historical_receipt_hash: ReceiptHash | None = None,
+    historical_state: MissionState | None = None,
+    reconciliation_reason: str | None = None,
+    domain: str = CURRENT_STATE_HASH_DOMAIN_SEPARATOR,
+) -> CurrentStateHash:
+    """Compute a deterministic domain-separated SHA-256 hash for a current-state projection."""
+    if not isinstance(domain, str) or not domain.strip():
+        raise ValueError("domain must be a non-empty string")
+    if not isinstance(mission_id, MissionId):
+        raise TypeError(f"mission_id must be MissionId, got {type(mission_id).__name__}")
+    if not isinstance(state, MissionState):
+        raise TypeError(f"state must be MissionState, got {type(state).__name__}")
+    if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+        raise ValueError("snapshot_id must be a non-empty string")
+    if not isinstance(evidence_ids, tuple):
+        raise TypeError(f"evidence_ids must be a tuple, got {type(evidence_ids).__name__}")
+
+    norm_as_of = _normalize_utc_dt(as_of, "as_of")
+
+    envelope: dict[str, Any] = {
+        "_domain": domain,
+        "as_of": normalize_datetime(norm_as_of),
+        "evidence_ids": [eid.value for eid in evidence_ids],
+        "historical_receipt_hash": (
+            historical_receipt_hash.value if historical_receipt_hash is not None else None
+        ),
+        "historical_state": historical_state.value if historical_state is not None else None,
+        "is_historical": False,
+        "mission_id": str(mission_id),
+        "reconciliation_reason": reconciliation_reason,
+        "snapshot_id": snapshot_id,
+        "state": state.value,
+    }
+    serialized_bytes = canonical_serialize(envelope)
+    digest = hashlib.sha256(serialized_bytes).hexdigest()
+    return CurrentStateHash(digest)
+
+
+@dataclass(frozen=True)
+class CurrentStateProjection:
+    """Typed immutable projection of current mission truth and lifecycle state.
+
+    Guarantees:
+    - is_historical is strictly False (historical completion != current completion).
+    - state reflects current authoritative lifecycle state (e.g. READY, DRIFTED).
+    - Tied to exact mission ID, canonical snapshot revision (snapshot_id), and evidence IDs.
+    - Preserves immutable reference to historical receipt hash and state if previously verified.
+    - Fails closed if tampered or if historical completion is conflated with current state.
+    """
+
+    mission_id: MissionId
+    state: MissionState
+    snapshot_id: str
+    snapshot_version: str
+    evidence_ids: tuple[EvidenceId, ...]
+    as_of: datetime
+    projection_hash: CurrentStateHash
+    is_historical: bool = False
+    historical_receipt_hash: ReceiptHash | None = None
+    historical_state: MissionState | None = None
+    reconciliation_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mission_id, MissionId):
+            raise TypeError(f"mission_id must be MissionId, got {type(self.mission_id).__name__}")
+        if not isinstance(self.state, MissionState):
+            raise TypeError(f"state must be MissionState, got {type(self.state).__name__}")
+        if not isinstance(self.snapshot_id, str) or not self.snapshot_id.strip():
+            raise ValueError("snapshot_id must be a non-empty string")
+        if not isinstance(self.snapshot_version, str) or not self.snapshot_version.strip():
+            raise ValueError("snapshot_version must be a non-empty string")
+        if not isinstance(self.evidence_ids, tuple):
+            raise TypeError(f"evidence_ids must be a tuple, got {type(self.evidence_ids).__name__}")
+        if self.is_historical is not False:
+            raise ValueError("CurrentStateProjection must always have is_historical=False")
+
+        norm_as_of = _normalize_utc_dt(self.as_of, "as_of")
+        object.__setattr__(self, "as_of", norm_as_of)
+
+        if self.historical_receipt_hash is not None and not isinstance(
+            self.historical_receipt_hash, ReceiptHash
+        ):
+            raise TypeError("historical_receipt_hash must be ReceiptHash or None")
+        if self.historical_state is not None and not isinstance(
+            self.historical_state, MissionState
+        ):
+            raise TypeError("historical_state must be MissionState or None")
+
+        # Validate evidence IDs: unique and canonically ordered
+        seen_eids: set[str] = set()
+        prev_eid: str | None = None
+        for eid in self.evidence_ids:
+            if not isinstance(eid, EvidenceId):
+                raise TypeError(
+                    f"evidence_ids must contain EvidenceId instances, got {type(eid).__name__}"
+                )
+            if eid.value in seen_eids:
+                raise DuplicateEvidenceBindingError(
+                    f"Duplicate evidence ID in current state: {eid.value}"
+                )
+            if prev_eid is not None and eid.value < prev_eid:
+                raise EvidenceOrderError(
+                    f"Evidence IDs are not canonically ordered: {prev_eid} followed by {eid.value}"
+                )
+            seen_eids.add(eid.value)
+            prev_eid = eid.value
+
+        expected_hash = compute_current_state_hash(
+            mission_id=self.mission_id,
+            state=self.state,
+            snapshot_id=self.snapshot_id,
+            evidence_ids=self.evidence_ids,
+            as_of=self.as_of,
+            historical_receipt_hash=self.historical_receipt_hash,
+            historical_state=self.historical_state,
+            reconciliation_reason=self.reconciliation_reason,
+        )
+        if self.projection_hash != expected_hash:
+            raise ReceiptHashMismatchError(
+                f"Current state projection hash mismatch: bound {self.projection_hash} "
+                f"!= computed {expected_hash}"
+            )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        mission_id: MissionId,
+        state: MissionState,
+        snapshot_id: str,
+        snapshot_version: str,
+        evidence_ids: Iterable[EvidenceId],
+        as_of: datetime | None = None,
+        historical_receipt_hash: ReceiptHash | None = None,
+        historical_state: MissionState | None = None,
+        reconciliation_reason: str | None = None,
+    ) -> CurrentStateProjection:
+        """Create a CurrentStateProjection with canonical evidence ordering and computed hash."""
+        if not isinstance(mission_id, MissionId):
+            raise TypeError(f"mission_id must be MissionId, got {type(mission_id).__name__}")
+        if not isinstance(state, MissionState):
+            raise TypeError(f"state must be MissionState, got {type(state).__name__}")
+
+        norm_as_of = _normalize_utc_dt(as_of or datetime.now(UTC), "as_of")
+
+        seen: set[str] = set()
+        eids_list: list[EvidenceId] = []
+        for eid in evidence_ids:
+            if not isinstance(eid, EvidenceId):
+                raise TypeError(
+                    f"All evidence_ids must be EvidenceId instances, got {type(eid).__name__}"
+                )
+            if eid.value in seen:
+                raise DuplicateEvidenceBindingError(
+                    f"Duplicate evidence ID in evidence_ids: {eid.value}"
+                )
+            seen.add(eid.value)
+            eids_list.append(eid)
+
+        eids_list.sort(key=lambda x: x.value)
+        ordered_eids = tuple(eids_list)
+
+        proj_hash = compute_current_state_hash(
+            mission_id=mission_id,
+            state=state,
+            snapshot_id=snapshot_id,
+            evidence_ids=ordered_eids,
+            as_of=norm_as_of,
+            historical_receipt_hash=historical_receipt_hash,
+            historical_state=historical_state,
+            reconciliation_reason=reconciliation_reason,
+        )
+
+        return cls(
+            mission_id=mission_id,
+            state=state,
+            snapshot_id=snapshot_id,
+            snapshot_version=snapshot_version,
+            evidence_ids=ordered_eids,
+            as_of=norm_as_of,
+            projection_hash=proj_hash,
+            is_historical=False,
+            historical_receipt_hash=historical_receipt_hash,
+            historical_state=historical_state,
+            reconciliation_reason=reconciliation_reason,
+        )
+
+    @property
+    def is_ready(self) -> bool:
+        """True if and only if current authoritative state is READY."""
+        return self.state == MissionState.READY
+
+    @property
+    def is_drifted(self) -> bool:
+        """True if and only if current authoritative state is DRIFTED."""
+        return self.state == MissionState.DRIFTED
+
+    def to_canonical(self) -> dict[str, Any]:
+        """Project current state to a canonical JSON-compatible dictionary."""
+        return {
+            "as_of": normalize_datetime(self.as_of),
+            "evidence_ids": [eid.to_canonical() for eid in self.evidence_ids],
+            "historical_receipt_hash": (
+                self.historical_receipt_hash.to_canonical()
+                if self.historical_receipt_hash is not None
+                else None
+            ),
+            "historical_state": self.historical_state.value if self.historical_state else None,
+            "is_drifted": self.is_drifted,
+            "is_historical": self.is_historical,
+            "is_ready": self.is_ready,
+            "mission_id": str(self.mission_id),
+            "projection_hash": self.projection_hash.to_canonical(),
+            "reconciliation_reason": self.reconciliation_reason,
+            "snapshot_id": self.snapshot_id,
+            "snapshot_version": self.snapshot_version,
+            "state": self.state.value,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.to_canonical()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CurrentStateProjection:
+        """Construct and validate a CurrentStateProjection from serialized dictionary."""
+        if not isinstance(data, dict):
+            raise TypeError(f"Data must be a dict, got {type(data).__name__}")
+        for req in (
+            "mission_id",
+            "state",
+            "snapshot_id",
+            "snapshot_version",
+            "evidence_ids",
+            "as_of",
+            "projection_hash",
+        ):
+            if req not in data:
+                raise ReceiptMismatchError(f"Missing required key: {req!r}")
+
+        m_id = MissionId(str(data["mission_id"]))
+        st = MissionState(str(data["state"]))
+        raw_eids = data["evidence_ids"]
+        if not isinstance(raw_eids, (list, tuple)):
+            raise TypeError("evidence_ids must be a sequence")
+        eids = tuple(EvidenceId(str(e)) for e in raw_eids)
+        as_of = datetime.fromisoformat(str(data["as_of"]))
+        p_hash = CurrentStateHash(str(data["projection_hash"]))
+        hist_h = (
+            ReceiptHash(str(data["historical_receipt_hash"]))
+            if data.get("historical_receipt_hash")
+            else None
+        )
+        hist_st = (
+            MissionState(str(data["historical_state"])) if data.get("historical_state") else None
+        )
+        reason = data.get("reconciliation_reason")
+
+        return cls(
+            mission_id=m_id,
+            state=st,
+            snapshot_id=str(data["snapshot_id"]),
+            snapshot_version=str(data["snapshot_version"]),
+            evidence_ids=eids,
+            as_of=as_of,
+            projection_hash=p_hash,
+            is_historical=False,
+            historical_receipt_hash=hist_h,
+            historical_state=hist_st,
+            reconciliation_reason=reason,
+        )
+
+
+def project_current_state(
+    snapshot: Any,
+    *,
+    historical_receipt: ReceiptProjection | None = None,
+    historical_receipt_hash: ReceiptHash | None = None,
+    historical_state: MissionState | None = None,
+    as_of: datetime | None = None,
+    reconciliation_reason: str | None = None,
+    ledger: Any | None = None,
+) -> CurrentStateProjection:
+    """Project authoritative current truth from a mission snapshot.
+
+    Guarantees:
+    - Never lets model prose or execution response override current truth.
+    - Preserves historical receipt immutability while publishing current state.
+    - Historical completion (historical_state=READY) does not make current state READY if drifted.
+    """
+    assert_not_planner_for_current_state(snapshot, parameter_name="snapshot")
+    from stilldone.snapshot import MissionSnapshot
+
+    if not isinstance(snapshot, MissionSnapshot):
+        raise TypeError(f"snapshot must be a MissionSnapshot, got {type(snapshot).__name__}")
+
+    effective_hist_hash = historical_receipt_hash
+    effective_hist_state = historical_state
+
+    if historical_receipt is not None:
+        assert_not_planner_for_current_state(
+            historical_receipt, parameter_name="historical_receipt"
+        )
+        if not isinstance(historical_receipt, ReceiptProjection):
+            raise TypeError("historical_receipt must be a ReceiptProjection")
+        if historical_receipt.mission_id != snapshot.mission_id:
+            raise ReceiptMismatchError(
+                f"Historical receipt mission {historical_receipt.mission_id} does not "
+                f"match snapshot mission {snapshot.mission_id}"
+            )
+        effective_hist_hash = historical_receipt.receipt_hash
+        effective_hist_state = historical_receipt.state_at_projection
+
+    if ledger is not None:
+        from stilldone.ledger import MissionLedgerPort
+
+        if not isinstance(ledger, MissionLedgerPort):
+            raise TypeError("ledger must implement MissionLedgerPort")
+        m_rec = ledger.get_mission(snapshot.mission_id)
+        if m_rec.state != snapshot.state:
+            raise ReceiptMismatchError(
+                f"Snapshot state {snapshot.state.value} contradicts "
+                f"ledger state {m_rec.state.value}"
+            )
+
+    norm_as_of = as_of or snapshot.created_at
+
+    return CurrentStateProjection.create(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_version=snapshot.snapshot_version,
+        evidence_ids=snapshot.evidence_ids,
+        as_of=norm_as_of,
+        historical_receipt_hash=effective_hist_hash,
+        historical_state=effective_hist_state,
+        reconciliation_reason=reconciliation_reason,
+    )

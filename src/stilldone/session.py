@@ -28,7 +28,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from stilldone.receipt import CurrentStateProjection, ReceiptProjection
 
 from stilldone.approval_consumption import (
     ApprovalConsumptionRecord,
@@ -105,6 +108,7 @@ class RestoredMissionSession:
     ledger: MissionLedgerPort
     approval_ledger: ApprovalLedger
     evidence_records: tuple[EvidenceRecord, ...]
+    historical_receipt: ReceiptProjection | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, MissionSnapshot):
@@ -115,6 +119,26 @@ class RestoredMissionSession:
             raise SessionTypeError("approval_ledger must be an ApprovalLedger")
         if not isinstance(self.evidence_records, tuple):
             raise SessionTypeError("evidence_records must be a tuple")
+        if self.historical_receipt is not None:
+            from stilldone.receipt import ReceiptProjection
+
+            if not isinstance(self.historical_receipt, ReceiptProjection):
+                raise SessionTypeError("historical_receipt must be a ReceiptProjection")
+            if self.historical_receipt.mission_id != self.snapshot.mission_id:
+                raise SessionValueError("historical_receipt mission_id does not match snapshot")
+            if not self.historical_receipt.is_historical:
+                raise SessionValueError("historical_receipt must have is_historical=True")
+
+    @property
+    def current_state(self) -> CurrentStateProjection:
+        """Project authoritative current truth from restored session facts."""
+        from stilldone.receipt import project_current_state
+
+        return project_current_state(
+            self.snapshot,
+            historical_receipt=self.historical_receipt,
+            ledger=self.ledger,
+        )
 
     @property
     def mission_id(self) -> MissionId:
@@ -315,9 +339,13 @@ def resume_mission_session(
                 f"Snapshot consumed approval {ca.approval_id} contradicts durable approval ledger"
             )
 
+    # 7. Query historical receipt from fresh repository if present
+    historical_receipt = fresh_snapshot_repo.get_historical_receipt(mission_id)
+
     return RestoredMissionSession(
         snapshot=snapshot,
         ledger=fresh_ledger,
         approval_ledger=fresh_approval_ledger,
         evidence_records=evidence_records,
+        historical_receipt=historical_receipt,
     )

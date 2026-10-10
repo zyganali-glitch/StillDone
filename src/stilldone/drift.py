@@ -683,8 +683,14 @@ def record_drift_in_snapshot(
             "persisted snapshot in repository (content tampering / mismatch detected)"
         )
 
-    # 2. Mission must be in READY state
+    # 2. Mission must be in READY state (or idempotent replay of already-drifted snapshot)
     if current_stored.state != MissionState.READY or snapshot.state != MissionState.READY:
+        if (
+            current_stored.state == MissionState.DRIFTED
+            and snapshot.state == MissionState.DRIFTED
+            and current_stored.snapshot_id == snapshot.snapshot_id
+        ):
+            return current_stored
         raise ReconciliationLifecycleError(
             f"Cannot record drift for mission in state {snapshot.state.value}; must be READY"
         )

@@ -489,6 +489,20 @@ class MissionSnapshot:
                 return b.target
         raise SnapshotIntegrityError(f"No target binding found for predicate {predicate_id}")
 
+    def project_current_state(
+        self,
+        historical_receipt: Any | None = None,
+        as_of: datetime | None = None,
+    ) -> Any:
+        """Project authoritative current truth from this snapshot."""
+        from stilldone.receipt import project_current_state
+
+        return project_current_state(
+            self,
+            historical_receipt=historical_receipt,
+            as_of=as_of,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert snapshot to deterministic serializable dictionary."""
         return {
@@ -1394,3 +1408,122 @@ class DurableSnapshotRepository:
                 self.verify_consistency_with_ledger(snapshot, self._ledger)
             object.__setattr__(snapshot, "is_persisted", True)
             return snapshot
+
+    def _receipt_file_for_mission(self, mission_id: MissionId) -> Path:
+        if self._is_file_mode:
+            return self._path
+        return self._path / f"{mission_id}.receipt.json"
+
+    def save_receipt(self, receipt: Any) -> None:
+        """Save a historical receipt projection durably with atomic write and fsync."""
+        assert_not_planner_for_snapshot(receipt, parameter_name="receipt")
+        from stilldone.receipt import ReceiptProjection
+
+        if not isinstance(receipt, ReceiptProjection):
+            raise SnapshotTypeError(
+                f"receipt must be ReceiptProjection, got {type(receipt).__name__}"
+            )
+        if not receipt.is_historical:
+            raise SnapshotValueError("Only historical receipt projections can be saved")
+
+        if self._ledger is not None:
+            try:
+                self._ledger.get_mission(receipt.mission_id)
+            except RecordNotFoundError as exc:
+                raise SnapshotLedgerConflictError(
+                    f"Mission {receipt.mission_id} in receipt does not exist in ledger"
+                ) from exc
+            for eid in receipt.evidence_ids:
+                try:
+                    self._ledger.get_evidence(eid)
+                except RecordNotFoundError as exc:
+                    raise SnapshotLedgerConflictError(
+                        f"Evidence {eid} in receipt does not exist in ledger"
+                    ) from exc
+
+        serialized = canonical_json(receipt.to_canonical())
+
+        if self._is_file_mode:
+            entry = {"_type": "receipt", **receipt.to_canonical()}
+            ser_entry = canonical_json(entry)
+            with open(self._path, "a", encoding="utf-8") as f:
+                f.write(ser_entry + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        else:
+            target_file = self._receipt_file_for_mission(receipt.mission_id)
+            fd, tmp_path_str = tempfile.mkstemp(prefix="rcpt_", suffix=".tmp", dir=self._path)
+            tmp_path = Path(tmp_path_str)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(serialized + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, target_file)
+            except Exception:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                raise
+
+    def load_receipt(self, mission_id: MissionId) -> Any:
+        """Load a historical receipt projection from durable storage fail-closed."""
+        if not isinstance(mission_id, MissionId):
+            raise SnapshotTypeError(
+                f"mission_id must be MissionId, got {type(mission_id).__name__}"
+            )
+        from stilldone.receipt import ReceiptNotFoundError, ReceiptProjection
+
+        if self._is_file_mode:
+            if not self._path.exists():
+                raise ReceiptNotFoundError(f"Receipt file {self._path} does not exist")
+            target_mission_str = str(mission_id)
+            found_data: dict[str, Any] | None = None
+            with open(self._path, encoding="utf-8") as f:
+                for line in f:
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    try:
+                        d = json.loads(line_str)
+                    except Exception:
+                        continue
+                    if (
+                        isinstance(d, dict)
+                        and d.get("_type") == "receipt"
+                        and d.get("mission_id") == target_mission_str
+                    ):
+                        found_data = d
+            if found_data is None:
+                raise ReceiptNotFoundError(
+                    f"No receipt found for mission {mission_id} in {self._path}"
+                )
+            clean_data = {k: v for k, v in found_data.items() if k != "_type"}
+            return ReceiptProjection.from_dict(clean_data)
+        else:
+            target_file = self._receipt_file_for_mission(mission_id)
+            if not target_file.exists():
+                raise ReceiptNotFoundError(
+                    f"Receipt file for mission {mission_id} not found at {target_file}"
+                )
+            try:
+                with open(target_file, encoding="utf-8") as f:
+                    content = f.read()
+                if not content.strip():
+                    raise SnapshotCorruptionError(
+                        f"Receipt file for mission {mission_id} is empty (0 bytes)"
+                    )
+                data = json.loads(content)
+            except Exception as exc:
+                if isinstance(exc, (SnapshotError, UnknownSnapshotVersionError)):
+                    raise
+                raise SnapshotCorruptionError(f"Failed to read receipt file: {exc}") from exc
+            return ReceiptProjection.from_dict(data)
+
+    def get_historical_receipt(self, mission_id: MissionId) -> Any | None:
+        """Get the historical receipt for a mission, or None if not present."""
+        from stilldone.receipt import ReceiptNotFoundError
+
+        try:
+            return self.load_receipt(mission_id)
+        except (ReceiptNotFoundError, SnapshotNotFoundError):
+            return None
