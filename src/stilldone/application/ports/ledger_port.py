@@ -391,41 +391,61 @@ def _is_verification_evidence(ev: EvidenceRecord) -> bool:
         rb_status = str(payload.get("readback_status", "")).upper()
         is_match = payload.get("is_match") is True
         if rb_status == "MATCH" or is_match:
-            # Must contain non-empty observed properties / observation content
-            props = payload.get("properties", payload.get("observed_properties"))
+            # Must have zero mismatches and non-empty observed properties
             mismatches = payload.get("mismatches")
-            if (isinstance(props, (dict, CanonicalPayload)) and len(props) > 0) or (
-                isinstance(mismatches, (list, tuple, CanonicalSequence)) and len(mismatches) == 0
-            ):
+            if isinstance(mismatches, (list, tuple, CanonicalSequence)) and len(mismatches) > 0:
+                return False
+            props = payload.get("properties", payload.get("observed_properties"))
+            if isinstance(props, (dict, CanonicalPayload)) and len(props) > 0:
                 return True
             raw_obs = payload.get("raw_observation")
             if isinstance(raw_obs, (dict, CanonicalPayload)) and len(raw_obs) > 0:
                 return True
+        return False
 
     # 3. P-09 Predicate Evaluation Contract
     if ev_type in ("PREDICATE_EVALUATION", "PREDICATE_RESULT"):
         pid = payload.get("predicate_id")
-        if pid and isinstance(pid, str) and pid.strip():
-            truth_val = str(payload.get("truth", "")).upper()
-            is_true_val = payload.get("is_true") is True
-            if truth_val == "TRUE" or is_true_val:
-                return True
+        if not pid or not isinstance(pid, str) or not pid.strip():
+            return False
+        truth_val = str(payload.get("truth", "")).upper()
+        is_true_val = payload.get("is_true") is True
+        if truth_val != "TRUE" and not is_true_val:
+            return False
+        # Authoritative proof requires non-empty verified observations fail-closed;
+        # user-constructed flag strings without observation backing are rejected.
+        obs = payload.get(
+            "observations",
+            payload.get("observed_properties", payload.get("raw_observation")),
+        )
+        if isinstance(obs, (dict, CanonicalPayload)) and len(obs) > 0:
+            return True
         return False
 
     # 4. P-09 Mission Readiness Determination Contract
     if ev_type == "MISSION_READINESS":
-        if payload.get("is_ready") is True:
-            sat = payload.get("satisfied_predicate_ids")
-            failed = payload.get("failed_predicate_ids")
-            stale = payload.get("stale_predicate_ids")
-            unverified = payload.get("unverified_action_ids")
-            if isinstance(sat, (list, tuple, CanonicalSequence)) and len(sat) > 0:
-                if (
-                    (not failed or len(failed) == 0)
-                    and (not stale or len(stale) == 0)
-                    and (not unverified or len(unverified) == 0)
-                ):
-                    return True
+        if payload.get("is_ready") is not True:
+            return False
+        sat = payload.get("satisfied_predicate_ids")
+        failed = payload.get("failed_predicate_ids")
+        stale = payload.get("stale_predicate_ids")
+        unverified = payload.get("unverified_action_ids")
+        if not isinstance(sat, (list, tuple, CanonicalSequence)) or len(sat) == 0:
+            return False
+        if (
+            (failed and len(failed) > 0)
+            or (stale and len(stale) > 0)
+            or (unverified and len(unverified) > 0)
+        ):
+            return False
+        # Must contain non-empty structured predicate evaluations or observations
+        # proving actual satisfaction; superficial flag dictionaries are rejected.
+        preds = payload.get("predicate_evaluations")
+        obs = payload.get("observations")
+        if isinstance(preds, (dict, CanonicalPayload)) and len(preds) > 0:
+            return True
+        if isinstance(obs, (dict, CanonicalPayload)) and len(obs) > 0:
+            return True
         return False
 
     # 5. Canonical VERIFICATION payload contract
@@ -1066,12 +1086,30 @@ class DurableFileLedger(MissionLedgerPort):
                         raise RecordNotFoundError(
                             f"Durable transition evidence references absent action {a_key}"
                         )
+                    if str(self._actions[a_key].mission_id) != m_key:
+                        raise LedgerError(
+                            f"Durable transition evidence action {a_key} mission "
+                            f"does not match {m_key}"
+                        )
+                    if str(ev_data.get("mission_id")) != m_key:
+                        raise LedgerError(
+                            f"Durable transition evidence mission {ev_data.get('mission_id')} "
+                            f"does not match {m_key}"
+                        )
                     orig_data = ev_data["origin"]
                     origin = EvidenceOrigin.create(
                         provenance=orig_data["provenance"],
                         observed_at=datetime.fromisoformat(orig_data["observed_at"]),
                         recorded_live_origin=orig_data.get("recorded_live_origin"),
                     )
+                    expected_eid = compute_evidence_id(
+                        {"origin": origin, "payload": freeze_canonical_payload(ev_data["payload"])}
+                    )
+                    if expected_eid != e_id:
+                        raise RecordConflictError(
+                            f"Durable transition evidence {e_id} failed content-address validation "
+                            f"during replay; expected {expected_eid}."
+                        )
                     ev_record = EvidenceRecord(
                         evidence_id=e_id,
                         action_id=a_id,
@@ -1081,6 +1119,18 @@ class DurableFileLedger(MissionLedgerPort):
                         created_at=datetime.fromisoformat(ev_data["created_at"]),
                     )
                     e_key = str(e_id)
+                    if e_key in self._evidence:
+                        existing_evidence = self._evidence[e_key]
+                        if canonical_serialize(
+                            to_canonical_primitive(existing_evidence)
+                        ) == canonical_serialize(to_canonical_primitive(ev_record)):
+                            raise DuplicateRecordError(
+                                f"Duplicate evidence {e_key} encountered during durable log replay."
+                            )
+                        raise RecordConflictError(
+                            f"Conflicting record for evidence {e_key} "
+                            "encountered during durable log replay."
+                        )
                     self._evidence[e_key] = ev_record
                     self._action_evidence.setdefault(a_key, []).append(e_key)
                     self._mission_evidence.setdefault(m_key, []).append(e_key)
@@ -1094,7 +1144,35 @@ class DurableFileLedger(MissionLedgerPort):
                     )
                     self._missions[m_key] = updated_m
                     if entry.get("snapshot_projection") is not None:
-                        self._transition_snapshots[m_key] = entry["snapshot_projection"]
+                        proj = entry["snapshot_projection"]
+                        if not isinstance(proj, dict):
+                            raise RecordConflictError(
+                                f"Durable transition snapshot projection must be a dict "
+                                f"for mission {m_key}"
+                            )
+                        if proj.get("mission_id") != m_key:
+                            raise RecordConflictError(
+                                f"Durable transition snapshot projection mission "
+                                f"{proj.get('mission_id')} does not match transition "
+                                f"mission {m_key}"
+                            )
+                        if proj.get("state") != new_st.value:
+                            raise RecordConflictError(
+                                f"Durable transition snapshot projection state {proj.get('state')} "
+                                f"does not match transition state {new_st.value}"
+                            )
+                        proj_eids = proj.get("evidence_ids")
+                        if not isinstance(proj_eids, list):
+                            raise RecordConflictError(
+                                "Durable transition snapshot projection evidence_ids must be a "
+                                f"list for mission {m_key}"
+                            )
+                        if e_key not in proj_eids:
+                            raise RecordConflictError(
+                                f"Durable transition evidence {e_key} not found in snapshot "
+                                f"projection evidence_ids for mission {m_key}"
+                            )
+                        self._transition_snapshots[m_key] = proj
                 else:
                     raise LedgerError(
                         f"Unknown record_type '{rec_type}' encountered during durable log replay."
@@ -1387,6 +1465,43 @@ class DurableFileLedger(MissionLedgerPort):
                     f"Evidence {e_key} already exists with identical content."
                 )
             raise RecordConflictError(f"Conflicting record for evidence {e_key}")
+
+        if new_state == MissionState.READY:
+            action_ids = self._mission_actions.get(key, [])
+            if not action_ids:
+                raise IllegalStatePromotionError(
+                    f"Cannot promote mission {key} to READY in ledger with zero actions"
+                )
+            for act_key in action_ids:
+                e_keys = self._action_evidence.get(act_key, [])
+                all_evs = [self._evidence[ek] for ek in e_keys if ek in self._evidence]
+                if act_key == a_key:
+                    all_evs.append(evidence)
+                if not all_evs or not any(_is_verification_evidence(ev) for ev in all_evs):
+                    raise IllegalStatePromotionError(
+                        f"Cannot promote mission {key} to READY: action {act_key} "
+                        "lacks valid verification evidence"
+                    )
+
+        if snapshot_projection is not None:
+            if not isinstance(snapshot_projection, dict):
+                raise RecordConflictError("snapshot_projection must be a dict")
+            if snapshot_projection.get("mission_id") != key:
+                raise RecordConflictError(
+                    f"Snapshot projection mission {snapshot_projection.get('mission_id')} "
+                    f"does not match {key}"
+                )
+            if snapshot_projection.get("state") != new_state.value:
+                raise RecordConflictError(
+                    f"Snapshot projection state {snapshot_projection.get('state')} "
+                    f"does not match {new_state.value}"
+                )
+            proj_eids = snapshot_projection.get("evidence_ids")
+            if not isinstance(proj_eids, list) or e_key not in proj_eids:
+                raise RecordConflictError(
+                    f"Transition evidence {e_key} must be referenced in snapshot "
+                    "projection evidence_ids"
+                )
 
         now = updated_at or datetime.now(UTC)
         norm_now = _normalize_utc(now, "updated_at")

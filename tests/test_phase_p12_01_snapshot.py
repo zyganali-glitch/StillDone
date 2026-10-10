@@ -1388,3 +1388,413 @@ def test_snapshot_crash_recovery_from_ledger_durable_transition(
     disk_loaded = unconnected_repo.load_snapshot(mission_id)
     assert disk_loaded.state == MissionState.READY
     assert disk_loaded.snapshot_id == ready_snap.snapshot_id
+
+
+def _make_test_ready_snapshot(
+    mission_id: MissionId,
+    contract: MissionContract,
+    predicate: DesiredStatePredicate,
+    action: ActionContract,
+    binding: Any,
+    evidence_ids: Any,
+    now: datetime,
+) -> MissionSnapshot:
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+
+    consumed_appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Human approved",
+    )
+    attempt = ExecutionAttempt(
+        action_id=action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=ProviderExecutionResult(
+            action_type=action.action_type,
+            success=True,
+            status_name="READ_OK",
+            writes_performed=0,
+            captured_at=now,
+        ),
+    )
+    return create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=[predicate],
+        actions=[action],
+        predicate_bindings=[binding],
+        consumed_approvals=[consumed_appr],
+        step_records={action.action_id: step_rec},
+        execution_attempts=[attempt],
+        evidence_ids=evidence_ids,
+        created_at=now,
+    )
+
+
+def test_verify_consistency_rejects_unrelated_predicate_evidence(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """verify_consistency_with_ledger() rejects verification evidence whose predicate_id
+    does not match the bound predicate ID.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.snapshot import SnapshotLedgerConflictError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "unrelated.ledger")
+    repo = DurableSnapshotRepository(tmp_path / "snaps", ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    # Evidence has predicate_id="different_pid_123"
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": "different_pid_123",
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev)
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
+
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    snapshot = _make_test_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        predicate=sample_predicate,
+        action=sample_action,
+        binding=binding,
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+
+    with pytest.raises(
+        SnapshotLedgerConflictError,
+        match="bound target lacks verification evidence",
+    ):
+        repo.verify_consistency_with_ledger(snapshot)
+
+
+def test_ledger_replay_rejects_tampered_evidence_id_in_durable_transition(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """DurableFileLedger replay rejects a durable_transition journal entry if its
+    embedded evidence ID was tampered with.
+    """
+    import json
+
+    from stilldone.application.ports.ledger_port import RecordConflictError
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_path = tmp_path / "tampered.ledger"
+    ledger = DurableFileLedger(ledger_path)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_test_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        predicate=sample_predicate,
+        action=sample_action,
+        binding=binding,
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    # Read journal lines and tamper with the evidence_id in the durable_transition entry
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    tampered_lines = []
+    for line in lines:
+        entry = json.loads(line)
+        if entry.get("record_type") == "durable_transition":
+            entry["evidence"]["evidence_id"] = "bad" * 21 + "a"
+        tampered_lines.append(json.dumps(entry))
+    ledger_path.write_text("\n".join(tampered_lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RecordConflictError, match="failed content-address validation"):
+        DurableFileLedger(ledger_path)
+
+
+def test_ledger_replay_rejects_mismatched_projection_mission_id(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """DurableFileLedger replay rejects durable_transition entry if snapshot_projection
+    mission_id differs from transition mission_id.
+    """
+    import json
+
+    from stilldone.application.ports.ledger_port import RecordConflictError
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_path = tmp_path / "mismatch_proj.ledger"
+    ledger = DurableFileLedger(ledger_path)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_test_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        predicate=sample_predicate,
+        action=sample_action,
+        binding=binding,
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    tampered_lines = []
+    for line in lines:
+        entry = json.loads(line)
+        if entry.get("record_type") == "durable_transition":
+            entry["snapshot_projection"]["mission_id"] = "foreign_mission_999"
+        tampered_lines.append(json.dumps(entry))
+    ledger_path.write_text("\n".join(tampered_lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RecordConflictError, match="does not match transition mission"):
+        DurableFileLedger(ledger_path)
+
+
+def test_load_snapshot_raises_on_healing_write_failure(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """load_snapshot() raises SnapshotIntegrityError when disk snapshot healing
+    write fails fail-closed.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.snapshot import SnapshotIntegrityError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_file = tmp_path / "healing_fail.ledger"
+    ledger = DurableFileLedger(ledger_file)
+    snap_dir = tmp_path / "snaps"
+    repo = DurableSnapshotRepository(snap_dir, ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_test_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        predicate=sample_predicate,
+        action=sample_action,
+        binding=binding,
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    # Mock save_snapshot to simulate disk I/O write failure
+    def mock_save_fail(*args: Any, **kwargs: Any) -> None:
+        raise OSError("Disk full simulation")
+
+    monkeypatch.setattr(repo, "save_snapshot", mock_save_fail)
+
+    with pytest.raises(SnapshotIntegrityError, match="Failed to heal snapshot projection"):
+        repo.load_snapshot(mission_id)

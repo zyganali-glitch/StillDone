@@ -177,6 +177,7 @@ class MissionRevalidationResult:
     is_partial: bool
     reads_performed: int
     writes_performed: int = 0
+    is_certifying_live_authority: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.mission_id, MissionId):
@@ -593,6 +594,24 @@ def revalidate_mission(
     )
     has_not_run = any(o.status == RevalidationPredicateStatus.NOT_RUN for o in outcomes.values())
 
+    is_certifying_live_authority = (
+        snapshot is not None
+        and hasattr(snapshot, "predicate_bindings")
+        and bool(snapshot.predicate_bindings)
+        and isinstance(target_reader, StandardTargetReader)
+        and all(
+            o.observation is not None
+            and o.observation.provenance
+            in (
+                EvidenceProvenance.LIVE_GOOGLE,
+                EvidenceProvenance.LIVE_EXTERNAL,
+                EvidenceProvenance.LIVE_AWS,
+            )
+            for o in outcomes.values()
+            if o.status == RevalidationPredicateStatus.TRUE
+        )
+    )
+
     return MissionRevalidationResult(
         mission_id=mission_id,
         evaluated_at=eval_at,
@@ -607,4 +626,5 @@ def revalidate_mission(
         is_partial=has_not_run,
         reads_performed=reads_done,
         writes_performed=0,
+        is_certifying_live_authority=is_certifying_live_authority,
     )

@@ -237,7 +237,11 @@ def _resolve_target_for_predicate(
                 f"matching {expected_system}/{expected_kind}"
             )
         else:
-            canonical_target = matching_actions[0].target
+            raise DriftTargetMismatchError(
+                f"Missing canonical PredicateTargetBinding for predicate "
+                f"{predicate.predicate_id}; authoritative drift paths require explicit "
+                "persisted bindings (single-target fallback is prohibited)"
+            )
 
     if explicit_target is not None:
         if explicit_target != canonical_target:
@@ -765,74 +769,62 @@ def record_drift_in_snapshot(
     drift_evidence_ids = list(snapshot.evidence_ids)
 
     # 5. Atomicity: Durable state transition in ledger, then save snapshot
-    if repository.ledger is not None:
-        origin = EvidenceOrigin(
-            provenance=EvidenceProvenance.LOCAL_EXECUTION,
-            observed_at=drift_result.evaluated_at,
-        )
-        explanation_val = (
-            drift_result.transition_result.explanation
-            if drift_result.transition_result is not None
-            else None
-        )
-        drift_evidence = EvidenceRecord.create(
-            action_id=bound_action_id,
-            mission_id=snapshot.mission_id,
-            origin=origin,
-            payload={
-                "evidence_type": "MISSION_DRIFT",
-                "mission_id": str(snapshot.mission_id),
-                "prior_state": MissionState.READY.value,
-                "new_state": MissionState.DRIFTED.value,
-                "is_drifted": True,
-                "drifted_predicate_id": str(drifted_predicate_id),
-                "evaluated_at": drift_result.evaluated_at.isoformat(),
-                "explanation": explanation_val,
-            },
-            created_at=drift_result.evaluated_at,
-        )
-        drift_evidence_ids.append(drift_evidence.evidence_id)
-
-        drifted_snapshot = create_mission_snapshot(
-            mission_id=snapshot.mission_id,
-            state=MissionState.DRIFTED,
-            contract=snapshot.contract,
-            desired_state=snapshot.desired_state,
-            actions=snapshot.actions,
-            action_dependencies=snapshot.action_dependencies,
-            step_records=snapshot.step_records,
-            pending_approvals=snapshot.pending_approvals,
-            consumed_approvals=snapshot.consumed_approvals,
-            execution_attempts=snapshot.execution_attempts,
-            evidence_ids=tuple(drift_evidence_ids),
-            predicate_bindings=snapshot.predicate_bindings,
-            created_at=drift_result.evaluated_at,
+    if repository.ledger is None:
+        raise DriftValueError(
+            "Durable drift recording requires an approved ledger-backed DurableSnapshotRepository"
         )
 
-        repository.ledger.record_state_transition(
-            mission_id=snapshot.mission_id,
-            expected_prior_state=MissionState.READY,
-            new_state=MissionState.DRIFTED,
-            evidence=drift_evidence,
-            updated_at=drift_result.evaluated_at,
-            snapshot_projection=drifted_snapshot.to_dict(),
-        )
-    else:
-        drifted_snapshot = create_mission_snapshot(
-            mission_id=snapshot.mission_id,
-            state=MissionState.DRIFTED,
-            contract=snapshot.contract,
-            desired_state=snapshot.desired_state,
-            actions=snapshot.actions,
-            action_dependencies=snapshot.action_dependencies,
-            step_records=snapshot.step_records,
-            pending_approvals=snapshot.pending_approvals,
-            consumed_approvals=snapshot.consumed_approvals,
-            execution_attempts=snapshot.execution_attempts,
-            evidence_ids=tuple(drift_evidence_ids),
-            predicate_bindings=snapshot.predicate_bindings,
-            created_at=drift_result.evaluated_at,
-        )
+    origin = EvidenceOrigin(
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+        observed_at=drift_result.evaluated_at,
+    )
+    explanation_val = (
+        drift_result.transition_result.explanation
+        if drift_result.transition_result is not None
+        else None
+    )
+    drift_evidence = EvidenceRecord.create(
+        action_id=bound_action_id,
+        mission_id=snapshot.mission_id,
+        origin=origin,
+        payload={
+            "evidence_type": "MISSION_DRIFT",
+            "mission_id": str(snapshot.mission_id),
+            "prior_state": MissionState.READY.value,
+            "new_state": MissionState.DRIFTED.value,
+            "is_drifted": True,
+            "drifted_predicate_id": str(drifted_predicate_id),
+            "evaluated_at": drift_result.evaluated_at.isoformat(),
+            "explanation": explanation_val,
+        },
+        created_at=drift_result.evaluated_at,
+    )
+    drift_evidence_ids.append(drift_evidence.evidence_id)
+
+    drifted_snapshot = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=MissionState.DRIFTED,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        action_dependencies=snapshot.action_dependencies,
+        step_records=snapshot.step_records,
+        pending_approvals=snapshot.pending_approvals,
+        consumed_approvals=snapshot.consumed_approvals,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=tuple(drift_evidence_ids),
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=drift_result.evaluated_at,
+    )
+
+    repository.ledger.record_state_transition(
+        mission_id=snapshot.mission_id,
+        expected_prior_state=MissionState.READY,
+        new_state=MissionState.DRIFTED,
+        evidence=drift_evidence,
+        updated_at=drift_result.evaluated_at,
+        snapshot_projection=drifted_snapshot.to_dict(),
+    )
 
     repository.save_snapshot(drifted_snapshot)
     return drifted_snapshot

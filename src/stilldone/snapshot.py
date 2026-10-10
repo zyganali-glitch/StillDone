@@ -1209,8 +1209,14 @@ class DurableSnapshotRepository:
                         and act.target.parent_id == pb.parent_id
                     ):
                         act_evs = target_ledger.get_evidence_for_action(act.action_id)
-                        if any(_is_verification_evidence(ev) for ev in act_evs):
-                            matching_action_ev = True
+                        for ev in act_evs:
+                            if _is_verification_evidence(ev):
+                                ev_pid = ev.payload.get("predicate_id")
+                                if ev_pid and str(ev_pid) != str(pb.predicate_id):
+                                    continue
+                                matching_action_ev = True
+                                break
+                        if matching_action_ev:
                             break
                 if not matching_action_ev:
                     raise SnapshotLedgerConflictError(
@@ -1291,10 +1297,14 @@ class DurableSnapshotRepository:
                     proj = self._ledger.get_transition_snapshot(mission_id)
                     if proj is not None:
                         recovered = MissionSnapshot.from_dict(proj)
+                        self.verify_consistency_with_ledger(recovered, self._ledger)
                         try:
                             self.save_snapshot(recovered)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            raise SnapshotIntegrityError(
+                                "Failed to heal snapshot projection to durable storage for mission "
+                                f"{mission_id}: {exc}"
+                            ) from exc
                         found = recovered
                 if found is None:
                     raise SnapshotNotFoundError(
@@ -1308,10 +1318,14 @@ class DurableSnapshotRepository:
                         or proj.get("state") != found.state.value
                     ):
                         recovered = MissionSnapshot.from_dict(proj)
+                        self.verify_consistency_with_ledger(recovered, self._ledger)
                         try:
                             self.save_snapshot(recovered)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            raise SnapshotIntegrityError(
+                                "Failed to heal snapshot projection to durable storage for mission "
+                                f"{mission_id}: {exc}"
+                            ) from exc
                         found = recovered
                 self.verify_consistency_with_ledger(found, self._ledger)
             return found
@@ -1322,10 +1336,14 @@ class DurableSnapshotRepository:
                     proj = self._ledger.get_transition_snapshot(mission_id)
                     if proj is not None:
                         recovered = MissionSnapshot.from_dict(proj)
+                        self.verify_consistency_with_ledger(recovered, self._ledger)
                         try:
                             self.save_snapshot(recovered)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            raise SnapshotIntegrityError(
+                                "Failed to heal snapshot projection to durable storage for mission "
+                                f"{mission_id}: {exc}"
+                            ) from exc
                         return recovered
                 raise SnapshotNotFoundError(
                     f"Snapshot file for mission {mission_id} not found at {target_file}"
@@ -1359,10 +1377,14 @@ class DurableSnapshotRepository:
                         or proj.get("state") != snapshot.state.value
                     ):
                         recovered = MissionSnapshot.from_dict(proj)
+                        self.verify_consistency_with_ledger(recovered, self._ledger)
                         try:
                             self.save_snapshot(recovered)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            raise SnapshotIntegrityError(
+                                "Failed to heal snapshot projection to durable storage for mission "
+                                f"{mission_id}: {exc}"
+                            ) from exc
                         snapshot = recovered
                 self.verify_consistency_with_ledger(snapshot, self._ledger)
             return snapshot

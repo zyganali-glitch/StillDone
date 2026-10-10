@@ -706,3 +706,41 @@ def test_revalidation_target_map_contradicting_snapshot_binding_rejected(
             target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
             snapshot=snapshot,
         )
+
+
+def test_revalidation_synthetic_callback_marks_non_certifying(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """revalidate_mission() with synthetic/reader callback or caller actions sets
+    is_certifying_live_authority=False fail-closed.
+    """
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    obs = VerificationObservation(
+        target=target_calendar,
+        observed_at=now,
+        exists=True,
+        properties={"summary": "Leave for school"},
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        actions=[cal_action],
+        target_map={pred.predicate_id: target_calendar},
+        target_reader=lambda t, s: obs,
+        at=now,
+    )
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False

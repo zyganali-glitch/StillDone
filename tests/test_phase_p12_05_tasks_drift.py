@@ -203,7 +203,7 @@ def test_tasks_completion_reversal_detects_drift(
     mission_id: MissionId,
     tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> None:
     """Completion reversal: task status reverted from 'completed' to 'needsAction' -> DRIFTED."""
     fake_transport = FakeGoogleTasksTransport()
@@ -227,8 +227,68 @@ def test_tasks_completion_reversal_detects_drift(
     assert result.reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
     assert pred_status.predicate_id in result.reconciliation.drifted_predicate_ids
 
-    # Persist in durable snapshot repository
-    repo = DurableSnapshotRepository(storage_path=str(tmp_path))
+    # Persist in durable snapshot repository with ledger
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_path = tmp_path / "mission_reversal.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=snapshot.contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    for act in snapshot.actions:
+        ledger.append_action(
+            ActionRecord(
+                action_id=act.action_id,
+                mission_id=mission_id,
+                action=act,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    for p in snapshot.desired_state:
+        verif_ev = EvidenceRecord.create(
+            action_id=snapshot.actions[0].action_id,
+            mission_id=mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload={
+                "evidence_type": "PREDICATE_EVALUATION",
+                "predicate_id": str(p.predicate_id),
+                "truth": "TRUE",
+                "is_true": True,
+                "observations": {"title": "Pack backpacks", "completed": False},
+            },
+            created_at=now,
+        )
+        ledger.append_evidence(verif_ev)
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
+    ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=[e.evidence_id for e in ev_recs],
+        created_at=now,
+    )
+    repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=ledger)
     repo.save_snapshot(snapshot)
     drifted_snap = record_drift_in_snapshot(repo, snapshot, result)
     assert drifted_snap is not None
@@ -655,22 +715,24 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
                 created_at=now,
             )
         )
-    verif_evidence = EvidenceRecord.create(
-        action_id=snapshot.actions[0].action_id,
-        mission_id=mission_id,
-        origin=EvidenceOrigin(
-            provenance=EvidenceProvenance.LOCAL_EXECUTION,
-            observed_at=now,
-        ),
-        payload={
-            "evidence_type": "PREDICATE_EVALUATION",
-            "predicate_id": str(snapshot.desired_state[0].predicate_id),
-            "truth": "TRUE",
-            "is_true": True,
-        },
-        created_at=now,
-    )
-    ledger.append_evidence(verif_evidence)
+    for p in snapshot.desired_state:
+        verif_evidence = EvidenceRecord.create(
+            action_id=snapshot.actions[0].action_id,
+            mission_id=mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload={
+                "evidence_type": "PREDICATE_EVALUATION",
+                "predicate_id": str(p.predicate_id),
+                "truth": "TRUE",
+                "is_true": True,
+                "observations": {"title": "Pack lunch", "completed": False},
+            },
+            created_at=now,
+        )
+        ledger.append_evidence(verif_evidence)
     ledger.update_mission_state(
         mission_id=mission_id,
         new_state=MissionState.READY,
@@ -1049,3 +1111,31 @@ def test_tasks_drift_target_override_contradicting_canonical_binding_rejected(
             tasks_adapter=tasks_adapter,
             target=target2,
         )
+
+
+def test_tasks_record_drift_rejects_ledger_less_repository(
+    tmp_path: Path,
+    mission_id: MissionId,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """record_drift_in_snapshot rejects repository without attached ledger for tasks fail-closed."""
+    from stilldone.drift import DriftValueError
+
+    fake_transport = FakeGoogleTasksTransport()
+    fake_transport.seed_task(
+        task_list_id=tasks_target.parent_id or "",
+        task_id=tasks_target.resource_id,
+        title="Pack backpacks",
+        status="needsAction",
+    )
+    adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=fake_transport)
+    snapshot, _, _ = _make_ready_tasks_snapshot(mission_id, tasks_target)
+    drift_res = detect_tasks_drift(snapshot=snapshot, tasks_adapter=adapter)
+    assert drift_res.is_drifted is True
+
+    repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=None)
+    repo.save_snapshot(snapshot)
+
+    with pytest.raises(DriftValueError, match="requires an approved ledger-backed"):
+        record_drift_in_snapshot(repo, snapshot, drift_res)
