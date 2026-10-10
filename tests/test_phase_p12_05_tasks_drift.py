@@ -229,6 +229,7 @@ def test_tasks_completion_reversal_detects_drift(
 
     # Persist in durable snapshot repository
     repo = DurableSnapshotRepository(storage_path=str(tmp_path))
+    repo.save_snapshot(snapshot)
     drifted_snap = record_drift_in_snapshot(repo, snapshot, result)
     assert drifted_snap is not None
     assert drifted_snap.state == MissionState.DRIFTED
@@ -626,7 +627,7 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
     demo_scope: DemoResourceScope,
 ) -> None:
     """When repo has attached ledger, record_drift updates state and appends evidence."""
-    from stilldone.domain.provenance import EvidenceOrigin
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
     from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
 
     ledger_path = tmp_path / "mission.ledger"
@@ -639,7 +640,7 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
         MissionRecord(
             mission_id=mission_id,
             contract=snapshot.contract,
-            state=MissionState.READY,
+            state=MissionState.VERIFYING,
             created_at=now,
             updated_at=now,
         )
@@ -654,16 +655,27 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
                 created_at=now,
             )
         )
-    for _eid in snapshot.evidence_ids:
-        ledger.append_evidence(
-            EvidenceRecord.create(
-                action_id=snapshot.actions[0].action_id,
-                mission_id=mission_id,
-                origin=EvidenceOrigin.fixture(),
-                payload={"initial_verification": True},
-                created_at=now,
-            )
-        )
+    verif_evidence = EvidenceRecord.create(
+        action_id=snapshot.actions[0].action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(snapshot.desired_state[0].predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(verif_evidence)
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
     # Re-align snapshot evidence_ids with ledger evidence
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
@@ -691,6 +703,7 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
     assert result.is_drifted is True
 
     repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
+    repo.save_snapshot(snapshot)
     drifted_snap = record_drift_in_snapshot(repo, snapshot, result)
 
     assert drifted_snap is not None
@@ -930,3 +943,109 @@ def test_tasks_drift_explicit_binding_resolves_multi_target_mission(
     result = detect_tasks_drift(snapshot=snapshot, tasks_adapter=tasks_adapter)
     assert result.is_drifted is True
     assert result.new_state == MissionState.DRIFTED
+
+
+def test_tasks_drift_target_override_contradicting_canonical_binding_rejected(
+    mission_id: MissionId,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """A caller target override pointing to a different legitimate action contradicts
+    the canonical PredicateTargetBinding and is rejected with DriftTargetMismatchError.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.drift import DriftTargetMismatchError
+
+    fake_transport = FakeGoogleTasksTransport()
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=fake_transport)
+
+    task_pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="status",
+        operator=PredicateOperator.EQUALS,
+        expected_value="completed",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    target2 = TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK,
+        resource_id="task_other_002",
+        parent_id=tasks_target.parent_id,
+    )
+    action1 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=tasks_target,
+        parameters={},
+    )
+    action2 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=target2,
+        parameters={},
+    )
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    att1 = ExecutionAttempt(
+        action_id=action1.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr1 = ProviderExecutionResult(
+        action_type=action1.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step1 = StepExecutionRecord(
+        action_id=action1.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att1,
+        provider_result=pr1,
+    )
+    att2 = ExecutionAttempt(
+        action_id=action2.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr2 = ProviderExecutionResult(
+        action_type=action2.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step2 = StepExecutionRecord(
+        action_id=action2.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att2,
+        provider_result=pr2,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=task_pred.predicate_id,
+        mission_id=mission_id,
+        target=tasks_target,
+    )
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=MissionContract.create("Multi-tasks-bound", mission_id=mission_id),
+        desired_state=(task_pred,),
+        actions=(action1, action2),
+        predicate_bindings=(binding,),
+        step_records={action1.action_id: step1, action2.action_id: step2},
+        execution_attempts=(att1, att2),
+        evidence_ids=(EvidenceId("e" * 64),),
+        created_at=now,
+    )
+
+    with pytest.raises(DriftTargetMismatchError, match="does not match canonical binding"):
+        detect_tasks_drift(
+            snapshot=snapshot,
+            tasks_adapter=tasks_adapter,
+            target=target2,
+        )

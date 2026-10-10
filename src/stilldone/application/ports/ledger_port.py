@@ -339,33 +339,137 @@ class EvidenceRecord:
 def _is_verification_evidence(ev: EvidenceRecord) -> bool:
     """Check whether an evidence record qualifies as authoritative verification proof.
 
-    Rules:
+    Enforces StillDone Core Product Invariants (P-09 / P-11 / P-12):
     - Must possess recognized EvidenceProvenance.
-    - Generic, unrelated payload (e.g. arbitrary metrics) does not constitute verification proof.
-    - Payload must contain verified execution/read-back indicators or predicate facts.
+    - No fixture or recorded-live evidence represented as current live truth:
+      EvidenceProvenance.FIXTURE and EvidenceProvenance.RECORDED_LIVE are strictly rejected.
+    - Generic, superficial payload flags are strictly rejected fail-closed:
+      No verification from generic `verification=True`, `is_verified=True`,
+      `initial_verification=True`, `is_ready=True`, `status="VERIFIED"` or `status="READ_OK"`.
+    - Empty predicate evaluations or unbound observations fail closed.
+    - Only structured canonical evidence contracts are accepted:
+      1. APPROVED_CALENDAR_UPDATE_RECEIPT: Must have valid receipt with readback MATCH,
+         predicate TRUE, execution EXECUTION_SUCCEEDED, and router mutations >= 1.
+      2. INDEPENDENT_READBACK: Must record readback_status MATCH (or is_match True) and
+         non-empty verified observation properties.
+      3. PREDICATE_EVALUATION: Must bind non-empty predicate_id with truth TRUE (or is_true True).
+      4. MISSION_READINESS: Must have is_ready True, satisfied_predicate_ids non-empty,
+         and failed/stale/unverified sets empty.
+      5. VERIFICATION / READ_BACK: Must contain non-empty structured predicate evaluations
+         evaluating to TRUE, or non-empty verified observations bound to a target.
     """
     if not isinstance(ev.origin.provenance, EvidenceProvenance):
         return False
+
+    # Disallow FIXTURE and RECORDED_LIVE from claiming current live verification truth
+    if ev.origin.provenance in (EvidenceProvenance.FIXTURE, EvidenceProvenance.RECORDED_LIVE):
+        return False
+
     payload = ev.payload
     if not isinstance(payload, (dict, CanonicalPayload)):
         return False
-    # Check for canonical verification indicators
-    if payload.get("initial_verification") is True:
-        return True
-    if payload.get("verification") is True:
-        return True
-    if payload.get("is_verified") is True:
-        return True
-    if payload.get("is_ready") is True:
-        return True
-    if payload.get("status") in ("VERIFIED", "READ_OK"):
-        return True
-    if payload.get("evidence_type") in ("VERIFICATION", "READ_BACK", "INITIAL_VERIFICATION"):
-        return True
-    if "predicate_evaluations" in payload:
-        return True
-    if "observations" in payload and payload.get("observations"):
-        return True
+
+    ev_type = str(payload.get("evidence_type", "")).strip().upper()
+
+    # 1. P-11 Approved Action Receipt Contract
+    if ev_type in ("APPROVED_CALENDAR_UPDATE_RECEIPT", "APPROVED_ACTION_RECEIPT"):
+        receipt = payload.get("receipt")
+        if isinstance(receipt, (dict, CanonicalPayload)):
+            rb_status = str(receipt.get("readback_status", receipt.get("status", ""))).upper()
+            pred_truth = str(receipt.get("predicate_truth", "")).upper()
+            exec_state = str(receipt.get("execution_state", "")).upper()
+            if (
+                rb_status == "MATCH"
+                and pred_truth == "TRUE"
+                and exec_state == "EXECUTION_SUCCEEDED"
+            ):
+                return True
+        return False
+
+    # 2. P-09 Independent Readback Contract
+    if ev_type in ("INDEPENDENT_READBACK", "READ_BACK"):
+        rb_status = str(payload.get("readback_status", "")).upper()
+        is_match = payload.get("is_match") is True
+        if rb_status == "MATCH" or is_match:
+            # Must contain non-empty observed properties / observation content
+            props = payload.get("properties", payload.get("observed_properties"))
+            mismatches = payload.get("mismatches")
+            if (isinstance(props, (dict, CanonicalPayload)) and len(props) > 0) or (
+                isinstance(mismatches, (list, tuple, CanonicalSequence)) and len(mismatches) == 0
+            ):
+                return True
+            raw_obs = payload.get("raw_observation")
+            if isinstance(raw_obs, (dict, CanonicalPayload)) and len(raw_obs) > 0:
+                return True
+
+    # 3. P-09 Predicate Evaluation Contract
+    if ev_type in ("PREDICATE_EVALUATION", "PREDICATE_RESULT"):
+        pid = payload.get("predicate_id")
+        if pid and isinstance(pid, str) and pid.strip():
+            truth_val = str(payload.get("truth", "")).upper()
+            is_true_val = payload.get("is_true") is True
+            if truth_val == "TRUE" or is_true_val:
+                return True
+        return False
+
+    # 4. P-09 Mission Readiness Determination Contract
+    if ev_type == "MISSION_READINESS":
+        if payload.get("is_ready") is True:
+            sat = payload.get("satisfied_predicate_ids")
+            failed = payload.get("failed_predicate_ids")
+            stale = payload.get("stale_predicate_ids")
+            unverified = payload.get("unverified_action_ids")
+            if isinstance(sat, (list, tuple, CanonicalSequence)) and len(sat) > 0:
+                if (
+                    (not failed or len(failed) == 0)
+                    and (not stale or len(stale) == 0)
+                    and (not unverified or len(unverified) == 0)
+                ):
+                    return True
+        return False
+
+    # 5. Canonical VERIFICATION payload contract
+    if ev_type == "VERIFICATION":
+        # Check structured predicate evaluations
+        preds = payload.get("predicate_evaluations")
+        if isinstance(preds, (dict, CanonicalPayload)) and len(preds) > 0:
+            all_true = True
+            for eval_entry in preds.values():
+                if isinstance(eval_entry, (dict, CanonicalPayload)):
+                    e_truth = str(eval_entry.get("truth", "")).upper()
+                    e_satisfied = eval_entry.get("is_satisfied", eval_entry.get("is_true")) is True
+                    if e_truth != "TRUE" and not e_satisfied:
+                        all_true = False
+                        break
+                elif eval_entry is not True and str(eval_entry).upper() != "TRUE":
+                    all_true = False
+                    break
+            if all_true:
+                return True
+        elif isinstance(preds, (list, tuple, CanonicalSequence)) and len(preds) > 0:
+            all_true = True
+            for eval_entry in preds:
+                if isinstance(eval_entry, (dict, CanonicalPayload)):
+                    e_truth = str(eval_entry.get("truth", "")).upper()
+                    e_satisfied = eval_entry.get("is_satisfied", eval_entry.get("is_true")) is True
+                    if e_truth != "TRUE" and not e_satisfied:
+                        all_true = False
+                        break
+                elif eval_entry is not True and str(eval_entry).upper() != "TRUE":
+                    all_true = False
+                    break
+            if all_true:
+                return True
+
+        # Check structured observations bound to target
+        obs = payload.get("observations")
+        target_info = payload.get("target")
+        if isinstance(obs, (dict, CanonicalPayload)) and len(obs) > 0:
+            if isinstance(target_info, (dict, CanonicalPayload)) and len(target_info) > 0:
+                return True
+            if "target" in obs and ("properties" in obs or len(obs) > 1):
+                return True
+
     return False
 
 
@@ -426,6 +530,30 @@ class MissionLedgerPort(ABC):
     def get_all_evidence(self) -> list[EvidenceRecord]:
         """List all evidence records in the ledger in append order."""
 
+    def record_state_transition(
+        self,
+        *,
+        mission_id: MissionId,
+        expected_prior_state: MissionState,
+        new_state: MissionState,
+        evidence: EvidenceRecord,
+        updated_at: datetime | None = None,
+        snapshot_projection: dict[str, Any] | None = None,
+    ) -> tuple[MissionRecord, EvidenceRecord]:
+        """Record a validated state transition with bound evidence atomically.
+
+        Subclasses override to provide atomic journal commit guarantees.
+        """
+        self.append_evidence(evidence)
+        rec = self.update_mission_state(
+            mission_id=mission_id, new_state=new_state, updated_at=updated_at
+        )
+        return rec, evidence
+
+    def get_transition_snapshot(self, mission_id: MissionId) -> dict[str, Any] | None:
+        """Retrieve the latest recoverable snapshot projection recorded for a mission."""
+        return None
+
 
 class InMemoryNonDurableLedger(MissionLedgerPort):
     """Non-durable in-memory ledger implementation strictly for testing/runtime-local state.
@@ -445,6 +573,7 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         self._mission_actions: dict[str, list[str]] = {}
         self._action_evidence: dict[str, list[str]] = {}
         self._mission_evidence: dict[str, list[str]] = {}
+        self._transition_snapshots: dict[str, dict[str, Any]] = {}
 
     def append_mission(self, record: MissionRecord) -> None:
         key = str(record.mission_id)
@@ -639,6 +768,58 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         """List all evidence records in the ledger in append order."""
         return [self.get_evidence(EvidenceId(e_key)) for e_key in self._evidence]
 
+    def record_state_transition(
+        self,
+        *,
+        mission_id: MissionId,
+        expected_prior_state: MissionState,
+        new_state: MissionState,
+        evidence: EvidenceRecord,
+        updated_at: datetime | None = None,
+        snapshot_projection: dict[str, Any] | None = None,
+    ) -> tuple[MissionRecord, EvidenceRecord]:
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        old = self._missions[key]
+        if old.state != expected_prior_state:
+            raise RecordConflictError(
+                f"Cannot transition mission {key}: current state is {old.state.value}, "
+                f"expected prior state is {expected_prior_state.value}"
+            )
+        assert_valid_transition(expected_prior_state, new_state)
+
+        if old.mission_id != evidence.mission_id:
+            raise LedgerError(
+                f"Evidence mission {evidence.mission_id} does not match {old.mission_id}"
+            )
+        a_key = str(evidence.action_id)
+        if a_key not in self._actions:
+            raise RecordNotFoundError(f"Action {a_key} does not exist in ledger")
+        if str(self._actions[a_key].mission_id) != key:
+            raise LedgerError(
+                f"Action {a_key} belongs to mission {self._actions[a_key].mission_id}, not {key}"
+            )
+
+        self.append_evidence(evidence)
+
+        now = updated_at or datetime.now(UTC)
+        norm_now = _normalize_utc(now, "updated_at")
+        updated = MissionRecord(
+            mission_id=old.mission_id,
+            contract=old.contract,
+            state=new_state,
+            created_at=old.created_at,
+            updated_at=norm_now,
+        )
+        self._missions[key] = updated
+        if snapshot_projection is not None:
+            self._transition_snapshots[key] = dict(snapshot_projection)
+        return updated, evidence
+
+    def get_transition_snapshot(self, mission_id: MissionId) -> dict[str, Any] | None:
+        return self._transition_snapshots.get(str(mission_id))
+
 
 class DurableFileLedger(MissionLedgerPort):
     """Durable append-only file ledger implementation for process continuity and recovery.
@@ -661,6 +842,7 @@ class DurableFileLedger(MissionLedgerPort):
         self._mission_actions: dict[str, list[str]] = {}
         self._action_evidence: dict[str, list[str]] = {}
         self._mission_evidence: dict[str, list[str]] = {}
+        self._transition_snapshots: dict[str, dict[str, Any]] = {}
 
         if self._path.exists():
             self._load_from_file()
@@ -695,6 +877,12 @@ class DurableFileLedger(MissionLedgerPort):
                 rec_type = entry.get("record_type")
                 if rec_type == "mission":
                     m_id = MissionId(entry["mission_id"])
+                    init_st = MissionState(entry["state"])
+                    if init_st == MissionState.READY:
+                        raise IllegalStatePromotionError(
+                            f"Initial mission record in durable log for mission {m_id} "
+                            "cannot be in READY state."
+                        )
                     c_data = entry["contract"]
                     intent = UserIntentSnapshot(
                         text=c_data["intent"]["text"],
@@ -710,7 +898,7 @@ class DurableFileLedger(MissionLedgerPort):
                     record = MissionRecord(
                         mission_id=m_id,
                         contract=contract,
-                        state=MissionState(entry["state"]),
+                        state=init_st,
                         created_at=datetime.fromisoformat(entry["created_at"]),
                         updated_at=datetime.fromisoformat(entry["updated_at"]),
                     )
@@ -852,12 +1040,72 @@ class DurableFileLedger(MissionLedgerPort):
                     self._evidence[e_key] = ev_record
                     self._action_evidence.setdefault(a_key, []).append(e_key)
                     self._mission_evidence.setdefault(m_key, []).append(e_key)
+                elif rec_type == "durable_transition":
+                    m_id = MissionId(entry["mission_id"])
+                    m_key = str(m_id)
+                    if m_key not in self._missions:
+                        raise RecordNotFoundError(
+                            f"Durable transition references absent mission {m_key} "
+                            "during durable log replay."
+                        )
+                    old_m = self._missions[m_key]
+                    exp_st = MissionState(entry["expected_prior_state"])
+                    if old_m.state != exp_st:
+                        raise RecordConflictError(
+                            f"Conflicting prior state during replay for mission {m_key}: "
+                            f"current is {old_m.state.value}, expected {exp_st.value}"
+                        )
+                    new_st = MissionState(entry["new_state"])
+                    assert_valid_transition(exp_st, new_st)
+
+                    ev_data = entry["evidence"]
+                    e_id = EvidenceId(ev_data["evidence_id"])
+                    a_id = ActionId(ev_data["action_id"])
+                    a_key = str(a_id)
+                    if a_key not in self._actions:
+                        raise RecordNotFoundError(
+                            f"Durable transition evidence references absent action {a_key}"
+                        )
+                    orig_data = ev_data["origin"]
+                    origin = EvidenceOrigin.create(
+                        provenance=orig_data["provenance"],
+                        observed_at=datetime.fromisoformat(orig_data["observed_at"]),
+                        recorded_live_origin=orig_data.get("recorded_live_origin"),
+                    )
+                    ev_record = EvidenceRecord(
+                        evidence_id=e_id,
+                        action_id=a_id,
+                        mission_id=m_id,
+                        origin=origin,
+                        payload=ev_data["payload"],
+                        created_at=datetime.fromisoformat(ev_data["created_at"]),
+                    )
+                    e_key = str(e_id)
+                    self._evidence[e_key] = ev_record
+                    self._action_evidence.setdefault(a_key, []).append(e_key)
+                    self._mission_evidence.setdefault(m_key, []).append(e_key)
+
+                    updated_m = MissionRecord(
+                        mission_id=old_m.mission_id,
+                        contract=old_m.contract,
+                        state=new_st,
+                        created_at=old_m.created_at,
+                        updated_at=datetime.fromisoformat(entry["updated_at"]),
+                    )
+                    self._missions[m_key] = updated_m
+                    if entry.get("snapshot_projection") is not None:
+                        self._transition_snapshots[m_key] = entry["snapshot_projection"]
                 else:
                     raise LedgerError(
                         f"Unknown record_type '{rec_type}' encountered during durable log replay."
                     )
 
     def append_mission(self, record: MissionRecord) -> None:
+        if record.state == MissionState.READY:
+            raise IllegalStatePromotionError(
+                f"Cannot initialize mission {record.mission_id} directly in READY state. "
+                "READY may only be entered from VERIFYING via valid verification."
+            )
         key = str(record.mission_id)
         if key in self._missions:
             existing = self._missions[key]
@@ -1095,3 +1343,102 @@ class DurableFileLedger(MissionLedgerPort):
     def get_all_evidence(self) -> list[EvidenceRecord]:
         """List all evidence records in the ledger in append order."""
         return [self.get_evidence(EvidenceId(e_key)) for e_key in self._evidence]
+
+    def record_state_transition(
+        self,
+        *,
+        mission_id: MissionId,
+        expected_prior_state: MissionState,
+        new_state: MissionState,
+        evidence: EvidenceRecord,
+        updated_at: datetime | None = None,
+        snapshot_projection: dict[str, Any] | None = None,
+    ) -> tuple[MissionRecord, EvidenceRecord]:
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        old = self._missions[key]
+        if old.state != expected_prior_state:
+            raise RecordConflictError(
+                f"Cannot transition mission {key}: current state is {old.state.value}, "
+                f"expected prior state is {expected_prior_state.value}"
+            )
+        assert_valid_transition(expected_prior_state, new_state)
+
+        if old.mission_id != evidence.mission_id:
+            raise LedgerError(
+                f"Evidence mission {evidence.mission_id} does not match {old.mission_id}"
+            )
+        a_key = str(evidence.action_id)
+        if a_key not in self._actions:
+            raise RecordNotFoundError(f"Action {a_key} does not exist in ledger")
+        if str(self._actions[a_key].mission_id) != key:
+            raise LedgerError(
+                f"Action {a_key} belongs to mission {self._actions[a_key].mission_id}, not {key}"
+            )
+
+        e_key = str(evidence.evidence_id)
+        if e_key in self._evidence:
+            existing = self._evidence[e_key]
+            if canonical_serialize(to_canonical_primitive(existing)) == canonical_serialize(
+                to_canonical_primitive(evidence)
+            ):
+                raise DuplicateRecordError(
+                    f"Evidence {e_key} already exists with identical content."
+                )
+            raise RecordConflictError(f"Conflicting record for evidence {e_key}")
+
+        now = updated_at or datetime.now(UTC)
+        norm_now = _normalize_utc(now, "updated_at")
+
+        entry = {
+            "record_type": "durable_transition",
+            "mission_id": key,
+            "expected_prior_state": expected_prior_state.value,
+            "new_state": new_state.value,
+            "evidence": {
+                "evidence_id": str(evidence.evidence_id),
+                "action_id": str(evidence.action_id),
+                "mission_id": str(evidence.mission_id),
+                "origin": {
+                    "provenance": evidence.origin.provenance.value,
+                    "observed_at": evidence.origin.observed_at.isoformat(),
+                    "recorded_live_origin": (
+                        evidence.origin.recorded_live_origin.value
+                        if evidence.origin.recorded_live_origin
+                        else None
+                    ),
+                },
+                "payload": to_canonical_primitive(evidence.payload),
+                "created_at": evidence.created_at.isoformat(),
+            },
+            "updated_at": norm_now.isoformat(),
+            "snapshot_projection": snapshot_projection,
+        }
+        self._write_entry(entry)
+
+        self._evidence[e_key] = EvidenceRecord(
+            evidence_id=evidence.evidence_id,
+            action_id=evidence.action_id,
+            mission_id=evidence.mission_id,
+            origin=evidence.origin,
+            payload=evidence.payload,
+            created_at=evidence.created_at,
+        )
+        self._action_evidence[a_key].append(e_key)
+        self._mission_evidence[key].append(e_key)
+
+        updated = MissionRecord(
+            mission_id=old.mission_id,
+            contract=old.contract,
+            state=new_state,
+            created_at=old.created_at,
+            updated_at=norm_now,
+        )
+        self._missions[key] = updated
+        if snapshot_projection is not None:
+            self._transition_snapshots[key] = dict(snapshot_projection)
+        return updated, evidence
+
+    def get_transition_snapshot(self, mission_id: MissionId) -> dict[str, Any] | None:
+        return self._transition_snapshots.get(str(mission_id))

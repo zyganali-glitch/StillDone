@@ -383,9 +383,17 @@ class MissionSnapshot:
         # Enforce READY state invariants fail-closed:
         # Snapshots must never create or confer mission READY authority independently.
         if self.state == MissionState.READY:
+            if len(self.desired_state) == 0 or not any(p.required for p in self.desired_state):
+                raise SnapshotIntegrityError(
+                    "Mission cannot be in READY state with zero required desired state predicates"
+                )
             if len(self.actions) > 0 and len(self.evidence_ids) == 0:
                 raise SnapshotIntegrityError(
                     "Mission cannot be in READY state with zero evidence records"
+                )
+            if len(self.desired_state) > 0 and len(self.actions) == 0:
+                raise SnapshotIntegrityError(
+                    "Cannot construct READY snapshot with predicates but zero actions"
                 )
             for act in self.actions:
                 if act.action_id not in self.step_records:
@@ -413,23 +421,39 @@ class MissionSnapshot:
                         f"Pending approval {pa.pending_approval_id} is still "
                         "PENDING in READY snapshot"
                     )
-            if len(self.desired_state) > 0 and len(self.actions) == 0:
-                raise SnapshotIntegrityError(
-                    "Cannot construct READY snapshot with predicates but zero actions"
-                )
+
+            from stilldone.authority_policy import get_action_authority_class
+            from stilldone.domain.authority import AuthorityClass
+
+            for act in self.actions:
+                if (
+                    get_action_authority_class(act.action_type)
+                    == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+                ):
+                    has_consumed = any(
+                        ca.action_id == act.action_id and ca.status == ApprovalUsageStatus.CONSUMED
+                        for ca in self.consumed_approvals
+                    )
+                    if not has_consumed:
+                        raise SnapshotIntegrityError(
+                            f"Action {act.action_id} requires approval but lacks consumed "
+                            "approval in READY snapshot"
+                        )
+
+            if len(self.predicate_bindings) > 0:
+                required_pids = {p.predicate_id for p in self.desired_state if p.required}
+                bound_pids = {pb.predicate_id for pb in self.predicate_bindings}
+                missing_bindings = required_pids - bound_pids
+                if missing_bindings:
+                    raise SnapshotIntegrityError(
+                        "Required predicates missing target bindings in READY snapshot: "
+                        f"{missing_bindings}"
+                    )
 
         if not isinstance(self.predicate_bindings, tuple):
             raise SnapshotTypeError("predicate_bindings must be a tuple")
         known_pred_ids = {p.predicate_id for p in self.desired_state}
-        known_target_tuples = {
-            (
-                a.target.system,
-                a.target.resource_kind,
-                a.target.resource_id,
-                a.target.parent_id,
-            )
-            for a in self.actions
-        }
+        known_action_targets = [a.target for a in self.actions]
         seen_pids: set[PredicateId] = set()
         for i, pb in enumerate(self.predicate_bindings):
             if not isinstance(pb, PredicateTargetBinding):
@@ -446,13 +470,7 @@ class MissionSnapshot:
                 raise SnapshotLineageError(
                     f"PredicateTargetBinding {pb.predicate_id} not in snapshot desired_state"
                 )
-            pb_tgt_tuple = (
-                pb.system,
-                pb.resource_kind,
-                pb.resource_id,
-                pb.parent_id,
-            )
-            if pb_tgt_tuple not in known_target_tuples:
+            if pb.target not in known_action_targets:
                 raise SnapshotLineageError(
                     f"PredicateTargetBinding {pb.predicate_id} target does not match "
                     "any action target"
@@ -992,31 +1010,9 @@ def create_mission_snapshot(
         elif len(distinct_targets) == 0 or len(desired_state) == 0:
             pass
         else:
-            # Unambiguous system-based derivation for mixed-provider missions
-            for p in desired_state:
-                norm_subj = p.subject.strip().lower().split(".")[-1]
-                raw_subj = p.subject.lower()
-                is_cal = norm_subj in CALENDAR_SUBJECTS or raw_subj.startswith(
-                    ("calendar.", "event.")
-                )
-                is_task = norm_subj in TASKS_SUBJECTS or raw_subj.startswith("task.")
-                matched_targets: list[TargetIdentity] = []
-                if is_cal and not is_task:
-                    matched_targets = [
-                        t for t in distinct_targets.values() if t.system == "google_calendar"
-                    ]
-                elif is_task and not is_cal:
-                    matched_targets = [
-                        t for t in distinct_targets.values() if t.system == "google_tasks"
-                    ]
-                if len(matched_targets) == 1:
-                    norm_pbs.append(
-                        PredicateTargetBinding.create(
-                            predicate_id=p.predicate_id,
-                            mission_id=mission_id,
-                            target=matched_targets[0],
-                        )
-                    )
+            # When multiple distinct action targets exist, explicit predicate_bindings
+            # are strictly required fail-closed. Heuristic guessing is prohibited.
+            pass
 
     if state == MissionState.READY:
         if step_records is None:
@@ -1179,6 +1175,14 @@ class DurableSnapshotRepository:
 
         # 4. If snapshot claims READY, verify authoritative verification lineage in ledger
         if snapshot.state == MissionState.READY:
+            required_pids = {p.predicate_id for p in snapshot.desired_state if p.required}
+            bound_pids = {pb.predicate_id for pb in snapshot.predicate_bindings}
+            missing_bindings = required_pids - bound_pids
+            if missing_bindings:
+                raise SnapshotLedgerConflictError(
+                    "Required predicates missing target bindings in READY snapshot: "
+                    f"{missing_bindings}"
+                )
             if len(snapshot.desired_state) > 0 and len(snapshot.actions) == 0:
                 raise SnapshotLedgerConflictError(
                     "READY snapshot with desired state predicates must have actions in ledger"
@@ -1283,15 +1287,46 @@ class DurableSnapshotRepository:
                     if data.get("mission_id") == target_mission_str:
                         found = MissionSnapshot.from_dict(data)
             if found is None:
-                raise SnapshotNotFoundError(
-                    f"No snapshot found for mission {mission_id} in {self._path}"
-                )
+                if self._ledger is not None and hasattr(self._ledger, "get_transition_snapshot"):
+                    proj = self._ledger.get_transition_snapshot(mission_id)
+                    if proj is not None:
+                        recovered = MissionSnapshot.from_dict(proj)
+                        try:
+                            self.save_snapshot(recovered)
+                        except Exception:
+                            pass
+                        found = recovered
+                if found is None:
+                    raise SnapshotNotFoundError(
+                        f"No snapshot found for mission {mission_id} in {self._path}"
+                    )
             if self._ledger is not None:
+                if hasattr(self._ledger, "get_transition_snapshot"):
+                    proj = self._ledger.get_transition_snapshot(mission_id)
+                    if proj is not None and (
+                        proj.get("snapshot_id") != found.snapshot_id
+                        or proj.get("state") != found.state.value
+                    ):
+                        recovered = MissionSnapshot.from_dict(proj)
+                        try:
+                            self.save_snapshot(recovered)
+                        except Exception:
+                            pass
+                        found = recovered
                 self.verify_consistency_with_ledger(found, self._ledger)
             return found
         else:
             target_file = self._snapshot_file_for_mission(mission_id)
             if not target_file.exists():
+                if self._ledger is not None and hasattr(self._ledger, "get_transition_snapshot"):
+                    proj = self._ledger.get_transition_snapshot(mission_id)
+                    if proj is not None:
+                        recovered = MissionSnapshot.from_dict(proj)
+                        try:
+                            self.save_snapshot(recovered)
+                        except Exception:
+                            pass
+                        return recovered
                 raise SnapshotNotFoundError(
                     f"Snapshot file for mission {mission_id} not found at {target_file}"
                 )
@@ -1317,5 +1352,17 @@ class DurableSnapshotRepository:
                     f"mission_id {snapshot.mission_id}"
                 )
             if self._ledger is not None:
+                if hasattr(self._ledger, "get_transition_snapshot"):
+                    proj = self._ledger.get_transition_snapshot(mission_id)
+                    if proj is not None and (
+                        proj.get("snapshot_id") != snapshot.snapshot_id
+                        or proj.get("state") != snapshot.state.value
+                    ):
+                        recovered = MissionSnapshot.from_dict(proj)
+                        try:
+                            self.save_snapshot(recovered)
+                        except Exception:
+                            pass
+                        snapshot = recovered
                 self.verify_consistency_with_ledger(snapshot, self._ledger)
             return snapshot

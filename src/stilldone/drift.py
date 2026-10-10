@@ -203,48 +203,51 @@ def _resolve_target_for_predicate(
     expected_system: str | None = None,
     expected_kind: ResourceKind | None = None,
 ) -> TargetIdentity:
-    """Resolve and validate the exact TargetIdentity bound to a predicate."""
-    known_action_targets = [
-        a.target for a in snapshot.actions if a.mission_id == snapshot.mission_id
-    ]
-    if explicit_target is not None:
-        if explicit_target not in known_action_targets:
+    """Resolve and validate the exact TargetIdentity bound to a predicate.
+
+    Enforces authoritative PredicateTargetBinding lineage:
+    - Resolves target directly from snapshot.get_target_for_predicate();
+    - If explicit_target is provided, it must match the canonical predicate binding;
+    - Reject missing, foreign or mismatched targets fail-closed.
+    """
+    canonical_target: TargetIdentity | None = None
+    try:
+        canonical_target = snapshot.get_target_for_predicate(predicate.predicate_id)
+    except (SnapshotIntegrityError, AttributeError):
+        canonical_target = None
+
+    if canonical_target is None:
+        matching_actions = [
+            a
+            for a in snapshot.actions
+            if a.mission_id == snapshot.mission_id
+            and (expected_system is None or a.target.system == expected_system)
+            and (expected_kind is None or a.target.resource_kind == expected_kind)
+        ]
+        if len(matching_actions) > 1:
             raise DriftTargetMismatchError(
-                f"Explicit target {explicit_target} does not belong to any action "
-                f"of mission {snapshot.mission_id}"
+                f"Ambiguous target for predicate {predicate.predicate_id}: multiple actions "
+                f"({len(matching_actions)}) match {expected_system}/{expected_kind}; "
+                "explicit PredicateTargetBinding is strictly required fail-closed "
+                "(no heuristic guessing)"
+            )
+        elif len(matching_actions) == 0:
+            raise DriftTargetMismatchError(
+                f"No bound action target found for predicate {predicate.predicate_id} "
+                f"matching {expected_system}/{expected_kind}"
+            )
+        else:
+            canonical_target = matching_actions[0].target
+
+    if explicit_target is not None:
+        if explicit_target != canonical_target:
+            raise DriftTargetMismatchError(
+                f"Explicit target {explicit_target} does not match canonical binding "
+                f"{canonical_target} for predicate {predicate.predicate_id}"
             )
         target = explicit_target
     else:
-        # Check authoritative snapshot.predicate_bindings first
-        resolved_from_binding = False
-        try:
-            target = snapshot.get_target_for_predicate(predicate.predicate_id)
-            resolved_from_binding = True
-        except (SnapshotIntegrityError, AttributeError):
-            resolved_from_binding = False
-
-        if not resolved_from_binding:
-            matching_actions = [
-                a
-                for a in snapshot.actions
-                if a.mission_id == snapshot.mission_id
-                and (expected_system is None or a.target.system == expected_system)
-                and (expected_kind is None or a.target.resource_kind == expected_kind)
-            ]
-            if len(matching_actions) == 1:
-                target = matching_actions[0].target
-            elif len(matching_actions) == 0:
-                raise DriftTargetMismatchError(
-                    f"No bound action target found for predicate {predicate.predicate_id} "
-                    f"matching {expected_system}/{expected_kind}"
-                )
-            else:
-                raise DriftTargetMismatchError(
-                    f"Ambiguous target for predicate {predicate.predicate_id}: multiple actions "
-                    f"({len(matching_actions)}) match {expected_system}/{expected_kind}; "
-                    "explicit PredicateTargetBinding is strictly required fail-closed "
-                    "(no heuristic guessing)"
-                )
+        target = canonical_target
 
     if not isinstance(target, TargetIdentity):
         raise DriftTypeError("target must be TargetIdentity")
@@ -309,20 +312,21 @@ def detect_calendar_drift(
 
     calendar_predicates = []
     for p in snapshot.desired_state:
-        norm_subj = _normalize_subject(p.subject)
-        raw_subj = p.subject.lower()
-        if norm_subj in CALENDAR_SUBJECTS or raw_subj.startswith(("calendar.", "event.")):
-            calendar_predicates.append(p)
-        elif norm_subj in TASKS_SUBJECTS or raw_subj.startswith("task."):
-            continue
-        else:
-            if target is not None and target.system == "google_calendar":
-                calendar_predicates.append(p)
-            elif any(a.target.system == "google_calendar" for a in snapshot.actions):
-                cal_acts = [a for a in snapshot.actions if a.target.system == "google_calendar"]
-                other_acts = [a for a in snapshot.actions if a.target.system != "google_calendar"]
-                if cal_acts and not other_acts:
-                    calendar_predicates.append(p)
+        try:
+            canonical_tgt = snapshot.get_target_for_predicate(p.predicate_id)
+            if canonical_tgt.system != "google_calendar":
+                continue
+        except (SnapshotIntegrityError, AttributeError):
+            pass
+
+        _resolve_target_for_predicate(
+            p,
+            snapshot,
+            explicit_target=target,
+            expected_system="google_calendar",
+            expected_kind=ResourceKind.CALENDAR_EVENT,
+        )
+        calendar_predicates.append(p)
 
     if not calendar_predicates:
         raise DriftValueError("Snapshot has zero calendar predicates to evaluate for drift")
@@ -485,20 +489,21 @@ def detect_tasks_drift(
 
     tasks_predicates = []
     for p in snapshot.desired_state:
-        norm_subj = _normalize_subject(p.subject)
-        raw_subj = p.subject.lower()
-        if norm_subj in TASKS_SUBJECTS or raw_subj.startswith("task."):
-            tasks_predicates.append(p)
-        elif norm_subj in CALENDAR_SUBJECTS or raw_subj.startswith(("calendar.", "event.")):
-            continue
-        else:
-            if target is not None and target.system == "google_tasks":
-                tasks_predicates.append(p)
-            elif any(a.target.system == "google_tasks" for a in snapshot.actions):
-                tsk_acts = [a for a in snapshot.actions if a.target.system == "google_tasks"]
-                other_acts = [a for a in snapshot.actions if a.target.system != "google_tasks"]
-                if tsk_acts and not other_acts:
-                    tasks_predicates.append(p)
+        try:
+            canonical_tgt = snapshot.get_target_for_predicate(p.predicate_id)
+            if canonical_tgt.system != "google_tasks":
+                continue
+        except (SnapshotIntegrityError, AttributeError):
+            pass
+
+        _resolve_target_for_predicate(
+            p,
+            snapshot,
+            explicit_target=target,
+            expected_system="google_tasks",
+            expected_kind=ResourceKind.TASK,
+        )
+        tasks_predicates.append(p)
 
     if not tasks_predicates:
         raise DriftValueError("Snapshot has zero tasks predicates to evaluate for drift")
@@ -648,38 +653,91 @@ def record_drift_in_snapshot(
     # 1. Verify source snapshot is current (not stale/replaced)
     try:
         current_stored = repository.load_snapshot(snapshot.mission_id)
-        if current_stored.snapshot_id != snapshot.snapshot_id:
-            raise DriftValueError(
-                f"Source snapshot {snapshot.snapshot_id} is stale; "
-                f"current stored snapshot is {current_stored.snapshot_id}"
-            )
-        if current_stored.created_at > snapshot.created_at:
-            raise DriftValueError(
-                f"Source snapshot {snapshot.snapshot_id} has older timestamp "
-                f"({snapshot.created_at.isoformat()}) than current stored snapshot "
-                f"({current_stored.created_at.isoformat()})"
-            )
     except Exception as exc:
-        if isinstance(exc, DriftValueError):
-            raise
-        # If no snapshot in repository yet, continue
+        raise DriftValueError(
+            f"Cannot record drift without successfully loaded authoritative predecessor: {exc}"
+        ) from exc
+
+    if current_stored.snapshot_id != snapshot.snapshot_id:
+        raise DriftValueError(
+            f"Source snapshot {snapshot.snapshot_id} is stale; "
+            f"current stored snapshot is {current_stored.snapshot_id}"
+        )
+    if current_stored.created_at != snapshot.created_at:
+        raise DriftValueError(
+            f"Source snapshot {snapshot.snapshot_id} timestamp "
+            f"({snapshot.created_at.isoformat()}) does not match current stored snapshot "
+            f"({current_stored.created_at.isoformat()})"
+        )
 
     # 2. Mission must be in READY state
-    if snapshot.state != MissionState.READY:
+    if current_stored.state != MissionState.READY or snapshot.state != MissionState.READY:
         raise ReconciliationLifecycleError(
             f"Cannot record drift for mission in state {snapshot.state.value}; must be READY"
         )
 
-    # 3. Fresh observations must actually prove drift
+    # 3. Fresh observations must actually prove drift against canonical targets
+    for pred in snapshot.desired_state:
+        if pred.predicate_id in drift_result.fresh_observations:
+            obs = drift_result.fresh_observations[pred.predicate_id]
+            pred_target = snapshot.get_target_for_predicate(pred.predicate_id)
+            if obs.target != pred_target:
+                raise DriftTargetMismatchError(
+                    f"Observation target {obs.target} does not match canonical binding "
+                    f"{pred_target} for predicate {pred.predicate_id}"
+                )
+
+    recomp_requests: dict[PredicateId, VerificationRequest] = {}
+    for pred in snapshot.desired_state:
+        if pred.predicate_id in drift_result.fresh_observations:
+            p_target = snapshot.get_target_for_predicate(pred.predicate_id)
+            act_type = (
+                ActionType.CALENDAR_READ
+                if p_target.system == "google_calendar"
+                else ActionType.TASK_READ
+            )
+            read_act = ActionContract.create(
+                mission_id=snapshot.mission_id,
+                action_type=act_type,
+                target=p_target,
+                parameters={},
+            )
+            recomp_requests[pred.predicate_id] = VerificationRequest(
+                mission_id=snapshot.mission_id,
+                action=read_act,
+                target=p_target,
+                predicate=pred,
+            )
+
+    effective_at = max(
+        drift_result.evaluated_at,
+        *(obs.observed_at for obs in drift_result.fresh_observations.values()),
+    )
+    reconciled = reconcile_mission_state(
+        mission_id=snapshot.mission_id,
+        predicates=[
+            p for p in snapshot.desired_state if p.predicate_id in drift_result.fresh_observations
+        ],
+        verification_requests=recomp_requests,
+        fresh_observations=drift_result.fresh_observations,
+        at=effective_at,
+    )
+    reconciled_trans = apply_reconciliation_transition(
+        prior_state=MissionState.READY,
+        reconciliation=reconciled,
+    )
+    if not reconciled_trans.is_drifted or reconciled_trans.new_state != MissionState.DRIFTED:
+        raise DriftValueError(
+            "Forged drift rejected: canonically recomputed reconciliation "
+            "does not confirm DRIFTED transition"
+        )
+
     has_proven_contradiction = False
     drifted_predicate_id: PredicateId | None = None
     for pred in snapshot.desired_state:
         if pred.predicate_id in drift_result.fresh_observations:
             obs = drift_result.fresh_observations[pred.predicate_id]
-            try:
-                pred_target = snapshot.get_target_for_predicate(pred.predicate_id)
-            except Exception:
-                pred_target = obs.target
+            pred_target = snapshot.get_target_for_predicate(pred.predicate_id)
             eval_res = evaluate_predicate(
                 pred, obs, expected_target=pred_target, at=drift_result.evaluated_at
             )
@@ -688,36 +746,25 @@ def record_drift_in_snapshot(
                 drifted_predicate_id = pred.predicate_id
                 break
 
-    if not has_proven_contradiction:
+    if not has_proven_contradiction or drifted_predicate_id is None:
         raise DriftValueError(
             "Forged drift rejected: fresh observations do not prove "
             "any contradicted desired state predicate"
         )
 
     # 4. Bind drift evidence to the exact canonical action associated with the drifted predicate
-    assert drifted_predicate_id is not None
-    try:
-        drifted_target = snapshot.get_target_for_predicate(drifted_predicate_id)
-        matching_actions = [a for a in snapshot.actions if a.target == drifted_target]
-        if matching_actions:
-            bound_action_id = matching_actions[0].action_id
-        elif snapshot.actions:
-            bound_action_id = snapshot.actions[0].action_id
-        else:
-            raise DriftValueError(
-                f"No canonical action found matching drifted predicate {drifted_predicate_id}"
-            )
-    except Exception as exc:
-        if snapshot.actions:
-            bound_action_id = snapshot.actions[0].action_id
-        else:
-            raise DriftValueError(
-                f"No canonical action found matching drifted predicate {drifted_predicate_id}"
-            ) from exc
+    drifted_target = snapshot.get_target_for_predicate(drifted_predicate_id)
+    matching_actions = [a for a in snapshot.actions if a.target == drifted_target]
+    if not matching_actions:
+        raise DriftValueError(
+            f"No canonical action found matching drifted predicate {drifted_predicate_id} "
+            f"and target {drifted_target}"
+        )
+    bound_action_id = matching_actions[0].action_id
 
     drift_evidence_ids = list(snapshot.evidence_ids)
 
-    # Atomicity: Transition ledger state first, append evidence, then save snapshot
+    # 5. Atomicity: Durable state transition in ledger, then save snapshot
     if repository.ledger is not None:
         origin = EvidenceOrigin(
             provenance=EvidenceProvenance.LOCAL_EXECUTION,
@@ -735,8 +782,8 @@ def record_drift_in_snapshot(
             payload={
                 "evidence_type": "MISSION_DRIFT",
                 "mission_id": str(snapshot.mission_id),
-                "prior_state": drift_result.prior_state.value,
-                "new_state": drift_result.new_state.value,
+                "prior_state": MissionState.READY.value,
+                "new_state": MissionState.DRIFTED.value,
                 "is_drifted": True,
                 "drifted_predicate_id": str(drifted_predicate_id),
                 "evaluated_at": drift_result.evaluated_at.isoformat(),
@@ -744,29 +791,48 @@ def record_drift_in_snapshot(
             },
             created_at=drift_result.evaluated_at,
         )
-        repository.ledger.append_evidence(drift_evidence)
         drift_evidence_ids.append(drift_evidence.evidence_id)
 
-        repository.ledger.update_mission_state(
+        drifted_snapshot = create_mission_snapshot(
             mission_id=snapshot.mission_id,
-            new_state=MissionState.DRIFTED,
-            updated_at=drift_result.evaluated_at,
+            state=MissionState.DRIFTED,
+            contract=snapshot.contract,
+            desired_state=snapshot.desired_state,
+            actions=snapshot.actions,
+            action_dependencies=snapshot.action_dependencies,
+            step_records=snapshot.step_records,
+            pending_approvals=snapshot.pending_approvals,
+            consumed_approvals=snapshot.consumed_approvals,
+            execution_attempts=snapshot.execution_attempts,
+            evidence_ids=tuple(drift_evidence_ids),
+            predicate_bindings=snapshot.predicate_bindings,
+            created_at=drift_result.evaluated_at,
         )
 
-    drifted_snapshot = create_mission_snapshot(
-        mission_id=snapshot.mission_id,
-        state=MissionState.DRIFTED,
-        contract=snapshot.contract,
-        desired_state=snapshot.desired_state,
-        actions=snapshot.actions,
-        action_dependencies=snapshot.action_dependencies,
-        step_records=snapshot.step_records,
-        pending_approvals=snapshot.pending_approvals,
-        consumed_approvals=snapshot.consumed_approvals,
-        execution_attempts=snapshot.execution_attempts,
-        evidence_ids=tuple(drift_evidence_ids),
-        predicate_bindings=snapshot.predicate_bindings,
-        created_at=drift_result.evaluated_at,
-    )
+        repository.ledger.record_state_transition(
+            mission_id=snapshot.mission_id,
+            expected_prior_state=MissionState.READY,
+            new_state=MissionState.DRIFTED,
+            evidence=drift_evidence,
+            updated_at=drift_result.evaluated_at,
+            snapshot_projection=drifted_snapshot.to_dict(),
+        )
+    else:
+        drifted_snapshot = create_mission_snapshot(
+            mission_id=snapshot.mission_id,
+            state=MissionState.DRIFTED,
+            contract=snapshot.contract,
+            desired_state=snapshot.desired_state,
+            actions=snapshot.actions,
+            action_dependencies=snapshot.action_dependencies,
+            step_records=snapshot.step_records,
+            pending_approvals=snapshot.pending_approvals,
+            consumed_approvals=snapshot.consumed_approvals,
+            execution_attempts=snapshot.execution_attempts,
+            evidence_ids=tuple(drift_evidence_ids),
+            predicate_bindings=snapshot.predicate_bindings,
+            created_at=drift_result.evaluated_at,
+        )
+
     repository.save_snapshot(drifted_snapshot)
     return drifted_snapshot

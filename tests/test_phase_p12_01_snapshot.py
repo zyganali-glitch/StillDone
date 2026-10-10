@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -179,6 +180,19 @@ def test_durable_snapshot_round_trip_file_mode(
     repo = DurableSnapshotRepository(log_file)
 
     now = datetime(2026, 10, 3, 6, 15, 0, tzinfo=UTC)
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+
+    consumed_appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=sample_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Human approved",
+    )
     attempt = ExecutionAttempt(
         action_id=sample_action.action_id,
         idempotency_key=IdempotencyKey.generate(),
@@ -207,6 +221,7 @@ def test_durable_snapshot_round_trip_file_mode(
         desired_state=[sample_predicate],
         actions=[sample_action],
         step_records={sample_action.action_id: step_rec},
+        consumed_approvals=[consumed_appr],
         execution_attempts=[attempt],
         evidence_ids=[evidence_id],
         created_at=now,
@@ -624,6 +639,20 @@ def test_forged_ready_over_persisted_draft_rejected(
         attempt=attempt,
         provider_result=pr,
     )
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+
+    consumed_appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=sample_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Human approved",
+    )
+
     forged_ready_snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
@@ -631,6 +660,7 @@ def test_forged_ready_over_persisted_draft_rejected(
         desired_state=[sample_predicate],
         actions=[sample_action],
         step_records={sample_action.action_id: step_rec},
+        consumed_approvals=[consumed_appr],
         execution_attempts=[attempt],
         evidence_ids=[EvidenceId("e" * 64)],
     )
@@ -658,7 +688,7 @@ def test_snapshot_ledger_foreign_evidence_rejected(
         MissionRecord(
             mission_id=mission_id,
             contract=contract,
-            state=MissionState.READY,
+            state=MissionState.VERIFYING,
             created_at=contract.created_at,
             updated_at=contract.created_at,
         )
@@ -671,27 +701,6 @@ def test_snapshot_ledger_foreign_evidence_rejected(
             approval_id=None,
             created_at=contract.created_at,
         )
-    )
-
-    now = datetime(2026, 10, 3, 6, 30, 0, tzinfo=UTC)
-    attempt = ExecutionAttempt(
-        action_id=sample_action.action_id,
-        idempotency_key=IdempotencyKey.generate(),
-        attempt_number=1,
-        started_at=now,
-    )
-    pr = ProviderExecutionResult(
-        action_type=ActionType.CALENDAR_UPDATE,
-        success=True,
-        status_name="UPDATED",
-        writes_performed=1,
-        captured_at=now,
-    )
-    step_rec = StepExecutionRecord(
-        action_id=sample_action.action_id,
-        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
-        attempt=attempt,
-        provider_result=pr,
     )
 
     # Append foreign mission and action to ledger first
@@ -732,12 +741,10 @@ def test_snapshot_ledger_foreign_evidence_rejected(
 
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
-        state=MissionState.READY,
+        state=MissionState.VERIFYING,
         contract=contract,
         desired_state=[sample_predicate],
         actions=[sample_action],
-        step_records={sample_action.action_id: step_rec},
-        execution_attempts=[attempt],
         evidence_ids=[foreign_ev_record.evidence_id],
     )
 
@@ -936,7 +943,7 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
         )
     )
 
-    # Genuine verification evidence
+    # Genuine verification evidence matching canonical contract
     verif_evidence = EvidenceRecord.create(
         action_id=sample_action.action_id,
         mission_id=mission_id,
@@ -945,9 +952,10 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
             observed_at=now,
         ),
         payload={
-            "evidence_type": "VERIFICATION",
-            "verification": True,
-            "status": "VERIFIED",
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
             "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
         },
         created_at=now,
@@ -959,6 +967,20 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
         mission_id=mission_id,
         new_state=MissionState.READY,
         updated_at=now,
+    )
+
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+
+    consumed_appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=sample_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Human approved",
     )
 
     attempt = ExecutionAttempt(
@@ -987,6 +1009,7 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
         desired_state=[sample_predicate],
         actions=[sample_action],
         step_records={sample_action.action_id: step_rec},
+        consumed_approvals=[consumed_appr],
         execution_attempts=[attempt],
         evidence_ids=[verif_evidence.evidence_id],
         created_at=now,
@@ -1100,3 +1123,268 @@ def test_snapshot_predicate_target_binding_rejected_when_duplicate_predicate_id(
             actions=[sample_action],
             predicate_bindings=[b1, b2],
         )
+
+
+def test_ledger_rejects_loose_flags_for_ready_promotion(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+) -> None:
+    """Loose flags, superficial status, fixture provenance, and empty predicate evaluations
+    fail closed with IllegalStatePromotionError when attempting promotion to READY in ledger.
+    """
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import (
+        ActionRecord,
+        DurableFileLedger,
+        EvidenceRecord,
+        MissionRecord,
+    )
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    loose_payloads: list[dict[str, Any]] = [
+        {"verification": True},
+        {"is_verified": True},
+        {"initial_verification": True},
+        {"is_ready": True},
+        {"status": "VERIFIED"},
+        {"status": "READ_OK"},
+        {"evidence_type": "PREDICATE_EVALUATION", "predicate_id": "", "truth": "TRUE"},
+        {"evidence_type": "PREDICATE_EVALUATION", "predicate_id": "p1", "truth": "FALSE"},
+        {"evidence_type": "MISSION_READINESS", "is_ready": True, "failed_predicate_ids": ["p1"]},
+    ]
+
+    for i, payload in enumerate(loose_payloads):
+        ledger = DurableFileLedger(tmp_path / f"loose_{i}.ledger")
+        ledger.append_mission(
+            MissionRecord(
+                mission_id=mission_id,
+                contract=contract,
+                state=MissionState.VERIFYING,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        ledger.append_action(
+            ActionRecord(
+                action_id=sample_action.action_id,
+                mission_id=mission_id,
+                action=sample_action,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+        ev = EvidenceRecord.create(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload=payload,
+            created_at=now,
+        )
+        ledger.append_evidence(ev)
+
+        with pytest.raises(IllegalStatePromotionError, match="lacks verification"):
+            ledger.update_mission_state(
+                mission_id=mission_id,
+                new_state=MissionState.READY,
+                updated_at=now,
+            )
+
+    # Fixture provenance must also be rejected even with valid-looking payload
+    ledger_fix = DurableFileLedger(tmp_path / "fixture.ledger")
+    ledger_fix.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger_fix.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev_fix = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.FIXTURE,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": "p1",
+            "truth": "TRUE",
+        },
+        created_at=now,
+    )
+    ledger_fix.append_evidence(ev_fix)
+    with pytest.raises(IllegalStatePromotionError, match="lacks verification"):
+        ledger_fix.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+        )
+
+
+def test_snapshot_crash_recovery_from_ledger_durable_transition(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """When a process crashes after ledger durable transition commit but before snapshot
+    storage write completes, DurableSnapshotRepository.load_snapshot() deterministically
+    recovers the projection from the ledger journal and heals the snapshot storage.
+    """
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import (
+        ActionRecord,
+        DurableFileLedger,
+        EvidenceRecord,
+        MissionRecord,
+    )
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_file = tmp_path / "recovery.ledger"
+    ledger = DurableFileLedger(ledger_file)
+    snap_dir = tmp_path / "snaps"
+    repo = DurableSnapshotRepository(snap_dir, ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+
+    consumed_appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=sample_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Human approved",
+    )
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=ProviderExecutionResult(
+            action_type=sample_action.action_type,
+            success=True,
+            status_name="READ_OK",
+            writes_performed=0,
+            captured_at=now,
+        ),
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+
+    # Initial snapshot saved in VERIFYING state
+    initial_snap = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.VERIFYING,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        created_at=now,
+    )
+    repo.save_snapshot(initial_snap)
+
+    # Create target READY snapshot projection
+    ready_snap = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        step_records={sample_action.action_id: step_rec},
+        consumed_approvals=[consumed_appr],
+        execution_attempts=[attempt],
+        evidence_ids=[ev.evidence_id],
+        created_at=now,
+    )
+
+    # Commit durable state transition in ledger journal
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    # Simulate CRASH: snapshot file on disk was NOT updated (remains VERIFYING)
+    fresh_ledger = DurableFileLedger(ledger_file)
+    fresh_repo = DurableSnapshotRepository(snap_dir, ledger=fresh_ledger)
+
+    # load_snapshot() detects that disk snapshot lags behind committed durable transition,
+    # recovers projection deterministically, and heals disk snapshot
+    recovered = fresh_repo.load_snapshot(mission_id)
+    assert recovered.state == MissionState.READY
+    assert recovered.snapshot_id == ready_snap.snapshot_id
+
+    # Verify that disk storage was healed
+    unconnected_repo = DurableSnapshotRepository(snap_dir, ledger=None)
+    disk_loaded = unconnected_repo.load_snapshot(mission_id)
+    assert disk_loaded.state == MissionState.READY
+    assert disk_loaded.snapshot_id == ready_snap.snapshot_id

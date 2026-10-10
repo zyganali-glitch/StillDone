@@ -438,6 +438,13 @@ def get_action_authority_policy(
     return policy
 
 
+def get_action_authority_class(
+    action: ValidatedActionContract | ActionContract | ActionType,
+) -> AuthorityClass:
+    """Resolve the canonical AuthorityClass for an action or ActionType."""
+    return get_action_authority_policy(action).authority_class
+
+
 get_authority_policy = get_action_authority_policy
 
 

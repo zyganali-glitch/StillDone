@@ -648,3 +648,61 @@ def test_revalidation_unsupported_provider_system_rejected(
             target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
             actions=[unsupported_action],
         )
+
+
+def test_revalidation_target_map_contradicting_snapshot_binding_rejected(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Caller target_map override contradicting canonical snapshot.predicate_bindings
+    is rejected with RevalidationValueError.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.lifecycle import MissionState
+    from stilldone.domain.mission import MissionContract
+    from stilldone.snapshot import create_mission_snapshot
+
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    target2 = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="different_event_999",
+        parent_id=target_calendar.parent_id,
+    )
+    action2 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=target2,
+        parameters={},
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=pred.predicate_id,
+        mission_id=mission_id,
+        target=target_calendar,
+    )
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=MissionContract.create("Reval contract", mission_id=mission_id),
+        desired_state=[pred],
+        actions=[cal_action, action2],
+        predicate_bindings=[binding],
+    )
+
+    with pytest.raises(RevalidationValueError, match="contradicts canonical snapshot binding"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: target2},
+            target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
+            snapshot=snapshot,
+        )

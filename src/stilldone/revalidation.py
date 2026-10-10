@@ -373,8 +373,21 @@ def revalidate_mission(
         else:
             raise RevalidationTypeError("snapshot must have actions attribute")
 
-    # Derive target_map from snapshot bindings if not provided explicitly
-    if target_map is None:
+    # Derive or validate target_map against snapshot bindings
+    if target_map is not None:
+        if (
+            snapshot is not None
+            and hasattr(snapshot, "predicate_bindings")
+            and snapshot.predicate_bindings
+        ):
+            snap_bindings = {b.predicate_id: b.target for b in snapshot.predicate_bindings}
+            for pid, tgt in target_map.items():
+                if pid in snap_bindings and snap_bindings[pid] != tgt:
+                    raise RevalidationValueError(
+                        f"Caller target_map override for predicate {pid} ({tgt}) "
+                        f"contradicts canonical snapshot binding ({snap_bindings[pid]})"
+                    )
+    else:
         if (
             snapshot is not None
             and hasattr(snapshot, "predicate_bindings")
