@@ -962,13 +962,6 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
     )
     ledger.append_evidence(verif_evidence)
 
-    # Legal transition VERIFYING -> READY
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
-
     from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
     from stilldone.domain.authority import ApprovalId, BindingHash
 
@@ -1013,6 +1006,14 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
         execution_attempts=[attempt],
         evidence_ids=[verif_evidence.evidence_id],
         created_at=now,
+    )
+
+    # Legal transition VERIFYING -> READY with authoritative snapshot projection
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     # Verification consistency succeeds
@@ -1500,9 +1501,12 @@ def test_verify_consistency_rejects_unrelated_predicate_evidence(
         created_at=now,
     )
     ledger.append_evidence(ev)
-    ledger.update_mission_state(
+    # Simulate a ledger record in READY state to test snapshot consistency rejection
+    ledger._missions[str(mission_id)] = MissionRecord(
         mission_id=mission_id,
-        new_state=MissionState.READY,
+        contract=contract,
+        state=MissionState.READY,
+        created_at=now,
         updated_at=now,
     )
 
@@ -2352,3 +2356,749 @@ def test_ready_accepted_with_legitimate_fully_verified_positive_path(
     loaded_snap = repo.load_snapshot(mission_id)
     assert loaded_snap.state == MissionState.READY
     assert loaded_snap.snapshot_id == ready_snap.snapshot_id
+
+
+# ===========================================================================
+# Phase P-12 Mandatory Discriminating Tests (Authority & Predicate Bounds)
+# ===========================================================================
+
+
+def test_discriminating_1_predicate_bound_to_wrong_action_resource_fails(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """1. Two legitimate actions, both with otherwise valid evidence,
+    but a predicate bound to the wrong action/resource is rejected fail-closed.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "wrong_action_resource.ledger")
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    # Action 1: target_calendar (evt_leave_school_001)
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    # Action 2: other_target (evt_leave_school_002)
+    other_target = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="evt_leave_school_002",
+        parent_id=sample_action.target.parent_id,
+    )
+    action2 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=other_target,
+        parameters={},
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=action2.action_id,
+            mission_id=mission_id,
+            action=action2,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+
+    # Valid evidence for Action 1 (start_time = 07:30, matches sample_predicate)
+    ev1 = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev1)
+
+    # Valid evidence for Action 2 (start_time = 09:00, different meeting)
+    ev2 = EvidenceRecord.create(
+        action_id=action2.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": "other_pred_id",
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T09:00:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev2)
+
+    # Predicate expects 07:30, but binding binds it to Action 2's target (evt_leave_school_002)!
+    b_wrong = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=other_target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action, action2],
+        predicate_bindings=[b_wrong],
+        evidence_ids=[ev1.evidence_id, ev2.evidence_id],
+        now=now,
+    )
+
+    with pytest.raises(IllegalStatePromotionError):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+            snapshot_projection=ready_snap.to_dict(),
+        )
+
+
+def test_discriminating_2_observation_contains_only_unrelated_property_fails(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """2. The predicate expects start_time, yet the observation contains only an
+    unrelated property. A non-empty unrelated dictionary is rejected fail-closed.
+    """
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "unrelated_prop.ledger")
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    # Non-empty observation, but completely unrelated properties; start_time is missing!
+    ev_unrelated = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"notes": "unrelated meeting notes", "color_id": "blue"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev_unrelated)
+
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        evidence_ids=[ev_unrelated.evidence_id],
+        now=now,
+    )
+
+    with pytest.raises(IllegalStatePromotionError, match="lacks verified evidence"):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+            snapshot_projection=ready_snap.to_dict(),
+        )
+
+
+def test_discriminating_3_correct_predicate_id_incorrect_parent_id_fails(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """3. Correct predicate ID, but incorrect parent/container ID fails closed."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "wrong_parent.ledger")
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev)
+
+    valid_binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[valid_binding],
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+    tampered_proj = ready_snap.to_dict()
+    # Tamper parent_id in projection binding
+    tampered_proj["predicate_bindings"][0]["parent_id"] = "wrong_parent_calendar_id_999"
+
+    with pytest.raises(IllegalStatePromotionError):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+            snapshot_projection=tampered_proj,
+        )
+
+
+def test_discriminating_4_ready_via_update_mission_state_without_projection_fails(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """4. READY via update_mission_state() without the required mission projection fails closed."""
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "no_projection.ledger")
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(ev)
+
+    # Calling update_mission_state with snapshot_projection=None MUST fail closed
+    with pytest.raises(IllegalStatePromotionError, match="authoritative snapshot projection"):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+            snapshot_projection=None,
+        )
+
+
+def test_discriminating_5_correctly_formatted_but_stale_observation_fails(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """5. Correctly formatted observation that has expired freshness fails closed."""
+    from datetime import timedelta
+
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    stale_time = now - timedelta(hours=3)
+    ledger = DurableFileLedger(tmp_path / "stale_obs.ledger")
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=stale_time,
+            updated_at=stale_time,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=stale_time,
+        )
+    )
+    ev_stale = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=stale_time,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=stale_time,
+    )
+    ledger.append_evidence(ev_stale)
+
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        evidence_ids=[ev_stale.evidence_id],
+        now=now,
+    )
+
+    with pytest.raises(IllegalStatePromotionError, match="lacks verified evidence"):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+            snapshot_projection=ready_snap.to_dict(),
+        )
+
+
+def test_discriminating_6_invalid_transition_leaves_no_orphan_in_memory(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """6. Invalid transition leaves no orphan evidence or projection in in-memory ledger."""
+    from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = InMemoryNonDurableLedger()
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+
+    # Invalid evidence with contradicting observation
+    ev_invalid = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T12:00:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        evidence_ids=[ev_invalid.evidence_id],
+        now=now,
+    )
+
+    with pytest.raises(IllegalStatePromotionError):
+        ledger.record_state_transition(
+            mission_id=mission_id,
+            expected_prior_state=MissionState.VERIFYING,
+            new_state=MissionState.READY,
+            evidence=ev_invalid,
+            snapshot_projection=ready_snap.to_dict(),
+            updated_at=now,
+        )
+
+    # Invariants: Mission remains VERIFYING, zero orphan evidence or projection
+    m_rec = ledger.get_mission(mission_id)
+    assert m_rec.state == MissionState.VERIFYING
+    assert str(ev_invalid.evidence_id) not in ledger._evidence
+    assert str(ev_invalid.evidence_id) not in ledger._action_evidence.get(
+        str(sample_action.action_id), []
+    )
+    assert str(ev_invalid.evidence_id) not in ledger._mission_evidence.get(str(mission_id), [])
+    assert ledger.get_transition_snapshot(mission_id) is None
+
+
+def test_discriminating_7_fully_verified_canonical_positive_path(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """7. Fully verified canonical positive path promotes to READY and marks snapshot persisted."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger = DurableFileLedger(tmp_path / "positive_path.ledger")
+    repo = DurableSnapshotRepository(tmp_path / "snaps", ledger=ledger)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    m_rec = ledger.get_mission(mission_id)
+    assert m_rec.state == MissionState.READY
+
+    repo.save_snapshot(ready_snap)
+    loaded_snap = repo.load_snapshot(mission_id)
+    assert loaded_snap.state == MissionState.READY
+    assert loaded_snap.is_persisted is True
+
+
+def test_discriminating_8_reload_legal_ready_and_reject_invalid_journal(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """8. Legal READY reload succeeds, and replay of invalid journal state is rejected."""
+    import json
+
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_path = tmp_path / "legal_reload.ledger"
+    ledger = DurableFileLedger(ledger_path)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ev = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(sample_predicate.predicate_id),
+            "truth": "TRUE",
+            "is_true": True,
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    ready_snap = _make_full_ready_snapshot(
+        mission_id=mission_id,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        evidence_ids=[ev.evidence_id],
+        now=now,
+    )
+    ledger.record_state_transition(
+        mission_id=mission_id,
+        expected_prior_state=MissionState.VERIFYING,
+        new_state=MissionState.READY,
+        evidence=ev,
+        snapshot_projection=ready_snap.to_dict(),
+        updated_at=now,
+    )
+
+    # Reload from file succeeds and verifies READY state
+    reloaded_ledger = DurableFileLedger(ledger_path)
+    assert reloaded_ledger.get_mission(mission_id).state == MissionState.READY
+
+    # Part B: Create an invalid journal attempting an unverified READY transition
+    bad_ledger_path = tmp_path / "invalid_replay.ledger"
+    with open(bad_ledger_path, "w", encoding="utf-8") as f:
+        # Write valid mission and action
+        f.write(
+            json.dumps(
+                {
+                    "record_type": "mission",
+                    "mission_id": str(mission_id),
+                    "state": "VERIFYING",
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                    "contract": {
+                        "mission_id": str(mission_id),
+                        "created_at": now.isoformat(),
+                        "schema_version": "v1",
+                        "intent": {
+                            "text": "Intent",
+                            "captured_at": now.isoformat(),
+                            "mission_id": str(mission_id),
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+        f.write(
+            json.dumps(
+                {
+                    "record_type": "action",
+                    "action_id": str(sample_action.action_id),
+                    "mission_id": str(mission_id),
+                    "created_at": now.isoformat(),
+                    "approval_id": None,
+                    "action": {
+                        "action_id": str(sample_action.action_id),
+                        "mission_id": str(mission_id),
+                        "action_type": sample_action.action_type.value,
+                        "target": {
+                            "system": sample_action.target.system,
+                            "resource_kind": sample_action.target.resource_kind.value,
+                            "resource_id": sample_action.target.resource_id,
+                            "parent_id": sample_action.target.parent_id,
+                        },
+                        "parameters": sample_action.parameters.to_dict(),
+                    },
+                }
+            )
+            + "\n"
+        )
+        # Write state update to READY without snapshot projection and without evidence
+        f.write(
+            json.dumps(
+                {
+                    "record_type": "mission_state_update",
+                    "mission_id": str(mission_id),
+                    "state": "READY",
+                    "updated_at": now.isoformat(),
+                    "snapshot_projection": None,
+                }
+            )
+            + "\n"
+        )
+
+    # Replaying this invalid journal MUST fail closed with IllegalStatePromotionError
+    with pytest.raises(IllegalStatePromotionError):
+        DurableFileLedger(bad_ledger_path)

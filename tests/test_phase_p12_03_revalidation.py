@@ -972,8 +972,9 @@ def test_revalidation_legitimate_standard_reader_live_provenance_certifies(
     target_calendar: TargetIdentity,
     cal_action: ActionContract,
 ) -> None:
-    """StandardTargetReader backed by real live transport with valid snapshot and matching
-    observations certifies live authority (is_certifying_live_authority=True).
+    """StandardTargetReader backed by MockLiveTransport with DRAFT snapshot computes
+    predicate truth (all_true=True) but strictly rejects live authority certification
+    (is_certifying_live_authority=False).
     """
     from typing import Any
 
@@ -1045,4 +1046,238 @@ def test_revalidation_legitimate_standard_reader_live_provenance_certifies(
     )
 
     assert result.all_true is True
-    assert result.is_certifying_live_authority is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_revalidation_forged_live_provenance_rejected(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Reader claiming LIVE_GOOGLE without trusted live capability fails closed."""
+    now = datetime.now(tz=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    def forged_callback(t: TargetIdentity, s: str) -> VerificationObservation:
+        return VerificationObservation(
+            target=t,
+            observed_at=now,
+            exists=True,
+            properties={"summary": "Leave for school"},
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+
+    with pytest.raises(RevalidationValueError, match="cannot assert live provenance"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            actions=[cal_action],
+            target_map={pred.predicate_id: target_calendar},
+            target_reader=forged_callback,
+            at=now,
+        )
+
+
+def test_revalidation_draft_snapshot_fails_live_certification(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """A DRAFT snapshot cannot certify current verified READY state."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.lifecycle import MissionState
+    from stilldone.domain.mission import MissionContract
+    from stilldone.snapshot import create_mission_snapshot
+
+    now = datetime.now(tz=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=pred.predicate_id,
+        mission_id=mission_id,
+        target=target_calendar,
+    )
+    snap = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=MissionContract.create("Draft Contract", mission_id=mission_id),
+        desired_state=[pred],
+        actions=[cal_action],
+        predicate_bindings=[binding],
+        created_at=now,
+    )
+    obs = VerificationObservation(
+        target=target_calendar,
+        observed_at=now,
+        exists=True,
+        properties={"summary": "Leave for school"},
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=snap,
+        target_reader=lambda t, s: obs,
+        at=now,
+    )
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_revalidation_unpersisted_ready_snapshot_fails_live_certification(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """An unpersisted READY snapshot (is_persisted=False) cannot certify live authority."""
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.execution import AttemptId, ExecutionAttempt, IdempotencyKey
+    from stilldone.domain.lifecycle import MissionState
+    from stilldone.domain.mission import MissionContract
+    from stilldone.evidence import EvidenceId
+    from stilldone.execution.state import (
+        ActionExecutionStatus,
+        ProviderExecutionResult,
+        StepExecutionRecord,
+    )
+    from stilldone.snapshot import MissionSnapshot
+
+    now = datetime.now(tz=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=pred.predicate_id,
+        mission_id=mission_id,
+        target=target_calendar,
+    )
+    contract = MissionContract.create("Ready Contract", mission_id=mission_id)
+    attempt = ExecutionAttempt(
+        action_id=cal_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+        attempt_id=AttemptId.generate(),
+    )
+    provider_res = ProviderExecutionResult(
+        action_type=cal_action.action_type,
+        success=True,
+        status_name="SUCCESS",
+        writes_performed=0,
+        captured_at=now,
+        details={},
+    )
+    step_rec = StepExecutionRecord(
+        action_id=cal_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=provider_res,
+    )
+    appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=cal_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=now,
+        attempt_number=1,
+        reason="Approved",
+    )
+    unpersisted_snap = MissionSnapshot(
+        snapshot_id="snap_unpersisted_123",
+        snapshot_version="v1",
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=(pred,),
+        actions=(cal_action,),
+        action_dependencies={cal_action.action_id: ()},
+        step_records={cal_action.action_id: step_rec},
+        pending_approvals=(),
+        consumed_approvals=(appr,),
+        execution_attempts=(attempt,),
+        evidence_ids=(EvidenceId("a" * 64),),
+        created_at=now,
+        predicate_bindings=(binding,),
+        is_persisted=False,
+    )
+    obs = VerificationObservation(
+        target=target_calendar,
+        observed_at=now,
+        exists=True,
+        properties={"summary": "Leave for school"},
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=unpersisted_snap,
+        target_reader=lambda t, s: obs,
+        at=now,
+    )
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_revalidation_genuine_fixture_read_success_without_certification(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Fixture reads compute predicate truth successfully (all_true=True)
+    without granting live authority certification (is_certifying_live_authority=False).
+    """
+    now = datetime.now(tz=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    fixture_obs = VerificationObservation(
+        target=target_calendar,
+        observed_at=now,
+        exists=True,
+        properties={"summary": "Leave for school"},
+        provenance=EvidenceProvenance.FIXTURE,
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        actions=[cal_action],
+        target_map={pred.predicate_id: target_calendar},
+        target_reader=lambda t, s: fixture_obs,
+        at=now,
+    )
+    assert result.all_true is True
+    assert result.is_still_true is True
+    assert result.is_certifying_live_authority is False

@@ -24,6 +24,14 @@ from stilldone.domain.action import (
     TargetIdentity,
 )
 from stilldone.domain.authority import ApprovalId
+from stilldone.domain.desired_state import (
+    DesiredStatePredicate,
+    FreshnessContract,
+    FreshnessMode,
+    PredicateId,
+    PredicateOperator,
+    PredicateTargetBinding,
+)
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
@@ -544,6 +552,7 @@ def _validate_ready_promotion(
     mission_id: MissionId,
     snapshot_projection: dict[str, Any] | None = None,
     new_evidence: EvidenceRecord | None = None,
+    updated_at: datetime | None = None,
 ) -> None:
     """Validate mission-level readiness facts before authoritative READY promotion.
 
@@ -552,13 +561,23 @@ def _validate_ready_promotion(
     - Every action must have evidence.
     - Every action must have valid verification evidence
       (not loose flags, not fixture/recorded-live).
-    - If snapshot_projection is present (or registered in ledger):
-      * Desired state predicates cannot be empty.
-      * Every required predicate must have canonical PredicateTargetBinding.
-      * Bound target must belong to an action of the mission.
-      * Every required predicate must be verified by matching verification evidence.
-      * Observation properties must not contradict expected predicate values.
+    - Authoritative snapshot projection is strictly required for READY promotion.
+    - Desired state predicates cannot be empty.
+    - Every required predicate must have canonical PredicateTargetBinding.
+    - Bound target must belong to an action of the mission.
+    - Every required predicate must be independently evaluated and verified against
+      real observations of the required subject property using deterministic P-09 functions.
+    - Observations contradicting expected predicate values fail closed.
+    - Missing properties, unrelated observations, unsupported operators, false values,
+      stale values and incorrect target identity are strictly rejected fail-closed.
     """
+    from stilldone.verifier.contracts import VerificationObservation
+    from stilldone.verifier.freshness import (
+        DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS,
+        evaluate_freshness,
+    )
+    from stilldone.verifier.predicates import PredicateTruth, evaluate_predicate
+
     m_key = str(mission_id)
     action_ids = ledger._mission_actions.get(m_key, [])
     if not action_ids:
@@ -583,104 +602,313 @@ def _validate_ready_promotion(
             )
 
     proj = snapshot_projection
-    if proj is None and hasattr(ledger, "_transition_snapshots"):
+    if proj is None and hasattr(ledger, "get_transition_snapshot"):
+        proj = ledger.get_transition_snapshot(mission_id)
+    elif proj is None and hasattr(ledger, "_transition_snapshots"):
         proj = ledger._transition_snapshots.get(m_key)
 
-    if proj is not None:
-        if not isinstance(proj, dict):
-            raise RecordConflictError(f"Snapshot projection must be a dict for mission {m_key}")
-        if proj.get("mission_id") != m_key:
-            raise RecordConflictError(
-                f"Snapshot projection mission {proj.get('mission_id')} does not match {m_key}"
-            )
-        desired_state = proj.get("desired_state")
-        if not desired_state or not isinstance(desired_state, list):
+    if proj is None:
+        raise IllegalStatePromotionError(
+            f"Cannot promote mission {m_key} to READY without authoritative snapshot projection"
+        )
+
+    if not isinstance(proj, dict):
+        raise RecordConflictError(f"Snapshot projection must be a dict for mission {m_key}")
+    if proj.get("mission_id") != m_key:
+        raise RecordConflictError(
+            f"Snapshot projection mission {proj.get('mission_id')} does not match {m_key}"
+        )
+    desired_state = proj.get("desired_state")
+    if not desired_state or not isinstance(desired_state, list):
+        raise IllegalStatePromotionError(
+            f"Cannot promote mission {m_key} to READY with zero desired state predicates"
+        )
+
+    raw_bindings = proj.get("predicate_bindings", [])
+    bindings_by_pid: dict[str, dict[str, Any]] = {}
+    for b in raw_bindings:
+        if isinstance(b, PredicateTargetBinding):
+            pid = str(b.predicate_id)
+            bindings_by_pid[pid] = {
+                "system": b.system,
+                "resource_kind": (
+                    b.resource_kind.value
+                    if isinstance(b.resource_kind, ResourceKind)
+                    else str(b.resource_kind)
+                ),
+                "resource_id": b.resource_id,
+                "parent_id": b.parent_id or "",
+            }
+        elif isinstance(b, dict):
+            pid = str(b.get("predicate_id", ""))
+            if not pid:
+                continue
+            if "target" in b:
+                t = b["target"]
+                if isinstance(t, TargetIdentity):
+                    bindings_by_pid[pid] = {
+                        "system": t.system,
+                        "resource_kind": (
+                            t.resource_kind.value
+                            if isinstance(t.resource_kind, ResourceKind)
+                            else str(t.resource_kind)
+                        ),
+                        "resource_id": t.resource_id,
+                        "parent_id": t.parent_id or "",
+                    }
+                elif isinstance(t, dict):
+                    bindings_by_pid[pid] = {
+                        "system": t.get("system"),
+                        "resource_kind": t.get("resource_kind"),
+                        "resource_id": t.get("resource_id"),
+                        "parent_id": t.get("parent_id") or "",
+                    }
+            else:
+                bindings_by_pid[pid] = {
+                    "system": b.get("system"),
+                    "resource_kind": b.get("resource_kind"),
+                    "resource_id": b.get("resource_id"),
+                    "parent_id": b.get("parent_id") or "",
+                }
+
+    eval_at = updated_at
+    if eval_at is None and "created_at" in proj:
+        try:
+            eval_at = datetime.fromisoformat(proj["created_at"])
+        except Exception:
+            eval_at = None
+    if eval_at is None:
+        eval_at = datetime.now(UTC)
+    else:
+        eval_at = _normalize_utc(eval_at, "eval_at")
+
+    # Every required predicate must be verified
+    for pred in desired_state:
+        freshness_raw: Any
+        if isinstance(pred, DesiredStatePredicate):
+            pid = str(pred.predicate_id)
+            is_req = pred.required
+            subject = pred.subject
+            op_raw = pred.operator
+            exp_val = pred.expected_value
+            freshness_raw = pred.freshness
+        elif isinstance(pred, dict):
+            pid = str(pred.get("predicate_id", ""))
+            is_req = pred.get("required", True)
+            subject = str(pred.get("subject", ""))
+            op_raw = pred.get("operator", "EQUALS")
+            exp_val = pred.get("expected_value")
+            freshness_raw = pred.get("freshness")
+        else:
+            continue
+
+        if not is_req:
+            continue
+
+        if pid not in bindings_by_pid:
             raise IllegalStatePromotionError(
-                f"Cannot promote mission {m_key} to READY with zero desired state predicates"
+                f"Cannot promote mission {m_key} to READY: required predicate {pid} "
+                "missing canonical PredicateTargetBinding"
+            )
+        b_tgt = bindings_by_pid[pid]
+        if (
+            not b_tgt.get("system")
+            or not b_tgt.get("resource_kind")
+            or not b_tgt.get("resource_id")
+        ):
+            raise IllegalStatePromotionError(
+                f"Cannot promote mission {m_key} to READY: required predicate {pid} "
+                "has invalid target binding"
             )
 
-        raw_bindings = proj.get("predicate_bindings", [])
-        bindings_by_pid: dict[str, Any] = {}
-        for b in raw_bindings:
-            if isinstance(b, dict):
-                bindings_by_pid[str(b.get("predicate_id"))] = b.get("target")
-            elif hasattr(b, "predicate_id") and hasattr(b, "target"):
-                bindings_by_pid[str(b.predicate_id)] = b.target
-
-        # Collect all verified evidence for mission
-        all_mission_verif_evs: list[EvidenceRecord] = []
+        matching_actions: list[str] = []
         for act_k in action_ids:
+            act_rec = ledger._actions.get(act_k)
+            if act_rec is None:
+                continue
+            act_t = act_rec.action.target
+            rk_val = (
+                act_t.resource_kind.value
+                if isinstance(act_t.resource_kind, ResourceKind)
+                else str(act_t.resource_kind)
+            )
+            p_id_norm = act_t.parent_id or ""
+            if (
+                act_t.system == b_tgt["system"]
+                and rk_val == b_tgt["resource_kind"]
+                and act_t.resource_id == b_tgt["resource_id"]
+                and p_id_norm == (b_tgt["parent_id"] or "")
+            ):
+                matching_actions.append(act_k)
+
+        if not matching_actions:
+            raise IllegalStatePromotionError(
+                f"Cannot promote mission {m_key} to READY: required predicate {pid} "
+                "bound target does not match any mission action target"
+            )
+
+        candidate_evs: list[EvidenceRecord] = []
+        for act_k in matching_actions:
             for ek in ledger._action_evidence.get(act_k, []):
                 if ek in ledger._evidence and _is_verification_evidence(ledger._evidence[ek]):
-                    all_mission_verif_evs.append(ledger._evidence[ek])
-        if new_evidence is not None and _is_verification_evidence(new_evidence):
-            all_mission_verif_evs.append(new_evidence)
+                    candidate_evs.append(ledger._evidence[ek])
+            if (
+                new_evidence is not None
+                and str(new_evidence.action_id) == act_k
+                and _is_verification_evidence(new_evidence)
+            ):
+                candidate_evs.append(new_evidence)
 
-        # Every required predicate must be verified
-        for pred in desired_state:
-            if not isinstance(pred, dict):
-                continue
-            pid = str(pred.get("predicate_id"))
-            is_req = pred.get("required", True)
-            if not is_req:
-                continue
-
-            if pid not in bindings_by_pid:
-                raise IllegalStatePromotionError(
-                    f"Cannot promote mission {m_key} to READY: required predicate {pid} "
-                    "missing canonical PredicateTargetBinding"
+        if isinstance(pred, DesiredStatePredicate):
+            pred_obj = pred
+        else:
+            if isinstance(freshness_raw, FreshnessContract):
+                fc = freshness_raw
+            elif isinstance(freshness_raw, dict):
+                fc = FreshnessContract(
+                    mode=FreshnessMode(freshness_raw.get("mode", "CURRENT")),
+                    max_age_seconds=freshness_raw.get(
+                        "max_age_seconds", DEFAULT_CURRENT_FRESHNESS_WINDOW_SECONDS
+                    ),
                 )
-            bound_target = bindings_by_pid[pid]
+            else:
+                fc = FreshnessContract.current()
+            try:
+                op_parsed = PredicateOperator(op_raw) if isinstance(op_raw, str) else op_raw
+            except ValueError as exc:
+                raise IllegalStatePromotionError(
+                    f"Unsupported predicate operator {op_raw!r} for predicate {pid}"
+                ) from exc
+            pred_obj = DesiredStatePredicate.create(
+                predicate_id=PredicateId(pid),
+                mission_id=mission_id,
+                subject=subject,
+                operator=op_parsed,
+                expected_value=exp_val,
+                required=is_req,
+                freshness=fc,
+            )
 
-            matching_ev = None
-            for ev in all_mission_verif_evs:
-                ev_pid = str(ev.payload.get("predicate_id", ""))
-                sat_pids = [str(x) for x in ev.payload.get("satisfied_predicate_ids", [])]
-                ev_type = str(ev.payload.get("evidence_type", "")).upper()
+        expected_target_obj = TargetIdentity(
+            system=b_tgt["system"],
+            resource_kind=(
+                ResourceKind(b_tgt["resource_kind"])
+                if isinstance(b_tgt["resource_kind"], str)
+                else b_tgt["resource_kind"]
+            ),
+            resource_id=b_tgt["resource_id"],
+            parent_id=b_tgt["parent_id"] if b_tgt["parent_id"] else None,
+        )
 
-                is_appr_receipt = ev_type == "APPROVED_CALENDAR_UPDATE_RECEIPT"
-                if ev_pid == pid or pid in sat_pids or is_appr_receipt:
-                    # Check target identity matches bound_target
-                    act_rec = ledger._actions.get(str(ev.action_id))
-                    if act_rec is not None:
-                        act_target = act_rec.action.target
-                        if isinstance(bound_target, dict):
-                            if (
-                                act_target.system != bound_target.get("system")
-                                or (
-                                    act_target.resource_kind.value
-                                    != bound_target.get("resource_kind")
-                                )
-                                or act_target.resource_id != bound_target.get("resource_id")
-                            ):
-                                continue
-                        elif hasattr(bound_target, "resource_id"):
-                            if act_target != bound_target:
-                                continue
+        matching_ev = None
+        for ev in candidate_evs:
+            ev_pid = str(ev.payload.get("predicate_id", ""))
+            sat_pids = [str(x) for x in ev.payload.get("satisfied_predicate_ids", [])]
+            ev_type = str(ev.payload.get("evidence_type", "")).upper()
+            is_appr_receipt = ev_type in (
+                "APPROVED_CALENDAR_UPDATE_RECEIPT",
+                "APPROVED_ACTION_RECEIPT",
+            )
+            is_readback = ev_type in ("INDEPENDENT_READBACK", "READ_BACK")
+            is_readiness = ev_type == "MISSION_READINESS"
+            is_verif = ev_type == "VERIFICATION"
 
-                    # Check observation against expectation
-                    obs_props = ev.payload.get("observations") or ev.payload.get(
+            if (
+                ev_pid
+                and ev_pid != pid
+                and not is_appr_receipt
+                and not is_readback
+                and not is_verif
+                and not is_readiness
+            ):
+                continue
+            if not (
+                ev_pid == pid
+                or pid in sat_pids
+                or is_appr_receipt
+                or is_readback
+                or is_verif
+                or is_readiness
+            ):
+                continue
+
+            obs_props = (
+                ev.payload.get("observations")
+                or ev.payload.get("observed_properties")
+                or ev.payload.get("properties")
+            )
+            if obs_props is None and is_appr_receipt:
+                receipt = ev.payload.get("receipt", {})
+                if isinstance(receipt, dict):
+                    obs_props = receipt.get("after_state_summary") or receipt.get(
                         "observed_properties"
                     )
-                    if isinstance(obs_props, (dict, CanonicalPayload)):
-                        subj = str(pred.get("subject", "")).split(".")[-1]
-                        exp_val = pred.get("expected_value")
-                        if subj in obs_props and exp_val is not None:
-                            obs_val = obs_props[subj]
-                            if str(obs_val) != str(exp_val):
-                                raise IllegalStatePromotionError(
-                                    f"Cannot promote mission {m_key} to READY: "
-                                    f"observed value {obs_val!r} contradicts "
-                                    f"expected value {exp_val!r} for predicate {pid}"
-                                )
-                    matching_ev = ev
-                    break
+            if obs_props is None and is_readback:
+                obs_props = ev.payload.get("properties") or ev.payload.get("raw_observation")
+            if obs_props is None:
+                obs_props = ev.payload.get("raw_observation")
 
-            if matching_ev is None:
-                raise IllegalStatePromotionError(
-                    f"Cannot promote mission {m_key} to READY: required predicate {pid} "
-                    "lacks verified evidence for its bound target"
+            if not isinstance(obs_props, (dict, CanonicalPayload)) or len(obs_props) == 0:
+                continue
+
+            act_rec = ledger._actions.get(str(ev.action_id))
+            if act_rec is None:
+                continue
+
+            try:
+                obs_obj = VerificationObservation(
+                    target=act_rec.action.target,
+                    observed_at=ev.origin.observed_at,
+                    exists=bool(ev.payload.get("exists", True)),
+                    properties=obs_props,
+                    provenance=ev.origin.provenance,
                 )
+            except Exception:
+                continue
+
+            eval_point = max(eval_at, ev.origin.observed_at)
+            eval_res = evaluate_predicate(
+                predicate=pred_obj,
+                observation=obs_obj,
+                expected_target=expected_target_obj,
+                at=eval_point,
+            )
+
+            # Contradiction check: if subject property is present and value evaluated to FALSE
+            norm_subj = pred_obj.subject.split(".")[-1]
+            if (
+                (ev_pid == pid or is_appr_receipt)
+                and norm_subj in obs_props
+                and eval_res.truth == PredicateTruth.FALSE
+            ):
+                raise IllegalStatePromotionError(
+                    f"Cannot promote mission {m_key} to READY: "
+                    f"observed value contradicts expected value for predicate {pid} "
+                    f"({eval_res.reason})"
+                )
+
+            if not eval_res.is_true:
+                continue
+
+            try:
+                fresh_res = evaluate_freshness(
+                    ev.origin.observed_at,
+                    at=eval_point,
+                    freshness_contract=pred_obj.freshness,
+                )
+                if not fresh_res.is_fresh:
+                    continue
+            except Exception:
+                continue
+
+            matching_ev = ev
+            break
+
+        if matching_ev is None:
+            raise IllegalStatePromotionError(
+                f"Cannot promote mission {m_key} to READY: required predicate {pid} "
+                "lacks verified evidence for its bound target"
+            )
 
 
 class MissionLedgerPort(ABC):
@@ -822,15 +1050,16 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         if old.state != new_state:
             assert_valid_transition(old.state, new_state)
 
-        if snapshot_projection is not None:
-            self._transition_snapshots[key] = snapshot_projection
-
         if new_state == MissionState.READY:
             _validate_ready_promotion(
                 self,
                 mission_id=mission_id,
                 snapshot_projection=snapshot_projection,
+                updated_at=updated_at,
             )
+
+        if snapshot_projection is not None:
+            self._transition_snapshots[key] = snapshot_projection
 
         now = updated_at or datetime.now(UTC)
         norm_now = _normalize_utc(now, "updated_at")
@@ -857,16 +1086,94 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         updated_at: datetime | None = None,
         snapshot_projection: dict[str, Any] | None = None,
     ) -> tuple[MissionRecord, EvidenceRecord]:
-        self.append_evidence(evidence)
+        key = str(mission_id)
+        if key not in self._missions:
+            raise RecordNotFoundError(f"Mission {key} not found in ledger")
+        old = self._missions[key]
+        if old.state != expected_prior_state:
+            raise RecordConflictError(
+                f"Cannot transition mission {key}: current state is {old.state.value}, "
+                f"expected prior state is {expected_prior_state.value}"
+            )
+        assert_valid_transition(expected_prior_state, new_state)
+
+        if old.mission_id != evidence.mission_id:
+            raise LedgerError(
+                f"Evidence mission {evidence.mission_id} does not match {old.mission_id}"
+            )
+        a_key = str(evidence.action_id)
+        if a_key not in self._actions:
+            raise RecordNotFoundError(f"Action {a_key} does not exist in ledger")
+        if str(self._actions[a_key].mission_id) != key:
+            raise LedgerError(
+                f"Action {a_key} belongs to mission {self._actions[a_key].mission_id}, not {key}"
+            )
+
+        e_key = str(evidence.evidence_id)
+        if e_key in self._evidence:
+            existing = self._evidence[e_key]
+            if canonical_serialize(to_canonical_primitive(existing)) == canonical_serialize(
+                to_canonical_primitive(evidence)
+            ):
+                raise DuplicateRecordError(
+                    f"Evidence {e_key} already exists with identical content."
+                )
+            raise RecordConflictError(f"Conflicting record for evidence {e_key}")
+
+        if new_state == MissionState.READY:
+            _validate_ready_promotion(
+                self,
+                mission_id=mission_id,
+                snapshot_projection=snapshot_projection,
+                new_evidence=evidence,
+                updated_at=updated_at,
+            )
+
         if snapshot_projection is not None:
-            self._transition_snapshots[str(mission_id)] = snapshot_projection
-        rec = self.update_mission_state(
-            mission_id=mission_id,
-            new_state=new_state,
-            updated_at=updated_at,
-            snapshot_projection=snapshot_projection,
+            if not isinstance(snapshot_projection, dict):
+                raise RecordConflictError("snapshot_projection must be a dict")
+            if snapshot_projection.get("mission_id") != key:
+                raise RecordConflictError(
+                    f"Snapshot projection mission {snapshot_projection.get('mission_id')} "
+                    f"does not match {key}"
+                )
+            if snapshot_projection.get("state") != new_state.value:
+                raise RecordConflictError(
+                    f"Snapshot projection state {snapshot_projection.get('state')} "
+                    f"does not match {new_state.value}"
+                )
+            proj_eids = snapshot_projection.get("evidence_ids")
+            if not isinstance(proj_eids, list) or e_key not in proj_eids:
+                raise RecordConflictError(
+                    f"Transition evidence {e_key} must be referenced in snapshot "
+                    "projection evidence_ids"
+                )
+
+        now = updated_at or datetime.now(UTC)
+        norm_now = _normalize_utc(now, "updated_at")
+
+        self._evidence[e_key] = EvidenceRecord(
+            evidence_id=evidence.evidence_id,
+            action_id=evidence.action_id,
+            mission_id=evidence.mission_id,
+            origin=evidence.origin,
+            payload=evidence.payload,
+            created_at=evidence.created_at,
         )
-        return rec, evidence
+        self._action_evidence[a_key].append(e_key)
+        self._mission_evidence[key].append(e_key)
+
+        updated = MissionRecord(
+            mission_id=old.mission_id,
+            contract=old.contract,
+            state=new_state,
+            created_at=old.created_at,
+            updated_at=norm_now,
+        )
+        self._missions[key] = updated
+        if snapshot_projection is not None:
+            self._transition_snapshots[key] = dict(snapshot_projection)
+        return updated, evidence
 
     def get_mission(self, mission_id: MissionId) -> MissionRecord:
         key = str(mission_id)
@@ -1105,6 +1412,16 @@ class DurableFileLedger(MissionLedgerPort):
                     new_st = MissionState(entry["state"])
                     if old_m.state != new_st:
                         assert_valid_transition(old_m.state, new_st)
+                    proj = entry.get("snapshot_projection")
+                    if proj is not None:
+                        self._transition_snapshots[m_key] = proj
+                    if new_st == MissionState.READY:
+                        _validate_ready_promotion(
+                            self,
+                            mission_id=m_id,
+                            snapshot_projection=proj,
+                            updated_at=datetime.fromisoformat(entry["updated_at"]),
+                        )
                     updated_m = MissionRecord(
                         mission_id=old_m.mission_id,
                         contract=old_m.contract,
@@ -1290,14 +1607,6 @@ class DurableFileLedger(MissionLedgerPort):
                     self._action_evidence.setdefault(a_key, []).append(e_key)
                     self._mission_evidence.setdefault(m_key, []).append(e_key)
 
-                    updated_m = MissionRecord(
-                        mission_id=old_m.mission_id,
-                        contract=old_m.contract,
-                        state=new_st,
-                        created_at=old_m.created_at,
-                        updated_at=datetime.fromisoformat(entry["updated_at"]),
-                    )
-                    self._missions[m_key] = updated_m
                     if entry.get("snapshot_projection") is not None:
                         proj = entry["snapshot_projection"]
                         if not isinstance(proj, dict):
@@ -1328,6 +1637,25 @@ class DurableFileLedger(MissionLedgerPort):
                                 f"projection evidence_ids for mission {m_key}"
                             )
                         self._transition_snapshots[m_key] = proj
+                    else:
+                        proj = None
+
+                    if new_st == MissionState.READY:
+                        _validate_ready_promotion(
+                            self,
+                            mission_id=m_id,
+                            snapshot_projection=proj,
+                            updated_at=datetime.fromisoformat(entry["updated_at"]),
+                        )
+
+                    updated_m = MissionRecord(
+                        mission_id=old_m.mission_id,
+                        contract=old_m.contract,
+                        state=new_st,
+                        created_at=old_m.created_at,
+                        updated_at=datetime.fromisoformat(entry["updated_at"]),
+                    )
+                    self._missions[m_key] = updated_m
                 else:
                     raise LedgerError(
                         f"Unknown record_type '{rec_type}' encountered during durable log replay."
@@ -1381,15 +1709,16 @@ class DurableFileLedger(MissionLedgerPort):
         if old.state != new_state:
             assert_valid_transition(old.state, new_state)
 
-        if snapshot_projection is not None:
-            self._transition_snapshots[key] = snapshot_projection
-
         if new_state == MissionState.READY:
             _validate_ready_promotion(
                 self,
                 mission_id=mission_id,
                 snapshot_projection=snapshot_projection,
+                updated_at=updated_at,
             )
+
+        if snapshot_projection is not None:
+            self._transition_snapshots[key] = snapshot_projection
 
         now = updated_at or datetime.now(UTC)
         norm_now = _normalize_utc(now, "updated_at")
@@ -1405,6 +1734,7 @@ class DurableFileLedger(MissionLedgerPort):
             "mission_id": key,
             "state": new_state.value,
             "updated_at": norm_now.isoformat(),
+            "snapshot_projection": snapshot_projection,
         }
         self._write_entry(entry)
         self._missions[key] = updated
@@ -1616,6 +1946,7 @@ class DurableFileLedger(MissionLedgerPort):
                 mission_id=mission_id,
                 snapshot_projection=snapshot_projection,
                 new_evidence=evidence,
+                updated_at=updated_at,
             )
 
         if snapshot_projection is not None:

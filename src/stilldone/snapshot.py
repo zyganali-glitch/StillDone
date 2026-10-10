@@ -216,6 +216,7 @@ class MissionSnapshot:
     evidence_ids: tuple[EvidenceId, ...]
     created_at: datetime
     predicate_bindings: tuple[PredicateTargetBinding, ...] = ()
+    is_persisted: bool = False
 
     def __post_init__(self) -> None:
         assert_not_planner_for_snapshot(self.contract, parameter_name="contract")
@@ -1246,6 +1247,7 @@ class DurableSnapshotRepository:
                 f.write(serialized + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+            object.__setattr__(snapshot, "is_persisted", True)
         else:
             # Atomic file replacement in directory
             target_file = self._snapshot_file_for_mission(snapshot.mission_id)
@@ -1258,6 +1260,7 @@ class DurableSnapshotRepository:
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp_path, target_file)
+                object.__setattr__(snapshot, "is_persisted", True)
             except Exception:
                 if tmp_path.exists():
                     tmp_path.unlink()
@@ -1328,6 +1331,8 @@ class DurableSnapshotRepository:
                             ) from exc
                         found = recovered
                 self.verify_consistency_with_ledger(found, self._ledger)
+            if found is not None:
+                object.__setattr__(found, "is_persisted", True)
             return found
         else:
             target_file = self._snapshot_file_for_mission(mission_id)
@@ -1387,4 +1392,5 @@ class DurableSnapshotRepository:
                             ) from exc
                         snapshot = recovered
                 self.verify_consistency_with_ledger(snapshot, self._ledger)
+            object.__setattr__(snapshot, "is_persisted", True)
             return snapshot

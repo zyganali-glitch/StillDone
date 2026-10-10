@@ -269,11 +269,6 @@ def test_calendar_changed_summary_detects_drift_and_transitions(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -285,6 +280,12 @@ def test_calendar_changed_summary_detects_drift_and_transitions(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=ledger)
@@ -737,11 +738,6 @@ def test_record_drift_updates_ledger_state_and_records_evidence(
             created_at=now,
         )
         ledger.append_evidence(verif_evidence)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     # Re-align snapshot evidence_ids with ledger evidence
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
@@ -754,6 +750,12 @@ def test_record_drift_updates_ledger_state_and_records_evidence(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     fake_transport = FakeGoogleCalendarTransport()
@@ -1359,11 +1361,6 @@ def test_drift_recording_rejects_stale_predecessor(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -1375,6 +1372,12 @@ def test_drift_recording_rejects_stale_predecessor(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
@@ -1488,11 +1491,6 @@ def test_record_drift_rejects_caller_snapshot_with_altered_desired_state(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -1504,6 +1502,12 @@ def test_record_drift_rejects_caller_snapshot_with_altered_desired_state(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
@@ -1606,11 +1610,6 @@ def test_record_drift_durable_evidence_contains_exact_mismatch_details(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -1622,6 +1621,12 @@ def test_record_drift_durable_evidence_contains_exact_mismatch_details(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)

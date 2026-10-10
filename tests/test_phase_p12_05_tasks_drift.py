@@ -266,16 +266,14 @@ def test_tasks_completion_reversal_detects_drift(
                 "predicate_id": str(p.predicate_id),
                 "truth": "TRUE",
                 "is_true": True,
-                "observations": {"title": "Pack backpacks", "completed": False},
+                "observations": {
+                    "status": "completed",
+                    "title": "Pack backpacks",
+                },
             },
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -287,6 +285,12 @@ def test_tasks_completion_reversal_detects_drift(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
     repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=ledger)
     repo.save_snapshot(snapshot)
@@ -728,17 +732,14 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
                 "predicate_id": str(p.predicate_id),
                 "truth": "TRUE",
                 "is_true": True,
-                "observations": {"title": "Pack lunch", "completed": False},
+                "observations": {
+                    "status": "completed",
+                    "title": "Pack backpacks",
+                },
             },
             created_at=now,
         )
         ledger.append_evidence(verif_evidence)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
-    # Re-align snapshot evidence_ids with ledger evidence
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -750,6 +751,12 @@ def test_tasks_record_drift_updates_ledger_state_and_records_evidence(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     fake_transport = FakeGoogleTasksTransport()
@@ -1208,11 +1215,6 @@ def test_tasks_record_drift_rejects_caller_snapshot_with_altered_desired_state(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -1224,6 +1226,12 @@ def test_tasks_record_drift_rejects_caller_snapshot_with_altered_desired_state(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=ledger)
@@ -1325,11 +1333,6 @@ def test_tasks_record_drift_durable_evidence_contains_exact_mismatch_details(
             created_at=now,
         )
         ledger.append_evidence(verif_ev)
-    ledger.update_mission_state(
-        mission_id=mission_id,
-        new_state=MissionState.READY,
-        updated_at=now,
-    )
     ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
     snapshot = create_mission_snapshot(
         mission_id=mission_id,
@@ -1341,6 +1344,12 @@ def test_tasks_record_drift_durable_evidence_contains_exact_mismatch_details(
         execution_attempts=snapshot.execution_attempts,
         evidence_ids=[e.evidence_id for e in ev_recs],
         created_at=now,
+    )
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+        snapshot_projection=snapshot.to_dict(),
     )
 
     repo = DurableSnapshotRepository(storage_path=str(tmp_path / "snaps"), ledger=ledger)

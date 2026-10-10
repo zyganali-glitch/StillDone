@@ -33,6 +33,7 @@ from stilldone.adapters.calendar import GoogleCalendarReadAdapter
 from stilldone.adapters.tasks import GoogleTasksReadAdapter
 from stilldone.domain.action import ActionContract, ActionType, ResourceKind, TargetIdentity
 from stilldone.domain.desired_state import DesiredStatePredicate, PredicateId
+from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.redaction import redact_text
@@ -299,6 +300,53 @@ class StandardTargetReader:
         raise RevalidationValueError(
             f"Unsupported target system/kind: {target.system}/{target.resource_kind}"
         )
+
+
+def _is_trusted_live_reader(reader: Any) -> bool:
+    """Return True if reader is backed by verified authentic live network transport.
+
+    Fails closed: mocks, fakes, stubs, test doubles, callbacks, unpersisted or
+    unverified transports strictly return False.
+    """
+    if not isinstance(reader, StandardTargetReader):
+        return False
+
+    has_components = False
+    for adapter in (reader._calendar_adapter, reader._tasks_adapter):
+        if adapter is not None:
+            has_components = True
+            transport = getattr(adapter, "_transport", getattr(adapter, "transport", None))
+            if transport is None:
+                return False
+            t_cls = transport.__class__
+            name_lower = f"{t_cls.__module__}.{t_cls.__name__}".lower()
+            if any(
+                term in name_lower for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
+            ):
+                return False
+            if not getattr(transport, "is_live_network_capable", False):
+                return False
+
+    if reader._dispatcher is not None:
+        has_components = True
+        disp = reader._dispatcher
+        d_cls = disp.__class__
+        if any(
+            term in f"{d_cls.__module__}.{d_cls.__name__}".lower()
+            for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
+        ):
+            return False
+        for route_handler in getattr(disp, "_routes", {}).values():
+            h_cls = route_handler.__class__
+            if any(
+                term in f"{h_cls.__module__}.{h_cls.__name__}".lower()
+                for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
+            ):
+                return False
+            if not getattr(route_handler, "is_live_network_capable", False):
+                return False
+
+    return has_components
 
 
 # ===========================================================================
@@ -609,9 +657,12 @@ def revalidate_mission(
         and snapshot is not None
         and hasattr(snapshot, "snapshot_id")
         and bool(getattr(snapshot, "snapshot_id", None))
+        and hasattr(snapshot, "state")
+        and snapshot.state == MissionState.READY
+        and getattr(snapshot, "is_persisted", False) is True
         and hasattr(snapshot, "predicate_bindings")
         and bool(snapshot.predicate_bindings)
-        and isinstance(target_reader, StandardTargetReader)
+        and _is_trusted_live_reader(target_reader)
         and all(
             o.observation is not None
             and o.observation.provenance
