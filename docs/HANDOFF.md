@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-11: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01 through P-11.06: CLOSED (independent QA PASS ✅) | P-12.01 through P-12.05: COMPLETED (PASS Candidate, awaiting independent QA review) | P-12.06+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`**
+Current repository state: **P-00 through P-11: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01 through P-11.06: CLOSED (independent QA PASS ✅) | P-12.01 through P-12.05: CLOSED (independent QA PASS ✅) | P-12.06 and P-12.07: COMPLETED (PASS Candidate, awaiting independent QA review) | P-13+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,25 +74,22 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-12.01 through P-12.05 Bounded Execution Batch (Phase P-12: Durable Mission Continuity & Drift)
+Active task: P-12.06 and P-12.07 Bounded Phase-Closure Batch (Phase P-12: Durable Mission Continuity & Drift)
 
 Status:
 - P-00 through P-11: CLOSED — independent QA PASS ✅
 - P-Ω Phase P-10 boundary: PASS ✅
-- P-11.01: CLOSED — independent QA PASS ✅ (Verified closure SHA: `ddd27ba50fe2f1cc9f034f8967e011cd309fe409`)
-- P-11.02: CLOSED — independent QA PASS ✅ (Verified closure SHA: `fd8348f504e0bf7b8b8fb41e51ef03a4bd9f514a`)
-- P-11.03: CLOSED — independent QA PASS ✅ (Verified closure SHA: `497334752e5a40bb9aebdbb0d0c3d9a1f2aa61be`)
-- P-11.04: CLOSED — independent QA PASS ✅ (Verified closure SHA: `4ec4475f006207ec5840880bb9476f6d169442cd`)
-- P-11.05: CLOSED — independent QA PASS ✅ (Verified closure SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`)
-- P-11.06: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
+- P-11.01 through P-11.06: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
 - Phase P-11 exit: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
-- P-12.01 through P-12.05: COMPLETED (PASS Candidate, awaiting independent QA review)
-- P-12.06+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-12.01 through P-12.05: CLOSED — independent QA PASS ✅ (Verified closure baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
+- P-12.06: COMPLETED (PASS Candidate, awaiting independent QA review)
+- P-12.07: COMPLETED (PASS Candidate, awaiting independent QA review)
+- P-13+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`
-Audited remote baseline SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`
-Current exact task: P-12.01 through P-12.05 Bounded Execution Batch
-Next exact task: Independent QA audit for P-12.01 through P-12.05 batch
+Last Independently VERIFIED contiguous SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`
+Audited remote baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`
+Current exact task: P-12.06 and P-12.07 Bounded Phase-Closure Batch (Completed, awaiting independent QA review)
+Next exact task: Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -258,15 +255,40 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Last independently VERIFIED contiguous SHA
 
-`864cfa4e2b47ade72d1f4095e78e06f309372320`
+`1102b68f3490ab92a358250b8aa49ae481aed5f7`
 
 ## Current exact task
 
-P-11.06 — Prove approved Calendar update executes once and verifies (REPAIRED / awaiting independent QA review).
+P-12.06 and P-12.07 — Bounded Phase-Closure Batch (Phase P-12: Durable Mission Continuity & Drift) — Completed, awaiting independent QA review.
 
 ## Next exact task
 
-Independent QA audit for P-11.06 (P-12+ remains PENDING / NOT AUTHORIZED / NOT_RUN).
+Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN).
+
+---
+
+### Phase P-12 Status Summary
+- **P-12.01 — Implement durable mission snapshot repository**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
+- **P-12.02 — Implement reload/resume across fresh process/session**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
+- **P-12.03 — Implement bounded revalidation command/tool**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
+- **P-12.04 — Implement external-change drift detection on Calendar**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
+- **P-12.05 — Implement external-change drift detection on Tasks**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
+- **P-12.06 — Preserve historical receipt while publishing current truth**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
+  - Implemented immutable historical receipt preservation (`ReceiptProjection`, `is_historical=True`, domain-separated `stilldone:receipt-projection:v1`) alongside authoritative separate current-state projection (`CurrentStateProjection`, `is_historical=False`, domain-separated `stilldone:current-state-projection:v1`).
+  - Current truth is bound to exact mission ID, snapshot revision, evidence IDs, observation timestamps, and deterministic lifecycle state; reopening or revalidating a mission does not overwrite old receipts or rewrite historical evidence.
+  - Fail-closed model boundary: `assert_not_planner_for_current_state` ensures model prose and planner proposals cannot override deterministic current truth.
+  - Provider errors and stale reads never masquerade as drift; duplicate drift transitions fail closed or handle idempotently.
+  - 11 unit and adversarial tests passing in `tests/test_phase_p12_06_current_truth.py`.
+- **P-12.07 — Run fresh-session 'Are we still ready?' proof**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
+  - Executed 4-process reproducible proof script (`scripts/p12_07_proof.py`) running across discrete OS subprocesses via `sys.executable`.
+  - Process 1 (Seed): Persists canonical READY mission and immutable historical receipt to durable disk.
+  - Process 2 (Revalidate): Fresh OS subprocess reloads state from disk, reads external targets via read-only verifiers, recomputes freshness and predicates, revalidates TRUE, and projects READY current truth with 0 provider writes and 0 approval consumption.
+  - Process 3 (Contradiction & Drift): Fresh OS subprocess observes contradictory external state, detects drift via `detect_calendar_drift`, records DRIFTED state, projects DRIFTED current truth, and proves original historical READY receipt hash on disk is unchanged.
+  - Process 4 (Subsequent Restart): Fresh OS subprocess re-reloads from disk, verifies recovered DRIFTED projection, intact evidence lineage, and unchanged historical receipt hash.
+  - Provenance strictly classified as LOCAL_EXECUTION / FIXTURE; live certification gate truthfully reported as NOT_RUN; zero personal spend ($0.00); 0 writes/approvals consumed during revalidation.
+  - 11 comprehensive tests passing in `tests/test_phase_p12_07_fresh_session_proof.py`; 141 tests passing across Phase P-12.
+- **P-13+: PENDING / NOT AUTHORIZED / NOT_RUN**.
+- **Last independently VERIFIED contiguous SHA**: `1102b68f3490ab92a358250b8aa49ae481aed5f7`.
 
 ---
 
@@ -294,7 +316,7 @@ Independent QA audit for P-11.06 (P-12+ remains PENDING / NOT AUTHORIZED / NOT_R
   - Proves unapproved `CALENDAR_UPDATE` halts immediately at execution authority gate returning `ActionExecutionStatus.NOT_RUN` with `is_authorized=False` and `attempt=None`.
   - Enforced monotonic observation chronology, strictly separated public `ApprovalLedger` queries, instrumented provider mutations via `CalendarMutationSpy`, runtime exact-SHA source validation, and recursive redaction.
   - Zero personal spend ($0.00 observed API spend); zero live writes.
-- **P-11.06 — Prove approved Calendar update executes once and verifies**: `REPAIRED (Final Two-Defect Evidence Integrity Repair complete) / awaiting independent QA review` (Starting remote SHA: `8b31cf52355933c0b1810ff988d4ad7225d4350d`; Parent verified SHA: `864cfa4e2b47ade72d1f4095e78e06f309372320`).
+- **P-11.06 — Prove approved Calendar update executes once and verifies**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`).
   - Repair 1 (Mission READY Authority): Separated action `is_verified=True` from mission `is_ready=False`; caller-supplied context cannot declare durable READY without canonical persisted transition in durable mission ledger (deferred to P-12); unpersisted READY records `mission_ready_status="NOT_ESTABLISHED"` with `is_ready_claimed=False`; caller contradictions (persisted DRAFT vs supplied VERIFYING, omitted predicates, terminal states) rejected fail-closed.
   - Repair 2 (Durable Approval & Mission Evidence Binding): `ApprovalLedger` exposes public `ledger`; requires same durable backing (`approval_ledger.ledger is mission_ledger`); exact approval consumption record (`ApprovalRecord`) verified present in canonical mission ledger; process-local ledger + file ledger cannot claim durable approved completion (`is_durable=False`).
   - Repair 3 (External Effect Preservation Across Post-Dispatch Failures): Post-dispatch exceptions (read timeouts, verifier exceptions, conflicting successive read-backs, evidence append failures) preserve durable execution attempt and write facts (`UNCERTAIN_POST_EXECUTION_FAILURE` evidence) before re-raising; consumed grant is never refunded or duplicate-retried; sensitive data recursively redacted.

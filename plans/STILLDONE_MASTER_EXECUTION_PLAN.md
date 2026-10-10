@@ -1302,28 +1302,48 @@ Goal:
 make missions survive sessions and reality changes.
 
 ### P-12.01 — Implement durable mission snapshot repository using the P-01-approved persistence path
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: PASS ✅ (independent QA verified; Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
 
 ### P-12.02 — Implement reload/resume across a fresh process/session
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: PASS ✅ (independent QA verified; Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
 
 ### P-12.03 — Implement bounded revalidation command/tool
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: PASS ✅ (independent QA verified; Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
 
 ### P-12.04 — Implement external-change drift detection on Calendar
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: PASS ✅ (independent QA verified; Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
 
 ### P-12.05 — Implement external-change drift detection on Tasks
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: PASS ✅ (independent QA verified; Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
 
 ### P-12.06 — Preserve historical receipt while publishing current truth
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- Implemented immutable historical receipt preservation alongside authoritative separate current-state projection;
+- `ReceiptProjection` remains frozen (`is_historical=True`, domain-separated `stilldone:receipt-projection:v1`), immutable after subsequent drift;
+- `CurrentStateProjection` publishes current authoritative truth (`is_historical=False`, domain-separated `stilldone:current-state-projection:v1`), bound to exact mission ID, snapshot revision, evidence IDs, observation timestamps, and deterministic lifecycle state;
+- Reopening or revalidating a mission does not overwrite old receipts or rewrite historical evidence;
+- Model prose and planner proposals cannot override deterministic current-state facts (`assert_not_planner_for_current_state`);
+- Provider errors and stale reads never masquerade as drift; duplicate drift transitions fail closed or handle idempotently;
+- Fresh-process reload preserves historical receipt hashes and reconstructs current projection consistently;
+- 11 focused unit and adversarial tests passing in `tests/test_phase_p12_06_current_truth.py`.
 
 ### P-12.07 — Run fresh-session `Are we still ready?` proof
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- Executed 4-process reproducible proof demonstrating cross-session renewable completion against persisted state (`scripts/p12_07_proof.py`);
+- Process 1: Seeds canonical READY mission with immutable historical receipt to durable disk;
+- Process 2: Fresh OS subprocess reloads state, reads external targets via read-only verifiers, recomputes freshness and predicates, revalidates TRUE, and projects READY current truth with 0 provider writes and 0 approval consumption;
+- Process 3: Fresh OS subprocess observes contradictory external state, detects drift, records DRIFTED state, projects DRIFTED current truth, and proves original historical READY receipt hash on disk is unchanged;
+- Process 4: Fresh OS subprocess restarts, recovers current DRIFTED projection, verifies intact evidence lineage and immutable historical receipt;
+- Provenance strictly classified as LOCAL_EXECUTION / FIXTURE; live certification gate truthfully reported as NOT_RUN; zero personal spend ($0.00);
+- 11 comprehensive tests passing in `tests/test_phase_p12_07_fresh_session_proof.py`;
+- Standalone CLI proof passes in default, `--json`, and individual step modes.
 
 Phase exit:
-cross-session renewable completion proven.
+P-12.01 through P-12.05 accepted by independent QA at baseline `1102b68f3490ab92a358250b8aa49ae481aed5f7`. P-12.06 and P-12.07 completed as PASS candidates awaiting independent QA review for Phase P-12 closure. Phase P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN.
 
 ---
 
