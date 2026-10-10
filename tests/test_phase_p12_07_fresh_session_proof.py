@@ -2,7 +2,7 @@
 
 Validates:
 1. Clean second-process reload with identical receipt hash preservation.
-2. Fresh TRUE revalidation preserving READY current state.
+2. Fresh TRUE revalidation preserving READY current state across Calendar and Tasks.
 3. Explicit FALSE contradiction driving deterministic READY -> DRIFTED reconciliation.
 4. Correct READY -> DRIFTED current projection while historical receipt remains immutable.
 5. Subsequent restart consistency and evidence lineage preservation.
@@ -11,6 +11,8 @@ Validates:
 8. Zero provider writes and zero approval consumption during revalidation.
 9. No LIVE certification from synthetic transports (strict non-certifying boundary).
 10. Full multi-process proof runner and CLI execution with sanitized JSON output.
+11. Adversarial edge cases: missing tasks resource, completion reversal, tampered lineage,
+    receipt replacement, wrong bound resource, and incomplete reader.
 """
 
 from __future__ import annotations
@@ -25,17 +27,27 @@ from pathlib import Path
 import pytest
 
 from scripts.p12_07_proof import (
+    CANONICAL_CAL_PREDICATE_ID,
     CANONICAL_MISSION_ID,
     CANONICAL_SUMMARY,
+    CANONICAL_TASK_STATUS,
+    CANONICAL_TASK_TITLE,
+    CANONICAL_TASKS_PREDICATE_ID,
     CONTRADICTORY_SUMMARY,
     DEMO_CALENDAR_ID,
     DEMO_EVENT_ID,
+    DEMO_TASK_ID,
+    DEMO_TASK_LIST_ID,
     run_p12_07_proof,
 )
 from stilldone.adapters.calendar import (
     CalendarTransportError,
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
+)
+from stilldone.adapters.tasks import (
+    FakeGoogleTasksTransport,
+    GoogleTasksReadAdapter,
 )
 from stilldone.demo_isolation import DemoResourceScope
 from stilldone.domain.action import (
@@ -57,8 +69,10 @@ from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.drift import (
+    DriftTargetMismatchError,
     DriftValueError,
     detect_calendar_drift,
+    detect_tasks_drift,
     record_drift_in_snapshot,
 )
 from stilldone.execution.state import (
@@ -78,6 +92,7 @@ from stilldone.receipt import (
     project_current_state,
 )
 from stilldone.revalidation import (
+    RevalidationValueError,
     StandardTargetReader,
     revalidate_mission,
 )
@@ -87,6 +102,7 @@ from stilldone.session import (
 from stilldone.snapshot import (
     DurableSnapshotRepository,
     MissionSnapshot,
+    SnapshotIntegrityError,
     create_mission_snapshot,
 )
 
@@ -107,21 +123,42 @@ def cal_target() -> TargetIdentity:
 
 
 @pytest.fixture
+def tasks_target() -> TargetIdentity:
+    return TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK,
+        resource_id=DEMO_TASK_ID,
+        parent_id=DEMO_TASK_LIST_ID,
+    )
+
+
+@pytest.fixture
 def demo_scope() -> DemoResourceScope:
     return DemoResourceScope(
         calendar_id=DEMO_CALENDAR_ID,
-        task_list_id="list_demo_tasks",
+        task_list_id=DEMO_TASK_LIST_ID,
     )
 
 
 def _seed_test_mission(
     tmp_path: Path,
     mission_id: MissionId,
-    target: TargetIdentity,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity | None = None,
     *,
     summary: str = CANONICAL_SUMMARY,
+    task_status: str = CANONICAL_TASK_STATUS,
+    task_title: str = CANONICAL_TASK_TITLE,
 ) -> tuple[DurableSnapshotRepository, DurableFileLedger, MissionSnapshot, ReceiptProjection]:
-    """Helper seeding canonical READY mission with durable snapshot and historical receipt."""
+    """Helper seeding canonical READY mission with dual resources (Calendar + Tasks)."""
+    if tasks_target is None:
+        tasks_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id=DEMO_TASK_ID,
+            parent_id=DEMO_TASK_LIST_ID,
+        )
+
     ledger_path = tmp_path / "ledger.jsonl"
     storage_path = tmp_path / "snapshots"
     storage_path.mkdir(parents=True, exist_ok=True)
@@ -132,12 +169,12 @@ def _seed_test_mission(
     now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
 
     contract = MissionContract.create(
-        text="Ensure morning departure is on track",
+        text="Ensure morning departure is on track and pack school bag",
         mission_id=mission_id,
         created_at=now,
     )
     pred_summary = DesiredStatePredicate(
-        predicate_id=PredicateId.generate(),
+        predicate_id=PredicateId(CANONICAL_CAL_PREDICATE_ID),
         mission_id=mission_id,
         subject="summary",
         operator=PredicateOperator.EQUALS,
@@ -145,16 +182,37 @@ def _seed_test_mission(
         freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
         required=True,
     )
-    pred_binding = PredicateTargetBinding.create(
+    pred_cal_binding = PredicateTargetBinding.create(
         predicate_id=pred_summary.predicate_id,
         mission_id=mission_id,
-        target=target,
+        target=cal_target,
     )
 
-    action = ActionContract.create(
+    pred_task = DesiredStatePredicate(
+        predicate_id=PredicateId(CANONICAL_TASKS_PREDICATE_ID),
+        mission_id=mission_id,
+        subject="status",
+        operator=PredicateOperator.EQUALS,
+        expected_value=task_status,
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    pred_task_binding = PredicateTargetBinding.create(
+        predicate_id=pred_task.predicate_id,
+        mission_id=mission_id,
+        target=tasks_target,
+    )
+
+    cal_action = ActionContract.create(
         mission_id=mission_id,
         action_type=ActionType.CALENDAR_READ,
-        target=target,
+        target=cal_target,
+        parameters={},
+    )
+    tasks_action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=tasks_target,
         parameters={},
     )
 
@@ -169,9 +227,18 @@ def _seed_test_mission(
     )
     ledger.append_action(
         ActionRecord(
-            action_id=action.action_id,
+            action_id=cal_action.action_id,
             mission_id=mission_id,
-            action=action,
+            action=cal_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=tasks_action.action_id,
+            mission_id=mission_id,
+            action=tasks_action,
             approval_id=None,
             created_at=now,
         )
@@ -181,7 +248,7 @@ def _seed_test_mission(
         provenance=EvidenceProvenance.LOCAL_EXECUTION,
         observed_at=now,
     )
-    verif_payload = {
+    cal_verif_payload = {
         "evidence_type": "PREDICATE_EVALUATION",
         "predicate_id": str(pred_summary.predicate_id),
         "truth": "TRUE",
@@ -189,50 +256,98 @@ def _seed_test_mission(
         "is_match": True,
         "observations": {"summary": summary},
         "target": {
-            "system": target.system,
-            "resource_kind": target.resource_kind.value,
-            "resource_id": target.resource_id,
-            "parent_id": target.parent_id,
+            "system": cal_target.system,
+            "resource_kind": cal_target.resource_kind.value,
+            "resource_id": cal_target.resource_id,
+            "parent_id": cal_target.parent_id,
         },
     }
-    verif_ev = EvidenceRecord.create(
-        action_id=action.action_id,
+    cal_verif_ev = EvidenceRecord.create(
+        action_id=cal_action.action_id,
         mission_id=mission_id,
         origin=origin,
-        payload=verif_payload,
+        payload=cal_verif_payload,
         created_at=now,
     )
 
-    attempt = ExecutionAttempt(
-        action_id=action.action_id,
+    tasks_verif_payload = {
+        "evidence_type": "PREDICATE_EVALUATION",
+        "predicate_id": str(pred_task.predicate_id),
+        "truth": "TRUE",
+        "observed_value": task_status,
+        "is_match": True,
+        "observations": {"status": task_status, "title": task_title},
+        "target": {
+            "system": tasks_target.system,
+            "resource_kind": tasks_target.resource_kind.value,
+            "resource_id": tasks_target.resource_id,
+            "parent_id": tasks_target.parent_id,
+        },
+    }
+    tasks_verif_ev = EvidenceRecord.create(
+        action_id=tasks_action.action_id,
+        mission_id=mission_id,
+        origin=origin,
+        payload=tasks_verif_payload,
+        created_at=now,
+    )
+
+    # Append tasks evidence record (cal_verif_ev will be appended by transition)
+    ledger.append_evidence(tasks_verif_ev)
+
+    cal_attempt = ExecutionAttempt(
+        action_id=cal_action.action_id,
         idempotency_key=IdempotencyKey.generate(),
         attempt_number=1,
         started_at=now,
     )
-    p_res = ProviderExecutionResult(
-        action_type=action.action_type,
+    cal_p_res = ProviderExecutionResult(
+        action_type=cal_action.action_type,
         success=True,
         status_name="READ_OK",
         writes_performed=0,
         captured_at=now,
     )
-    step_rec = StepExecutionRecord(
-        action_id=action.action_id,
+    cal_step_rec = StepExecutionRecord(
+        action_id=cal_action.action_id,
         status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
-        attempt=attempt,
-        provider_result=p_res,
+        attempt=cal_attempt,
+        provider_result=cal_p_res,
+    )
+
+    tasks_attempt = ExecutionAttempt(
+        action_id=tasks_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    tasks_p_res = ProviderExecutionResult(
+        action_type=tasks_action.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    tasks_step_rec = StepExecutionRecord(
+        action_id=tasks_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=tasks_attempt,
+        provider_result=tasks_p_res,
     )
 
     ready_snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
         contract=contract,
-        desired_state=(pred_summary,),
-        actions=(action,),
-        step_records={action.action_id: step_rec},
-        execution_attempts=(attempt,),
-        evidence_ids=(verif_ev.evidence_id,),
-        predicate_bindings=(pred_binding,),
+        desired_state=(pred_summary, pred_task),
+        actions=(cal_action, tasks_action),
+        step_records={
+            cal_action.action_id: cal_step_rec,
+            tasks_action.action_id: tasks_step_rec,
+        },
+        execution_attempts=(cal_attempt, tasks_attempt),
+        evidence_ids=(cal_verif_ev.evidence_id, tasks_verif_ev.evidence_id),
+        predicate_bindings=(pred_cal_binding, pred_task_binding),
         created_at=now,
     )
 
@@ -240,7 +355,7 @@ def _seed_test_mission(
         mission_id=mission_id,
         expected_prior_state=MissionState.VERIFYING,
         new_state=MissionState.READY,
-        evidence=verif_ev,
+        evidence=cal_verif_ev,
         updated_at=now,
         snapshot_projection=ready_snapshot.to_dict(),
     )
@@ -283,7 +398,7 @@ def test_fresh_session_proof_runner_end_to_end(tmp_path: Path) -> None:
 
     # Step 4 Restart
     assert result["step_4_restart_current_state"] == "DRIFTED"
-    assert result["step_4_evidence_count"] == 2
+    assert result["step_4_evidence_count"] == 3
     assert result["step_4_lineage_verified"] is True
 
     # Zero spend and live gate
@@ -300,9 +415,12 @@ def test_clean_second_process_reload_and_receipt_hash_preservation(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
 ) -> None:
     """Fresh session reload recovers exact receipt hash and verifies state."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
     orig_hash = receipt.receipt_hash.value
 
     # Process 2 reloads from disk
@@ -337,10 +455,13 @@ def test_fresh_true_revalidation_preserves_ready_state(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
-    """When reality continues to match, revalidation evaluates to TRUE."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    """When reality continues to match for both Calendar and Tasks, revalidation is TRUE."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
     session = resume_mission_session(
         storage_path=tmp_path / "snapshots",
@@ -348,8 +469,8 @@ def test_fresh_true_revalidation_preserves_ready_state(
         mission_id=mission_id,
     )
 
-    transport = FakeGoogleCalendarTransport()
-    transport.seed_event(
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
         calendar_id=DEMO_CALENDAR_ID,
         event_id=DEMO_EVENT_ID,
         summary=CANONICAL_SUMMARY,
@@ -357,8 +478,20 @@ def test_fresh_true_revalidation_preserves_ready_state(
         end_time="2026-10-03T08:00:00+03:00",
         status="confirmed",
     )
-    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=transport)
-    reader = StandardTargetReader(calendar_read_adapter=adapter)
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status=CANONICAL_TASK_STATUS,
+    )
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    reader = StandardTargetReader(
+        calendar_read_adapter=cal_adapter, tasks_read_adapter=tasks_adapter
+    )
 
     reval = revalidate_mission(
         mission_id=session.snapshot.mission_id,
@@ -369,7 +502,8 @@ def test_fresh_true_revalidation_preserves_ready_state(
 
     assert reval.is_still_true is True
     assert reval.writes_performed == 0
-    assert transport.writes_count == 0
+    assert cal_transport.writes_count == 0
+    assert tasks_transport.writes_count == 0
 
     curr = session.current_state
     assert curr.state == MissionState.READY
@@ -386,10 +520,13 @@ def test_explicit_false_contradiction_drives_deterministic_drift(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
-    """Mutated reality produces is_drifted=True and transitions snapshot to DRIFTED."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    """Calendar mutation produces drift while Tasks remains true; mission drifts to DRIFTED."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
     session = resume_mission_session(
         storage_path=tmp_path / "snapshots",
@@ -397,8 +534,8 @@ def test_explicit_false_contradiction_drives_deterministic_drift(
         mission_id=mission_id,
     )
 
-    transport = FakeGoogleCalendarTransport()
-    transport.seed_event(
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
         calendar_id=DEMO_CALENDAR_ID,
         event_id=DEMO_EVENT_ID,
         summary=CONTRADICTORY_SUMMARY,
@@ -406,12 +543,27 @@ def test_explicit_false_contradiction_drives_deterministic_drift(
         end_time="2026-10-03T09:30:00+03:00",
         status="confirmed",
     )
-    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=transport)
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
 
-    drift_eval = detect_calendar_drift(snapshot=session.snapshot, calendar_adapter=adapter)
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status=CANONICAL_TASK_STATUS,
+    )
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    # Tasks evaluation independently remains NOT drifted
+    tasks_eval = detect_tasks_drift(snapshot=session.snapshot, tasks_adapter=tasks_adapter)
+    assert tasks_eval.is_drifted is False
+
+    # Calendar evaluation detects drift
+    drift_eval = detect_calendar_drift(snapshot=session.snapshot, calendar_adapter=cal_adapter)
     assert drift_eval.is_drifted is True
     assert drift_eval.new_state == MissionState.DRIFTED
 
+    # Provider-scoped drift reconciles the whole mission
     repo_session = DurableSnapshotRepository(tmp_path / "snapshots", ledger=session.ledger)
     drifted_snap = record_drift_in_snapshot(repo_session, session.snapshot, drift_eval)
     assert drifted_snap is not None
@@ -437,10 +589,13 @@ def test_historical_receipt_remains_immutable_while_current_truth_is_drifted(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Original READY receipt on disk and in memory remains untouched."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
     orig_hash = receipt.receipt_hash.value
 
     # Reconcile drift
@@ -477,10 +632,13 @@ def test_subsequent_restart_consistency_and_lineage_preservation(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Subsequent restart in fresh session re-projects DRIFTED current state."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
     orig_hash = receipt.receipt_hash.value
 
     # Reconcile drift
@@ -520,11 +678,17 @@ def test_subsequent_restart_consistency_and_lineage_preservation(
     assert session_4.historical_receipt is not None
     assert session_4.historical_receipt.receipt_hash.value == orig_hash
 
-    # Lineage verified: transition evidence + drift evidence
+    # Lineage verified: 2 verification records + 1 drift record = 3 records
     evidences = ledger.get_evidence_for_mission(mission_id)
-    assert len(evidences) == 2
-    assert evidences[0].payload.get("truth") == "TRUE"
-    assert evidences[1].payload.get("is_drifted") is True
+    assert len(evidences) == 3
+    verif_records = [
+        e for e in evidences if e.payload.get("evidence_type") == "PREDICATE_EVALUATION"
+    ]
+    drift_records = [e for e in evidences if e.payload.get("evidence_type") == "MISSION_DRIFT"]
+    assert len(verif_records) == 2
+    assert len(drift_records) == 1
+    assert all(e.payload.get("truth") == "TRUE" for e in verif_records)
+    assert drift_records[0].payload.get("is_drifted") is True
 
 
 # ===========================================================================
@@ -536,10 +700,13 @@ def test_stale_and_provider_error_non_promotion_in_fresh_session(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Provider error never gets promoted to drift proof or alters state."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
     class FlakyTransport(FakeGoogleCalendarTransport):
         def get_event(self, calendar_id: str, event_id: str) -> None:
@@ -568,10 +735,13 @@ def test_wrong_resource_missing_binding_and_replay_rejection(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Duplicate/replayed drift transitions handle idempotently or fail closed."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
     transport = FakeGoogleCalendarTransport()
     transport.seed_event(
@@ -607,13 +777,16 @@ def test_zero_provider_writes_and_zero_approval_consumption_during_revalidation(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Revalidation and drift detection are strictly passive and execute zero mutations."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
-    transport = FakeGoogleCalendarTransport()
-    transport.seed_event(
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
         calendar_id=DEMO_CALENDAR_ID,
         event_id=DEMO_EVENT_ID,
         summary=CANONICAL_SUMMARY,
@@ -621,8 +794,20 @@ def test_zero_provider_writes_and_zero_approval_consumption_during_revalidation(
         end_time="2026-10-03T08:00:00+03:00",
         status="confirmed",
     )
-    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=transport)
-    reader = StandardTargetReader(calendar_read_adapter=adapter)
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status=CANONICAL_TASK_STATUS,
+    )
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    reader = StandardTargetReader(
+        calendar_read_adapter=cal_adapter, tasks_read_adapter=tasks_adapter
+    )
 
     # Revalidation
     reval = revalidate_mission(
@@ -632,11 +817,14 @@ def test_zero_provider_writes_and_zero_approval_consumption_during_revalidation(
         target_reader=reader,
     )
     assert reval.writes_performed == 0
-    assert transport.writes_count == 0
+    assert cal_transport.writes_count == 0
+    assert tasks_transport.writes_count == 0
 
     # Drift check
-    _ = detect_calendar_drift(snapshot=snapshot, calendar_adapter=adapter)
-    assert transport.writes_count == 0
+    _ = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
+    _ = detect_tasks_drift(snapshot=snapshot, tasks_adapter=tasks_adapter)
+    assert cal_transport.writes_count == 0
+    assert tasks_transport.writes_count == 0
 
 
 # ===========================================================================
@@ -648,10 +836,13 @@ def test_no_live_certification_from_synthetic_transports(
     tmp_path: Path,
     mission_id: MissionId,
     cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
     demo_scope: DemoResourceScope,
 ) -> None:
     """Synthetic transports produce FIXTURE/LOCAL_EXECUTION and never LIVE certification."""
-    repo, ledger, snapshot, receipt = _seed_test_mission(tmp_path, mission_id, cal_target)
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
 
     transport = FakeGoogleCalendarTransport()
     transport.seed_event(
@@ -695,3 +886,240 @@ def test_cli_invocation_and_json_output() -> None:
     assert data["step_4_restart_current_state"] == "DRIFTED"
     assert data["receipt_immutability_proven"] is True
     assert data["zero_spend_confirmed"] is True
+
+
+# ===========================================================================
+# 12. Adversarial: Missing Tasks Resource Detects Drift Deterministically
+# ===========================================================================
+
+
+def test_adversarial_missing_tasks_resource_fails_closed_or_detects_drift(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """Missing or deleted task resource detects drift deterministically."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    # Empty tasks transport: task does not exist (404)
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    tasks_drift = detect_tasks_drift(snapshot=snapshot, tasks_adapter=tasks_adapter)
+    assert tasks_drift.is_drifted is True
+    assert tasks_drift.new_state == MissionState.DRIFTED
+
+    # Reconciles mission to DRIFTED
+    drifted_snap = record_drift_in_snapshot(repo, snapshot, tasks_drift)
+    assert drifted_snap is not None
+    assert drifted_snap.state == MissionState.DRIFTED
+
+    # Historical receipt remains unchanged
+    stored_receipt = repo.load_receipt(mission_id)
+    assert stored_receipt.receipt_hash == receipt.receipt_hash
+
+
+# ===========================================================================
+# 13. Adversarial: Tasks Completion Reversal While Calendar Matches
+# ===========================================================================
+
+
+def test_adversarial_tasks_predicate_fails_while_calendar_matches(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """Task completion reversal drives mission drift even when Calendar matches perfectly."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
+        calendar_id=DEMO_CALENDAR_ID,
+        event_id=DEMO_EVENT_ID,
+        summary=CANONICAL_SUMMARY,
+        start_time="2026-10-03T07:30:00+03:00",
+        end_time="2026-10-03T08:00:00+03:00",
+        status="confirmed",
+    )
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+
+    # Task status reversed from 'completed' to 'needsAction'
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status="needsAction",
+    )
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    cal_drift = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
+    assert cal_drift.is_drifted is False
+
+    tasks_drift = detect_tasks_drift(snapshot=snapshot, tasks_adapter=tasks_adapter)
+    assert tasks_drift.is_drifted is True
+    assert tasks_drift.new_state == MissionState.DRIFTED
+
+    drifted_snap = record_drift_in_snapshot(repo, snapshot, tasks_drift)
+    assert drifted_snap is not None
+    assert drifted_snap.state == MissionState.DRIFTED
+
+
+# ===========================================================================
+# 14. Adversarial: Tampered Evidence Lineage with Unchanged Count Fails Closed
+# ===========================================================================
+
+
+def test_adversarial_tampered_evidence_lineage_with_unchanged_count_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+) -> None:
+    """Tampering with evidence IDs while keeping the count unchanged fails closed."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    from stilldone.evidence import EvidenceId
+    from stilldone.receipt import ReceiptMismatchError
+
+    # Create a forged snapshot where count of evidence_ids is still 2, but one ID is foreign
+    forged_evidence_ids = (snapshot.evidence_ids[0], EvidenceId("a" * 64))
+    tampered_snap = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        pending_approvals=snapshot.pending_approvals,
+        consumed_approvals=snapshot.consumed_approvals,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=forged_evidence_ids,
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=snapshot.created_at,
+    )
+
+    with pytest.raises(ReceiptMismatchError, match="does not exist in canonical ledger"):
+        project_current_state(
+            tampered_snap,
+            historical_receipt=receipt,
+            ledger=ledger,
+        )
+
+
+# ===========================================================================
+# 15. Adversarial: Historical Receipt Replacement Attempt Fails Closed
+# ===========================================================================
+
+
+def test_adversarial_historical_receipt_replacement_attempt_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+) -> None:
+    """Overwriting an existing historical READY receipt with a different receipt fails closed."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    # Construct conflicting receipt with different projection timestamp
+    diff_snap = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC),
+    )
+    diff_receipt = create_mission_ready_receipt(diff_snap)
+
+    with pytest.raises(SnapshotIntegrityError, match="is write-once and cannot be replaced"):
+        repo.save_receipt(diff_receipt)
+
+
+# ===========================================================================
+# 16. Adversarial: Wrong Bound Resource After Fresh Session Fails Closed
+# ===========================================================================
+
+
+def test_adversarial_wrong_bound_resource_after_fresh_session_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """Passing a mismatched target to drift detection fails closed."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    wrong_tasks_target = TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK,
+        resource_id="wrong_task_id_9999",
+        parent_id=DEMO_TASK_LIST_ID,
+    )
+
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+
+    with pytest.raises(DriftTargetMismatchError, match="does not match canonical binding"):
+        detect_tasks_drift(
+            snapshot=snapshot, tasks_adapter=tasks_adapter, target=wrong_tasks_target
+        )
+
+
+# ===========================================================================
+# 17. Adversarial: Incomplete Mixed Provider Revalidation Fails Closed
+# ===========================================================================
+
+
+def test_adversarial_incomplete_mixed_provider_revalidation_fails_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """When reader omits Tasks adapter for a dual-resource mission, revalidation fails closed."""
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
+        calendar_id=DEMO_CALENDAR_ID,
+        event_id=DEMO_EVENT_ID,
+        summary=CANONICAL_SUMMARY,
+        start_time="2026-10-03T07:30:00+03:00",
+        end_time="2026-10-03T08:00:00+03:00",
+        status="confirmed",
+    )
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+
+    # Reader configured with Calendar adapter only, omitting Tasks adapter
+    cal_only_reader = StandardTargetReader(calendar_read_adapter=cal_adapter)
+
+    with pytest.raises(RevalidationValueError, match="No tasks read port configured"):
+        revalidate_mission(
+            mission_id=snapshot.mission_id,
+            predicates=snapshot.desired_state,
+            snapshot=snapshot,
+            target_reader=cal_only_reader,
+        )

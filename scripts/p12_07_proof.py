@@ -46,9 +46,14 @@ from stilldone.adapters.calendar import (  # noqa: E402
     FakeGoogleCalendarTransport,
     GoogleCalendarReadAdapter,
 )
+from stilldone.adapters.tasks import (  # noqa: E402
+    FakeGoogleTasksTransport,
+    GoogleTasksReadAdapter,
+)
 from stilldone.demo_isolation import DemoResourceScope  # noqa: E402
 from stilldone.domain.action import (  # noqa: E402
     ActionContract,
+    ActionId,
     ActionType,
     ResourceKind,
     TargetIdentity,
@@ -67,8 +72,10 @@ from stilldone.domain.mission import MissionContract, MissionId  # noqa: E402
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance  # noqa: E402
 from stilldone.drift import (  # noqa: E402
     detect_calendar_drift,
+    detect_tasks_drift,
     record_drift_in_snapshot,
 )
+from stilldone.evidence import compute_evidence_id  # noqa: E402
 from stilldone.execution.state import (  # noqa: E402
     ActionExecutionStatus,
     ProviderExecutionResult,
@@ -100,9 +107,16 @@ LAST_VERIFIED_BASELINE_SHA = "1102b68f3490ab92a358250b8aa49ae481aed5f7"
 CANONICAL_MISSION_ID = "cf5d834b-a760-4e43-91ad-f4b41faf5b91"
 DEMO_CALENDAR_ID = "c_demo@group.calendar.google.com"
 DEMO_EVENT_ID = "evt_leave_school_001"
-CANONICAL_ACTION_ID = "00000000-0000-4000-8000-000000000001"
+DEMO_TASK_LIST_ID = "list_demo_tasks"
+DEMO_TASK_ID = "task_pack_school_bag_001"
+CANONICAL_CAL_ACTION_ID = "00000000-0000-4000-8000-000000000001"
+CANONICAL_TASKS_ACTION_ID = "00000000-0000-4000-8000-000000000002"
+CANONICAL_CAL_PREDICATE_ID = "00000000-0000-4000-8000-000000000011"
+CANONICAL_TASKS_PREDICATE_ID = "00000000-0000-4000-8000-000000000012"
 CANONICAL_SUMMARY = "Leave for school"
 CONTRADICTORY_SUMMARY = "Doctor Appointment"
+CANONICAL_TASK_TITLE = "Pack school bag"
+CANONICAL_TASK_STATUS = "completed"
 
 
 class ProofVerificationError(Exception):
@@ -145,14 +159,14 @@ def check_git_worktree_clean() -> bool:
         return False
 
 
-def _save_fixture_transport(path: Path, transport: FakeGoogleCalendarTransport) -> None:
-    """Persist fake transport events to disk for cross-process observation sharing."""
+def _save_calendar_fixture(path: Path, transport: FakeGoogleCalendarTransport) -> None:
+    """Persist fake calendar transport events to disk for cross-process observation sharing."""
     serializable = {f"{cal}:{eid}": event for (cal, eid), event in transport._events.items()}
     path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
 
 
-def _load_fixture_transport(path: Path) -> FakeGoogleCalendarTransport:
-    """Load fake transport events from disk."""
+def _load_calendar_fixture(path: Path) -> FakeGoogleCalendarTransport:
+    """Load fake calendar transport events from disk."""
     transport = FakeGoogleCalendarTransport()
     if path.exists():
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -162,16 +176,38 @@ def _load_fixture_transport(path: Path) -> FakeGoogleCalendarTransport:
     return transport
 
 
+def _save_tasks_fixture(path: Path, transport: FakeGoogleTasksTransport) -> None:
+    """Persist fake tasks transport tasks to disk for cross-process observation sharing."""
+    serializable = {f"{tl}:{tid}": task for (tl, tid), task in transport._tasks.items()}
+    path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+
+
+def _load_tasks_fixture(path: Path) -> FakeGoogleTasksTransport:
+    """Load fake tasks transport tasks from disk."""
+    transport = FakeGoogleTasksTransport()
+    if path.exists():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        for key, task in raw.items():
+            tl, tid = key.split(":", 1)
+            transport._tasks[(tl, tid)] = task
+            if tl not in transport._list_order:
+                transport._list_order[tl] = []
+            if tid not in transport._list_order[tl]:
+                transport._list_order[tl].append(tid)
+    return transport
+
+
 # ===========================================================================
 # Individual Discrete Subprocess Steps
 # ===========================================================================
 
 
 def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
-    """Process 1: Seed canonical READY mission, durable snapshot, and historical receipt."""
+    """Process 1: Seed canonical READY mission with Calendar and Tasks resources."""
     ledger_path = storage_dir / "ledger.jsonl"
     snapshots_dir = storage_dir / "snapshots"
     fixture_cal_path = storage_dir / "calendar_fixture.json"
+    fixture_tasks_path = storage_dir / "tasks_fixture.json"
 
     pid = os.getpid()
     mission_id = MissionId(CANONICAL_MISSION_ID)
@@ -181,12 +217,18 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         resource_id=DEMO_EVENT_ID,
         parent_id=DEMO_CALENDAR_ID,
     )
+    tasks_target = TargetIdentity(
+        system="google_tasks",
+        resource_kind=ResourceKind.TASK,
+        resource_id=DEMO_TASK_ID,
+        parent_id=DEMO_TASK_LIST_ID,
+    )
 
     now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
 
     # 1. Seed calendar fixture transport
-    transport = FakeGoogleCalendarTransport()
-    transport.seed_event(
+    cal_transport = FakeGoogleCalendarTransport()
+    cal_transport.seed_event(
         calendar_id=DEMO_CALENDAR_ID,
         event_id=DEMO_EVENT_ID,
         summary=CANONICAL_SUMMARY,
@@ -194,15 +236,26 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         end_time="2026-10-03T08:00:00+03:00",
         status="confirmed",
     )
-    _save_fixture_transport(fixture_cal_path, transport)
+    _save_calendar_fixture(fixture_cal_path, cal_transport)
+
+    # 2. Seed tasks fixture transport
+    tasks_transport = FakeGoogleTasksTransport()
+    tasks_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status=CANONICAL_TASK_STATUS,
+    )
+    _save_tasks_fixture(fixture_tasks_path, tasks_transport)
 
     contract = MissionContract.create(
-        text="Ensure morning departure is on track",
+        text="Ensure morning departure is on track and school bag is packed",
         mission_id=mission_id,
         created_at=now,
     )
-    pred_summary = DesiredStatePredicate(
-        predicate_id=PredicateId.generate(),
+
+    pred_cal = DesiredStatePredicate(
+        predicate_id=PredicateId(CANONICAL_CAL_PREDICATE_ID),
         mission_id=mission_id,
         subject="summary",
         operator=PredicateOperator.EQUALS,
@@ -210,20 +263,43 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
         required=True,
     )
-    pred_binding = PredicateTargetBinding.create(
-        predicate_id=pred_summary.predicate_id,
+    pred_cal_binding = PredicateTargetBinding.create(
+        predicate_id=pred_cal.predicate_id,
         mission_id=mission_id,
         target=cal_target,
     )
 
-    action = ActionContract.create(
+    pred_tasks = DesiredStatePredicate(
+        predicate_id=PredicateId(CANONICAL_TASKS_PREDICATE_ID),
+        mission_id=mission_id,
+        subject="status",
+        operator=PredicateOperator.EQUALS,
+        expected_value=CANONICAL_TASK_STATUS,
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    pred_tasks_binding = PredicateTargetBinding.create(
+        predicate_id=pred_tasks.predicate_id,
+        mission_id=mission_id,
+        target=tasks_target,
+    )
+
+    cal_action = ActionContract.create(
         mission_id=mission_id,
         action_type=ActionType.CALENDAR_READ,
         target=cal_target,
         parameters={},
+        action_id=ActionId(CANONICAL_CAL_ACTION_ID),
+    )
+    tasks_action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=tasks_target,
+        parameters={},
+        action_id=ActionId(CANONICAL_TASKS_ACTION_ID),
     )
 
-    # 2. Seed durable ledger
+    # 3. Seed durable ledger
     ledger = DurableFileLedger(ledger_path)
     ledger.append_mission(
         MissionRecord(
@@ -236,22 +312,30 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
     )
     ledger.append_action(
         ActionRecord(
-            action_id=action.action_id,
+            action_id=cal_action.action_id,
             mission_id=mission_id,
-            action=action,
+            action=cal_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=tasks_action.action_id,
+            mission_id=mission_id,
+            action=tasks_action,
             approval_id=None,
             created_at=now,
         )
     )
 
-    # Add verification evidence
     origin = EvidenceOrigin(
         provenance=EvidenceProvenance.LOCAL_EXECUTION,
         observed_at=now,
     )
-    verif_payload = {
+    cal_verif_payload = {
         "evidence_type": "PREDICATE_EVALUATION",
-        "predicate_id": str(pred_summary.predicate_id),
+        "predicate_id": str(pred_cal.predicate_id),
         "truth": "TRUE",
         "observed_value": CANONICAL_SUMMARY,
         "is_match": True,
@@ -263,44 +347,93 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
             "parent_id": cal_target.parent_id,
         },
     }
-    verif_ev = EvidenceRecord.create(
-        action_id=action.action_id,
+    cal_verif_ev = EvidenceRecord.create(
+        action_id=cal_action.action_id,
         mission_id=mission_id,
         origin=origin,
-        payload=verif_payload,
+        payload=cal_verif_payload,
         created_at=now,
     )
 
-    attempt = ExecutionAttempt(
-        action_id=action.action_id,
+    tasks_verif_payload = {
+        "evidence_type": "PREDICATE_EVALUATION",
+        "predicate_id": str(pred_tasks.predicate_id),
+        "truth": "TRUE",
+        "observed_value": CANONICAL_TASK_STATUS,
+        "is_match": True,
+        "observations": {
+            "status": CANONICAL_TASK_STATUS,
+            "title": CANONICAL_TASK_TITLE,
+        },
+        "target": {
+            "system": tasks_target.system,
+            "resource_kind": tasks_target.resource_kind.value,
+            "resource_id": tasks_target.resource_id,
+            "parent_id": tasks_target.parent_id,
+        },
+    }
+    tasks_verif_ev = EvidenceRecord.create(
+        action_id=tasks_action.action_id,
+        mission_id=mission_id,
+        origin=origin,
+        payload=tasks_verif_payload,
+        created_at=now,
+    )
+    ledger.append_evidence(tasks_verif_ev)
+
+    attempt_cal = ExecutionAttempt(
+        action_id=cal_action.action_id,
         idempotency_key=IdempotencyKey.generate(),
         attempt_number=1,
         started_at=now,
     )
-    p_res = ProviderExecutionResult(
-        action_type=action.action_type,
+    p_res_cal = ProviderExecutionResult(
+        action_type=cal_action.action_type,
         success=True,
         status_name="READ_OK",
         writes_performed=0,
         captured_at=now,
     )
-    step_rec = StepExecutionRecord(
-        action_id=action.action_id,
+    step_rec_cal = StepExecutionRecord(
+        action_id=cal_action.action_id,
         status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
-        attempt=attempt,
-        provider_result=p_res,
+        attempt=attempt_cal,
+        provider_result=p_res_cal,
+    )
+
+    attempt_tasks = ExecutionAttempt(
+        action_id=tasks_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    p_res_tasks = ProviderExecutionResult(
+        action_type=tasks_action.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step_rec_tasks = StepExecutionRecord(
+        action_id=tasks_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt_tasks,
+        provider_result=p_res_tasks,
     )
 
     ready_snapshot = create_mission_snapshot(
         mission_id=mission_id,
         state=MissionState.READY,
         contract=contract,
-        desired_state=(pred_summary,),
-        actions=(action,),
-        step_records={action.action_id: step_rec},
-        execution_attempts=(attempt,),
-        evidence_ids=(verif_ev.evidence_id,),
-        predicate_bindings=(pred_binding,),
+        desired_state=(pred_cal, pred_tasks),
+        actions=(cal_action, tasks_action),
+        step_records={
+            cal_action.action_id: step_rec_cal,
+            tasks_action.action_id: step_rec_tasks,
+        },
+        execution_attempts=(attempt_cal, attempt_tasks),
+        evidence_ids=(cal_verif_ev.evidence_id, tasks_verif_ev.evidence_id),
+        predicate_bindings=(pred_cal_binding, pred_tasks_binding),
         created_at=now,
     )
 
@@ -308,7 +441,7 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         mission_id=mission_id,
         expected_prior_state=MissionState.VERIFYING,
         new_state=MissionState.READY,
-        evidence=verif_ev,
+        evidence=cal_verif_ev,
         updated_at=now,
         snapshot_projection=ready_snapshot.to_dict(),
     )
@@ -329,14 +462,16 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         "receipt_hash": receipt.receipt_hash.value,
         "receipt_is_historical": receipt.is_historical,
         "evidence_count": len(ledger.get_evidence_for_mission(mission_id)),
+        "resources_seeded": ["google_calendar", "google_tasks"],
     }
 
 
 def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
-    """Process 2: Reload session from disk, read external target, prove fresh TRUE revalidation."""
+    """Process 2: Reload session from disk, read both targets, prove fresh TRUE revalidation."""
     ledger_path = storage_dir / "ledger.jsonl"
     snapshots_dir = storage_dir / "snapshots"
     fixture_cal_path = storage_dir / "calendar_fixture.json"
+    fixture_tasks_path = storage_dir / "tasks_fixture.json"
 
     pid = os.getpid()
     mission_id = MissionId(CANONICAL_MISSION_ID)
@@ -351,14 +486,20 @@ def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
     if session.historical_receipt is None:
         raise ProofVerificationError("Process 2 failed: historical_receipt not loaded")
 
-    # Read external target through read-only adapter
-    transport = _load_fixture_transport(fixture_cal_path)
+    # Read both targets through read-only adapters
+    cal_transport = _load_calendar_fixture(fixture_cal_path)
+    tasks_transport = _load_tasks_fixture(fixture_tasks_path)
+
     demo_scope = DemoResourceScope(
         calendar_id=DEMO_CALENDAR_ID,
-        task_list_id="list_demo_tasks",
+        task_list_id=DEMO_TASK_LIST_ID,
     )
-    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=transport)
-    reader = StandardTargetReader(calendar_read_adapter=adapter)
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
+    reader = StandardTargetReader(
+        calendar_read_adapter=cal_adapter,
+        tasks_read_adapter=tasks_adapter,
+    )
 
     reval = revalidate_mission(
         mission_id=session.snapshot.mission_id,
@@ -389,11 +530,12 @@ def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
     if curr.historical_receipt_hash != session.historical_receipt.receipt_hash:
         raise ProofVerificationError("Process 2 failed: historical receipt hash mismatch")
 
-    # Invariants: 0 writes performed, 0 approvals consumed
-    writes_count = transport.writes_count
-    if writes_count != 0:
+    # Invariants: 0 writes performed across both transports
+    cal_writes = cal_transport.writes_count
+    tasks_writes = tasks_transport.writes_count
+    if cal_writes != 0 or tasks_writes != 0:
         raise ProofVerificationError(
-            f"Process 2 failed: writes_count must be 0, got {writes_count}"
+            f"Process 2 failed: writes_count must be 0, got cal={cal_writes}, tasks={tasks_writes}"
         )
 
     return {
@@ -406,16 +548,21 @@ def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
         "is_historical": curr.is_historical,
         "receipt_hash": session.historical_receipt.receipt_hash.value,
         "projection_hash": curr.projection_hash.value,
-        "writes_performed": writes_count,
+        "writes_performed": cal_writes + tasks_writes,
+        "calendar_writes": cal_writes,
+        "tasks_writes": tasks_writes,
         "provenance": EvidenceProvenance.FIXTURE.value,
     }
 
 
 def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
-    """Process 3: Contradictory observation triggers READY -> DRIFTED reconciliation."""
+    """Process 3: Contradictory observation on Calendar triggers READY -> DRIFTED reconciliation
+    while Tasks resource remains TRUE.
+    """
     ledger_path = storage_dir / "ledger.jsonl"
     snapshots_dir = storage_dir / "snapshots"
     fixture_cal_path = storage_dir / "calendar_fixture.json"
+    fixture_tasks_path = storage_dir / "tasks_fixture.json"
 
     pid = os.getpid()
     mission_id = MissionId(CANONICAL_MISSION_ID)
@@ -429,9 +576,9 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
         raise ProofVerificationError("Process 3 failed: historical_receipt not loaded")
     orig_receipt_hash = session.historical_receipt.receipt_hash.value
 
-    # External reality drifts: update calendar fixture event
-    transport = _load_fixture_transport(fixture_cal_path)
-    transport.seed_event(
+    # External reality drifts on CALENDAR ONLY: update calendar fixture event
+    cal_transport = _load_calendar_fixture(fixture_cal_path)
+    cal_transport.seed_event(
         calendar_id=DEMO_CALENDAR_ID,
         event_id=DEMO_EVENT_ID,
         summary=CONTRADICTORY_SUMMARY,
@@ -439,25 +586,39 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
         end_time="2026-10-03T09:30:00+03:00",
         status="confirmed",
     )
-    _save_fixture_transport(fixture_cal_path, transport)
+    _save_calendar_fixture(fixture_cal_path, cal_transport)
+
+    # Load tasks fixture - completely UNCHANGED (still completed)
+    tasks_transport = _load_tasks_fixture(fixture_tasks_path)
 
     demo_scope = DemoResourceScope(
         calendar_id=DEMO_CALENDAR_ID,
-        task_list_id="list_demo_tasks",
+        task_list_id=DEMO_TASK_LIST_ID,
     )
-    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=transport)
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
+    tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
 
-    # Detect drift
-    drift_eval = detect_calendar_drift(
+    # Verify Tasks evaluation explicitly remains NOT DRIFTED
+    tasks_drift_eval = detect_tasks_drift(
         snapshot=session.snapshot,
-        calendar_adapter=adapter,
+        tasks_adapter=tasks_adapter,
     )
-    if not drift_eval.is_drifted:
-        raise ProofVerificationError("Process 3 failed: expected is_drifted == True")
+    if tasks_drift_eval.is_drifted:
+        raise ProofVerificationError(
+            "Process 3 failed: tasks resource drifted unexpectedly, expected is_drifted == False"
+        )
+
+    # Detect drift on Calendar
+    cal_drift_eval = detect_calendar_drift(
+        snapshot=session.snapshot,
+        calendar_adapter=cal_adapter,
+    )
+    if not cal_drift_eval.is_drifted:
+        raise ProofVerificationError("Process 3 failed: expected cal_drift_eval.is_drifted == True")
 
     # Record drift in snapshot repository
     repo = DurableSnapshotRepository(snapshots_dir, ledger=session.ledger)
-    drifted_snap = record_drift_in_snapshot(repo, session.snapshot, drift_eval)
+    drifted_snap = record_drift_in_snapshot(repo, session.snapshot, cal_drift_eval)
 
     if drifted_snap is None or drifted_snap.state != MissionState.DRIFTED:
         raise ProofVerificationError(
@@ -502,7 +663,9 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
     return {
         "step": "reconcile_drift",
         "process_id": pid,
-        "is_drifted": drift_eval.is_drifted,
+        "tasks_still_true": not tasks_drift_eval.is_drifted,
+        "calendar_drifted": cal_drift_eval.is_drifted,
+        "is_drifted": cal_drift_eval.is_drifted,
         "current_state": curr.state.value,
         "is_ready": curr.is_ready,
         "historical_state": curr.historical_state.value,
@@ -514,7 +677,9 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
 
 
 def step_verify_restart(storage_dir: Path) -> dict[str, Any]:
-    """Process 4: Fresh process reload preserves DRIFTED current state and READY receipt."""
+    """Process 4: Fresh process reload preserves DRIFTED current state, READY receipt,
+    and performs complete exact identity and content lineage verification through durable ledger.
+    """
     ledger_path = storage_dir / "ledger.jsonl"
     snapshots_dir = storage_dir / "snapshots"
 
@@ -543,11 +708,68 @@ def step_verify_restart(storage_dir: Path) -> dict[str, Any]:
     if curr.historical_receipt_hash != session.historical_receipt.receipt_hash:
         raise ProofVerificationError("Process 4 failed: historical receipt hash mismatch")
 
-    # Verify evidence lineage
+    # Complete exact evidence identity and content lineage verification
     evidences = session.ledger.get_evidence_for_mission(mission_id)
-    if len(evidences) != 2:
+    if len(evidences) != 3:
         raise ProofVerificationError(
-            f"Process 4 failed: expected 2 evidence records, got {len(evidences)}"
+            f"Process 4 failed: expected exactly 3 evidence records, got {len(evidences)}"
+        )
+
+    # 1. Verify every evidence record has valid content-derived hash and belongs to this mission
+    for ev in evidences:
+        if ev.mission_id != mission_id:
+            raise ProofVerificationError(
+                f"Evidence {ev.evidence_id} belongs to foreign mission {ev.mission_id}"
+            )
+        expected_eid = compute_evidence_id({"origin": ev.origin, "payload": ev.payload})
+        if ev.evidence_id != expected_eid:
+            raise ProofVerificationError(
+                f"Evidence {ev.evidence_id} content hash mismatch: expected {expected_eid}"
+            )
+
+    # 2. Verify individual evidence identities and payloads
+    cal_verif = [
+        e
+        for e in evidences
+        if e.payload.get("predicate_id") == CANONICAL_CAL_PREDICATE_ID
+        and e.payload.get("evidence_type") == "PREDICATE_EVALUATION"
+    ]
+    if len(cal_verif) != 1 or cal_verif[0].payload.get("truth") != "TRUE":
+        raise ProofVerificationError("Missing or invalid Calendar verification evidence record")
+
+    tasks_verif = [
+        e
+        for e in evidences
+        if e.payload.get("predicate_id") == CANONICAL_TASKS_PREDICATE_ID
+        and e.payload.get("evidence_type") == "PREDICATE_EVALUATION"
+    ]
+    if len(tasks_verif) != 1 or tasks_verif[0].payload.get("truth") != "TRUE":
+        raise ProofVerificationError("Missing or invalid Tasks verification evidence record")
+
+    drift_ev = [
+        e
+        for e in evidences
+        if e.payload.get("evidence_type") == "MISSION_DRIFT" or e.payload.get("is_drifted") is True
+    ]
+    if len(drift_ev) != 1:
+        raise ProofVerificationError("Missing or invalid drift evidence record in ledger")
+
+    # 3. Verify historical receipt evidence binding: exactly the two verification records
+    expected_rcpt_eids = tuple(
+        sorted([cal_verif[0].evidence_id, tasks_verif[0].evidence_id], key=lambda x: x.value)
+    )
+    if session.historical_receipt.evidence_ids != expected_rcpt_eids:
+        raise ProofVerificationError(
+            "Historical receipt evidence binding mismatch: "
+            f"{session.historical_receipt.evidence_ids} != {expected_rcpt_eids}"
+        )
+
+    # 4. Verify current state evidence binding: exactly all 3 records
+    expected_curr_eids = tuple(sorted([e.evidence_id for e in evidences], key=lambda x: x.value))
+    if curr.evidence_ids != expected_curr_eids:
+        raise ProofVerificationError(
+            f"Current projection evidence binding mismatch: "
+            f"{curr.evidence_ids} != {expected_curr_eids}"
         )
 
     return {
@@ -559,6 +781,7 @@ def step_verify_restart(storage_dir: Path) -> dict[str, Any]:
         "historical_receipt_hash": session.historical_receipt.receipt_hash.value,
         "projection_hash": curr.projection_hash.value,
         "evidence_records_count": len(evidences),
+        "evidence_identities_verified": [e.evidence_id.value for e in evidences],
         "lineage_verified": True,
         "provenance": EvidenceProvenance.FIXTURE.value,
     }
@@ -681,11 +904,16 @@ def run_p12_07_proof(
                 "process_4_restart": step4_out["process_id"],
             },
             "canonical_mission_id": CANONICAL_MISSION_ID,
+            "resources_evaluated": ["google_calendar", "google_tasks"],
             "historical_ready_receipt_hash": orig_hash,
             "step_2_revalidate_is_still_true": step2_out["is_still_true"],
             "step_2_current_state": step2_out["current_state"],
             "step_2_writes_performed": step2_out["writes_performed"],
+            "step_2_calendar_writes": step2_out.get("calendar_writes", 0),
+            "step_2_tasks_writes": step2_out.get("tasks_writes", 0),
             "step_3_drift_detected": step3_out["is_drifted"],
+            "step_3_calendar_drifted": step3_out.get("calendar_drifted", True),
+            "step_3_tasks_still_true": step3_out.get("tasks_still_true", True),
             "step_3_current_state": step3_out["current_state"],
             "step_3_historical_state": step3_out["historical_state"],
             "step_4_restart_current_state": step4_out["current_state"],
