@@ -305,48 +305,16 @@ class StandardTargetReader:
 def _is_trusted_live_reader(reader: Any) -> bool:
     """Return True if reader is backed by verified authentic live network transport.
 
-    Fails closed: mocks, fakes, stubs, test doubles, callbacks, unpersisted or
-    unverified transports strictly return False.
+    Fails closed:
+    - Never uses class-name string heuristics ("mock", "fake", "stub", etc.);
+    - Never trusts caller-declared flags such as is_live_network_capable;
+    - Synthetic, injected, mock, fake, test, or unverified transports strictly return False;
+    - Official production transport identity alone, without verified external network execution
+      and durable context, cannot confer live certification;
+    - Within local-only execution interfaces where genuine external network execution cannot
+      be proven, conservatively returns False (live proof reserved for P-12.07).
     """
-    if not isinstance(reader, StandardTargetReader):
-        return False
-
-    has_components = False
-    for adapter in (reader._calendar_adapter, reader._tasks_adapter):
-        if adapter is not None:
-            has_components = True
-            transport = getattr(adapter, "_transport", getattr(adapter, "transport", None))
-            if transport is None:
-                return False
-            t_cls = transport.__class__
-            name_lower = f"{t_cls.__module__}.{t_cls.__name__}".lower()
-            if any(
-                term in name_lower for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
-            ):
-                return False
-            if not getattr(transport, "is_live_network_capable", False):
-                return False
-
-    if reader._dispatcher is not None:
-        has_components = True
-        disp = reader._dispatcher
-        d_cls = disp.__class__
-        if any(
-            term in f"{d_cls.__module__}.{d_cls.__name__}".lower()
-            for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
-        ):
-            return False
-        for route_handler in getattr(disp, "_routes", {}).values():
-            h_cls = route_handler.__class__
-            if any(
-                term in f"{h_cls.__module__}.{h_cls.__name__}".lower()
-                for term in ("mock", "fake", "stub", "dummy", "test", "simulat")
-            ):
-                return False
-            if not getattr(route_handler, "is_live_network_capable", False):
-                return False
-
-    return has_components
+    return False
 
 
 # ===========================================================================
@@ -659,20 +627,9 @@ def revalidate_mission(
         and bool(getattr(snapshot, "snapshot_id", None))
         and hasattr(snapshot, "state")
         and snapshot.state == MissionState.READY
-        and getattr(snapshot, "is_persisted", False) is True
         and hasattr(snapshot, "predicate_bindings")
         and bool(snapshot.predicate_bindings)
         and _is_trusted_live_reader(target_reader)
-        and all(
-            o.observation is not None
-            and o.observation.provenance
-            in (
-                EvidenceProvenance.LIVE_GOOGLE,
-                EvidenceProvenance.LIVE_EXTERNAL,
-                EvidenceProvenance.LIVE_AWS,
-            )
-            for o in outcomes.values()
-        )
     )
 
     return MissionRevalidationResult(

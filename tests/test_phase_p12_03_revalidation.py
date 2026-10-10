@@ -45,6 +45,7 @@ from stilldone.revalidation import (
     StandardTargetReader,
     revalidate_mission,
 )
+from stilldone.snapshot import MissionSnapshot
 from stilldone.verifier.contracts import (
     VerificationObservation,
     VerifierReadError,
@@ -1280,4 +1281,305 @@ def test_revalidation_genuine_fixture_read_success_without_certification(
     )
     assert result.all_true is True
     assert result.is_still_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def _make_dummy_ready_snapshot(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+    pred: DesiredStatePredicate,
+    *,
+    is_persisted: bool = False,
+    now: datetime | None = None,
+) -> MissionSnapshot:
+    from stilldone.approval_consumption import ApprovalConsumptionRecord, ApprovalUsageStatus
+    from stilldone.domain.authority import ApprovalId, BindingHash
+    from stilldone.domain.desired_state import PredicateTargetBinding
+    from stilldone.domain.execution import AttemptId, ExecutionAttempt, IdempotencyKey
+    from stilldone.domain.lifecycle import MissionState
+    from stilldone.domain.mission import MissionContract
+    from stilldone.evidence import EvidenceId
+    from stilldone.execution.state import (
+        ActionExecutionStatus,
+        ProviderExecutionResult,
+        StepExecutionRecord,
+    )
+
+    eval_now = now or datetime.now(tz=UTC)
+    binding = PredicateTargetBinding.create(
+        predicate_id=pred.predicate_id,
+        mission_id=mission_id,
+        target=target_calendar,
+    )
+    contract = MissionContract.create("Ready Snapshot Contract", mission_id=mission_id)
+    attempt = ExecutionAttempt(
+        action_id=cal_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=eval_now,
+        attempt_id=AttemptId.generate(),
+    )
+    provider_res = ProviderExecutionResult(
+        action_type=cal_action.action_type,
+        success=True,
+        status_name="SUCCESS",
+        writes_performed=0,
+        captured_at=eval_now,
+        details={},
+    )
+    step_rec = StepExecutionRecord(
+        action_id=cal_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=provider_res,
+    )
+    appr = ApprovalConsumptionRecord(
+        approval_id=ApprovalId.generate(),
+        mission_id=mission_id,
+        action_id=cal_action.action_id,
+        binding_hash=BindingHash("0" * 64),
+        status=ApprovalUsageStatus.CONSUMED,
+        consumed_at=eval_now,
+        attempt_number=1,
+        reason="Approved",
+    )
+    return MissionSnapshot(
+        snapshot_id=f"snap_{mission_id}_{int(eval_now.timestamp())}",
+        snapshot_version="v1",
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=(pred,),
+        actions=(cal_action,),
+        action_dependencies={cal_action.action_id: ()},
+        step_records={cal_action.action_id: step_rec},
+        pending_approvals=(),
+        consumed_approvals=(appr,),
+        execution_attempts=(attempt,),
+        evidence_ids=(EvidenceId("a" * 64),),
+        created_at=eval_now,
+        predicate_bindings=(binding,),
+        is_persisted=is_persisted,
+    )
+
+
+def test_custom_fake_transport_with_capability_flag_remains_non_certifying(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Fake transport without mock/fake declaring capability remains non-certifying."""
+    from typing import Any
+
+    from stilldone.adapters.calendar import CalendarTransportEvent, GoogleCalendarReadAdapter
+    from stilldone.demo_isolation import DemoResourceScope
+
+    now = datetime.now(tz=UTC)
+    cal_id = target_calendar.parent_id or "c_demo@group.calendar.google.com"
+
+    class CustomCloudProductionGateway:
+        is_live_network_capable = True
+
+        def get_event(self, calendar_id: str, event_id: str) -> CalendarTransportEvent | None:
+            return CalendarTransportEvent(
+                id=event_id,
+                etag="etag_custom_gateway_1",
+                summary="Leave for school",
+                start_time="2026-10-03T07:30:00+03:00",
+                end_time="2026-10-03T08:00:00+03:00",
+                all_day=False,
+                status="confirmed",
+            )
+
+        def update_event(
+            self,
+            calendar_id: str,
+            event_id: str,
+            payload: dict[str, Any],
+            if_match: str,
+            send_updates: str = "none",
+        ) -> CalendarTransportEvent:
+            raise NotImplementedError()
+
+    scope = DemoResourceScope(calendar_id=cal_id, task_list_id="list_demo")
+    adapter = GoogleCalendarReadAdapter(scope=scope, transport=CustomCloudProductionGateway())
+    reader = StandardTargetReader(calendar_read_adapter=adapter)
+
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    snap = _make_dummy_ready_snapshot(
+        mission_id, target_calendar, cal_action, pred, now=now, is_persisted=True
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=snap,
+        target_reader=reader,
+    )
+
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_caller_created_ready_snapshot_declaring_is_persisted_cannot_certify(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Caller-created READY snapshot setting is_persisted=True cannot confer live certification."""
+    now = datetime.now(tz=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    snap = _make_dummy_ready_snapshot(
+        mission_id, target_calendar, cal_action, pred, now=now, is_persisted=True
+    )
+    obs = VerificationObservation(
+        target=target_calendar,
+        observed_at=now,
+        exists=True,
+        properties={"summary": "Leave for school"},
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=snap,
+        target_reader=lambda t, s: obs,
+        at=now,
+    )
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_fixture_observation_falsely_labeled_live_google_cannot_certify(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """A fixture observation claiming LIVE_GOOGLE cannot confer live certification."""
+    from typing import Any
+
+    from stilldone.adapters.calendar import CalendarTransportEvent, GoogleCalendarReadAdapter
+    from stilldone.demo_isolation import DemoResourceScope
+
+    now = datetime.now(tz=UTC)
+    cal_id = target_calendar.parent_id or "c_demo@group.calendar.google.com"
+
+    class SyntheticCarrierTransport:
+        def get_event(self, calendar_id: str, event_id: str) -> CalendarTransportEvent | None:
+            return CalendarTransportEvent(
+                id=event_id,
+                etag="etag_carrier_1",
+                summary="Leave for school",
+                start_time="2026-10-03T07:30:00+03:00",
+                end_time="2026-10-03T08:00:00+03:00",
+                all_day=False,
+                status="confirmed",
+            )
+
+        def update_event(
+            self,
+            calendar_id: str,
+            event_id: str,
+            payload: dict[str, Any],
+            if_match: str,
+            send_updates: str = "none",
+        ) -> CalendarTransportEvent:
+            raise NotImplementedError()
+
+    scope = DemoResourceScope(calendar_id=cal_id, task_list_id="list_demo")
+    adapter = GoogleCalendarReadAdapter(scope=scope, transport=SyntheticCarrierTransport())
+    reader = StandardTargetReader(calendar_read_adapter=adapter)
+
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    snap = _make_dummy_ready_snapshot(
+        mission_id, target_calendar, cal_action, pred, now=now, is_persisted=True
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=snap,
+        target_reader=reader,
+    )
+    assert result.all_true is True
+    assert result.is_certifying_live_authority is False
+
+
+def test_official_production_transport_identity_alone_cannot_certify(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Official transport class identity alone without verified network execution cannot certify."""
+    from unittest.mock import MagicMock
+
+    from stilldone.adapters.calendar import (
+        GoogleApiClientCalendarTransport,
+        GoogleCalendarReadAdapter,
+    )
+    from stilldone.demo_isolation import DemoResourceScope
+
+    now = datetime.now(tz=UTC)
+    cal_id = target_calendar.parent_id or "c_demo@group.calendar.google.com"
+
+    mock_service = MagicMock()
+    mock_service.events().get().execute.return_value = {
+        "id": target_calendar.resource_id,
+        "etag": '"etag_google_client_1"',
+        "summary": "Leave for school",
+        "status": "confirmed",
+        "start": {"dateTime": "2026-10-03T07:30:00+03:00"},
+        "end": {"dateTime": "2026-10-03T08:00:00+03:00"},
+    }
+    prod_transport = GoogleApiClientCalendarTransport(service=mock_service)
+    scope = DemoResourceScope(calendar_id=cal_id, task_list_id="list_demo")
+    adapter = GoogleCalendarReadAdapter(scope=scope, transport=prod_transport)
+    reader = StandardTargetReader(calendar_read_adapter=adapter)
+
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    snap = _make_dummy_ready_snapshot(
+        mission_id, target_calendar, cal_action, pred, now=now, is_persisted=True
+    )
+
+    result = revalidate_mission(
+        mission_id=mission_id,
+        predicates=[pred],
+        snapshot=snap,
+        target_reader=reader,
+    )
+    assert result.all_true is True
     assert result.is_certifying_live_authority is False
