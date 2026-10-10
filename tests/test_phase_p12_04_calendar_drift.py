@@ -513,6 +513,9 @@ def test_calendar_drift_mixed_provider_mission(
     result = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
     assert result.is_drifted is False
     assert result.new_state == MissionState.READY
+    assert result.is_partial is True
+    assert result.is_whole_mission is False
+    assert result.scope == "google_calendar"
 
 
 def test_calendar_drift_ambiguous_targets_fails_closed(
@@ -698,3 +701,229 @@ def test_record_drift_updates_ledger_state_and_records_evidence(
     )
     assert drift_ev is not None
     assert drift_ev.payload.get("new_state") == "DRIFTED"
+    assert drift_ev.action_id == snapshot.actions[0].action_id
+
+
+def test_record_drift_rejected_when_not_drifted(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """record_drift_in_snapshot rejects non-drifted results with ValueError."""
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Leave for school",
+        start_time="2026-10-03T07:30:00+03:00",
+        status="confirmed",
+    )
+    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    snapshot, _, _ = _make_ready_snapshot(mission_id, cal_target)
+    result = detect_calendar_drift(snapshot=snapshot, calendar_adapter=adapter)
+    assert result.is_drifted is False
+
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps")
+    repo.save_snapshot(snapshot)
+
+    with pytest.raises(ValueError, match="Cannot record drift for a non-drifted result"):
+        record_drift_in_snapshot(repo, snapshot, result)
+
+
+def test_record_drift_rejected_when_source_snapshot_stale(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """record_drift_in_snapshot rejects stale/superseded source snapshot."""
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Drifted event text",
+        start_time="2026-10-03T07:30:00+03:00",
+        status="confirmed",
+    )
+    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    snapshot, _, _ = _make_ready_snapshot(mission_id, cal_target)
+    result = detect_calendar_drift(snapshot=snapshot, calendar_adapter=adapter)
+    assert result.is_drifted is True
+
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps")
+    repo.save_snapshot(snapshot)
+
+    # Save newer snapshot in repository
+    newer_snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        snapshot_id=f"{snapshot.snapshot_id}_rev2",
+        created_at=datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC),
+    )
+    repo.save_snapshot(newer_snapshot)
+
+    # Attempting to record drift against old snapshot fails closed
+    with pytest.raises(ValueError, match="is stale"):
+        record_drift_in_snapshot(repo, snapshot, result)
+
+
+def test_record_drift_rejected_when_observations_do_not_contradict(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """record_drift_in_snapshot rejects forged drift where observations
+    actually match desired state.
+    """
+    from stilldone.domain.provenance import EvidenceProvenance
+    from stilldone.drift import MissionDriftEvaluationResult
+    from stilldone.verifier.contracts import VerificationObservation
+
+    snapshot, pred_summary, _ = _make_ready_snapshot(mission_id, cal_target)
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps")
+    repo.save_snapshot(snapshot)
+
+    obs = VerificationObservation(
+        target=cal_target,
+        observed_at=datetime.now(UTC),
+        exists=True,
+        properties={"summary": pred_summary.expected_value},
+        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+    )
+
+    # Forged drift result claiming is_drifted=True but observations match expected_value
+    forged_result = MissionDriftEvaluationResult(
+        mission_id=mission_id,
+        prior_state=MissionState.READY,
+        new_state=MissionState.DRIFTED,
+        is_drifted=True,
+        reconciliation=None,
+        transition_result=None,
+        evaluated_at=datetime.now(UTC),
+        is_inconclusive=False,
+        error_message=None,
+        fresh_observations={pred_summary.predicate_id: obs},
+    )
+
+    with pytest.raises(ValueError, match="Forged drift rejected"):
+        record_drift_in_snapshot(repo, snapshot, forged_result)
+
+
+def test_calendar_drift_explicit_binding_resolves_multi_target_mission(
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """When multiple actions exist, explicit PredicateTargetBinding resolves without ambiguity."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Changed summary",
+        start_time="2026-10-03T07:30:00+03:00",
+        status="confirmed",
+    )
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+
+    cal_pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Original summary",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    target2 = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="evt_school_departure_002",
+        parent_id=cal_target.parent_id,
+    )
+
+    action1 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=cal_target,
+        parameters={},
+    )
+    action2 = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=target2,
+        parameters={},
+    )
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    att1 = ExecutionAttempt(
+        action_id=action1.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr1 = ProviderExecutionResult(
+        action_type=action1.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step1 = StepExecutionRecord(
+        action_id=action1.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att1,
+        provider_result=pr1,
+    )
+    att2 = ExecutionAttempt(
+        action_id=action2.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    pr2 = ProviderExecutionResult(
+        action_type=action2.action_type,
+        success=True,
+        status_name="READ_OK",
+        writes_performed=0,
+        captured_at=now,
+    )
+    step2 = StepExecutionRecord(
+        action_id=action2.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att2,
+        provider_result=pr2,
+    )
+
+    binding = PredicateTargetBinding.create(
+        predicate_id=cal_pred.predicate_id,
+        mission_id=mission_id,
+        target=cal_target,
+    )
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=MissionContract.create("Multi-calendar-bound", mission_id=mission_id),
+        desired_state=(cal_pred,),
+        actions=(action1, action2),
+        predicate_bindings=(binding,),
+        step_records={action1.action_id: step1, action2.action_id: step2},
+        execution_attempts=(att1, att2),
+        evidence_ids=(EvidenceId("e" * 64),),
+        created_at=now,
+    )
+
+    # With explicit binding, no ambiguity error; evaluates cal_target
+    result = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
+    assert result.is_drifted is True
+    assert result.new_state == MissionState.DRIFTED

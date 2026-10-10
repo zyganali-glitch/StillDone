@@ -26,7 +26,7 @@ from stilldone.adapters.calendar import (
     GoogleCalendarReadAdapter,
 )
 from stilldone.demo_isolation import DemoResourceScope
-from stilldone.domain.action import ResourceKind, TargetIdentity
+from stilldone.domain.action import ActionContract, ActionType, ResourceKind, TargetIdentity
 from stilldone.domain.desired_state import (
     DesiredStatePredicate,
     FreshnessContract,
@@ -41,6 +41,7 @@ from stilldone.revalidation import (
     HistoricalReceiptSubstitutionError,
     PlannerRevalidationAuthorityError,
     RevalidationPredicateStatus,
+    RevalidationValueError,
     StandardTargetReader,
     revalidate_mission,
 )
@@ -74,9 +75,30 @@ def target_tasks() -> TargetIdentity:
     )
 
 
+@pytest.fixture
+def cal_action(mission_id: MissionId, target_calendar: TargetIdentity) -> ActionContract:
+    return ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=target_calendar,
+        parameters={},
+    )
+
+
+@pytest.fixture
+def tasks_action(mission_id: MissionId, target_tasks: TargetIdentity) -> ActionContract:
+    return ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=target_tasks,
+        parameters={},
+    )
+
+
 def test_revalidation_distinguishes_true_and_false(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
 
@@ -115,6 +137,7 @@ def test_revalidation_distinguishes_true_and_false(
         predicates=[pred1, pred2],
         target_map={pred1.predicate_id: target_calendar, pred2.predicate_id: target_calendar},
         target_reader=mock_reader,
+        actions=[cal_action],
         at=now,
     )
 
@@ -130,6 +153,8 @@ def test_revalidation_distinguishes_stale_and_provider_error(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
     target_tasks: TargetIdentity,
+    cal_action: ActionContract,
+    tasks_action: ActionContract,
 ) -> None:
     eval_at = datetime(2026, 10, 3, 7, 10, 0, tzinfo=UTC)
     stale_at = eval_at - timedelta(seconds=600)  # 10 minutes ago, exceeds 300s window
@@ -172,6 +197,7 @@ def test_revalidation_distinguishes_stale_and_provider_error(
             pred_error.predicate_id: target_tasks,
         },
         target_reader=mock_reader,
+        actions=[cal_action, tasks_action],
         at=eval_at,
     )
 
@@ -188,6 +214,7 @@ def test_revalidation_distinguishes_stale_and_provider_error(
 def test_revalidation_distinguishes_not_evaluable(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
 
@@ -215,6 +242,7 @@ def test_revalidation_distinguishes_not_evaluable(
         predicates=[pred],
         target_map={pred.predicate_id: target_calendar},
         target_reader=mock_reader,
+        actions=[cal_action],
         at=now,
     )
 
@@ -224,6 +252,7 @@ def test_revalidation_distinguishes_not_evaluable(
 def test_revalidation_bounded_work_limit_produces_not_run_and_partial(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
 
@@ -256,6 +285,7 @@ def test_revalidation_bounded_work_limit_produces_not_run_and_partial(
         predicates=preds,
         target_map=target_map,
         target_reader=mock_reader,
+        actions=[cal_action],
         at=now,
         max_reads_per_call=2,
     )
@@ -277,6 +307,7 @@ def test_revalidation_bounded_work_limit_produces_not_run_and_partial(
 def test_historical_observation_replay_rejected_fail_closed(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
 
@@ -308,6 +339,7 @@ def test_historical_observation_replay_rejected_fail_closed(
             predicates=[pred],
             target_map={pred.predicate_id: target_calendar},
             target_reader=mock_reader,
+            actions=[cal_action],
             at=now,
             historical_observations={pred.predicate_id: historical_obs},
         )
@@ -331,6 +363,7 @@ def test_planner_model_proposals_rejected_in_revalidation(
 def test_deterministic_proof_path_with_standard_target_reader(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     """Deterministic proof path exercising StandardTargetReader with GoogleCalendar adapter."""
     fake_transport = FakeGoogleCalendarTransport()
@@ -370,6 +403,7 @@ def test_deterministic_proof_path_with_standard_target_reader(
         predicates=[pred],
         target_map={pred.predicate_id: target_calendar},
         target_reader=standard_reader,
+        actions=[cal_action],
     )
 
     assert result.all_true is True
@@ -398,6 +432,7 @@ def test_revalidation_empty_predicates_fails_closed(
 def test_revalidation_foreign_target_fails_closed(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     """When actions are provided, target_map must reference targets belonging to those actions."""
     from stilldone.domain.action import ActionContract, ActionId, ActionType, NormalizedParameters
@@ -441,6 +476,7 @@ def test_revalidation_foreign_target_fails_closed(
 def test_revalidation_redacts_error_message(
     mission_id: MissionId,
     target_calendar: TargetIdentity,
+    cal_action: ActionContract,
 ) -> None:
     """Provider error messages must have secrets and emails redacted."""
     pred = DesiredStatePredicate(
@@ -461,6 +497,7 @@ def test_revalidation_redacts_error_message(
         predicates=[pred],
         target_map={pred.predicate_id: target_calendar},
         target_reader=leaking_reader,  # type: ignore[arg-type]
+        actions=[cal_action],
     )
 
     assert result.all_true is False
@@ -471,3 +508,143 @@ def test_revalidation_redacts_error_message(
     assert "secret_token_xyz" not in outcome.error_message
     assert "[REDACTED_EMAIL]" in outcome.error_message
     assert "[REDACTED_SECRET]" in outcome.error_message
+
+
+def test_revalidation_requires_authoritative_actions_or_snapshot_fails_closed(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+) -> None:
+    """Passing actions=None and snapshot=None fails closed to prevent unauthenticated bypass."""
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    with pytest.raises(RevalidationValueError, match="authoritative mission context"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: target_calendar},
+            target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
+            actions=None,
+            snapshot=None,
+        )
+
+
+def test_revalidation_mismatched_observation_target_fails_closed(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Reader returning an observation for a mismatched target identity fails closed."""
+    now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+    wrong_target = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="wrong_event_id",
+        parent_id=target_calendar.parent_id,
+    )
+
+    def wrong_target_reader(target: TargetIdentity, subject: str) -> VerificationObservation:
+        return VerificationObservation(
+            target=wrong_target,
+            observed_at=now,
+            exists=True,
+            properties={subject: "Leave for school"},
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+        )
+
+    with pytest.raises(RevalidationValueError, match="does not match expected target"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: target_calendar},
+            target_reader=wrong_target_reader,
+            actions=[cal_action],
+            at=now,
+        )
+
+
+def test_revalidation_synthetic_reader_live_provenance_rejected(
+    mission_id: MissionId,
+    target_calendar: TargetIdentity,
+    cal_action: ActionContract,
+) -> None:
+    """Synthetic callback reader cannot assert LIVE_GOOGLE provenance."""
+    now = datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC)
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Leave for school",
+        freshness=FreshnessContract(mode=FreshnessMode.MAX_AGE, max_age_seconds=300),
+        required=True,
+    )
+
+    def fake_live_reader(target: TargetIdentity, subject: str) -> VerificationObservation:
+        return VerificationObservation(
+            target=target,
+            observed_at=now,
+            exists=True,
+            properties={subject: "Leave for school"},
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+
+    with pytest.raises(RevalidationValueError, match="cannot assert live provenance"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: target_calendar},
+            target_reader=fake_live_reader,
+            actions=[cal_action],
+            at=now,
+        )
+
+
+def test_revalidation_unsupported_provider_system_rejected(
+    mission_id: MissionId,
+) -> None:
+    """Target system outside supported providers fails closed."""
+    unsupported_target = TargetIdentity(
+        system="unsupported_external_crm",
+        resource_kind=ResourceKind.TASK,
+        resource_id="item_123",
+        parent_id="board_abc",
+    )
+    unsupported_action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.TASK_READ,
+        target=unsupported_target,
+        parameters={},
+    )
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId.generate(),
+        mission_id=mission_id,
+        subject="status",
+        operator=PredicateOperator.EQUALS,
+        expected_value="done",
+        freshness=FreshnessContract(mode=FreshnessMode.CURRENT),
+        required=True,
+    )
+    with pytest.raises(RevalidationValueError, match="not a supported provider"):
+        revalidate_mission(
+            mission_id=mission_id,
+            predicates=[pred],
+            target_map={pred.predicate_id: unsupported_target},
+            target_reader=lambda t, s: None,  # type: ignore[arg-type,return-value]
+            actions=[unsupported_action],
+        )

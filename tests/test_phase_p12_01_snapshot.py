@@ -792,3 +792,311 @@ def test_snapshot_tampered_pending_approval_rejected(
     data["pending_approvals"][0]["authority_class"] = "READ_ONLY"
     with pytest.raises(SnapshotIntegrityError, match="does not match"):
         MissionSnapshot.from_dict(data)
+
+
+def test_forged_ready_with_unrelated_evidence_rejected_by_consistency_check(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """A READY mission in ledger with only generic/unrelated evidence fails closed."""
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import (
+        ActionRecord,
+        DurableFileLedger,
+        EvidenceRecord,
+        MissionRecord,
+    )
+
+    ledger_path = tmp_path / "forged.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    # Append mission in VERIFYING state first
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    # Generic, unrelated evidence (lacks verification proof)
+    unrelated_evidence = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={"metrics": {"cpu": 95}, "note": "unrelated generic payload"},
+        created_at=now,
+    )
+    ledger.append_evidence(unrelated_evidence)
+
+    # Transitioning to READY in ledger should fail because evidence is NOT verification evidence
+    from stilldone.transitions import IllegalStatePromotionError
+
+    with pytest.raises(IllegalStatePromotionError, match="lacks verification"):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+        )
+
+
+def test_ledger_update_mission_state_rejects_illegal_promotion(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+) -> None:
+    """Updating state directly from DRAFT to READY raises IllegalStatePromotionError."""
+    from stilldone.ledger import DurableFileLedger, MissionRecord
+    from stilldone.transitions import IllegalStatePromotionError
+
+    ledger_path = tmp_path / "lifecycle.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.DRAFT,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    with pytest.raises(IllegalStatePromotionError, match="Illegal promotion to READY"):
+        ledger.update_mission_state(
+            mission_id=mission_id,
+            new_state=MissionState.READY,
+            updated_at=now,
+        )
+
+
+def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Legitimate VERIFYING -> READY transition with genuine verification evidence
+    passes consistency check.
+    """
+    from stilldone.domain.execution import IdempotencyKey
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.execution.state import (
+        ActionExecutionStatus,
+        ProviderExecutionResult,
+        StepExecutionRecord,
+    )
+    from stilldone.ledger import (
+        ActionRecord,
+        DurableFileLedger,
+        EvidenceRecord,
+        MissionRecord,
+    )
+
+    ledger_path = tmp_path / "legit.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    repo = DurableSnapshotRepository(tmp_path / "snaps", ledger=ledger)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=sample_action.action_id,
+            mission_id=mission_id,
+            action=sample_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+
+    # Genuine verification evidence
+    verif_evidence = EvidenceRecord.create(
+        action_id=sample_action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+            observed_at=now,
+        ),
+        payload={
+            "evidence_type": "VERIFICATION",
+            "verification": True,
+            "status": "VERIFIED",
+            "observations": {"start_time": "2026-10-03T07:30:00+03:00"},
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(verif_evidence)
+
+    # Legal transition VERIFYING -> READY
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
+
+    attempt = ExecutionAttempt(
+        action_id=sample_action.action_id,
+        idempotency_key=IdempotencyKey.generate(),
+        attempt_number=1,
+        started_at=now,
+    )
+    step_rec = StepExecutionRecord(
+        action_id=sample_action.action_id,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=attempt,
+        provider_result=ProviderExecutionResult(
+            action_type=sample_action.action_type,
+            success=True,
+            status_name="READ_OK",
+            writes_performed=0,
+            captured_at=now,
+        ),
+    )
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        step_records={sample_action.action_id: step_rec},
+        execution_attempts=[attempt],
+        evidence_ids=[verif_evidence.evidence_id],
+        created_at=now,
+    )
+
+    # Verification consistency succeeds
+    repo.verify_consistency_with_ledger(snapshot)
+    repo.save_snapshot(snapshot)
+    loaded = repo.load_snapshot(mission_id)
+    assert loaded.state == MissionState.READY
+
+
+def test_snapshot_predicate_target_binding_round_trip(
+    tmp_path: Path,
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Explicit PredicateTargetBinding survives durable snapshot round-trip."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+
+    repo = DurableSnapshotRepository(tmp_path / "snaps")
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=MissionState.DRAFT,
+        contract=contract,
+        desired_state=[sample_predicate],
+        actions=[sample_action],
+        predicate_bindings=[binding],
+        created_at=now,
+    )
+
+    repo.save_snapshot(snapshot)
+    loaded = repo.load_snapshot(mission_id)
+
+    assert len(loaded.predicate_bindings) == 1
+    loaded_b = loaded.predicate_bindings[0]
+    assert loaded_b.predicate_id == sample_predicate.predicate_id
+    assert loaded_b.mission_id == mission_id
+    assert loaded_b.target == sample_action.target
+    assert loaded.get_target_for_predicate(sample_predicate.predicate_id) == sample_action.target
+
+
+def test_snapshot_predicate_target_binding_rejected_when_target_foreign(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """PredicateTargetBinding target not present in any action is rejected fail-closed."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+
+    foreign_target = TargetIdentity(
+        system="google_calendar",
+        resource_kind=ResourceKind.CALENDAR_EVENT,
+        resource_id="foreign_event_999",
+        parent_id="c_other@group.calendar.google.com",
+    )
+    binding = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=foreign_target,
+    )
+
+    with pytest.raises(SnapshotLineageError, match="does not match any action target"):
+        create_mission_snapshot(
+            mission_id=mission_id,
+            state=MissionState.DRAFT,
+            contract=contract,
+            desired_state=[sample_predicate],
+            actions=[sample_action],
+            predicate_bindings=[binding],
+        )
+
+
+def test_snapshot_predicate_target_binding_rejected_when_duplicate_predicate_id(
+    mission_id: MissionId,
+    contract: MissionContract,
+    sample_action: ActionContract,
+    sample_predicate: DesiredStatePredicate,
+) -> None:
+    """Duplicate predicate ID in predicate_bindings is rejected fail-closed."""
+    from stilldone.domain.desired_state import PredicateTargetBinding
+
+    b1 = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+    b2 = PredicateTargetBinding.create(
+        predicate_id=sample_predicate.predicate_id,
+        mission_id=mission_id,
+        target=sample_action.target,
+    )
+
+    with pytest.raises(SnapshotIntegrityError, match="Duplicate predicate target binding"):
+        create_mission_snapshot(
+            mission_id=mission_id,
+            state=MissionState.DRAFT,
+            contract=contract,
+            desired_state=[sample_predicate],
+            actions=[sample_action],
+            predicate_bindings=[b1, b2],
+        )

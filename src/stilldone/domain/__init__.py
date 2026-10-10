@@ -25,6 +25,7 @@ from stilldone.domain.desired_state import (
     FreshnessMode,
     PredicateId,
     PredicateOperator,
+    PredicateTargetBinding,
 )
 from stilldone.domain.execution import (
     MAX_RETRY_ATTEMPTS_CEILING,
@@ -81,6 +82,7 @@ __all__ = [
     "PredicateId",
     "PredicateOperator",
     "PredicateScope",
+    "PredicateTargetBinding",
     "ReconciliationReason",
     "ReconciliationRequest",
     "ResourceBinding",

@@ -34,6 +34,7 @@ from stilldone.adapters.tasks import GoogleTasksReadAdapter
 from stilldone.domain.action import ActionContract, ActionType, ResourceKind, TargetIdentity
 from stilldone.domain.desired_state import DesiredStatePredicate, PredicateId
 from stilldone.domain.mission import MissionId
+from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.redaction import redact_text
 from stilldone.verifier.contracts import (
     VerificationObservation,
@@ -57,6 +58,8 @@ from stilldone.verifier.predicates import (
     _extract_observed_value,
     evaluate_predicate,
 )
+
+SUPPORTED_REVALIDATION_SYSTEMS: frozenset[str] = frozenset({"google_calendar", "google_tasks"})
 
 # Detect planner/model classes if available to reject model authority injections
 try:
@@ -306,11 +309,12 @@ def revalidate_mission(
     *,
     mission_id: MissionId,
     predicates: Sequence[DesiredStatePredicate],
-    target_map: Mapping[PredicateId, TargetIdentity],
     target_reader: (
         Callable[[TargetIdentity, str], VerificationObservation] | StandardTargetReader
     ),
+    target_map: Mapping[PredicateId, TargetIdentity] | None = None,
     actions: Sequence[ActionContract] | None = None,
+    snapshot: Any | None = None,
     at: datetime | None = None,
     max_reads_per_call: int = 10,
     historical_observations: Mapping[PredicateId, VerificationObservation] | None = None,
@@ -326,9 +330,12 @@ def revalidate_mission(
     """
     assert_not_planner_for_revalidation(mission_id, parameter_name="mission_id")
     assert_not_planner_for_revalidation(predicates, parameter_name="predicates")
-    assert_not_planner_for_revalidation(target_map, parameter_name="target_map")
+    if target_map is not None:
+        assert_not_planner_for_revalidation(target_map, parameter_name="target_map")
     if actions is not None:
         assert_not_planner_for_revalidation(actions, parameter_name="actions")
+    if snapshot is not None:
+        assert_not_planner_for_revalidation(snapshot, parameter_name="snapshot")
 
     if not isinstance(mission_id, MissionId):
         raise RevalidationTypeError("mission_id must be MissionId")
@@ -338,8 +345,6 @@ def revalidate_mission(
         raise RevalidationValueError(
             "Cannot revalidate mission with zero predicates; fail closed against vacuous truth"
         )
-    if not isinstance(target_map, Mapping):
-        raise RevalidationTypeError("target_map must be a Mapping")
     if not callable(target_reader) and not isinstance(target_reader, StandardTargetReader):
         raise RevalidationTypeError(
             "target_reader must be a callable or StandardTargetReader instance"
@@ -347,15 +352,56 @@ def revalidate_mission(
     if max_reads_per_call < 1:
         raise RevalidationValueError("max_reads_per_call must be >= 1")
 
-    # If actions are supplied, validate that targets in target_map belong to mission actions
+    # Authoritative mission context is strictly required fail-closed
+    if actions is None and snapshot is None:
+        raise RevalidationValueError(
+            "Revalidation requires authoritative mission context; "
+            "actions or snapshot must be provided (cannot both be None)"
+        )
+
+    effective_actions: Sequence[ActionContract]
     if actions is not None:
-        known_action_targets = {a.target for a in actions if a.mission_id == mission_id}
-        for pid, tgt in target_map.items():
-            if tgt not in known_action_targets:
-                raise RevalidationValueError(
-                    f"Target for predicate {pid} ({tgt}) does not match any action target "
-                    f"for mission {mission_id}"
-                )
+        effective_actions = actions
+    else:
+        assert snapshot is not None
+        if hasattr(snapshot, "mission_id") and snapshot.mission_id != mission_id:
+            raise RevalidationValueError(
+                f"Snapshot mission {snapshot.mission_id} does not match {mission_id}"
+            )
+        if hasattr(snapshot, "actions"):
+            effective_actions = snapshot.actions
+        else:
+            raise RevalidationTypeError("snapshot must have actions attribute")
+
+    # Derive target_map from snapshot bindings if not provided explicitly
+    if target_map is None:
+        if (
+            snapshot is not None
+            and hasattr(snapshot, "predicate_bindings")
+            and snapshot.predicate_bindings
+        ):
+            target_map = {b.predicate_id: b.target for b in snapshot.predicate_bindings}
+        else:
+            raise RevalidationValueError(
+                "target_map must be provided or derivable from snapshot.predicate_bindings"
+            )
+
+    if not isinstance(target_map, Mapping):
+        raise RevalidationTypeError("target_map must be a Mapping")
+
+    # Validate that all targets belong to known actions and use supported providers
+    known_action_targets = {a.target for a in effective_actions if a.mission_id == mission_id}
+    for pid, tgt in target_map.items():
+        if tgt not in known_action_targets:
+            raise RevalidationValueError(
+                f"Target for predicate {pid} ({tgt}) does not match any action target "
+                f"for mission {mission_id}"
+            )
+        if tgt.system not in SUPPORTED_REVALIDATION_SYSTEMS:
+            raise RevalidationValueError(
+                f"Target system {tgt.system!r} for predicate {pid} is not a supported provider "
+                f"(supported: {sorted(SUPPORTED_REVALIDATION_SYSTEMS)})"
+            )
 
     eval_at = at or datetime.now(UTC)
     if eval_at.tzinfo is None:
@@ -418,7 +464,28 @@ def revalidate_mission(
                 raise RevalidationTypeError(
                     f"Reader returned {type(obs).__name__}, expected VerificationObservation"
                 )
+            if obs.target != target:
+                raise RevalidationValueError(
+                    f"Observation target {obs.target} does not match expected target {target} "
+                    f"for predicate {pred.predicate_id}"
+                )
+            if not isinstance(target_reader, StandardTargetReader):
+                if obs.provenance in (
+                    EvidenceProvenance.LIVE_GOOGLE,
+                    EvidenceProvenance.LIVE_EXTERNAL,
+                    EvidenceProvenance.LIVE_AWS,
+                ):
+                    raise RevalidationValueError(
+                        f"Synthetic callback reader cannot assert live provenance "
+                        f"({obs.provenance.value}); synthetic readers must report FIXTURE "
+                        "or LOCAL_EXECUTION"
+                    )
         except (VerifierReadError, Exception) as exc:
+            if isinstance(
+                exc,
+                (RevalidationValueError, RevalidationTypeError, HistoricalReceiptSubstitutionError),
+            ):
+                raise
             provider_error_msg = redact_text(str(exc))
 
         if provider_error_msg is not None or obs is None:

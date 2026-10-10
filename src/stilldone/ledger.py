@@ -13,6 +13,7 @@ from stilldone.application.ports.ledger_port import (
     MissionRecord,
     RecordConflictError,
     RecordNotFoundError,
+    _is_verification_evidence,
     freeze_canonical_payload,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "MissionRecord",
     "RecordConflictError",
     "RecordNotFoundError",
+    "_is_verification_evidence",
     "freeze_canonical_payload",
 ]

@@ -26,12 +26,16 @@ from stilldone.domain.action import (
 from stilldone.domain.authority import ApprovalId
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
-from stilldone.domain.provenance import EvidenceOrigin
+from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.evidence import EvidenceId, compute_evidence_id
 from stilldone.serialization import (
     canonical_json,
     canonical_serialize,
     to_canonical_primitive,
+)
+from stilldone.transitions import (
+    IllegalStatePromotionError,
+    assert_valid_transition,
 )
 
 
@@ -332,6 +336,39 @@ class EvidenceRecord:
         )
 
 
+def _is_verification_evidence(ev: EvidenceRecord) -> bool:
+    """Check whether an evidence record qualifies as authoritative verification proof.
+
+    Rules:
+    - Must possess recognized EvidenceProvenance.
+    - Generic, unrelated payload (e.g. arbitrary metrics) does not constitute verification proof.
+    - Payload must contain verified execution/read-back indicators or predicate facts.
+    """
+    if not isinstance(ev.origin.provenance, EvidenceProvenance):
+        return False
+    payload = ev.payload
+    if not isinstance(payload, (dict, CanonicalPayload)):
+        return False
+    # Check for canonical verification indicators
+    if payload.get("initial_verification") is True:
+        return True
+    if payload.get("verification") is True:
+        return True
+    if payload.get("is_verified") is True:
+        return True
+    if payload.get("is_ready") is True:
+        return True
+    if payload.get("status") in ("VERIFIED", "READ_OK"):
+        return True
+    if payload.get("evidence_type") in ("VERIFICATION", "READ_BACK", "INITIAL_VERIFICATION"):
+        return True
+    if "predicate_evaluations" in payload:
+        return True
+    if "observations" in payload and payload.get("observations"):
+        return True
+    return False
+
+
 class MissionLedgerPort(ABC):
     """Abstract provider-neutral append-only ledger interface."""
 
@@ -438,6 +475,31 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         if key not in self._missions:
             raise RecordNotFoundError(f"Mission {key} not found in ledger")
         old = self._missions[key]
+        if old.state != new_state:
+            assert_valid_transition(old.state, new_state)
+
+        if new_state == MissionState.READY:
+            action_ids = self._mission_actions.get(key, [])
+            if not action_ids:
+                raise IllegalStatePromotionError(
+                    f"Cannot promote mission {key} to READY in ledger with zero actions"
+                )
+            for a_key in action_ids:
+                e_keys = self._action_evidence.get(a_key, [])
+                if not e_keys:
+                    raise IllegalStatePromotionError(
+                        f"Cannot promote mission {key} to READY: action {a_key} has zero evidence"
+                    )
+                has_verification = any(
+                    _is_verification_evidence(self._evidence[ek])
+                    for ek in e_keys
+                    if ek in self._evidence
+                )
+                if not has_verification:
+                    raise IllegalStatePromotionError(
+                        f"Cannot promote mission {key} to READY: action {a_key} lacks verification"
+                    )
+
         now = updated_at or datetime.now(UTC)
         norm_now = _normalize_utc(now, "updated_at")
         updated = MissionRecord(
@@ -677,10 +739,13 @@ class DurableFileLedger(MissionLedgerPort):
                             "during durable log replay."
                         )
                     old_m = self._missions[m_key]
+                    new_st = MissionState(entry["state"])
+                    if old_m.state != new_st:
+                        assert_valid_transition(old_m.state, new_st)
                     updated_m = MissionRecord(
                         mission_id=old_m.mission_id,
                         contract=old_m.contract,
-                        state=MissionState(entry["state"]),
+                        state=new_st,
                         created_at=old_m.created_at,
                         updated_at=datetime.fromisoformat(entry["updated_at"]),
                     )
@@ -831,6 +896,31 @@ class DurableFileLedger(MissionLedgerPort):
         if key not in self._missions:
             raise RecordNotFoundError(f"Mission {key} not found in ledger")
         old = self._missions[key]
+        if old.state != new_state:
+            assert_valid_transition(old.state, new_state)
+
+        if new_state == MissionState.READY:
+            action_ids = self._mission_actions.get(key, [])
+            if not action_ids:
+                raise IllegalStatePromotionError(
+                    f"Cannot promote mission {key} to READY in ledger with zero actions"
+                )
+            for a_key in action_ids:
+                e_keys = self._action_evidence.get(a_key, [])
+                if not e_keys:
+                    raise IllegalStatePromotionError(
+                        f"Cannot promote mission {key} to READY: action {a_key} has zero evidence"
+                    )
+                has_verification = any(
+                    _is_verification_evidence(self._evidence[ek])
+                    for ek in e_keys
+                    if ek in self._evidence
+                )
+                if not has_verification:
+                    raise IllegalStatePromotionError(
+                        f"Cannot promote mission {key} to READY: action {a_key} lacks verification"
+                    )
+
         now = updated_at or datetime.now(UTC)
         norm_now = _normalize_utc(now, "updated_at")
         updated = MissionRecord(

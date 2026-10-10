@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
+from stilldone.domain.action import ResourceKind, TargetIdentity
 from stilldone.domain.mission import MissionId
 
 
@@ -190,4 +193,114 @@ class DesiredStatePredicate:
             expected_value=expected_value,
             required=required,
             freshness=fc,
+        )
+
+
+@dataclass(frozen=True)
+class PredicateTargetBinding:
+    """Immutable binding associating a DesiredStatePredicate with an exact target resource.
+
+    Core Invariants:
+    - Binds predicate_id, mission_id, provider system, resource_kind, resource_id, and parent_id.
+    - Derived only from authoritative mission action contracts.
+    - Rejects synthetic or unmatched targets fail-closed.
+    - Persisted durably within mission snapshots.
+    """
+
+    predicate_id: PredicateId
+    mission_id: MissionId
+    system: str
+    resource_kind: ResourceKind
+    resource_id: str
+    parent_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.predicate_id, PredicateId):
+            raise TypeError(
+                f"predicate_id must be PredicateId, got {type(self.predicate_id).__name__}"
+            )
+        if not isinstance(self.mission_id, MissionId):
+            raise TypeError(f"mission_id must be MissionId, got {type(self.mission_id).__name__}")
+        if not isinstance(self.system, str) or not self.system.strip():
+            raise ValueError("system must be a non-empty string")
+        if isinstance(self.resource_kind, str) and not isinstance(self.resource_kind, ResourceKind):
+            try:
+                object.__setattr__(self, "resource_kind", ResourceKind(self.resource_kind))
+            except ValueError as exc:
+                raise ValueError(f"Unsupported resource_kind: {self.resource_kind!r}") from exc
+        elif not isinstance(self.resource_kind, ResourceKind):
+            raise TypeError(
+                f"resource_kind must be a ResourceKind, got {type(self.resource_kind).__name__}"
+            )
+        if not isinstance(self.resource_id, str) or not self.resource_id.strip():
+            raise ValueError("resource_id must be a non-empty string")
+        if not isinstance(self.parent_id, str):
+            raise ValueError("parent_id must be a string")
+
+    @property
+    def target(self) -> TargetIdentity:
+        """Return the concrete TargetIdentity for this binding."""
+        return TargetIdentity(
+            system=self.system,
+            resource_kind=self.resource_kind,
+            resource_id=self.resource_id,
+            parent_id=self.parent_id if self.parent_id else None,
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert binding to a deterministic serializable dictionary."""
+        return {
+            "predicate_id": str(self.predicate_id),
+            "mission_id": str(self.mission_id),
+            "system": self.system,
+            "resource_kind": self.resource_kind.value,
+            "resource_id": self.resource_id,
+            "parent_id": self.parent_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> PredicateTargetBinding:
+        """Deserialize and validate binding fail-closed."""
+        if not isinstance(data, Mapping):
+            raise TypeError(f"data must be a mapping, got {type(data).__name__}")
+        required_fields = (
+            "predicate_id",
+            "mission_id",
+            "system",
+            "resource_kind",
+            "resource_id",
+            "parent_id",
+        )
+        for key in required_fields:
+            if key not in data:
+                raise ValueError(f"Missing required field in PredicateTargetBinding: {key!r}")
+            if not isinstance(data[key], str):
+                raise TypeError(f"Field {key!r} must be str, got {type(data[key]).__name__}")
+        return cls(
+            predicate_id=PredicateId(data["predicate_id"]),
+            mission_id=MissionId(data["mission_id"]),
+            system=data["system"],
+            resource_kind=ResourceKind(data["resource_kind"]),
+            resource_id=data["resource_id"],
+            parent_id=data["parent_id"],
+        )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        predicate_id: PredicateId,
+        mission_id: MissionId,
+        target: TargetIdentity,
+    ) -> PredicateTargetBinding:
+        """Construct binding from an authoritative TargetIdentity."""
+        if not isinstance(target, TargetIdentity):
+            raise TypeError(f"target must be TargetIdentity, got {type(target).__name__}")
+        return cls(
+            predicate_id=predicate_id,
+            mission_id=mission_id,
+            system=target.system,
+            resource_kind=target.resource_kind,
+            resource_id=target.resource_id,
+            parent_id=target.parent_id or "",
         )

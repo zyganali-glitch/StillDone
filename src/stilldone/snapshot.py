@@ -56,6 +56,7 @@ from stilldone.domain.desired_state import (
     FreshnessMode,
     PredicateId,
     PredicateOperator,
+    PredicateTargetBinding,
 )
 from stilldone.domain.execution import AttemptId, ExecutionAttempt, IdempotencyKey
 from stilldone.domain.lifecycle import MissionState
@@ -69,6 +70,7 @@ from stilldone.execution.state import (
 from stilldone.ledger import (
     MissionLedgerPort,
     RecordNotFoundError,
+    _is_verification_evidence,
 )
 from stilldone.pending_approval import (
     PendingApproval,
@@ -80,6 +82,34 @@ from stilldone.serialization import (
 
 CANONICAL_SNAPSHOT_VERSION: str = "v1"
 SUPPORTED_SNAPSHOT_VERSIONS: frozenset[str] = frozenset({CANONICAL_SNAPSHOT_VERSION})
+
+CALENDAR_SUBJECTS: frozenset[str] = frozenset(
+    {
+        "summary",
+        "start",
+        "end",
+        "all_day",
+        "allday",
+        "event_id",
+        "calendar_id",
+        "description",
+        "location",
+        "start_time",
+        "end_time",
+    }
+)
+TASKS_SUBJECTS: frozenset[str] = frozenset(
+    {
+        "title",
+        "due",
+        "completed",
+        "deleted",
+        "task_id",
+        "task_list_id",
+        "notes",
+        "due_date",
+    }
+)
 
 # Detect planner/model classes if available to reject model authority injections
 try:
@@ -185,6 +215,7 @@ class MissionSnapshot:
     execution_attempts: tuple[ExecutionAttempt, ...]
     evidence_ids: tuple[EvidenceId, ...]
     created_at: datetime
+    predicate_bindings: tuple[PredicateTargetBinding, ...] = ()
 
     def __post_init__(self) -> None:
         assert_not_planner_for_snapshot(self.contract, parameter_name="contract")
@@ -382,6 +413,62 @@ class MissionSnapshot:
                         f"Pending approval {pa.pending_approval_id} is still "
                         "PENDING in READY snapshot"
                     )
+            if len(self.desired_state) > 0 and len(self.actions) == 0:
+                raise SnapshotIntegrityError(
+                    "Cannot construct READY snapshot with predicates but zero actions"
+                )
+
+        if not isinstance(self.predicate_bindings, tuple):
+            raise SnapshotTypeError("predicate_bindings must be a tuple")
+        known_pred_ids = {p.predicate_id for p in self.desired_state}
+        known_target_tuples = {
+            (
+                a.target.system,
+                a.target.resource_kind,
+                a.target.resource_id,
+                a.target.parent_id,
+            )
+            for a in self.actions
+        }
+        seen_pids: set[PredicateId] = set()
+        for i, pb in enumerate(self.predicate_bindings):
+            if not isinstance(pb, PredicateTargetBinding):
+                raise SnapshotTypeError(
+                    f"predicate_bindings[{i}] must be PredicateTargetBinding, "
+                    f"got {type(pb).__name__}"
+                )
+            if pb.mission_id != self.mission_id:
+                raise SnapshotLineageError(
+                    f"PredicateTargetBinding {pb.predicate_id} mission {pb.mission_id} "
+                    f"does not match snapshot mission {self.mission_id}"
+                )
+            if pb.predicate_id not in known_pred_ids:
+                raise SnapshotLineageError(
+                    f"PredicateTargetBinding {pb.predicate_id} not in snapshot desired_state"
+                )
+            pb_tgt_tuple = (
+                pb.system,
+                pb.resource_kind,
+                pb.resource_id,
+                pb.parent_id,
+            )
+            if pb_tgt_tuple not in known_target_tuples:
+                raise SnapshotLineageError(
+                    f"PredicateTargetBinding {pb.predicate_id} target does not match "
+                    "any action target"
+                )
+            if pb.predicate_id in seen_pids:
+                raise SnapshotIntegrityError(
+                    f"Duplicate predicate target binding for predicate {pb.predicate_id}"
+                )
+            seen_pids.add(pb.predicate_id)
+
+    def get_target_for_predicate(self, predicate_id: PredicateId) -> TargetIdentity:
+        """Lookup the authoritative TargetIdentity bound to a predicate."""
+        for b in self.predicate_bindings:
+            if b.predicate_id == predicate_id:
+                return b.target
+        raise SnapshotIntegrityError(f"No target binding found for predicate {predicate_id}")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert snapshot to deterministic serializable dictionary."""
@@ -513,6 +600,7 @@ class MissionSnapshot:
                 for att in self.execution_attempts
             ],
             "evidence_ids": [str(eid) for eid in self.evidence_ids],
+            "predicate_bindings": [b.to_dict() for b in self.predicate_bindings],
         }
 
     @classmethod
@@ -751,6 +839,43 @@ class MissionSnapshot:
             # Evidence IDs
             eids = [EvidenceId(eid_str) for eid_str in data["evidence_ids"]]
 
+            # Predicate bindings
+            pbs: list[PredicateTargetBinding] = []
+            if "predicate_bindings" in data:
+                raw_pbs = data["predicate_bindings"]
+                if not isinstance(raw_pbs, list):
+                    raise SnapshotCorruptionError("predicate_bindings must be a list")
+                for pbd in raw_pbs:
+                    pbs.append(PredicateTargetBinding.from_dict(pbd))
+            else:
+                # Unambiguous legacy derivation check
+                distinct_targets = {
+                    (
+                        a.target.system,
+                        a.target.resource_kind,
+                        a.target.resource_id,
+                        a.target.parent_id,
+                    ): a.target
+                    for a in acts
+                }
+                if len(distinct_targets) == 1:
+                    sole_target = next(iter(distinct_targets.values()))
+                    for p in preds:
+                        pbs.append(
+                            PredicateTargetBinding.create(
+                                predicate_id=p.predicate_id,
+                                mission_id=m_id,
+                                target=sole_target,
+                            )
+                        )
+                elif len(distinct_targets) == 0 or len(preds) == 0:
+                    pass
+                else:
+                    raise SnapshotCorruptionError(
+                        "Ambiguous historical snapshot: multiple distinct action targets present "
+                        "without explicit predicate bindings"
+                    )
+
             return cls(
                 snapshot_id=str(data["snapshot_id"]),
                 snapshot_version=version,
@@ -766,6 +891,7 @@ class MissionSnapshot:
                 execution_attempts=tuple(eatts),
                 evidence_ids=tuple(eids),
                 created_at=c_at,
+                predicate_bindings=tuple(pbs),
             )
         except (SnapshotError, UnknownSnapshotVersionError):
             raise
@@ -791,6 +917,9 @@ def create_mission_snapshot(
     consumed_approvals: Sequence[ApprovalConsumptionRecord] | None = None,
     execution_attempts: Sequence[ExecutionAttempt] | None = None,
     evidence_ids: Sequence[EvidenceId] | None = None,
+    predicate_bindings: Sequence[PredicateTargetBinding]
+    | Mapping[PredicateId, TargetIdentity]
+    | None = None,
     snapshot_id: str | None = None,
     snapshot_version: str = CANONICAL_SNAPSHOT_VERSION,
     created_at: datetime | None = None,
@@ -800,6 +929,20 @@ def create_mission_snapshot(
         snapshot_id or f"snap_{mission_id}_{int((created_at or datetime.now(UTC)).timestamp())}"
     )
     now = created_at or datetime.now(UTC)
+
+    # Validate action and predicate lineage upfront
+    for act in actions:
+        if act.mission_id != mission_id:
+            raise SnapshotLineageError(
+                f"Action {act.action_id} mission {act.mission_id} "
+                f"does not match snapshot mission {mission_id}"
+            )
+    for p in desired_state:
+        if p.mission_id != mission_id:
+            raise SnapshotLineageError(
+                f"Predicate {p.predicate_id} mission {p.mission_id} "
+                f"does not match snapshot mission {mission_id}"
+            )
 
     # Normalize dependencies
     deps_map: dict[ActionId, tuple[ActionId, ...]] = {}
@@ -811,6 +954,69 @@ def create_mission_snapshot(
     step_map: dict[ActionId, StepExecutionRecord] = {}
     if step_records is not None:
         step_map.update(step_records)
+
+    # Predicate bindings normalization
+    norm_pbs: list[PredicateTargetBinding] = []
+    if predicate_bindings is not None:
+        if isinstance(predicate_bindings, Mapping):
+            for pid, tgt in predicate_bindings.items():
+                norm_pbs.append(
+                    PredicateTargetBinding.create(
+                        predicate_id=pid,
+                        mission_id=mission_id,
+                        target=tgt,
+                    )
+                )
+        else:
+            norm_pbs.extend(predicate_bindings)
+    else:
+        distinct_targets = {
+            (
+                a.target.system,
+                a.target.resource_kind,
+                a.target.resource_id,
+                a.target.parent_id,
+            ): a.target
+            for a in actions
+        }
+        if len(distinct_targets) == 1 and len(desired_state) > 0:
+            sole_target = next(iter(distinct_targets.values()))
+            for p in desired_state:
+                norm_pbs.append(
+                    PredicateTargetBinding.create(
+                        predicate_id=p.predicate_id,
+                        mission_id=mission_id,
+                        target=sole_target,
+                    )
+                )
+        elif len(distinct_targets) == 0 or len(desired_state) == 0:
+            pass
+        else:
+            # Unambiguous system-based derivation for mixed-provider missions
+            for p in desired_state:
+                norm_subj = p.subject.strip().lower().split(".")[-1]
+                raw_subj = p.subject.lower()
+                is_cal = norm_subj in CALENDAR_SUBJECTS or raw_subj.startswith(
+                    ("calendar.", "event.")
+                )
+                is_task = norm_subj in TASKS_SUBJECTS or raw_subj.startswith("task.")
+                matched_targets: list[TargetIdentity] = []
+                if is_cal and not is_task:
+                    matched_targets = [
+                        t for t in distinct_targets.values() if t.system == "google_calendar"
+                    ]
+                elif is_task and not is_cal:
+                    matched_targets = [
+                        t for t in distinct_targets.values() if t.system == "google_tasks"
+                    ]
+                if len(matched_targets) == 1:
+                    norm_pbs.append(
+                        PredicateTargetBinding.create(
+                            predicate_id=p.predicate_id,
+                            mission_id=mission_id,
+                            target=matched_targets[0],
+                        )
+                    )
 
     if state == MissionState.READY:
         if step_records is None:
@@ -862,6 +1068,7 @@ def create_mission_snapshot(
         execution_attempts=tuple(execution_attempts or ()),
         evidence_ids=tuple(evidence_ids or ()),
         created_at=now,
+        predicate_bindings=tuple(norm_pbs),
     )
 
 
@@ -972,12 +1179,39 @@ class DurableSnapshotRepository:
 
         # 4. If snapshot claims READY, verify authoritative verification lineage in ledger
         if snapshot.state == MissionState.READY:
+            if len(snapshot.desired_state) > 0 and len(snapshot.actions) == 0:
+                raise SnapshotLedgerConflictError(
+                    "READY snapshot with desired state predicates must have actions in ledger"
+                )
             for act in snapshot.actions:
                 act_evidences = target_ledger.get_evidence_for_action(act.action_id)
                 if not act_evidences:
                     raise SnapshotLedgerConflictError(
                         f"Action {act.action_id} lacks durable verification evidence in ledger "
                         "for READY mission"
+                    )
+                if not any(_is_verification_evidence(ev) for ev in act_evidences):
+                    raise SnapshotLedgerConflictError(
+                        f"Action {act.action_id} lacks durable verification evidence in ledger "
+                        "for READY mission"
+                    )
+            for pb in snapshot.predicate_bindings:
+                matching_action_ev = False
+                for act in snapshot.actions:
+                    if (
+                        act.target.system == pb.system
+                        and act.target.resource_kind == pb.resource_kind
+                        and act.target.resource_id == pb.resource_id
+                        and act.target.parent_id == pb.parent_id
+                    ):
+                        act_evs = target_ledger.get_evidence_for_action(act.action_id)
+                        if any(_is_verification_evidence(ev) for ev in act_evs):
+                            matching_action_ev = True
+                            break
+                if not matching_action_ev:
+                    raise SnapshotLedgerConflictError(
+                        f"Predicate {pb.predicate_id} bound target lacks verification evidence "
+                        "in ledger for READY mission"
                     )
 
     def save_snapshot(self, snapshot: MissionSnapshot) -> None:
