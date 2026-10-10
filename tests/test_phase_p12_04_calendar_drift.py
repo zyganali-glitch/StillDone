@@ -1419,3 +1419,231 @@ def test_record_drift_rejects_ledger_less_repository(
 
     with pytest.raises(DriftValueError, match="requires an approved ledger-backed"):
         record_drift_in_snapshot(repo, snapshot, drift_res)
+
+
+def test_record_drift_rejects_caller_snapshot_with_altered_desired_state(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """Caller-provided snapshot with identical snapshot_id and created_at but altered desired_state
+    fails closed with DriftValueError (tampering / mismatch detected).
+    """
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.drift import DriftValueError
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Changed summary",
+        start_time="2026-10-03T07:30:00+03:00",
+        status="confirmed",
+    )
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    snapshot, pred_summary, _ = _make_ready_snapshot(mission_id, cal_target)
+
+    ledger_path = tmp_path / "drift_tamper.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=snapshot.contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    for act in snapshot.actions:
+        ledger.append_action(
+            ActionRecord(
+                action_id=act.action_id,
+                mission_id=mission_id,
+                action=act,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    for p in snapshot.desired_state:
+        verif_ev = EvidenceRecord.create(
+            action_id=snapshot.actions[0].action_id,
+            mission_id=mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload={
+                "evidence_type": "PREDICATE_EVALUATION",
+                "predicate_id": str(p.predicate_id),
+                "truth": "TRUE",
+                "is_true": True,
+                "observations": {
+                    "summary": "Leave for school",
+                    "start_time": "2026-10-03T07:30:00+03:00",
+                },
+            },
+            created_at=now,
+        )
+        ledger.append_evidence(verif_ev)
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
+    ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=[e.evidence_id for e in ev_recs],
+        created_at=now,
+    )
+
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
+    repo.save_snapshot(snapshot)
+
+    drift_res = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
+    assert drift_res.is_drifted is True
+
+    # Construct tampered snapshot with identical snapshot_id and created_at
+    # but altered predicate expected_value
+    tampered_pred = DesiredStatePredicate(
+        predicate_id=pred_summary.predicate_id,
+        mission_id=mission_id,
+        subject="summary",
+        operator=PredicateOperator.EQUALS,
+        expected_value="Tampered Expected Value",
+        freshness=pred_summary.freshness,
+        required=True,
+    )
+    tampered_snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=[tampered_pred, snapshot.desired_state[1]],
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        snapshot_id=snapshot.snapshot_id,
+        created_at=snapshot.created_at,
+    )
+
+    with pytest.raises(DriftValueError, match="content tampering / mismatch detected"):
+        record_drift_in_snapshot(repo, tampered_snapshot, drift_res)
+
+
+def test_record_drift_durable_evidence_contains_exact_mismatch_details(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """record_drift_in_snapshot creates durable MISSION_DRIFT evidence
+    with exact mismatch details.
+    """
+    from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Changed summary",
+        start_time="2026-10-03T07:30:00+03:00",
+        status="confirmed",
+    )
+    cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    snapshot, pred_summary, _ = _make_ready_snapshot(mission_id, cal_target)
+
+    ledger_path = tmp_path / "drift_details.ledger"
+    ledger = DurableFileLedger(ledger_path)
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            contract=snapshot.contract,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    for act in snapshot.actions:
+        ledger.append_action(
+            ActionRecord(
+                action_id=act.action_id,
+                mission_id=mission_id,
+                action=act,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    for p in snapshot.desired_state:
+        verif_ev = EvidenceRecord.create(
+            action_id=snapshot.actions[0].action_id,
+            mission_id=mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload={
+                "evidence_type": "PREDICATE_EVALUATION",
+                "predicate_id": str(p.predicate_id),
+                "truth": "TRUE",
+                "is_true": True,
+                "observations": {
+                    "summary": "Leave for school",
+                    "start_time": "2026-10-03T07:30:00+03:00",
+                },
+            },
+            created_at=now,
+        )
+        ledger.append_evidence(verif_ev)
+    ledger.update_mission_state(
+        mission_id=mission_id,
+        new_state=MissionState.READY,
+        updated_at=now,
+    )
+    ev_recs = tuple(ledger.get_evidence_for_mission(mission_id))
+    snapshot = create_mission_snapshot(
+        mission_id=mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=[e.evidence_id for e in ev_recs],
+        created_at=now,
+    )
+
+    repo = DurableSnapshotRepository(storage_path=tmp_path / "snaps", ledger=ledger)
+    repo.save_snapshot(snapshot)
+
+    drift_res = detect_calendar_drift(snapshot=snapshot, calendar_adapter=cal_adapter)
+    assert drift_res.is_drifted is True
+
+    record_drift_in_snapshot(repo, snapshot, drift_res)
+
+    all_evs = ledger.get_evidence_for_mission(mission_id)
+    drift_ev = next(e for e in all_evs if e.payload.get("evidence_type") == "MISSION_DRIFT")
+    payload = drift_ev.payload
+
+    assert payload["source_snapshot_id"] == snapshot.snapshot_id
+    assert payload["predicate_id"] == str(pred_summary.predicate_id)
+    assert payload["target"]["resource_id"] == cal_target.resource_id
+    assert payload["provider"] == cal_target.system
+    assert payload["expected_value"] == "Leave for school"
+    assert payload["observed_value"] == "Changed summary"
+    assert payload["freshness_status"] == "FRESH"
+    assert payload["is_drifted"] is True
+    assert payload["prior_state"] == "READY"
+    assert payload["new_state"] == "DRIFTED"
+    assert "mismatch_reason" in payload

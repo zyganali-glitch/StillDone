@@ -593,9 +593,22 @@ def revalidate_mission(
         o.status == RevalidationPredicateStatus.PROVIDER_ERROR for o in outcomes.values()
     )
     has_not_run = any(o.status == RevalidationPredicateStatus.NOT_RUN for o in outcomes.values())
+    has_not_evaluable = any(
+        o.status == RevalidationPredicateStatus.NOT_EVALUABLE for o in outcomes.values()
+    )
 
     is_certifying_live_authority = (
-        snapshot is not None
+        len(predicates) > 0
+        and len(outcomes) == len(predicates)
+        and all_true
+        and not has_not_run
+        and not has_false
+        and not has_stale
+        and not has_provider_error
+        and not has_not_evaluable
+        and snapshot is not None
+        and hasattr(snapshot, "snapshot_id")
+        and bool(getattr(snapshot, "snapshot_id", None))
         and hasattr(snapshot, "predicate_bindings")
         and bool(snapshot.predicate_bindings)
         and isinstance(target_reader, StandardTargetReader)
@@ -608,7 +621,6 @@ def revalidate_mission(
                 EvidenceProvenance.LIVE_AWS,
             )
             for o in outcomes.values()
-            if o.status == RevalidationPredicateStatus.TRUE
         )
     )
 

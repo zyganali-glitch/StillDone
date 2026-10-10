@@ -39,6 +39,7 @@ from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.ledger import EvidenceRecord
 from stilldone.redaction import redact_text
+from stilldone.serialization import canonical_json
 from stilldone.snapshot import (
     SUPPORTED_SNAPSHOT_VERSIONS,
     DurableSnapshotRepository,
@@ -60,6 +61,7 @@ from stilldone.verifier.freshness import (
 )
 from stilldone.verifier.predicates import (
     PredicateTruth,
+    _extract_observed_value,
     evaluate_predicate,
 )
 from stilldone.verifier.reconciliation import (
@@ -674,6 +676,13 @@ def record_drift_in_snapshot(
             f"({current_stored.created_at.isoformat()})"
         )
 
+    # Full canonical content equality check against authoritative stored truth
+    if canonical_json(current_stored.to_dict()) != canonical_json(snapshot.to_dict()):
+        raise DriftValueError(
+            f"Caller snapshot {snapshot.snapshot_id} content contradicts authoritative "
+            "persisted snapshot in repository (content tampering / mismatch detected)"
+        )
+
     # 2. Mission must be in READY state
     if current_stored.state != MissionState.READY or snapshot.state != MissionState.READY:
         raise ReconciliationLifecycleError(
@@ -681,10 +690,10 @@ def record_drift_in_snapshot(
         )
 
     # 3. Fresh observations must actually prove drift against canonical targets
-    for pred in snapshot.desired_state:
+    for pred in current_stored.desired_state:
         if pred.predicate_id in drift_result.fresh_observations:
             obs = drift_result.fresh_observations[pred.predicate_id]
-            pred_target = snapshot.get_target_for_predicate(pred.predicate_id)
+            pred_target = current_stored.get_target_for_predicate(pred.predicate_id)
             if obs.target != pred_target:
                 raise DriftTargetMismatchError(
                     f"Observation target {obs.target} does not match canonical binding "
@@ -692,22 +701,22 @@ def record_drift_in_snapshot(
                 )
 
     recomp_requests: dict[PredicateId, VerificationRequest] = {}
-    for pred in snapshot.desired_state:
+    for pred in current_stored.desired_state:
         if pred.predicate_id in drift_result.fresh_observations:
-            p_target = snapshot.get_target_for_predicate(pred.predicate_id)
+            p_target = current_stored.get_target_for_predicate(pred.predicate_id)
             act_type = (
                 ActionType.CALENDAR_READ
                 if p_target.system == "google_calendar"
                 else ActionType.TASK_READ
             )
             read_act = ActionContract.create(
-                mission_id=snapshot.mission_id,
+                mission_id=current_stored.mission_id,
                 action_type=act_type,
                 target=p_target,
                 parameters={},
             )
             recomp_requests[pred.predicate_id] = VerificationRequest(
-                mission_id=snapshot.mission_id,
+                mission_id=current_stored.mission_id,
                 action=read_act,
                 target=p_target,
                 predicate=pred,
@@ -718,9 +727,11 @@ def record_drift_in_snapshot(
         *(obs.observed_at for obs in drift_result.fresh_observations.values()),
     )
     reconciled = reconcile_mission_state(
-        mission_id=snapshot.mission_id,
+        mission_id=current_stored.mission_id,
         predicates=[
-            p for p in snapshot.desired_state if p.predicate_id in drift_result.fresh_observations
+            p
+            for p in current_stored.desired_state
+            if p.predicate_id in drift_result.fresh_observations
         ],
         verification_requests=recomp_requests,
         fresh_observations=drift_result.fresh_observations,
@@ -737,36 +748,43 @@ def record_drift_in_snapshot(
         )
 
     has_proven_contradiction = False
-    drifted_predicate_id: PredicateId | None = None
-    for pred in snapshot.desired_state:
+    drifted_predicate: DesiredStatePredicate | None = None
+    drifted_obs: VerificationObservation | None = None
+    drifted_eval = None
+    for pred in current_stored.desired_state:
         if pred.predicate_id in drift_result.fresh_observations:
             obs = drift_result.fresh_observations[pred.predicate_id]
-            pred_target = snapshot.get_target_for_predicate(pred.predicate_id)
+            pred_target = current_stored.get_target_for_predicate(pred.predicate_id)
             eval_res = evaluate_predicate(
                 pred, obs, expected_target=pred_target, at=drift_result.evaluated_at
             )
             if eval_res.truth == PredicateTruth.FALSE:
                 has_proven_contradiction = True
-                drifted_predicate_id = pred.predicate_id
+                drifted_predicate = pred
+                drifted_obs = obs
+                drifted_eval = eval_res
                 break
 
-    if not has_proven_contradiction or drifted_predicate_id is None:
+    if (
+        not has_proven_contradiction
+        or drifted_predicate is None
+        or drifted_obs is None
+        or drifted_eval is None
+    ):
         raise DriftValueError(
             "Forged drift rejected: fresh observations do not prove "
             "any contradicted desired state predicate"
         )
 
     # 4. Bind drift evidence to the exact canonical action associated with the drifted predicate
-    drifted_target = snapshot.get_target_for_predicate(drifted_predicate_id)
-    matching_actions = [a for a in snapshot.actions if a.target == drifted_target]
+    drifted_target = current_stored.get_target_for_predicate(drifted_predicate.predicate_id)
+    matching_actions = [a for a in current_stored.actions if a.target == drifted_target]
     if not matching_actions:
         raise DriftValueError(
-            f"No canonical action found matching drifted predicate {drifted_predicate_id} "
-            f"and target {drifted_target}"
+            f"No canonical action found matching drifted predicate "
+            f"{drifted_predicate.predicate_id} and target {drifted_target}"
         )
     bound_action_id = matching_actions[0].action_id
-
-    drift_evidence_ids = list(snapshot.evidence_ids)
 
     # 5. Atomicity: Durable state transition in ledger, then save snapshot
     if repository.ledger is None:
@@ -783,42 +801,70 @@ def record_drift_in_snapshot(
         if drift_result.transition_result is not None
         else None
     )
+
+    found_obs, authoritative_obs_val = _extract_observed_value(
+        drifted_obs, drifted_predicate.subject
+    )
+    obs_val = authoritative_obs_val if found_obs else drifted_eval.observed_value
+    mismatch_msg = (
+        drifted_eval.reason
+        or f"Observed value {obs_val!r} contradicts expected {drifted_predicate.expected_value!r}"
+    )
+
+    drift_payload = {
+        "evidence_type": "MISSION_DRIFT",
+        "mission_id": str(current_stored.mission_id),
+        "source_snapshot_id": current_stored.snapshot_id,
+        "predicate_id": str(drifted_predicate.predicate_id),
+        "target": {
+            "system": drifted_target.system,
+            "resource_kind": drifted_target.resource_kind.value,
+            "resource_id": drifted_target.resource_id,
+            "parent_id": drifted_target.parent_id,
+        },
+        "provider": drifted_target.system,
+        "observed_at": drifted_obs.observed_at.isoformat(),
+        "freshness_status": "FRESH",
+        "expected_value": drifted_predicate.expected_value,
+        "observed_value": obs_val,
+        "mismatch_reason": mismatch_msg,
+        "prior_state": MissionState.READY.value,
+        "new_state": MissionState.DRIFTED.value,
+        "is_drifted": True,
+        "drifted_predicate_id": str(drifted_predicate.predicate_id),
+        "evaluated_at": drift_result.evaluated_at.isoformat(),
+        "explanation": explanation_val,
+    }
+
     drift_evidence = EvidenceRecord.create(
         action_id=bound_action_id,
-        mission_id=snapshot.mission_id,
+        mission_id=current_stored.mission_id,
         origin=origin,
-        payload={
-            "evidence_type": "MISSION_DRIFT",
-            "mission_id": str(snapshot.mission_id),
-            "prior_state": MissionState.READY.value,
-            "new_state": MissionState.DRIFTED.value,
-            "is_drifted": True,
-            "drifted_predicate_id": str(drifted_predicate_id),
-            "evaluated_at": drift_result.evaluated_at.isoformat(),
-            "explanation": explanation_val,
-        },
+        payload=drift_payload,
         created_at=drift_result.evaluated_at,
     )
+
+    drift_evidence_ids = list(current_stored.evidence_ids)
     drift_evidence_ids.append(drift_evidence.evidence_id)
 
     drifted_snapshot = create_mission_snapshot(
-        mission_id=snapshot.mission_id,
+        mission_id=current_stored.mission_id,
         state=MissionState.DRIFTED,
-        contract=snapshot.contract,
-        desired_state=snapshot.desired_state,
-        actions=snapshot.actions,
-        action_dependencies=snapshot.action_dependencies,
-        step_records=snapshot.step_records,
-        pending_approvals=snapshot.pending_approvals,
-        consumed_approvals=snapshot.consumed_approvals,
-        execution_attempts=snapshot.execution_attempts,
+        contract=current_stored.contract,
+        desired_state=current_stored.desired_state,
+        actions=current_stored.actions,
+        action_dependencies=current_stored.action_dependencies,
+        step_records=current_stored.step_records,
+        pending_approvals=current_stored.pending_approvals,
+        consumed_approvals=current_stored.consumed_approvals,
+        execution_attempts=current_stored.execution_attempts,
         evidence_ids=tuple(drift_evidence_ids),
-        predicate_bindings=snapshot.predicate_bindings,
+        predicate_bindings=current_stored.predicate_bindings,
         created_at=drift_result.evaluated_at,
     )
 
     repository.ledger.record_state_transition(
-        mission_id=snapshot.mission_id,
+        mission_id=current_stored.mission_id,
         expected_prior_state=MissionState.READY,
         new_state=MissionState.DRIFTED,
         evidence=drift_evidence,
