@@ -1256,9 +1256,10 @@ class DurableSnapshotRepository:
         serialized = canonical_json(snapshot.to_dict())
 
         if self._is_file_mode:
-            # Append-only log file with flush and fsync
+            entry = {"_type": "snapshot", **snapshot.to_dict()}
+            ser_entry = canonical_json(entry)
             with open(self._path, "a", encoding="utf-8") as f:
-                f.write(serialized + "\n")
+                f.write(ser_entry + "\n")
                 f.flush()
                 os.fsync(f.fileno())
             object.__setattr__(snapshot, "is_persisted", True)
@@ -1307,8 +1308,32 @@ class DurableSnapshotRepository:
                         raise SnapshotCorruptionError(
                             f"Line {line_num} in snapshot log is not a JSON object"
                         )
-                    if data.get("mission_id") == target_mission_str:
-                        found = MissionSnapshot.from_dict(data)
+
+                    # Disambiguate record types:
+                    # If this is a receipt entry, do NOT parse as snapshot
+                    is_receipt = data.get("_type") == "receipt" or (
+                        "receipt_hash" in data and "snapshot_id" not in data
+                    )
+                    if is_receipt:
+                        continue
+
+                    is_snapshot = (
+                        data.get("_type") == "snapshot" or "snapshot_id" in data or "state" in data
+                    )
+                    if is_snapshot:
+                        if data.get("mission_id") == target_mission_str:
+                            clean_data = {k: v for k, v in data.items() if k != "_type"}
+                            try:
+                                found = MissionSnapshot.from_dict(clean_data)
+                            except Exception as exc:
+                                raise SnapshotCorruptionError(
+                                    f"Corrupt snapshot record in log at line {line_num}: {exc}"
+                                ) from exc
+                    elif data.get("mission_id") == target_mission_str:
+                        raise SnapshotCorruptionError(
+                            f"Unrecognized record type for mission {target_mission_str} "
+                            f"at line {line_num}"
+                        )
             if found is None:
                 if self._ledger is not None and hasattr(self._ledger, "get_transition_snapshot"):
                     proj = self._ledger.get_transition_snapshot(mission_id)
@@ -1382,7 +1407,8 @@ class DurableSnapshotRepository:
                     f"Failed to read snapshot file for mission {mission_id}: {exc}"
                 ) from exc
 
-            snapshot = MissionSnapshot.from_dict(data)
+            clean_data = {k: v for k, v in data.items() if k != "_type"}
+            snapshot = MissionSnapshot.from_dict(clean_data)
             if snapshot.mission_id != mission_id:
                 raise SnapshotLineageError(
                     f"Snapshot file for mission {mission_id} contains conflicting "
@@ -1415,7 +1441,16 @@ class DurableSnapshotRepository:
         return self._path / f"{mission_id}.receipt.json"
 
     def save_receipt(self, receipt: Any) -> None:
-        """Save a historical receipt projection durably with atomic write and fsync."""
+        """Save a historical receipt projection durably with atomic write and fsync.
+
+        Enforces write-once identity per mission:
+        - First save succeeds.
+        - Identical repeated save is safely idempotent.
+        - Conflicting receipt fails closed.
+        - Preserves original receipt hash, metadata, and evidence bindings.
+        - Validates evidence lineage and foreign-mission rejection.
+        - Validates linkage to genuine historical verification without requiring current READY.
+        """
         assert_not_planner_for_snapshot(receipt, parameter_name="receipt")
         from stilldone.receipt import ReceiptProjection
 
@@ -1433,13 +1468,55 @@ class DurableSnapshotRepository:
                 raise SnapshotLedgerConflictError(
                     f"Mission {receipt.mission_id} in receipt does not exist in ledger"
                 ) from exc
+
+            if not receipt.evidence_ids:
+                raise SnapshotLineageError(
+                    f"Historical READY receipt for mission {receipt.mission_id} "
+                    "has empty evidence_ids"
+                )
+
+            has_verif_ev = False
             for eid in receipt.evidence_ids:
                 try:
-                    self._ledger.get_evidence(eid)
+                    ev_rec = self._ledger.get_evidence(eid)
                 except RecordNotFoundError as exc:
                     raise SnapshotLedgerConflictError(
                         f"Evidence {eid} in receipt does not exist in ledger"
                     ) from exc
+                if ev_rec.mission_id != receipt.mission_id:
+                    raise SnapshotLineageError(
+                        f"Evidence {eid} in receipt belongs to foreign mission "
+                        f"{ev_rec.mission_id}, expected receipt mission {receipt.mission_id}"
+                    )
+                if _is_verification_evidence(ev_rec):
+                    has_verif_ev = True
+
+            # Validate receipt linkage to genuine historical mission verification
+            if receipt.state_at_projection == MissionState.READY and not has_verif_ev:
+                raise SnapshotLedgerConflictError(
+                    f"Historical READY receipt for mission {receipt.mission_id} lacks "
+                    "verification evidence in ledger"
+                )
+
+        # Enforce write-once historical receipt identity per mission
+        from stilldone.receipt import ReceiptNotFoundError
+
+        existing_receipt: ReceiptProjection | None = None
+        try:
+            existing_receipt = self.load_receipt(receipt.mission_id)
+        except (ReceiptNotFoundError, SnapshotNotFoundError):
+            existing_receipt = None
+
+        if existing_receipt is not None:
+            if existing_receipt.receipt_hash == receipt.receipt_hash:
+                # Identical repeated save: safely idempotent
+                return
+            raise SnapshotIntegrityError(
+                f"Historical receipt for mission {receipt.mission_id} is write-once "
+                "and cannot be replaced; "
+                f"existing receipt hash {existing_receipt.receipt_hash} != "
+                f"new {receipt.receipt_hash}"
+            )
 
         serialized = canonical_json(receipt.to_canonical())
 
@@ -1477,28 +1554,48 @@ class DurableSnapshotRepository:
             if not self._path.exists():
                 raise ReceiptNotFoundError(f"Receipt file {self._path} does not exist")
             target_mission_str = str(mission_id)
-            found_data: dict[str, Any] | None = None
+            found_receipt: ReceiptProjection | None = None
             with open(self._path, encoding="utf-8") as f:
-                for line in f:
+                for line_num, line in enumerate(f, start=1):
                     line_str = line.strip()
                     if not line_str:
                         continue
                     try:
                         d = json.loads(line_str)
-                    except Exception:
-                        continue
-                    if (
-                        isinstance(d, dict)
-                        and d.get("_type") == "receipt"
-                        and d.get("mission_id") == target_mission_str
-                    ):
-                        found_data = d
-            if found_data is None:
+                    except Exception as exc:
+                        raise SnapshotCorruptionError(
+                            f"Malformed JSON in snapshot/receipt log at line {line_num}: {exc}"
+                        ) from exc
+                    if not isinstance(d, dict):
+                        raise SnapshotCorruptionError(
+                            f"Line {line_num} in snapshot/receipt log is not a JSON object"
+                        )
+                    is_receipt = d.get("_type") == "receipt" or (
+                        "receipt_hash" in d and "snapshot_id" not in d
+                    )
+                    if is_receipt and d.get("mission_id") == target_mission_str:
+                        clean_data = {k: v for k, v in d.items() if k != "_type"}
+                        try:
+                            rec = ReceiptProjection.from_dict(clean_data)
+                        except Exception as exc:
+                            raise SnapshotCorruptionError(
+                                f"Corrupt receipt record at line {line_num}: {exc}"
+                            ) from exc
+                        if found_receipt is None:
+                            found_receipt = rec
+                        else:
+                            # Conflicting duplicate receipt in log fails closed
+                            if rec.receipt_hash != found_receipt.receipt_hash:
+                                raise SnapshotIntegrityError(
+                                    f"Conflicting duplicate receipts in log for mission "
+                                    f"{mission_id}: first {found_receipt.receipt_hash} "
+                                    f"vs subsequent {rec.receipt_hash}"
+                                )
+            if found_receipt is None:
                 raise ReceiptNotFoundError(
                     f"No receipt found for mission {mission_id} in {self._path}"
                 )
-            clean_data = {k: v for k, v in found_data.items() if k != "_type"}
-            return ReceiptProjection.from_dict(clean_data)
+            return found_receipt
         else:
             target_file = self._receipt_file_for_mission(mission_id)
             if not target_file.exists():
@@ -1517,7 +1614,15 @@ class DurableSnapshotRepository:
                 if isinstance(exc, (SnapshotError, UnknownSnapshotVersionError)):
                     raise
                 raise SnapshotCorruptionError(f"Failed to read receipt file: {exc}") from exc
-            return ReceiptProjection.from_dict(data)
+            try:
+                clean_data = {k: v for k, v in data.items() if k != "_type"}
+                return ReceiptProjection.from_dict(clean_data)
+            except Exception as exc:
+                if isinstance(exc, SnapshotError):
+                    raise
+                raise SnapshotCorruptionError(
+                    f"Corrupt receipt data in {target_file}: {exc}"
+                ) from exc
 
     def get_historical_receipt(self, mission_id: MissionId) -> Any | None:
         """Get the historical receipt for a mission, or None if not present."""

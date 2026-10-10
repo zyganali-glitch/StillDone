@@ -91,7 +91,10 @@ from stilldone.session import (
 from stilldone.snapshot import (
     DurableSnapshotRepository,
     MissionSnapshot,
+    SnapshotCorruptionError,
+    SnapshotIntegrityError,
     SnapshotLedgerConflictError,
+    SnapshotLineageError,
     create_mission_snapshot,
 )
 
@@ -130,10 +133,12 @@ def _seed_ready_mission(
     *,
     summary: str = "Leave for school",
     start_time: str = "2026-10-03T07:30:00+03:00",
+    storage_path: Path | None = None,
 ) -> tuple[DurableSnapshotRepository, DurableFileLedger, MissionSnapshot, ReceiptProjection]:
     ledger_path = tmp_path / "ledger.jsonl"
-    storage_path = tmp_path / "snapshots"
-    storage_path.mkdir(parents=True, exist_ok=True)
+    if storage_path is None:
+        storage_path = tmp_path / "snapshots"
+        storage_path.mkdir(parents=True, exist_ok=True)
 
     ledger = DurableFileLedger(ledger_path)
     repository = DurableSnapshotRepository(storage_path, ledger=ledger)
@@ -680,3 +685,287 @@ def test_current_state_projection_is_historical_false_invariant(
             projection_hash=None,  # type: ignore[arg-type]
             is_historical=True,
         )
+
+
+def test_write_once_receipt_both_storage_modes(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """Enforces write-once historical receipt identity across directory and file modes:
+    - First save succeeds.
+    - Identical repeated save is safely idempotent.
+    - Conflicting receipt for same mission is rejected (fails closed with SnapshotIntegrityError).
+    - Receipt content before and after drift remains byte-for-byte identical.
+    - Restart preserves the original receipt.
+    """
+    # 1. Directory Mode
+    dir_repo, dir_ledger, snap_dir, receipt_dir = _seed_ready_mission(
+        tmp_path / "dir_mode", mission_id, cal_target
+    )
+    first_receipt = dir_repo.load_receipt(mission_id)
+    assert first_receipt.receipt_hash == receipt_dir.receipt_hash
+
+    # Identical repeated save is safely idempotent
+    dir_repo.save_receipt(receipt_dir)
+    assert dir_repo.load_receipt(mission_id).receipt_hash == receipt_dir.receipt_hash
+
+    # Conflicting receipt for same mission is rejected
+    conflicting_receipt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=receipt_dir.mission_content_hash,
+        evidence_ids=receipt_dir.evidence_ids,
+        state_at_projection=receipt_dir.state_at_projection,
+        projected_at=datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC),
+    )
+    with pytest.raises(SnapshotIntegrityError, match="write-once and cannot be replaced"):
+        dir_repo.save_receipt(conflicting_receipt)
+
+    # 2. File / Log Mode
+    file_log = tmp_path / "file_mode" / "snapshots.jsonl"
+    file_repo, file_ledger, snap_file, receipt_file = _seed_ready_mission(
+        tmp_path / "file_mode", mission_id, cal_target, storage_path=file_log
+    )
+    first_file_rcpt = file_repo.load_receipt(mission_id)
+    assert first_file_rcpt.receipt_hash == receipt_file.receipt_hash
+
+    # Identical repeated save in file mode is safely idempotent
+    file_repo.save_receipt(receipt_file)
+    assert file_repo.load_receipt(mission_id).receipt_hash == receipt_file.receipt_hash
+
+    # Conflicting receipt for same mission in file mode is rejected
+    conflicting_file_rcpt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=receipt_file.mission_content_hash,
+        evidence_ids=receipt_file.evidence_ids,
+        state_at_projection=receipt_file.state_at_projection,
+        projected_at=datetime(2026, 10, 3, 7, 0, 0, tzinfo=UTC),
+    )
+    with pytest.raises(SnapshotIntegrityError, match="write-once and cannot be replaced"):
+        file_repo.save_receipt(conflicting_file_rcpt)
+
+
+def test_foreign_mission_evidence_and_forged_ready_lineage_rejected(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """Historical receipt cannot reference foreign-mission evidence or forged verification."""
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, mission_id, cal_target)
+
+    # 1. Foreign-mission evidence reference raises SnapshotLineageError
+    foreign_mission_id = MissionId.generate()
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    foreign_contract = MissionContract.create(
+        text="Foreign mission",
+        mission_id=foreign_mission_id,
+        created_at=now,
+    )
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=foreign_mission_id,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+            contract=foreign_contract,
+        )
+    )
+    foreign_action = ActionContract.create(
+        mission_id=foreign_mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=cal_target,
+        parameters={},
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=foreign_action.action_id,
+            mission_id=foreign_mission_id,
+            action=foreign_action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+    foreign_ev = EvidenceRecord.create(
+        action_id=foreign_action.action_id,
+        mission_id=foreign_mission_id,
+        origin=EvidenceOrigin(provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=now),
+        payload={"is_match": True},
+        created_at=now,
+    )
+    ledger.append_evidence(foreign_ev)
+
+    foreign_receipt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=[foreign_ev.evidence_id],
+        state_at_projection=MissionState.READY,
+        projected_at=now,
+    )
+    with pytest.raises(SnapshotLineageError, match="foreign mission"):
+        repository.save_receipt(foreign_receipt)
+
+    # 2. Receipt with empty evidence_ids raises SnapshotLineageError
+    empty_ev_receipt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=[],
+        state_at_projection=MissionState.READY,
+        projected_at=now,
+    )
+    with pytest.raises(SnapshotLineageError, match="empty evidence_ids"):
+        repository.save_receipt(empty_ev_receipt)
+
+
+def test_shared_log_snapshot_receipt_interleaved_and_restart(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """In shared append-only log mode, snapshot and receipt records are disambiguated,
+    survive interleaved writes, and recover cleanly across restart.
+    """
+    log_file = tmp_path / "interleaved" / "events.jsonl"
+    repo, ledger, snapshot, receipt = _seed_ready_mission(
+        tmp_path / "interleaved", mission_id, cal_target, storage_path=log_file
+    )
+
+    # 1. Drift occurs -> Snapshot (DRIFTED) appended to log
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Different event",
+        start_time="2026-10-03T07:30:00+03:00",
+        end_time="2026-10-03T08:00:00+03:00",
+        status="confirmed",
+    )
+    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    drift_eval = detect_calendar_drift(snapshot=snapshot, calendar_adapter=adapter)
+    drifted_snapshot = record_drift_in_snapshot(repo, snapshot, drift_eval)
+    assert drifted_snapshot is not None
+
+    # Restart / Fresh repository instance reading the same file log
+    repo_restarted = DurableSnapshotRepository(log_file, ledger=ledger)
+    loaded_snap = repo_restarted.load_snapshot(mission_id)
+    assert loaded_snap.state == MissionState.DRIFTED
+    assert loaded_snap.snapshot_id == drifted_snapshot.snapshot_id
+
+    loaded_receipt = repo_restarted.load_receipt(mission_id)
+    assert loaded_receipt.receipt_hash == receipt.receipt_hash
+    assert loaded_receipt.state_at_projection == MissionState.READY
+    assert loaded_receipt.is_historical is True
+
+    # Current truth projection from restarted repository
+    curr = project_current_state(
+        loaded_snap,
+        historical_receipt=loaded_receipt,
+        ledger=ledger,
+    )
+    assert curr.state == MissionState.DRIFTED
+    assert curr.is_drifted is True
+    assert curr.historical_receipt_hash == receipt.receipt_hash
+
+
+def test_shared_log_conflicting_duplicate_and_corrupt_entry_fail_closed(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """Shared log fails closed when containing conflicting duplicate receipts or corrupt entries."""
+    import json
+
+    log_file = tmp_path / "fail_closed" / "events.jsonl"
+    repo, ledger, snapshot, receipt = _seed_ready_mission(
+        tmp_path / "fail_closed", mission_id, cal_target, storage_path=log_file
+    )
+
+    # 1. Append a conflicting duplicate receipt directly into the log file
+    conflicting_receipt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=receipt.state_at_projection,
+        projected_at=datetime(2026, 10, 3, 9, 0, 0, tzinfo=UTC),
+    )
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"_type": "receipt", **conflicting_receipt.to_canonical()}) + "\n")
+
+    # Loading receipt fails closed with SnapshotIntegrityError
+    with pytest.raises(SnapshotIntegrityError, match="Conflicting duplicate receipts"):
+        repo.load_receipt(mission_id)
+
+    # 2. Append malformed JSON line
+    corrupt_log = tmp_path / "corrupt_log.jsonl"
+    with open(corrupt_log, "w", encoding="utf-8") as f:
+        f.write("{this is not valid json\n")
+    corrupt_repo = DurableSnapshotRepository(corrupt_log, ledger=ledger)
+
+    with pytest.raises(SnapshotCorruptionError, match="Malformed JSON"):
+        corrupt_repo.load_snapshot(mission_id)
+
+    with pytest.raises(SnapshotCorruptionError, match="Malformed JSON"):
+        corrupt_repo.load_receipt(mission_id)
+
+
+def test_authoritative_vs_preview_current_truth_and_hash_binding(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """Validates authoritative qualification, hash binding of snapshot_version,
+    rejection of arbitrary evidence IDs and forged receipts.
+    """
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, mission_id, cal_target)
+
+    # 1. Authoritative projection succeeds with canonical ledger and persisted snapshot
+    proj_auth = project_current_state(
+        snapshot,
+        historical_receipt=receipt,
+        ledger=ledger,
+        authoritative=True,
+    )
+    assert proj_auth.is_authoritative is True
+    assert proj_auth.is_certified_ready is True
+
+    # 2. Forged snapshot without ledger cannot obtain authoritative certification
+    proj_no_ledger = project_current_state(snapshot, historical_receipt=receipt, ledger=None)
+    assert proj_no_ledger.is_authoritative is False
+    assert proj_no_ledger.is_certified_ready is False
+
+    with pytest.raises(ReceiptMismatchError, match="requires a canonical mission ledger"):
+        project_current_state(
+            snapshot,
+            historical_receipt=receipt,
+            ledger=None,
+            authoritative=True,
+        )
+
+    # 3. Forged historical receipt hash fails closed
+    import copy
+
+    tampered_receipt = copy.copy(receipt)
+    object.__setattr__(tampered_receipt, "receipt_hash", receipt.receipt_hash.__class__("f" * 64))
+    with pytest.raises(ReceiptHashMismatchError, match="Forged historical receipt"):
+        project_current_state(snapshot, historical_receipt=tampered_receipt, ledger=ledger)
+
+    # 4. Modifying snapshot_version invalidates projection hash
+    raw_canon = proj_auth.to_canonical()
+    raw_canon["snapshot_version"] = "v999_tampered"
+    with pytest.raises(ReceiptHashMismatchError):
+        CurrentStateProjection.from_dict(raw_canon)
+
+    # 5. Snapshot with arbitrary foreign evidence IDs rejected against ledger
+    arbitrary_eid = EvidenceId("a" * 64)
+    tampered_snapshot = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        evidence_ids=(arbitrary_eid,),
+        created_at=snapshot.created_at,
+    )
+    with pytest.raises(ReceiptMismatchError, match="does not exist in canonical ledger"):
+        project_current_state(tampered_snapshot, historical_receipt=receipt, ledger=ledger)
