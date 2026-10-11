@@ -40,8 +40,11 @@ from stilldone.demo_seeding import (  # noqa: E402
     CanonicalEventSpec,
     FakeCalendarSeedTransport,
     FakeTasksSeedTransport,
+    GoogleApiClientCalendarSeedTransport,
+    GoogleApiClientTasksSeedTransport,
     SeedOperationStatus,
     check_demo_resources_preflight,
+    sanitize_error_message,
     seed_canonical_demo_resources,
 )
 from stilldone.domain.provenance import EvidenceProvenance  # noqa: E402
@@ -68,29 +71,101 @@ def get_git_sha() -> str:
         sys.exit(1)
 
 
-def check_live_preflight() -> dict[str, Any]:
+def check_live_preflight(
+    scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    approve_live: bool = False,
+) -> dict[str, Any]:
     """Inspect environment for real Google API read-only preflight capability."""
+    if not approve_live:
+        return {
+            "status": "NOT_RUN",
+            "provenance": "NOT_RUN",
+            "reason": (
+                "Live execution withheld; requires explicit --approve-live operator boundary."
+            ),
+            "client_secret_found": False,
+            "active_live_token_present": False,
+            "read_only_access_available": False,
+            "api_calls_performed": False,
+            "writes_performed": 0,
+        }
+
     env_secret = os.environ.get("GOOGLE_CLIENT_SECRET_PATH")
-    secret_found = False
-    if env_secret and os.path.exists(env_secret):
-        secret_found = True
-    else:
-        # Check standard Downloads patterns without reading contents
+    secret_found = bool(env_secret and os.path.exists(env_secret))
+    if not secret_found:
         downloads = Path.home() / "Downloads"
         if downloads.exists():
             matches = list(downloads.glob("client_secret*.json"))
             if matches:
                 secret_found = True
 
-    # Under StillDone governance, live provider calls require active non-expired
-    # OAuth tokens with approved least-privilege scopes and explicit operator consent.
-    return {
-        "client_secret_found": secret_found,
-        "active_live_token_present": False,
-        "read_only_access_available": False,
-        "status": "BLOCKED_LIVE",
-        "reason": "Active OAuth tokens unestablished; interactive operator consent required.",
-    }
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    token_path = os.environ.get("GOOGLE_TOKEN_PATH") or (Path.home() / ".stilldone" / "token.json")
+    has_creds = (
+        bool(creds_path and os.path.exists(creds_path))
+        or (isinstance(token_path, Path) and token_path.exists())
+        or (isinstance(token_path, str) and os.path.exists(token_path))
+    )
+
+    if not has_creds:
+        return {
+            "client_secret_found": secret_found,
+            "active_live_token_present": False,
+            "read_only_access_available": False,
+            "api_calls_performed": False,
+            "writes_performed": 0,
+            "status": "BLOCKED_LIVE",
+            "provenance": "NOT_RUN",
+            "reason": "Active OAuth tokens unestablished; interactive operator consent required.",
+        }
+
+    try:
+        import google.auth  # type: ignore[import-not-found,import-untyped]
+        from googleapiclient.discovery import build  # type: ignore[import-not-found,import-untyped]
+
+        credentials, _ = google.auth.default(
+            scopes=[
+                "https://www.googleapis.com/auth/calendar.events",
+                "https://www.googleapis.com/auth/tasks",
+            ]
+        )
+        cal_service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
+        tasks_service = build("tasks", "v1", credentials=credentials, cache_discovery=False)
+        cal_transport = GoogleApiClientCalendarSeedTransport(cal_service)
+        tasks_transport = GoogleApiClientTasksSeedTransport(tasks_service)
+
+        preflight_res = check_demo_resources_preflight(
+            scope=scope,
+            calendar_transport=cal_transport,
+            tasks_transport=tasks_transport,
+            event_spec=event_spec,
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+        return {
+            "client_secret_found": secret_found,
+            "active_live_token_present": True,
+            "read_only_access_available": True,
+            "api_calls_performed": True,
+            "writes_performed": preflight_res.writes_performed,
+            "status": preflight_res.status.value,
+            "provenance": EvidenceProvenance.LIVE_GOOGLE.value,
+            "details": preflight_res.details,
+            "readback_verified": preflight_res.readback_verified,
+            "is_seed_complete": preflight_res.is_seed_complete,
+        }
+    except Exception as exc:
+        sanitized = sanitize_error_message(exc)
+        return {
+            "client_secret_found": secret_found,
+            "active_live_token_present": False,
+            "read_only_access_available": False,
+            "api_calls_performed": False,
+            "writes_performed": 0,
+            "status": "BLOCKED_LIVE",
+            "provenance": "NOT_RUN",
+            "reason": f"Live probe initialization failed: {sanitized}",
+        }
 
 
 def run_fixture_proof(verbose: bool = True) -> dict[str, Any]:
@@ -282,6 +357,11 @@ def main() -> int:
         help="Execute live Google API preflight probe against configured environment",
     )
     parser.add_argument(
+        "--approve-live",
+        action="store_true",
+        help="Explicit operator authorization flag required for any live Google API execution",
+    )
+    parser.add_argument(
         "--fixture",
         action="store_true",
         default=True,
@@ -302,6 +382,14 @@ def main() -> int:
     git_sha = get_git_sha()
     verbose = not args.json
 
+    if args.live and not args.approve_live:
+        print(
+            "FATAL: --live execution requires explicit approved operator "
+            "boundary flag --approve-live.",
+            file=sys.stderr,
+        )
+        return 1
+
     if verbose:
         print("=" * 70)
         print("STILLDONE — P-13.01 CANONICAL DEMO RESOURCE SEEDING PROOF")
@@ -312,7 +400,34 @@ def main() -> int:
     fixture_results = run_fixture_proof(verbose=verbose)
 
     # 2. Live preflight check
-    live_preflight = check_live_preflight()
+    scope = DemoResourceScope(
+        calendar_id=CANONICAL_DEMO_CALENDAR_ID,
+        task_list_id=CANONICAL_DEMO_TASK_LIST_ID,
+    )
+    event_spec = CanonicalEventSpec(
+        title="Leave for school",
+        start_time=CANONICAL_PRE_STATE_START,
+        end_time=CANONICAL_PRE_STATE_END,
+        description="StillDone canonical demo event",
+    )
+
+    if args.live:
+        live_preflight = check_live_preflight(
+            scope=scope,
+            event_spec=event_spec,
+            approve_live=args.approve_live,
+        )
+    else:
+        live_preflight = {
+            "status": "NOT_RUN",
+            "provenance": "NOT_RUN",
+            "client_secret_found": False,
+            "active_live_token_present": False,
+            "read_only_access_available": False,
+            "api_calls_performed": False,
+            "writes_performed": 0,
+            "reason": "Live execution not requested (fixture-only mode).",
+        }
 
     output: dict[str, Any] = {
         "task": "P-13.01 — Seed canonical disposable demo resources reproducibly",
@@ -325,15 +440,16 @@ def main() -> int:
         "live_preflight": {
             "status": live_preflight["status"],
             "provenance": (
-                "NOT_RUN"
-                if not live_preflight["read_only_access_available"]
-                else EvidenceProvenance.LIVE_GOOGLE.value
+                EvidenceProvenance.LIVE_GOOGLE.value
+                if live_preflight.get("read_only_access_available")
+                else "NOT_RUN"
             ),
             "client_secret_found": live_preflight["client_secret_found"],
             "active_live_token_present": live_preflight["active_live_token_present"],
             "read_only_access_available": live_preflight["read_only_access_available"],
-            "writes_performed": 0,
-            "reason": live_preflight["reason"],
+            "api_calls_performed": live_preflight.get("api_calls_performed", False),
+            "writes_performed": live_preflight.get("writes_performed", 0),
+            "reason": live_preflight.get("reason"),
         },
         "zero_personal_spend": "$0.00",
     }

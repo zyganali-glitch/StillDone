@@ -18,6 +18,9 @@ Validates:
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import MagicMock
+
 import pytest
 
 from stilldone.demo_isolation import DemoResourceScope, DemoScopeTypeError
@@ -539,3 +542,355 @@ def test_create_canonical_event_spec_defaults() -> None:
     assert "T07:45:00Z" in spec.start_time
     assert "T08:15:00Z" in spec.end_time
     assert spec.description == "StillDone canonical demo event"
+
+
+# ===========================================================================
+# 9. Dedicated Container Ownership & Primary Metadata Tests
+# ===========================================================================
+
+
+def test_reject_primary_calendar_detected_in_provider_metadata(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+) -> None:
+    cal_t = FakeCalendarSeedTransport()
+    # Calendar has valid non-forbidden ID, but provider metadata declares primary=True
+    cal_t._calendars[valid_scope.calendar_id] = {
+        "id": valid_scope.calendar_id,
+        "summary": "StillDone Demo",
+        "primary": True,
+    }
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id)
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+    )
+    assert res.status == SeedOperationStatus.WRONG_TARGET_REJECTED
+    assert res.error_message == "WRONG_TARGET_CALENDAR"
+    assert "Primary calendar detected" in res.details
+    assert res.writes_performed == 0
+    assert res.is_seed_complete is False
+
+
+def test_reject_calendar_with_wrong_summary(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+) -> None:
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, title="Personal Calendar")
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id)
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+    )
+    assert res.status == SeedOperationStatus.WRONG_TARGET_REJECTED
+    assert res.error_message == "WRONG_TARGET_CALENDAR"
+    assert "does not match expected title" in res.details
+    assert res.writes_performed == 0
+
+
+def test_reject_task_list_with_wrong_title(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+) -> None:
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, title="StillDone Demo")
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id, title="My Personal Tasks")
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+    )
+    assert res.status == SeedOperationStatus.WRONG_TARGET_REJECTED
+    assert res.error_message == "WRONG_TARGET_TASK_LIST"
+    assert "does not match expected title" in res.details
+    assert res.writes_performed == 0
+
+
+# ===========================================================================
+# 10. Strict Boolean Authorization & Provenance Safety Tests
+# ===========================================================================
+
+
+@pytest.mark.parametrize("invalid_permit", ["yes", 1, "true", [True], None, object()])
+def test_reject_non_strict_boolean_permit_mutation(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+    invalid_permit: Any,
+) -> None:
+    cal_t, tasks_t = seeded_transports
+    from stilldone.demo_seeding import DemoSeedingUnauthorizedError
+
+    with pytest.raises(DemoSeedingUnauthorizedError, match="strict boolean"):
+        seed_canonical_demo_resources(
+            valid_scope,
+            cal_t,
+            tasks_t,
+            event_spec=event_spec,
+            permit_mutation=invalid_permit,
+        )
+
+
+def test_fixture_transport_cannot_claim_live_google_provenance(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    cal_t, tasks_t = seeded_transports
+    from stilldone.demo_seeding import DemoSeedingProvenanceError
+
+    with pytest.raises(DemoSeedingProvenanceError, match="cannot claim LIVE_GOOGLE"):
+        seed_canonical_demo_resources(
+            valid_scope,
+            cal_t,
+            tasks_t,
+            event_spec=event_spec,
+            permit_mutation=False,
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+
+
+# ===========================================================================
+# 11. Initial Preparation-Task Pre-State Contradiction Tests
+# ===========================================================================
+
+
+def test_contradictory_pre_state_when_prep_task_already_exists(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    cal_t, tasks_t = seeded_transports
+    # Canonical event exists at 07:45
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        "ev_canonical",
+        event_spec.title,
+        CANONICAL_START_TIME,
+        CANONICAL_END_TIME,
+    )
+    # BUT prep task 'Pack backpacks' is already present
+    tasks_t.add_task(valid_scope.task_list_id, "t_prep", "Pack backpacks")
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+        permit_mutation=True,
+    )
+    assert res.status == SeedOperationStatus.CONTRADICTORY_PRE_STATE
+    assert res.error_message == "CONTRADICTORY_PRE_STATE_TASK_EXISTS"
+    assert res.is_seed_complete is False
+    assert res.readback_verified is False
+    assert res.writes_performed == 0
+
+
+# ===========================================================================
+# 12. Calendar Pre-State Full Attribute Validation
+# ===========================================================================
+
+
+def test_pre_state_mismatch_when_end_time_differs(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    cal_t, tasks_t = seeded_transports
+    # Start time matches 07:45, but end time differs (08:30 instead of 08:15)
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        "ev_1",
+        event_spec.title,
+        CANONICAL_START_TIME,
+        "2026-10-12T08:30:00Z",
+    )
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+        permit_mutation=False,
+    )
+    # Fails closed because end time differs and permit_mutation is False
+    assert res.status == SeedOperationStatus.BLOCKED_UNAUTHORIZED
+    assert res.writes_performed == 0
+
+
+def test_pre_state_mismatch_when_event_is_all_day(
+    valid_scope: DemoResourceScope,
+    event_spec: CanonicalEventSpec,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    cal_t, tasks_t = seeded_transports
+    # Event is all-day
+    cal_t._events[(valid_scope.calendar_id, "ev_allday")] = {
+        "id": "ev_allday",
+        "etag": '"1001"',
+        "summary": event_spec.title,
+        "status": "confirmed",
+        "start": {"date": "2026-10-12"},
+        "end": {"date": "2026-10-13"},
+    }
+
+    res = seed_canonical_demo_resources(
+        valid_scope,
+        cal_t,
+        tasks_t,
+        event_spec=event_spec,
+        permit_mutation=False,
+    )
+    assert res.status == SeedOperationStatus.BLOCKED_UNAUTHORIZED
+    assert res.writes_performed == 0
+
+
+# ===========================================================================
+# 13. Production Google-Client Mock & Pagination Tests
+# ===========================================================================
+
+
+def test_google_client_calendar_transport_pagination_finds_event_on_page_2(
+    valid_scope: DemoResourceScope,
+) -> None:
+    from stilldone.demo_seeding import GoogleApiClientCalendarSeedTransport
+
+    mock_service = MagicMock()
+    # Page 1 returns non-matching event with nextPageToken
+    page_1_resp = {
+        "items": [
+            {
+                "id": "ev_other",
+                "summary": "Dentist appointment",
+                "status": "confirmed",
+                "start": {"dateTime": "2026-10-12T10:00:00Z"},
+                "end": {"dateTime": "2026-10-12T10:30:00Z"},
+            }
+        ],
+        "nextPageToken": "token_page_2",
+    }
+    # Page 2 returns matching canonical event
+    page_2_resp = {
+        "items": [
+            {
+                "id": "ev_p2",
+                "summary": "Leave for school",
+                "status": "confirmed",
+                "start": {"dateTime": CANONICAL_START_TIME},
+                "end": {"dateTime": CANONICAL_END_TIME},
+            }
+        ]
+    }
+
+    mock_events_req = MagicMock()
+    mock_events_req.execute.side_effect = [page_1_resp, page_2_resp]
+    mock_service.events().list.return_value = mock_events_req
+
+    transport = GoogleApiClientCalendarSeedTransport(mock_service)
+    matches = transport.list_events_by_title(valid_scope.calendar_id, "Leave for school")
+
+    assert len(matches) == 1
+    assert matches[0].id == "ev_p2"
+    assert matches[0].summary == "Leave for school"
+
+
+def test_google_client_calendar_transport_detects_duplicate_across_pages(
+    valid_scope: DemoResourceScope,
+) -> None:
+    from stilldone.demo_seeding import GoogleApiClientCalendarSeedTransport
+
+    mock_service = MagicMock()
+    page_1_resp = {
+        "items": [
+            {
+                "id": "ev_p1",
+                "summary": "Leave for school",
+                "status": "confirmed",
+                "start": {"dateTime": CANONICAL_START_TIME},
+            }
+        ],
+        "nextPageToken": "tok_2",
+    }
+    page_2_resp = {
+        "items": [
+            {
+                "id": "ev_p2",
+                "summary": "Leave for school",
+                "status": "confirmed",
+                "start": {"dateTime": "2026-10-12T09:00:00Z"},
+            }
+        ]
+    }
+
+    mock_req = MagicMock()
+    mock_req.execute.side_effect = [page_1_resp, page_2_resp]
+    mock_service.events().list.return_value = mock_req
+
+    transport = GoogleApiClientCalendarSeedTransport(mock_service)
+    matches = transport.list_events_by_title(valid_scope.calendar_id, "Leave for school")
+
+    # Detects both duplicate events across page boundaries!
+    assert len(matches) == 2
+
+
+def test_google_client_calendar_transport_exceeding_max_pages_fails_closed(
+    valid_scope: DemoResourceScope,
+) -> None:
+    from stilldone.demo_seeding import (
+        DemoSeedingIncompleteDiscoveryError,
+        GoogleApiClientCalendarSeedTransport,
+    )
+
+    mock_service = MagicMock()
+    # Infinite pagination simulation
+    infinite_resp = {"items": [], "nextPageToken": "infinite_next"}
+    mock_req = MagicMock()
+    mock_req.execute.return_value = infinite_resp
+    mock_service.events().list.return_value = mock_req
+
+    transport = GoogleApiClientCalendarSeedTransport(mock_service)
+    with pytest.raises(DemoSeedingIncompleteDiscoveryError, match="exceeded maximum page limit"):
+        transport.list_events_by_title(valid_scope.calendar_id, "Leave for school", max_pages=3)
+
+
+# ===========================================================================
+# 14. Error Sanitization & Privacy Tests
+# ===========================================================================
+
+
+def test_google_client_transport_sanitizes_tokens_and_paths() -> None:
+    from stilldone.demo_seeding import (
+        DemoSeedingTransportError,
+        GoogleApiClientCalendarSeedTransport,
+    )
+
+    mock_service = MagicMock()
+    hostile_error = Exception(
+        "HttpError 400 when requesting "
+        "https://calendar.googleapis.com/v3/calendars/c_123/events?key=AIzaSySecretToken99 "
+        "returned 'Authorization bearer ya29.secret_token_123 failed on path "
+        "/var/run/secrets/google.json'"
+    )
+    mock_service.calendarList().get.side_effect = hostile_error
+
+    transport = GoogleApiClientCalendarSeedTransport(mock_service)
+    with pytest.raises(DemoSeedingTransportError) as exc_info:
+        transport.get_calendar("c_123")
+
+    err_str = str(exc_info.value)
+    # Zero secret, token, key, or sensitive local path leakage
+    assert "ya29." not in err_str
+    assert "AIzaSy" not in err_str
+    assert "/var/run/secrets" not in err_str

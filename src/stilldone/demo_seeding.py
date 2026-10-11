@@ -23,6 +23,7 @@ Guarantees:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -34,6 +35,7 @@ from stilldone.demo_isolation import (
     DemoScopeTypeError,
 )
 from stilldone.domain.provenance import EvidenceProvenance
+from stilldone.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ DEFAULT_PREPARATION_TASK_TITLE: str = "Pack backpacks"
 
 FORBIDDEN_CALENDAR_IDS: frozenset[str] = frozenset({"primary", "default"})
 FORBIDDEN_TASK_LIST_IDS: frozenset[str] = frozenset({"default", "@default"})
+DEFAULT_DISCOVERY_MAX_PAGES: int = 10
 
 # ===========================================================================
 # Exception Hierarchy
@@ -82,6 +85,18 @@ class DemoSeedingTransportError(DemoSeedingError):
     """Raised when transport/network errors occur during seeding operations."""
 
 
+class DemoSeedingIncompleteDiscoveryError(DemoSeedingError):
+    """Raised when container pagination exceeds safety bounds or discovery is incomplete."""
+
+
+class DemoSeedingProvenanceError(DemoSeedingError, ValueError):
+    """Raised when transport capability contradicts claimed evidence provenance."""
+
+
+class DemoSeedingContradictionError(DemoSeedingError):
+    """Raised when external pre-state contradicts canonical preconditions."""
+
+
 # ===========================================================================
 # Operation Status & Data Models
 # ===========================================================================
@@ -98,6 +113,8 @@ class SeedOperationStatus(StrEnum):
     DUPLICATE_CONTRADICTION = "DUPLICATE_CONTRADICTION"
     VERIFICATION_FAILED = "VERIFICATION_FAILED"
     WRONG_TARGET_REJECTED = "WRONG_TARGET_REJECTED"
+    CONTRADICTORY_PRE_STATE = "CONTRADICTORY_PRE_STATE"
+    INCOMPLETE_DISCOVERY = "INCOMPLETE_DISCOVERY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +232,13 @@ class CalendarSeedTransport(Protocol):
         """Fetch calendar metadata, or None if not found."""
         ...
 
-    def list_events_by_title(self, calendar_id: str, title: str) -> list[CalendarTransportEvent]:
-        """Fetch active events matching the given summary/title."""
+    def list_events_by_title(
+        self,
+        calendar_id: str,
+        title: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[CalendarTransportEvent]:
+        """Fetch active events matching the given summary/title across pages."""
         ...
 
     def get_event(self, calendar_id: str, event_id: str) -> CalendarTransportEvent | None:
@@ -246,8 +268,12 @@ class TasksSeedTransport(Protocol):
         """Fetch task list metadata, or None if not found."""
         ...
 
-    def list_tasks(self, task_list_id: str) -> list[dict[str, Any]]:
-        """List tasks on the specified task list."""
+    def list_tasks(
+        self,
+        task_list_id: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[dict[str, Any]]:
+        """List tasks on the specified task list across pages."""
         ...
 
 
@@ -256,8 +282,34 @@ class TasksSeedTransport(Protocol):
 # ===========================================================================
 
 
-def are_datetimes_equal(dt1: str, dt2: str) -> bool:
-    """Compare two ISO-8601 datetime strings with timezone tolerance."""
+def sanitize_error_message(exc: Any) -> str:
+    """Sanitize provider error messages without token/secret/path leakage."""
+    if exc is None:
+        return "UNKNOWN_ERROR"
+    raw = str(exc)
+    raw_lower = raw.lower()
+    if "404" in raw or "notfound" in raw_lower or "not found" in raw_lower:
+        return "RESOURCE_NOT_FOUND"
+    if "401" in raw or "403" in raw or "unauthorized" in raw_lower or "forbidden" in raw_lower:
+        return "AUTHENTICATION_OR_PERMISSION_FAILED"
+    if "429" in raw or "ratelimit" in raw_lower or "quota" in raw_lower:
+        return "RATE_LIMIT_OR_QUOTA_EXCEEDED"
+    if "500" in raw or "502" in raw or "503" in raw or "504" in raw or "unavailable" in raw_lower:
+        return "PROVIDER_TEMPORARILY_UNAVAILABLE"
+
+    # Redact raw secrets, emails, URLs, and local file paths
+    cleaned = redact_text(raw)
+    cleaned = re.sub(r"https?://[^\s]+", "[REDACTED_URL]", cleaned)
+    cleaned = re.sub(r"[a-zA-Z0-9_\-\.\\]+[/\\][a-zA-Z0-9_\-\.\\]+", "[REDACTED_PATH]", cleaned)
+    if len(cleaned) > 160:
+        cleaned = cleaned[:157] + "..."
+    return cleaned
+
+
+def are_datetimes_equal(dt1: str | None, dt2: str | None) -> bool:
+    """Compare two ISO-8601 datetime strings with strict timezone awareness."""
+    if not dt1 or not dt2:
+        return False
     if dt1 == dt2:
         return True
     try:
@@ -265,7 +317,9 @@ def are_datetimes_equal(dt1: str, dt2: str) -> bool:
         norm2 = dt2.replace("Z", "+00:00")
         p1 = datetime.fromisoformat(norm1)
         p2 = datetime.fromisoformat(norm2)
-        return p1 == p2
+        if p1.tzinfo is None or p2.tzinfo is None:
+            return False
+        return p1.astimezone(UTC) == p2.astimezone(UTC)
     except Exception:
         return False
 
@@ -288,6 +342,7 @@ class FakeCalendarSeedTransport:
         self._id_counter: int = 5000
         self.fail_readback: bool = False
         self.inconsistent_readback_event: CalendarTransportEvent | None = None
+        self.simulate_incomplete_discovery: bool = False
 
     def add_calendar(self, calendar_id: str, title: str = DEFAULT_DEMO_CALENDAR_TITLE) -> None:
         self._calendars[calendar_id] = {"id": calendar_id, "summary": title}
@@ -319,8 +374,17 @@ class FakeCalendarSeedTransport:
         self.reads_count += 1
         return self._calendars.get(calendar_id)
 
-    def list_events_by_title(self, calendar_id: str, title: str) -> list[CalendarTransportEvent]:
+    def list_events_by_title(
+        self,
+        calendar_id: str,
+        title: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[CalendarTransportEvent]:
         self.list_count += 1
+        if self.simulate_incomplete_discovery:
+            raise DemoSeedingIncompleteDiscoveryError(
+                f"Calendar discovery exceeded maximum page limit ({max_pages}); failing closed."
+            )
         matches: list[CalendarTransportEvent] = []
         for (c_id, _), raw in self._events.items():
             if c_id == calendar_id and raw.get("status") != "cancelled":
@@ -418,23 +482,38 @@ class FakeTasksSeedTransport:
         self.reads_count: int = 0
         self.writes_count: int = 0
         self.list_count: int = 0
+        self.simulate_incomplete_discovery: bool = False
 
     def add_task_list(self, task_list_id: str, title: str = DEFAULT_DEMO_TASK_LIST_TITLE) -> None:
         self._task_lists[task_list_id] = {"id": task_list_id, "title": title}
 
-    def add_task(self, task_list_id: str, task_id: str, title: str) -> None:
+    def add_task(
+        self,
+        task_list_id: str,
+        task_id: str,
+        title: str,
+        status: str = "needsAction",
+    ) -> None:
         self._tasks[(task_list_id, task_id)] = {
             "id": task_id,
             "title": title,
-            "status": "needsAction",
+            "status": status,
         }
 
     def get_task_list(self, task_list_id: str) -> dict[str, Any] | None:
         self.reads_count += 1
         return self._task_lists.get(task_list_id)
 
-    def list_tasks(self, task_list_id: str) -> list[dict[str, Any]]:
+    def list_tasks(
+        self,
+        task_list_id: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[dict[str, Any]]:
         self.list_count += 1
+        if self.simulate_incomplete_discovery:
+            raise DemoSeedingIncompleteDiscoveryError(
+                f"Tasks discovery exceeded maximum page limit ({max_pages}); failing closed."
+            )
         return [t for (tl_id, _), t in self._tasks.items() if tl_id == task_list_id]
 
 
@@ -457,24 +536,50 @@ class GoogleApiClientCalendarSeedTransport:
             status_code = getattr(getattr(exc, "resp", None), "status", None)
             if status_code == 404:
                 return None
-            raise DemoSeedingTransportError(f"Failed to get calendar metadata: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(
+                f"Failed to get calendar metadata: {sanitized}"
+            ) from None
 
-    def list_events_by_title(self, calendar_id: str, title: str) -> list[CalendarTransportEvent]:
+    def list_events_by_title(
+        self,
+        calendar_id: str,
+        title: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[CalendarTransportEvent]:
         try:
-            req = self._service.events().list(
-                calendarId=calendar_id,
-                maxResults=50,
-                singleEvents=True,
-            )
-            resp = req.execute()
-            items = resp.get("items", [])
             matches: list[CalendarTransportEvent] = []
-            for item in items:
-                if item.get("summary") == title and item.get("status") != "cancelled":
-                    matches.append(FakeCalendarSeedTransport._to_transport_event(item))
+            page_token = None
+            page_count = 0
+            while True:
+                page_count += 1
+                if page_count > max_pages:
+                    raise DemoSeedingIncompleteDiscoveryError(
+                        f"Calendar discovery exceeded maximum page limit ({max_pages}); "
+                        "failing closed."
+                    )
+                kwargs: dict[str, Any] = {
+                    "calendarId": calendar_id,
+                    "maxResults": 50,
+                    "singleEvents": True,
+                }
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                req = self._service.events().list(**kwargs)
+                resp = req.execute()
+                items = resp.get("items", [])
+                for item in items:
+                    if item.get("summary") == title and item.get("status") != "cancelled":
+                        matches.append(FakeCalendarSeedTransport._to_transport_event(item))
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
             return matches
+        except DemoSeedingIncompleteDiscoveryError:
+            raise
         except Exception as exc:
-            raise DemoSeedingTransportError(f"Failed to list events: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to list events: {sanitized}") from None
 
     def get_event(self, calendar_id: str, event_id: str) -> CalendarTransportEvent | None:
         try:
@@ -487,7 +592,8 @@ class GoogleApiClientCalendarSeedTransport:
             status_code = getattr(getattr(exc, "resp", None), "status", None)
             if status_code == 404:
                 return None
-            raise DemoSeedingTransportError(f"Failed to get event: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to get event: {sanitized}") from None
 
     def insert_event(self, calendar_id: str, body: dict[str, Any]) -> CalendarTransportEvent:
         try:
@@ -495,7 +601,8 @@ class GoogleApiClientCalendarSeedTransport:
             resp = req.execute()
             return FakeCalendarSeedTransport._to_transport_event(resp)
         except Exception as exc:
-            raise DemoSeedingTransportError(f"Failed to insert event: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to insert event: {sanitized}") from None
 
     def update_event(
         self,
@@ -518,7 +625,8 @@ class GoogleApiClientCalendarSeedTransport:
             resp = req.execute()
             return FakeCalendarSeedTransport._to_transport_event(resp)
         except Exception as exc:
-            raise DemoSeedingTransportError(f"Failed to update event: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to update event: {sanitized}") from None
 
 
 class GoogleApiClientTasksSeedTransport:
@@ -535,15 +643,44 @@ class GoogleApiClientTasksSeedTransport:
             status_code = getattr(getattr(exc, "resp", None), "status", None)
             if status_code == 404:
                 return None
-            raise DemoSeedingTransportError(f"Failed to get task list: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to get task list: {sanitized}") from None
 
-    def list_tasks(self, task_list_id: str) -> list[dict[str, Any]]:
+    def list_tasks(
+        self,
+        task_list_id: str,
+        max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    ) -> list[dict[str, Any]]:
         try:
-            req = self._service.tasks().list(tasklist=task_list_id, maxResults=100)
-            resp = req.execute()
-            return resp.get("items", [])  # type: ignore[no-any-return]
+            all_items: list[dict[str, Any]] = []
+            page_token = None
+            page_count = 0
+            while True:
+                page_count += 1
+                if page_count > max_pages:
+                    raise DemoSeedingIncompleteDiscoveryError(
+                        f"Tasks discovery exceeded maximum page limit ({max_pages}); "
+                        "failing closed."
+                    )
+                kwargs: dict[str, Any] = {
+                    "tasklist": task_list_id,
+                    "maxResults": 100,
+                }
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                req = self._service.tasks().list(**kwargs)
+                resp = req.execute()
+                items = resp.get("items", [])
+                all_items.extend(items)
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
+            return all_items
+        except DemoSeedingIncompleteDiscoveryError:
+            raise
         except Exception as exc:
-            raise DemoSeedingTransportError(f"Failed to list tasks: {exc}") from exc
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to list tasks: {sanitized}") from None
 
 
 # ===========================================================================
@@ -564,19 +701,23 @@ def seed_canonical_demo_resources(
 
     1. Enforces DemoResourceScope bounds and strictly forbids primary/default.
     2. Performs provider read-only preflight on calendar and task list containers.
-    3. Scans calendar for events matching event_spec.title.
+    3. Scans calendar for events matching event_spec.title across pages.
     4. Evaluates event pre-state:
-       - If matching event exists with exact start time: performs independent read-back;
-         if verified, returns VERIFIED_EXISTING (0 writes).
-       - If matching event exists with different start time: requires mutation. If
-         permit_mutation is False, returns BLOCKED_UNAUTHORIZED. If permit_mutation is True,
+       - If matching event exists with exact start/end time, confirmed status, and non-all-day:
+         performs independent read-back; if verified, returns VERIFIED_EXISTING (0 writes).
+       - If matching event exists with different time/status: requires mutation. If
+         permit_mutation is False, returns BLOCKED_UNAUTHORIZED (0 writes). If
+          permit_mutation is True,
          updates event and performs independent read-back.
        - If no matching event exists: requires mutation. If permit_mutation is False,
-         returns BLOCKED_UNAUTHORIZED. If permit_mutation is True, inserts event and
+         returns BLOCKED_UNAUTHORIZED (0 writes). If permit_mutation is True, inserts event and
          performs independent read-back.
        - If multiple matching events exist: fails closed with DUPLICATE_CONTRADICTION.
     5. Evaluates tasks state (detects whether preparation task is present/absent).
+       - In canonical pre-state, the preparation task must NOT be present; fails closed with
+         CONTRADICTORY_PRE_STATE if already present.
     6. Ensures provider write success never substitutes for independent read-back.
+    7. Accurately reports attempted writes even if read-back verification fails.
 
     Args:
         scope: DemoResourceScope containing dedicated calendar and task list IDs.
@@ -592,6 +733,21 @@ def seed_canonical_demo_resources(
     if not isinstance(scope, DemoResourceScope):
         raise DemoScopeTypeError(
             f"scope must be a DemoResourceScope instance, got {type(scope).__name__}"
+        )
+
+    # Strict boolean validation
+    if permit_mutation is not True and permit_mutation is not False:
+        raise DemoSeedingUnauthorizedError(
+            "permit_mutation must be a strict boolean (True or False)"
+        )
+
+    # Provenance capability check: fixture fake transport cannot claim LIVE_GOOGLE
+    if (
+        isinstance(calendar_transport, FakeCalendarSeedTransport)
+        and provenance == EvidenceProvenance.LIVE_GOOGLE
+    ):
+        raise DemoSeedingProvenanceError(
+            "Fixture fake transport cannot claim LIVE_GOOGLE provenance."
         )
 
     # 1. Scope / target validation
@@ -632,6 +788,7 @@ def seed_canonical_demo_resources(
     try:
         cal_meta = calendar_transport.get_calendar(scope.calendar_id)
     except Exception as exc:
+        sanitized = sanitize_error_message(exc)
         return DemoSeedResult(
             status=SeedOperationStatus.BLOCKED_PREFLIGHT,
             provenance=provenance,
@@ -640,8 +797,8 @@ def seed_canonical_demo_resources(
             writes_performed=0,
             readback_verified=False,
             is_seed_complete=False,
-            details=f"Provider calendar preflight probe failed: {exc}",
-            error_message=str(exc),
+            details=f"Provider calendar preflight probe failed: {sanitized}",
+            error_message=sanitized,
         )
 
     if cal_meta is None:
@@ -653,13 +810,48 @@ def seed_canonical_demo_resources(
             writes_performed=0,
             readback_verified=False,
             is_seed_complete=False,
-            details="Dedicated demo calendar does not exist on provider.",
+            details=(
+                "Dedicated demo calendar does not exist on provider. "
+                "Container creation is strictly prohibited."
+            ),
             error_message="DEMO_CALENDAR_NOT_FOUND",
+        )
+
+    # Dedicated resource identity verification
+    if cal_meta.get("primary") is True:
+        return DemoSeedResult(
+            status=SeedOperationStatus.WRONG_TARGET_REJECTED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details="Primary calendar detected on provider; primary/default substitution rejected.",
+            error_message="WRONG_TARGET_CALENDAR",
+        )
+
+    if cal_meta.get("summary") != DEFAULT_DEMO_CALENDAR_TITLE:
+        return DemoSeedResult(
+            status=SeedOperationStatus.WRONG_TARGET_REJECTED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=(
+                "Dedicated demo calendar summary does not match expected title "
+                f"'{DEFAULT_DEMO_CALENDAR_TITLE}'. "
+                "Friendly title alone is insufficient for ownership."
+            ),
+            error_message="WRONG_TARGET_CALENDAR",
         )
 
     try:
         tl_meta = tasks_transport.get_task_list(scope.task_list_id)
     except Exception as exc:
+        sanitized = sanitize_error_message(exc)
         return DemoSeedResult(
             status=SeedOperationStatus.BLOCKED_PREFLIGHT,
             provenance=provenance,
@@ -668,8 +860,8 @@ def seed_canonical_demo_resources(
             writes_performed=0,
             readback_verified=False,
             is_seed_complete=False,
-            details=f"Provider task list preflight probe failed: {exc}",
-            error_message=str(exc),
+            details=f"Provider task list preflight probe failed: {sanitized}",
+            error_message=sanitized,
         )
 
     if tl_meta is None:
@@ -681,20 +873,116 @@ def seed_canonical_demo_resources(
             writes_performed=0,
             readback_verified=False,
             is_seed_complete=False,
-            details="Dedicated demo task list does not exist on provider.",
+            details=(
+                "Dedicated demo task list does not exist on provider. "
+                "Container creation is strictly prohibited."
+            ),
             error_message="DEMO_TASK_LIST_NOT_FOUND",
         )
 
+    if tl_meta.get("title") != DEFAULT_DEMO_TASK_LIST_TITLE:
+        return DemoSeedResult(
+            status=SeedOperationStatus.WRONG_TARGET_REJECTED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=(
+                "Dedicated demo task list title does not match expected title "
+                f"'{DEFAULT_DEMO_TASK_LIST_TITLE}'. "
+                "Friendly title alone is insufficient for ownership."
+            ),
+            error_message="WRONG_TARGET_TASK_LIST",
+        )
+
     # 3. Tasks state inspection
-    tasks = tasks_transport.list_tasks(scope.task_list_id)
-    matching_tasks = [t for t in tasks if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE]
+    try:
+        tasks = tasks_transport.list_tasks(scope.task_list_id)
+    except DemoSeedingIncompleteDiscoveryError as exc:
+        return DemoSeedResult(
+            status=SeedOperationStatus.BLOCKED_PREFLIGHT,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=str(exc),
+            error_message="INCOMPLETE_DISCOVERY",
+        )
+    except Exception as exc:
+        sanitized = sanitize_error_message(exc)
+        return DemoSeedResult(
+            status=SeedOperationStatus.BLOCKED_PREFLIGHT,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=f"Provider task listing failed: {sanitized}",
+            error_message=sanitized,
+        )
+
+    matching_tasks = [
+        t
+        for t in tasks
+        if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
+    ]
+    if len(matching_tasks) > 0:
+        return DemoSeedResult(
+            status=SeedOperationStatus.CONTRADICTORY_PRE_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=(
+                f"Canonical preparation task '{DEFAULT_PREPARATION_TASK_TITLE}' is already present "
+                f"on demo task list ({len(matching_tasks)} found); "
+                "clean initial pre-state required."
+            ),
+            error_message="CONTRADICTORY_PRE_STATE_TASK_EXISTS",
+        )
+
     tasks_note = (
         f"Demo task list inspected: {len(tasks)} tasks found; "
-        f"'{DEFAULT_PREPARATION_TASK_TITLE}' present={len(matching_tasks) > 0}."
+        f"'{DEFAULT_PREPARATION_TASK_TITLE}' absent (clean pre-state verified)."
     )
 
     # 4. Calendar event pre-state inspection
-    matching_events = calendar_transport.list_events_by_title(scope.calendar_id, event_spec.title)
+    try:
+        matching_events = calendar_transport.list_events_by_title(
+            scope.calendar_id, event_spec.title
+        )
+    except DemoSeedingIncompleteDiscoveryError as exc:
+        return DemoSeedResult(
+            status=SeedOperationStatus.BLOCKED_PREFLIGHT,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=str(exc),
+            error_message="INCOMPLETE_DISCOVERY",
+        )
+    except Exception as exc:
+        sanitized = sanitize_error_message(exc)
+        return DemoSeedResult(
+            status=SeedOperationStatus.BLOCKED_PREFLIGHT,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_seed_complete=False,
+            details=f"Provider event listing failed: {sanitized}",
+            error_message=sanitized,
+        )
 
     if len(matching_events) > 1:
         return DemoSeedResult(
@@ -714,13 +1002,27 @@ def seed_canonical_demo_resources(
 
     if len(matching_events) == 1:
         candidate = matching_events[0]
-        if are_datetimes_equal(candidate.start_time, event_spec.start_time):
+        # Complete pre-state verification: title, start_time, end_time, status, all_day
+        time_matches = are_datetimes_equal(
+            candidate.start_time, event_spec.start_time
+        ) and are_datetimes_equal(candidate.end_time, event_spec.end_time)
+        status_matches = (
+            (candidate.status == "confirmed")
+            and (not candidate.all_day)
+            and (candidate.summary == event_spec.title)
+        )
+
+        if time_matches and status_matches:
             # Already in canonical pre-state -> execute INDEPENDENT READ-BACK
             readback = calendar_transport.get_event(scope.calendar_id, candidate.id)
             if (
                 readback is None
                 or not are_datetimes_equal(readback.start_time, event_spec.start_time)
+                or not are_datetimes_equal(readback.end_time, event_spec.end_time)
                 or readback.id != candidate.id
+                or readback.status != "confirmed"
+                or readback.all_day
+                or readback.summary != event_spec.title
             ):
                 return DemoSeedResult(
                     status=SeedOperationStatus.VERIFICATION_FAILED,
@@ -750,7 +1052,7 @@ def seed_canonical_demo_resources(
                 ),
             )
 
-        # Candidate exists but start time differs -> requires mutation
+        # Candidate exists but fields differ -> requires mutation
         if not permit_mutation:
             return DemoSeedResult(
                 status=SeedOperationStatus.BLOCKED_UNAUTHORIZED,
@@ -770,7 +1072,7 @@ def seed_canonical_demo_resources(
                 error_message="MUTATION_UNAUTHORIZED",
             )
 
-        # Mutate existing event back to pre-state
+        # Mutate existing event back to pre-state with If-Match precondition
         update_body: dict[str, Any] = {
             "summary": event_spec.title,
             "start": {"dateTime": event_spec.start_time},
@@ -789,7 +1091,11 @@ def seed_canonical_demo_resources(
         if (
             readback is None
             or not are_datetimes_equal(readback.start_time, event_spec.start_time)
+            or not are_datetimes_equal(readback.end_time, event_spec.end_time)
             or readback.id != candidate.id
+            or readback.status != "confirmed"
+            or readback.all_day
+            or readback.summary != event_spec.title
         ):
             return DemoSeedResult(
                 status=SeedOperationStatus.VERIFICATION_FAILED,
@@ -850,7 +1156,11 @@ def seed_canonical_demo_resources(
     if (
         readback is None
         or not are_datetimes_equal(readback.start_time, event_spec.start_time)
+        or not are_datetimes_equal(readback.end_time, event_spec.end_time)
         or readback.id != created.id
+        or readback.status != "confirmed"
+        or readback.all_day
+        or readback.summary != event_spec.title
     ):
         return DemoSeedResult(
             status=SeedOperationStatus.VERIFICATION_FAILED,
