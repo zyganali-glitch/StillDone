@@ -1455,28 +1455,87 @@ Goal:
 prove honesty under failure, not just success.
 
 ### P-14.01 — Provider 5xx/timeout before mutation
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- 503 Service Unavailable injected before write in `FaultyTasksTransport`;
+- zero provider writes performed (`writes_performed=0`);
+- error classified as `RETRYABLE_TRANSIENT`;
+- read-before-retry duplicate inspection verifies `EFFECT_ABSENT`;
+- diagnostics sanitized with zero secret leakage;
+- verified in `run_p14_01_provider_5xx_before_mutation()`.
 
 ### P-14.02 — Timeout after mutation but before response
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- initial write succeeds on provider (`writes_performed=1`), but response drops on timeout;
+- recovery duplicate inspection performs read-before-retry and detects `INTENDED_EFFECT_EXISTS`;
+- recovery orchestrator deterministically decides `EFFECT_ALREADY_EXISTS` / `DO_NOT_RETRY`;
+- zero duplicate writes performed (total writes strictly 1, duplicate items 0);
+- core invariant verified: lost response != permission to create second effect;
+- verified in `run_p14_02_timeout_after_mutation_before_response()`.
 
 ### P-14.03 — Read-back mismatch after execute success
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- calendar update returns HTTP 200 OK, but underlying start time is corrupted (09:00 vs 07:30);
+- independent read-back via `GoogleCalendarReadAdapter` observes actual corrupted state;
+- deterministic predicate evaluates to `PredicateTruth.FALSE`;
+- mission strictly prevented from reaching `READY` (remains unverified / failed);
+- core invariant verified: execute success != verification;
+- verified in `run_p14_03_readback_mismatch_after_execute_success()`.
 
 ### P-14.04 — OAuth permission revoked mid-mission
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- 401 Unauthorized injected mid-mission;
+- classified as non-retryable `AUTHORITY_SECURITY_FAILURE`;
+- `evaluate_retry` deterministically halts execution with `should_retry=False`;
+- zero further mutations attempted;
+- error diagnostics sanitized with zero token or credential leakage;
+- verified in `run_p14_04_oauth_revoked_mid_mission()`.
 
 ### P-14.05 — Model returns malformed/unsupported/over-authorized plan
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- unsupported action vocabulary (`calendar.delete_all`) rejected fail-closed;
+- over-authorized proposal (claiming `READ_ONLY` for mutation) fails closed with `requires_approval=True`;
+- invalid / unknown action parameter schema rejected fail-closed with `ActionPolicyError`;
+- model proposal confers zero execution or readiness authority;
+- verified in `run_p14_05_model_malformed_unsupported_overauthorized()`.
 
 ### P-14.06 — Approval replay/mismatch/stale approval
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- `UsedApprovalRegistry` enforces single-use consumption and rejects approval replay (`ApprovalAlreadyUsedError`);
+- mismatched action ID rejected fail-closed (`ApprovalBindingMismatchError`);
+- expired approval grant rejected fail-closed (`ApprovalExpiredError`);
+- zero unapproved writes performed;
+- verified in `run_p14_06_approval_replay_mismatch_stale()`.
 
 ### P-14.07 — Evidence tamper/replay/stale receipt
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- tampered receipt projection state detected by cryptographic SHA-256 hash mismatch (`ReceiptHashMismatchError`);
+- cross-mission receipt replay rejected by mission lineage check;
+- stale observation exceeding 300s TTL evaluated as `is_fresh=False`;
+- verified in `run_p14_07_evidence_tamper_replay_stale_receipt()`.
 
 ### P-14.08 — Duplicate retry stress
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- 10 repeated mutation retry attempts executed against task creation;
+- read-before-retry duplicate detector intercepts 9 redundant retry attempts;
+- exactly 1 write performed on provider store;
+- exactly 0 duplicate tasks created;
+- verified in `run_p14_08_duplicate_retry_stress()`.
 
 Phase exit:
 failures remain truthful and bounded.
