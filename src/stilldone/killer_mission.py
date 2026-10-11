@@ -19,6 +19,8 @@ Core Architectural Laws:
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -266,24 +268,70 @@ class LivePreflightReport:
         }
 
 
+HEX_40_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def is_synthetic_service(service: Any) -> bool:
+    """Detect whether a service or client is a mock / synthetic object."""
+    if service is None:
+        return False
+    from unittest.mock import Mock, NonCallableMock
+
+    if isinstance(service, (Mock, NonCallableMock)):
+        return True
+    mod = getattr(service.__class__, "__module__", "")
+    if mod.startswith("unittest.mock"):
+        return True
+    if getattr(service, "_is_synthetic", False) or getattr(service, "_is_mock", False):
+        return True
+    return False
+
+
+def is_synthetic_transport(transport: Any) -> bool:
+    """Detect whether a transport or its wrapped service is synthetic/mock."""
+    if transport is None:
+        return False
+    from unittest.mock import Mock, NonCallableMock
+
+    if isinstance(transport, (Mock, NonCallableMock)):
+        return True
+    svc = getattr(transport, "_service", None)
+    if svc is not None and is_synthetic_service(svc):
+        return True
+    if isinstance(
+        transport,
+        (
+            FakeGoogleCalendarTransport,
+            FakeGoogleTasksTransport,
+            FakeOpenMeteoTransport,
+            FakeCalendarSeedTransport,
+            FakeTasksSeedTransport,
+        ),
+    ):
+        return True
+    return False
+
+
 def check_live_preflight(
     scope: DemoResourceScope,
     *,
     operator_approved: bool = False,
     source_sha: str | None = None,
     expected_source_sha: str | None = None,
-    clean_working_tree_required: bool = False,
+    clean_working_tree_required: bool = True,
     google_credentials: Any = None,
     aws_credentials_available: bool = False,
     calendar_transport: CalendarTransport | None = None,
     tasks_transport: TaskTransport | None = None,
     weather_transport: WeatherTransport | None = None,
     bedrock_planner_available: bool = False,
+    git_runner: Callable[[list[str]], Any] | None = None,
 ) -> LivePreflightReport:
     """Evaluate deterministic preflight before attempting ANY live mission execution.
 
     ONE canonical entry gate enforcing zero mutations and zero approval consumption
-    if any preflight requirement is not met.
+    if any preflight requirement is not met. Fails closed against invalid source SHA,
+    git mismatch, dirty working tree, and synthetic mocks.
     """
     blockers: list[str] = []
 
@@ -293,34 +341,89 @@ def check_live_preflight(
             "Operator authorization required to maintain Zero Personal Spend Law ($0.00)"
         )
 
-    # 2. Exact source SHA gate
+    # 2. Strict Source SHA & Git Remote / Working Tree Fail-Closed Gate
     sha_ok = True
-    if not source_sha or len(source_sha) != 40:
-        blockers.append("Exact source SHA gate failed: valid 40-character commit SHA required")
-        sha_ok = False
-    elif expected_source_sha and source_sha != expected_source_sha:
-        blockers.append(
-            f"Source SHA gate mismatch: expected {expected_source_sha}, got {source_sha}"
-        )
-        sha_ok = False
-
-    # 3. Clean working tree / remote gate if required
     clean_ok = True
-    if clean_working_tree_required:
-        try:
+
+    if not source_sha or not isinstance(source_sha, str) or not HEX_40_RE.match(source_sha):
+        blockers.append("Exact source SHA gate failed: valid lowercase 40-hex commit SHA required")
+        sha_ok = False
+    else:
+
+        def _run_git(cmd: list[str]) -> tuple[int, str, str]:
+            if git_runner is not None:
+                res = git_runner(cmd)
+                if hasattr(res, "returncode"):
+                    return res.returncode, str(res.stdout).strip(), str(res.stderr).strip()
+                return int(res[0]), str(res[1]).strip(), str(res[2]).strip()
             import subprocess
 
-            res = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                blockers.append("Working tree is dirty; clean remote gate required for live proof")
-                clean_ok = False
-        except Exception:
-            pass
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+        try:
+            # 1. git rev-parse HEAD
+            rc_head, out_head, err_head = _run_git(["git", "rev-parse", "HEAD"])
+            if rc_head != 0 or not out_head or not HEX_40_RE.match(out_head.lower()):
+                blockers.append(f"Git rev-parse HEAD failed: {err_head or 'non-zero exit code'}")
+                sha_ok = False
+                head_sha = ""
+            else:
+                head_sha = out_head.lower()
+
+            # 2. git rev-parse origin/main
+            rc_origin, out_origin, err_origin = _run_git(["git", "rev-parse", "origin/main"])
+            if rc_origin != 0 or not out_origin or not HEX_40_RE.match(out_origin.lower()):
+                blockers.append(
+                    f"Git rev-parse origin/main failed: {err_origin or 'non-zero exit code'}"
+                )
+                sha_ok = False
+                origin_sha = ""
+            else:
+                origin_sha = out_origin.lower()
+
+            # 3. HEAD == origin/main
+            if head_sha and origin_sha and head_sha != origin_sha:
+                blockers.append(f"Git HEAD ({head_sha}) does not match origin/main ({origin_sha})")
+                sha_ok = False
+
+            # 4. HEAD == source_sha
+            if head_sha and head_sha != source_sha.lower():
+                blockers.append(
+                    f"Git HEAD ({head_sha}) does not match authorized source_sha ({source_sha})"
+                )
+                sha_ok = False
+
+            # 5. Caller-supplied expected_source_sha check if provided
+            if expected_source_sha:
+                if (
+                    not HEX_40_RE.match(expected_source_sha.lower())
+                    or expected_source_sha.lower() != source_sha.lower()
+                ):
+                    blockers.append(
+                        f"Source SHA gate mismatch: expected {expected_source_sha}, "
+                        f"got {source_sha}"
+                    )
+                    sha_ok = False
+
+            # 6. Working tree clean
+            if clean_working_tree_required:
+                rc_status, out_status, err_status = _run_git(["git", "status", "--porcelain"])
+                if rc_status != 0:
+                    blockers.append(
+                        f"Git status check failed: {err_status or 'non-zero exit code'}"
+                    )
+                    clean_ok = False
+                elif out_status:
+                    blockers.append(
+                        "Working tree is dirty; clean remote gate required for live proof"
+                    )
+                    clean_ok = False
+
+        except Exception as exc:
+            blockers.append(f"Git command execution failed: {type(exc).__name__}")
+            sha_ok = False
+            clean_ok = False
 
     # 4. Google OAuth availability
     google_ok = google_credentials is not None
@@ -345,22 +448,36 @@ def check_live_preflight(
             f"task_list_id={scope.task_list_id!r}. Primary/default calendars strictly forbidden."
         )
 
-    # 7. Real transport validation
+    # 7. Real transport validation (must be real production transports, NOT synthetic/mock)
     transports_ok = True
-    if calendar_transport is None or not isinstance(
-        calendar_transport, GoogleApiClientCalendarTransport
+    if (
+        calendar_transport is None
+        or not isinstance(calendar_transport, GoogleApiClientCalendarTransport)
+        or is_synthetic_transport(calendar_transport)
     ):
         blockers.append(
-            "Real Google Calendar production transport (GoogleApiClientCalendarTransport) required"
+            "Real Google Calendar production transport (GoogleApiClientCalendarTransport) "
+            "required (non-mock)"
         )
         transports_ok = False
-    if tasks_transport is None or not isinstance(tasks_transport, GoogleApiClientTasksTransport):
+    if (
+        tasks_transport is None
+        or not isinstance(tasks_transport, GoogleApiClientTasksTransport)
+        or is_synthetic_transport(tasks_transport)
+    ):
         blockers.append(
-            "Real Google Tasks production transport (GoogleApiClientTasksTransport) required"
+            "Real Google Tasks production transport (GoogleApiClientTasksTransport) "
+            "required (non-mock)"
         )
         transports_ok = False
-    if weather_transport is None or not isinstance(weather_transport, OpenMeteoHttpTransport):
-        blockers.append("Real Open-Meteo production transport (OpenMeteoHttpTransport) required")
+    if (
+        weather_transport is None
+        or not isinstance(weather_transport, OpenMeteoHttpTransport)
+        or is_synthetic_transport(weather_transport)
+    ):
+        blockers.append(
+            "Real Open-Meteo production transport (OpenMeteoHttpTransport) required (non-mock)"
+        )
         transports_ok = False
 
     # 8. Bedrock planner availability
@@ -375,7 +492,8 @@ def check_live_preflight(
         clean_working_tree_verified=clean_ok,
         google_auth_available=google_ok,
         aws_bedrock_auth_available=aws_ok,
-        open_meteo_reachable=isinstance(weather_transport, OpenMeteoHttpTransport),
+        open_meteo_reachable=isinstance(weather_transport, OpenMeteoHttpTransport)
+        and not is_synthetic_transport(weather_transport),
         disposable_scope_verified=disposable_ok,
         transports_verified=transports_ok,
         blocker_reasons=blockers,
@@ -588,6 +706,17 @@ class KillerMissionEnvironment:
         ):
             tasks_seed_transport = GoogleApiClientTasksSeedTransport(tasks_transport._service)
 
+        has_synthetic = (
+            is_synthetic_transport(calendar_transport)
+            or is_synthetic_transport(tasks_transport)
+            or is_synthetic_transport(weather_transport)
+            or is_synthetic_transport(cal_seed_transport)
+            or is_synthetic_transport(tasks_seed_transport)
+        )
+        resolved_provenance = (
+            EvidenceProvenance.LOCAL_EXECUTION if has_synthetic else EvidenceProvenance.LIVE_GOOGLE
+        )
+
         import tempfile
 
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_live_killer_mission_"))
@@ -599,7 +728,7 @@ class KillerMissionEnvironment:
             weather_transport=weather_transport,
             cal_seed_transport=cal_seed_transport,
             tasks_seed_transport=tasks_seed_transport,
-            provenance=EvidenceProvenance.LIVE_GOOGLE,
+            provenance=resolved_provenance,
         )
 
     def __init__(
@@ -623,13 +752,9 @@ class KillerMissionEnvironment:
         )
         self.provenance = provenance
 
-        # Enforce closed-world consistency: LIVE provenance cannot have fake transports!
-        is_live_provenance = provenance in (
-            EvidenceProvenance.LIVE_GOOGLE,
-            EvidenceProvenance.LIVE_AWS,
-            EvidenceProvenance.LIVE_EXTERNAL,
-        )
-        if is_live_provenance:
+        # Enforce closed-world consistency: external LIVE provenance cannot have
+        # synthetic or fake transports!
+        if self.provenance.is_external_live:
             if (
                 calendar_transport is None
                 or isinstance(calendar_transport, FakeGoogleCalendarTransport)
@@ -639,10 +764,16 @@ class KillerMissionEnvironment:
                 or isinstance(weather_transport, FakeOpenMeteoTransport)
                 or isinstance(cal_seed_transport, FakeCalendarSeedTransport)
                 or isinstance(tasks_seed_transport, FakeTasksSeedTransport)
+                or is_synthetic_transport(calendar_transport)
+                or is_synthetic_transport(tasks_transport)
+                or is_synthetic_transport(weather_transport)
+                or is_synthetic_transport(cal_seed_transport)
+                or is_synthetic_transport(tasks_seed_transport)
             ):
                 raise InvalidEnvironmentConfigurationError(
-                    f"Live provenance ({provenance.value}) cannot be combined with fake or "
-                    "missing transports. LIVE provenance + fake transport is strictly forbidden."
+                    f"Live provenance ({self.provenance.value}) cannot be combined "
+                    "with synthetic / mock services or missing/fake transports. "
+                    "Use EvidenceProvenance.LOCAL_EXECUTION for injected-service wiring tests."
                 )
 
         if provenance == EvidenceProvenance.FIXTURE:
@@ -666,7 +797,7 @@ class KillerMissionEnvironment:
         if cal_seed_transport is not None:
             self.cal_seed_transport = cal_seed_transport
         else:
-            if is_live_provenance:
+            if self.provenance.is_external_live:
                 raise InvalidEnvironmentConfigurationError(
                     "Live environment requires concrete calendar seed transport or service"
                 )
@@ -679,7 +810,7 @@ class KillerMissionEnvironment:
         if tasks_seed_transport is not None:
             self.tasks_seed_transport = tasks_seed_transport
         else:
-            if is_live_provenance:
+            if self.provenance.is_external_live:
                 raise InvalidEnvironmentConfigurationError(
                     "Live environment requires concrete tasks seed transport or service"
                 )
@@ -717,6 +848,14 @@ class KillerMissionSliceRunner:
         operator_approved: bool = False,
         bedrock_planner: BedrockPlannerAdapter | None = None,
     ) -> None:
+        if type(self) is KillerMissionSliceRunner:
+            if live_mode or (env is not None and env.provenance != EvidenceProvenance.FIXTURE):
+                raise InvalidEnvironmentConfigurationError(
+                    "KillerMissionSliceRunner is restricted to fixture/local regression only "
+                    "(EvidenceProvenance.FIXTURE, live_mode=False). "
+                    "Use LiveKillerMissionSliceRunner for live execution."
+                )
+
         self.env = env or KillerMissionEnvironment.create_fixture_environment()
         self.mission_id = mission_id or MissionId("11111111-2222-3333-4444-555555555555")
         self.live_mode = live_mode or (self.env.provenance != EvidenceProvenance.FIXTURE)
@@ -836,16 +975,8 @@ class KillerMissionSliceRunner:
         )
 
     def _setup_canonical_plan(self) -> None:
-        """Compile canonical plan and initialize action tracking."""
-        if self.live_mode and self.bedrock_planner is not None:
-            planner_input = PlannerInput(
-                mission_id=self.mission_id,
-                intent=self.intent_text,
-            )
-            plan_result = self.bedrock_planner.plan(planner_input)
-            self.candidate_plan = plan_result.plan
-        else:
-            self.candidate_plan = self._create_deterministic_proposal()
+        """Compile canonical plan and action tracking (fixture deterministic proposal)."""
+        self.candidate_plan = self._create_deterministic_proposal()
 
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
@@ -1646,10 +1777,11 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         operator_approved: bool = False,
         source_sha: str | None = None,
         expected_source_sha: str | None = None,
-        clean_working_tree_required: bool = False,
+        clean_working_tree_required: bool = True,
         google_credentials: Any = None,
         aws_credentials_available: bool = False,
         bedrock_planner: BedrockPlannerAdapter | None = None,
+        git_runner: Callable[[list[str]], Any] | None = None,
     ) -> None:
         if env.provenance == EvidenceProvenance.FIXTURE:
             raise InvalidEnvironmentConfigurationError(
@@ -1660,6 +1792,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.clean_working_tree_required = clean_working_tree_required
         self.google_credentials = google_credentials
         self.aws_credentials_available = aws_credentials_available
+        self.git_runner = git_runner
         self.preflight_report: LivePreflightReport | None = None
         super().__init__(
             env=env,
@@ -1682,8 +1815,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             calendar_transport=self.env.calendar_transport,
             tasks_transport=self.env.tasks_transport,
             weather_transport=self.env.weather_transport,
-            bedrock_planner_available=self.bedrock_planner is not None
-            or self.aws_credentials_available,
+            bedrock_planner_available=isinstance(self.bedrock_planner, BedrockPlannerAdapter),
+            git_runner=self.git_runner,
         )
         self.preflight_report = report
         return report
@@ -1704,6 +1837,36 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Execute plan step; gated strictly by live preflight."""
         self._require_preflight()
+        if self.bedrock_planner is None or not isinstance(
+            self.bedrock_planner, BedrockPlannerAdapter
+        ):
+            raise KillerMissionExecutionError(
+                "Live mode requires concrete Bedrock / Strands planner adapter; "
+                "fallback to deterministic proposal is strictly prohibited."
+            )
+        planner_input = PlannerInput(
+            mission_id=self.mission_id,
+            intent=self.intent_text,
+        )
+        plan_result = self.bedrock_planner.plan(planner_input)
+        self.candidate_plan = plan_result.plan
+        resolver = SymbolicTargetResolver(
+            scope=self.env.scope,
+            event_id_mappings={
+                SymbolicTargetRef.LEAVE_FOR_SCHOOL: CANONICAL_DEMO_EVENT_ID,
+            },
+        )
+        self.execution_contract = compile_candidate_plan(
+            self.candidate_plan,
+            resolver,
+        )
+        self.schedule = schedule_execution(self.execution_contract)
+        self.tracker = ExecutionStateTracker(self.execution_contract, self.schedule)
+        self.action_weather = self.execution_contract.actions[0]
+        self.action_task = self.execution_contract.actions[1]
+        self.action_cal = self.execution_contract.actions[2]
+        self.validated_action_cal = validate_action_contract(self.action_cal)
+
         return super().step_p13_02_plan()
 
     def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
@@ -1802,4 +1965,6 @@ __all__ = [
     "LivePreflightBlockedError",
     "LivePreflightReport",
     "check_live_preflight",
+    "is_synthetic_service",
+    "is_synthetic_transport",
 ]

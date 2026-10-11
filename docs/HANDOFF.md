@@ -82,13 +82,12 @@ Status:
   - P-13: P-13.01 COMPLETED; P-13.02–P-13.05, P-13.08, P-13.09 BLOCKED_LIVE / NOT_RUN (fixture regression slice COMPLETED); P-13.06, P-13.07 COMPLETED (FIXTURE Regression Mode)
   - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
   - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
-  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN (CloudWatch EMF prepared locally; live proof harness fail-closed verified)
+  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross architecture estimates bounded; account billing metrics preserved as NOT_OBSERVED pending live account observation)
   - P-17: P-17.01–P-17.04 COMPLETED (real official MCPServer over stdio transport verified; wheel package smoke verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN
 - P-18+: PENDING / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
-Current remote HEAD: `f653c2adcb5081ab608f1f77ce812e082bb37679`
-Starting remote HEAD: `e83bcc2f7894a247208f5f7cdba6d5704e7b14c6`
+Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main` (eliminates stale self-referential tracking)
 Next exact task: Independent QA Review of Consolidated Macro Repair (P-18 remains strictly PENDING / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:

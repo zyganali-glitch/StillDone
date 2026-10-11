@@ -1665,12 +1665,12 @@ Acceptance:
 - verified in `test_p16_04_aws_builder_architecture_and_evidence_map`.
 
 ### P-16.05 — Validate cost impact against remaining promotional budget
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross Architecture Estimates Bounded; Account Billing Metrics Preserved as NOT_OBSERVED Pending Live Account Observation)
 
 Acceptance:
 - gross estimated spend strictly bounded under $0.05 USD (actual gross < $0.01 USD);
-- net personal spend is strictly $0.00000000 USD (Bedrock + AgentCore 100% offset by promotional credit; IAM and CloudWatch EMF covered under AWS Free Tier);
-- Zero Personal Spend Law ($0.00) fully maintained;
+- net personal spend, promotional credit sufficiency, and zero personal spend maintenance preserved as `NOT_OBSERVED` without an explicit live `AWSAccountObservation`;
+- Zero Personal Spend Law ($0.00) architectural invariants enforced fail-closed;
 - verified in `test_p16_05_cost_impact_validation_against_zero_personal_spend`.
 
 Phase exit:

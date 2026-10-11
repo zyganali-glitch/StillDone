@@ -21,6 +21,9 @@ import argparse
 import json
 import sys
 
+from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
+from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+from stilldone.adapters.weather import OpenMeteoHttpTransport
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
@@ -29,8 +32,10 @@ from stilldone.killer_mission import (
     InvalidEnvironmentConfigurationError,
     KillerMissionEnvironment,
     KillerMissionSliceRunner,
+    LiveKillerMissionSliceRunner,
     check_live_preflight,
 )
+from stilldone.planning.bedrock import BedrockPlannerAdapter
 
 
 def run_killer_mission(
@@ -56,7 +61,48 @@ def run_killer_mission(
             or (isinstance(token_path, Path) and token_path.exists())
             or (isinstance(token_path, str) and os.path.exists(token_path))
         )
-        google_creds = object() if has_google_token else None
+        google_creds = None
+        cal_transport: GoogleApiClientCalendarTransport | None = None
+        tasks_transport: GoogleApiClientTasksTransport | None = None
+
+        if has_google_token:
+            try:
+                from google.oauth2.credentials import Credentials  # type: ignore[import-untyped]
+                from googleapiclient.discovery import build  # type: ignore[import-untyped]
+
+                resolved_token = (
+                    token_path
+                    if (isinstance(token_path, Path) and token_path.exists())
+                    else creds_path
+                )
+                if resolved_token and os.path.exists(str(resolved_token)):
+                    creds = Credentials.from_authorized_user_file(str(resolved_token))
+                    google_creds = creds
+                    cal_service = build("calendar", "v3", credentials=creds)
+                    tasks_service = build("tasks", "v1", credentials=creds)
+                    cal_transport = GoogleApiClientCalendarTransport(service=cal_service)
+                    tasks_transport = GoogleApiClientTasksTransport(service=tasks_service)
+            except Exception:
+                google_creds = None
+                cal_transport = None
+                tasks_transport = None
+
+        # AWS Bedrock detection
+        aws_credentials_available = False
+        bedrock_planner: BedrockPlannerAdapter | None = None
+        try:
+            import boto3  # type: ignore[import-untyped]
+
+            session = boto3.Session()
+            if session.get_credentials() is not None:
+                aws_credentials_available = True
+                bedrock_client = session.client("bedrock-runtime", region_name="us-east-1")
+                bedrock_planner = BedrockPlannerAdapter(client=bedrock_client)
+        except Exception:
+            aws_credentials_available = False
+            bedrock_planner = None
+
+        weather_transport = OpenMeteoHttpTransport()
 
         scope = DemoResourceScope(
             calendar_id=CANONICAL_DEMO_CALENDAR_ID,
@@ -67,10 +113,11 @@ def run_killer_mission(
             operator_approved=operator_approved,
             source_sha=source_sha,
             google_credentials=google_creds,
-            aws_credentials_available=False,  # No unapproved/paid AWS credentials in CLI test
-            calendar_transport=None,
-            tasks_transport=None,
-            weather_transport=None,
+            aws_credentials_available=aws_credentials_available,
+            calendar_transport=cal_transport,
+            tasks_transport=tasks_transport,
+            weather_transport=weather_transport,
+            bedrock_planner_available=(bedrock_planner is not None),
         )
 
         if not preflight.is_ready:
@@ -101,9 +148,30 @@ def run_killer_mission(
                 print("=================================================================")
             return 2
 
-        # If preflight passed, live environment is required.
-        # Strict closed-world invariant: never fall back to fixture.
-        print("Live preflight passed. Live mutations require dedicated operator execution.")
+        # If preflight passed, construct canonical live environment and runner
+        live_env = KillerMissionEnvironment.create_live_environment(
+            scope=scope,
+            calendar_transport=cal_transport,
+            tasks_transport=tasks_transport,
+            weather_transport=weather_transport,
+        )
+        runner = LiveKillerMissionSliceRunner(
+            env=live_env,
+            operator_approved=operator_approved,
+            source_sha=source_sha,
+            bedrock_planner=bedrock_planner,
+            aws_credentials_available=aws_credentials_available,
+            google_credentials=google_creds,
+        )
+        outcome = runner.run_full_slice()
+        if as_json:
+            print(json.dumps(outcome.to_dict(), indent=2))
+        else:
+            print("=================================================================")
+            print("STILLDONE KILLER MISSION -- LIVE EXECUTION COMPLETE")
+            print("=================================================================")
+            print(f"Final State: {outcome.final_state.value}")
+            print(f"Total Writes: {outcome.total_writes_performed}")
         return 0
 
     # Fixture mode: strict closed-world fixture environment with zero live connectivity

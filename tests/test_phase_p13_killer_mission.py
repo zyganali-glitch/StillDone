@@ -65,7 +65,6 @@ from stilldone.killer_mission import (
     FakeGoogleCalendarTransport,
     InvalidEnvironmentConfigurationError,
     KillerMissionEnvironment,
-    KillerMissionExecutionError,
     KillerMissionSliceRunner,
     LiveKillerMissionSliceRunner,
     LivePreflightBlockedError,
@@ -688,10 +687,76 @@ def test_adversarial_live_runner_all_steps_fail_closed_on_preflight_block(
         assert step.is_verified is False
 
 
-def test_adversarial_live_mode_without_bedrock_planner_fails_closed(
+def test_adversarial_base_runner_rejects_live_mode_and_live_provenance(
     tmp_path: Path,
 ) -> None:
-    """Adversarial: Live mode without Bedrock planner adapter strictly fails closed."""
+    """Adversarial: Base KillerMissionSliceRunner strictly rejects live mode / live provenance."""
+    # 1. Base runner with live_mode=True must raise InvalidEnvironmentConfigurationError
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="KillerMissionSliceRunner is restricted to fixture/local regression only",
+    ):
+        KillerMissionSliceRunner(live_mode=True)
+
+    # 2. Base runner with non-fixture environment must raise InvalidEnvironmentConfigurationError
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "live_env",
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="KillerMissionSliceRunner is restricted to fixture/local regression only",
+    ):
+        KillerMissionSliceRunner(env=live_env)
+
+
+def test_adversarial_live_runner_constructor_causes_zero_planner_calls(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: Constructing LiveKillerMissionSliceRunner causes 0 planner calls."""
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "live_env_deferred_plan",
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+
+    mock_client = MagicMock()
+    planner_adapter = BedrockPlannerAdapter(client=mock_client)
+
+    # Constructor must NOT invoke Bedrock planner! (Defect A)
+    runner = LiveKillerMissionSliceRunner(
+        env=live_env,
+        operator_approved=False,
+        bedrock_planner=planner_adapter,
+    )
+    assert mock_client.converse.call_count == 0
+
+    # Step calls without approval fail closed before any planner invocation
+    with pytest.raises(LivePreflightBlockedError):
+        runner.step_p13_01_seed()
+    assert mock_client.converse.call_count == 0
+
+    with pytest.raises(LivePreflightBlockedError):
+        runner.step_p13_02_plan()
+    assert mock_client.converse.call_count == 0
+
+    # Running full slice with blocked preflight results in:
+    # 0 planner calls, 0 writes, 0 approvals consumed
+    outcome = runner.run_full_slice()
+    assert mock_client.converse.call_count == 0
+    assert outcome.total_writes_performed == 0
+    assert outcome.steps["P-13.02"].status == "BLOCKED_LIVE"
+
+
+def test_adversarial_live_preflight_blocks_when_aws_creds_present_but_planner_absent(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: AWS credentials present + planner absent blocks BEFORE seed (0 writes)."""
     live_env = KillerMissionEnvironment.create_live_environment(
         base_dir=tmp_path / "live_env_no_planner",
         calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
@@ -699,25 +764,155 @@ def test_adversarial_live_mode_without_bedrock_planner_fails_closed(
         weather_transport=OpenMeteoHttpTransport(),
     )
 
-    # Base runner in live mode with operator approval but NO bedrock planner
-    runner = KillerMissionSliceRunner(
+    runner = LiveKillerMissionSliceRunner(
         env=live_env,
-        live_mode=True,
         operator_approved=True,
-        bedrock_planner=None,
+        aws_credentials_available=True,
+        bedrock_planner=None,  # AWS credentials present, but planner adapter absent!
+        source_sha="1111111111111111111111111111111111111111",
     )
 
-    with pytest.raises(
-        KillerMissionExecutionError,
-        match="Live mode requires concrete Bedrock / Strands planner adapter",
-    ):
-        runner.step_p13_02_plan()
+    preflight = runner.evaluate_preflight()
+    assert preflight.aws_bedrock_auth_available is True
+    assert preflight.is_ready is False
+    assert any("Bedrock planner adapter is not available" in b for b in preflight.blocker_reasons)
+
+    # Must block before P-13.01 and before any writes
+    with pytest.raises(LivePreflightBlockedError):
+        runner.step_p13_01_seed()
 
 
-def test_adversarial_live_mode_with_injected_bedrock_planner(
+def test_adversarial_live_preflight_git_fail_closed_checks() -> None:
+    """Adversarial: Strict git preflight gates fail closed on non-hex SHA,
+    SHA mismatch, git error, and dirty tree.
+    """
+    from stilldone.killer_mission import DemoResourceScope
+
+    scope = DemoResourceScope(calendar_id="demo_cal", task_list_id="demo_tasks")
+
+    # 1. Non-hex 40-char SHA rejected
+    for invalid_sha in [
+        "not_a_sha",
+        "123456789012345678901234567890123456789",
+        "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        "111111111111111111111111111111111111111G",
+    ]:
+        rep = check_live_preflight(
+            scope=scope,
+            operator_approved=True,
+            source_sha=invalid_sha,
+        )
+        assert rep.is_ready is False
+        assert rep.source_sha_verified is False
+        assert any("valid lowercase 40-hex" in b for b in rep.blocker_reasons)
+
+    # 2. HEAD != source_sha rejected
+    def git_head_mismatch(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ""
+        return 0, "", ""
+
+    rep_head_mismatch = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        source_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        git_runner=git_head_mismatch,
+    )
+    assert rep_head_mismatch.is_ready is False
+    assert any(
+        "does not match authorized source_sha" in b for b in rep_head_mismatch.blocker_reasons
+    )
+
+    # 3. origin/main != HEAD rejected
+    def git_origin_mismatch(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        if "origin/main" in cmd:
+            return 0, "2222222222222222222222222222222222222222", ""
+        return 0, "", ""
+
+    rep_origin_mismatch = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        git_runner=git_origin_mismatch,
+    )
+    assert rep_origin_mismatch.is_ready is False
+    assert any("does not match origin/main" in b for b in rep_origin_mismatch.blocker_reasons)
+
+    # 4. git command failure rejected
+    def git_failure(cmd: list[str]) -> tuple[int, str, str]:
+        return 1, "", "fatal: not a git repository"
+
+    rep_fail = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        git_runner=git_failure,
+    )
+    assert rep_fail.is_ready is False
+    assert rep_fail.source_sha_verified is False
+
+    # 5. dirty tree rejected
+    def git_dirty(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        return 0, " M src/stilldone/killer_mission.py", ""
+
+    rep_dirty = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        git_runner=git_dirty,
+        clean_working_tree_required=True,
+    )
+    assert rep_dirty.is_ready is False
+    assert rep_dirty.clean_working_tree_verified is False
+    assert any("dirty" in b for b in rep_dirty.blocker_reasons)
+
+
+def test_adversarial_synthetic_service_wrappers_cannot_create_live_provenance(
     tmp_path: Path,
 ) -> None:
-    """Verify live mode compiles candidate proposal from Bedrock adapter with 0 model authority."""
+    """Adversarial: Synthetic/MagicMock services strictly produce LOCAL_EXECUTION,
+    never LIVE_GOOGLE.
+    """
+    mock_cal_svc = MagicMock()
+    mock_tasks_svc = MagicMock()
+
+    env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "synthetic_live_env",
+        calendar_transport=GoogleApiClientCalendarTransport(service=mock_cal_svc),
+        tasks_transport=GoogleApiClientTasksTransport(service=mock_tasks_svc),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+
+    # Synthetic wrapper automatically downgraded to LOCAL_EXECUTION
+    assert env.provenance == EvidenceProvenance.LOCAL_EXECUTION
+    assert not env.provenance.is_external_live
+
+    # Forbids forcing LIVE_GOOGLE on synthetic wrappers
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="Live provenance.*cannot be combined with synthetic",
+    ):
+        KillerMissionEnvironment(
+            base_dir=tmp_path / "forbidden_env",
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+            calendar_transport=GoogleApiClientCalendarTransport(service=mock_cal_svc),
+            tasks_transport=GoogleApiClientTasksTransport(service=mock_tasks_svc),
+            weather_transport=OpenMeteoHttpTransport(),
+        )
+
+
+def test_adversarial_live_mode_compilation_with_injected_bedrock_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify live runner compiles candidate proposal from Bedrock adapter
+    with 0 model authority when preflight passes.
+    """
+    from stilldone.killer_mission import LivePreflightReport
     from stilldone.planning.bedrock import BedrockPlannerAdapter
 
     live_env = KillerMissionEnvironment.create_live_environment(
@@ -727,7 +922,6 @@ def test_adversarial_live_mode_with_injected_bedrock_planner(
         weather_transport=OpenMeteoHttpTransport(),
     )
 
-    # Injected fake Bedrock client returning valid candidate plan JSON
     valid_plan_json = json.dumps(
         {
             "mission_id": "11111111-2222-3333-4444-555555555555",
@@ -765,14 +959,30 @@ def test_adversarial_live_mode_with_injected_bedrock_planner(
 
     planner_adapter = BedrockPlannerAdapter(client=fake_bedrock_client)
 
-    runner = KillerMissionSliceRunner(
+    runner = LiveKillerMissionSliceRunner(
         env=live_env,
-        live_mode=True,
         operator_approved=True,
+        aws_credentials_available=True,
         bedrock_planner=planner_adapter,
+        source_sha="1111111111111111111111111111111111111111",
     )
 
-    # Step P-13.02 must compile the model proposal through deterministic contracts
+    # Mock preflight pass for isolated step_p13_02 compilation test
+    mock_report = LivePreflightReport(
+        is_ready=True,
+        operator_approved=True,
+        source_sha_verified=True,
+        clean_working_tree_verified=True,
+        google_auth_available=True,
+        aws_bedrock_auth_available=True,
+        open_meteo_reachable=True,
+        disposable_scope_verified=True,
+        transports_verified=True,
+        blocker_reasons=[],
+    )
+    monkeypatch.setattr(runner, "evaluate_preflight", lambda: mock_report)
+
+    # Step P-13.02 compiles the model proposal through deterministic contracts
     res = runner.step_p13_02_plan()
     assert res.status == "PASS"
     assert res.writes_performed == 0
@@ -780,3 +990,4 @@ def test_adversarial_live_mode_with_injected_bedrock_planner(
     assert len(runner.schedule) == 3
     # Model proposal has zero execution authority
     assert runner.action_cal.action_type == ActionType.CALENDAR_UPDATE
+    assert fake_bedrock_client.converse.call_count == 1

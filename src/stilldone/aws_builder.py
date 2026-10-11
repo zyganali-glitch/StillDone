@@ -18,7 +18,9 @@ Constitutional Invariants:
 from __future__ import annotations
 
 import json
+import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -62,7 +64,7 @@ class AWSServiceAuditEntry:
     live_proof_ref: str
     non_decorative_justification: str
     estimated_cost_usd: Decimal
-    covered_by_free_tier_or_credit: bool
+    covered_by_free_tier_or_credit: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,12 +77,24 @@ class AWSServiceAuditEntry:
             "live_proof_ref": self.live_proof_ref,
             "non_decorative_justification": self.non_decorative_justification,
             "estimated_cost_usd": str(self.estimated_cost_usd),
-            "covered_by_free_tier_or_credit": self.covered_by_free_tier_or_credit,
+            "covered_by_free_tier_or_credit": (
+                self.covered_by_free_tier_or_credit
+                if self.covered_by_free_tier_or_credit is not None
+                else "NOT_OBSERVED"
+            ),
         }
 
 
-def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
-    """Audit all AWS services used across the StillDone critical path (P-16.01)."""
+def audit_critical_path_aws_services(
+    observation: AWSAccountObservation | None = None,
+) -> list[AWSServiceAuditEntry]:
+    """Audit all AWS services used across the StillDone critical path (P-16.01).
+
+    Account coverage (covered_by_free_tier_or_credit) derives only from an explicit
+    timestamped AWSAccountObservation, returning None ('NOT_OBSERVED') otherwise.
+    """
+    coverage = observation.promotional_credit_budget_sufficient if observation is not None else None
+
     return [
         AWSServiceAuditEntry(
             service_name="Amazon Bedrock",
@@ -96,7 +110,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
                 "fail-closed schema parser."
             ),
             estimated_cost_usd=Decimal("0.00000168"),
-            covered_by_free_tier_or_credit=True,
+            covered_by_free_tier_or_credit=coverage,
         ),
         AWSServiceAuditEntry(
             service_name="AWS Strands Agents SDK",
@@ -111,7 +125,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
                 "model inference from mcp>=2.2.0 Streamable HTTP core."
             ),
             estimated_cost_usd=Decimal("0.00000000"),
-            covered_by_free_tier_or_credit=True,
+            covered_by_free_tier_or_credit=coverage,
         ),
         AWSServiceAuditEntry(
             service_name="Amazon Bedrock AgentCore Runtime",
@@ -126,7 +140,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
                 "official MCP Inspector over SigV4 IAM ingress."
             ),
             estimated_cost_usd=Decimal("0.00838839"),
-            covered_by_free_tier_or_credit=True,
+            covered_by_free_tier_or_credit=coverage,
         ),
         AWSServiceAuditEntry(
             service_name="AWS Identity and Access Management (IAM)",
@@ -141,7 +155,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
                 "ephemeral ASIA credential verification on remote MCP endpoints."
             ),
             estimated_cost_usd=Decimal("0.00000000"),
-            covered_by_free_tier_or_credit=True,
+            covered_by_free_tier_or_credit=coverage,
         ),
         AWSServiceAuditEntry(
             service_name="Amazon CloudWatch (Embedded Metric Format)",
@@ -157,7 +171,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
                 "live harness prepared for bounded execution; live proof execution NOT_RUN."
             ),
             estimated_cost_usd=Decimal("0.00000000"),
-            covered_by_free_tier_or_credit=True,
+            covered_by_free_tier_or_credit=coverage,
         ),
     ]
 
@@ -445,6 +459,14 @@ def record_killer_mission_telemetry(
 # ===========================================================================
 
 
+class CostExposure(StrEnum):
+    """Truthful cost exposure status for live AWS actions."""
+
+    NOT_ATTEMPTED = "NOT_ATTEMPTED"
+    MAY_HAVE_INCURRED_USAGE = "MAY_HAVE_INCURRED_USAGE"
+    ACCOUNT_OBSERVATION_REQUIRED = "ACCOUNT_OBSERVATION_REQUIRED"
+
+
 @dataclass(frozen=True)
 class CloudWatchLiveProofResult:
     """Evidence outcome for CloudWatch live ingestion/observation check (P-16.03)."""
@@ -459,6 +481,7 @@ class CloudWatchLiveProofResult:
     observed_metric_value: float | None = None
     is_verified: bool = False
     is_billable: bool = False
+    cost_exposure: CostExposure = CostExposure.NOT_ATTEMPTED
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -472,7 +495,11 @@ class CloudWatchLiveProofResult:
             "observed_metric_value": self.observed_metric_value,
             "is_verified": self.is_verified,
             "is_billable": self.is_billable,
+            "cost_exposure": self.cost_exposure.value,
         }
+
+
+HEX_40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class CloudWatchLiveProofHarness:
@@ -487,6 +514,7 @@ class CloudWatchLiveProofHarness:
         log_stream_name: str | None = None,
         logs_client: Any = None,
         cw_client: Any = None,
+        git_runner: Callable[[list[str]], Any] | None = None,
     ) -> None:
         self.region = region
         self.environment = environment
@@ -494,6 +522,7 @@ class CloudWatchLiveProofHarness:
         self.log_stream_name = log_stream_name
         self._logs_client = logs_client
         self._cw_client = cw_client
+        self._git_runner = git_runner
 
     def execute_live_proof(
         self,
@@ -501,7 +530,11 @@ class CloudWatchLiveProofHarness:
         namespace: str = "StillDone/VerificationEngine",
         metric_name: str = "VerificationLatencyMs",
         source_sha: str,
+        expected_source_sha: str | None = None,
+        expected_metric_value: float = 42.0,
         operator_approved: bool = False,
+        clean_working_tree_required: bool = True,
+        git_runner: Callable[[list[str]], Any] | None = None,
         timeout_seconds: float = 30.0,
         poll_interval_seconds: float = 2.0,
     ) -> CloudWatchLiveProofResult:
@@ -535,10 +568,11 @@ class CloudWatchLiveProofHarness:
                 ),
                 is_verified=False,
                 is_billable=False,
+                cost_exposure=CostExposure.NOT_ATTEMPTED,
             )
 
-        # 2. Exact source SHA binding
-        if not source_sha or len(source_sha) != 40:
+        # 2. Strict source SHA & Git Remote / Working Tree Fail-Closed Gate
+        if not source_sha or not isinstance(source_sha, str) or not HEX_40_RE.match(source_sha):
             return CloudWatchLiveProofResult(
                 status="BLOCKED_LIVE",
                 namespace=namespace,
@@ -546,9 +580,155 @@ class CloudWatchLiveProofHarness:
                 region=self.region,
                 source_sha=source_sha or "MISSING",
                 timestamp_utc=now_str,
-                details="Exact 40-character source SHA binding required before live execution.",
+                details=(
+                    "Exact 40-character lowercase hex source SHA binding "
+                    "required before live execution."
+                ),
                 is_verified=False,
                 is_billable=False,
+                cost_exposure=CostExposure.NOT_ATTEMPTED,
+            )
+
+        active_git_runner = git_runner or self._git_runner
+
+        def _run_git(cmd: list[str]) -> tuple[int, str, str]:
+            if active_git_runner is not None:
+                res = active_git_runner(cmd)
+                if hasattr(res, "returncode"):
+                    return res.returncode, str(res.stdout).strip(), str(res.stderr).strip()
+                return int(res[0]), str(res[1]).strip(), str(res[2]).strip()
+            import subprocess
+
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+        try:
+            rc_head, out_head, err_head = _run_git(["git", "rev-parse", "HEAD"])
+            if rc_head != 0 or not out_head or not HEX_40_RE.match(out_head.lower()):
+                return CloudWatchLiveProofResult(
+                    status="BLOCKED_LIVE",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=now_str,
+                    details=f"Git rev-parse HEAD failed: {err_head or 'non-zero exit code'}",
+                    is_verified=False,
+                    is_billable=False,
+                    cost_exposure=CostExposure.NOT_ATTEMPTED,
+                )
+            head_sha = out_head.lower()
+
+            rc_origin, out_origin, err_origin = _run_git(["git", "rev-parse", "origin/main"])
+            if rc_origin != 0 or not out_origin or not HEX_40_RE.match(out_origin.lower()):
+                return CloudWatchLiveProofResult(
+                    status="BLOCKED_LIVE",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=now_str,
+                    details=(
+                        f"Git rev-parse origin/main failed: {err_origin or 'non-zero exit code'}"
+                    ),
+                    is_verified=False,
+                    is_billable=False,
+                    cost_exposure=CostExposure.NOT_ATTEMPTED,
+                )
+            origin_sha = out_origin.lower()
+
+            if head_sha != origin_sha:
+                return CloudWatchLiveProofResult(
+                    status="BLOCKED_LIVE",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=now_str,
+                    details=f"Git HEAD ({head_sha}) does not match origin/main ({origin_sha})",
+                    is_verified=False,
+                    is_billable=False,
+                    cost_exposure=CostExposure.NOT_ATTEMPTED,
+                )
+
+            if head_sha != source_sha.lower():
+                return CloudWatchLiveProofResult(
+                    status="BLOCKED_LIVE",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=now_str,
+                    details=(
+                        f"Git HEAD ({head_sha}) does not match authorized source_sha ({source_sha})"
+                    ),
+                    is_verified=False,
+                    is_billable=False,
+                    cost_exposure=CostExposure.NOT_ATTEMPTED,
+                )
+
+            if expected_source_sha:
+                if (
+                    not HEX_40_RE.match(expected_source_sha.lower())
+                    or expected_source_sha.lower() != source_sha.lower()
+                ):
+                    return CloudWatchLiveProofResult(
+                        status="BLOCKED_LIVE",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=now_str,
+                        details=(
+                            f"Source SHA gate mismatch: expected {expected_source_sha}, "
+                            f"got {source_sha}"
+                        ),
+                        is_verified=False,
+                        is_billable=False,
+                        cost_exposure=CostExposure.NOT_ATTEMPTED,
+                    )
+
+            if clean_working_tree_required:
+                rc_stat, out_stat, err_stat = _run_git(["git", "status", "--porcelain"])
+                if rc_stat != 0:
+                    return CloudWatchLiveProofResult(
+                        status="BLOCKED_LIVE",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=now_str,
+                        details=f"Git status check failed: {err_stat or 'non-zero exit code'}",
+                        is_verified=False,
+                        is_billable=False,
+                        cost_exposure=CostExposure.NOT_ATTEMPTED,
+                    )
+                if out_stat:
+                    return CloudWatchLiveProofResult(
+                        status="BLOCKED_LIVE",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=now_str,
+                        details="Working tree is dirty; clean remote gate required for live proof",
+                        is_verified=False,
+                        is_billable=False,
+                        cost_exposure=CostExposure.NOT_ATTEMPTED,
+                    )
+
+        except Exception as exc:
+            return CloudWatchLiveProofResult(
+                status="BLOCKED_LIVE",
+                namespace=namespace,
+                metric_name=metric_name,
+                region=self.region,
+                source_sha=source_sha,
+                timestamp_utc=now_str,
+                details=f"Git verification failed: {type(exc).__name__}",
+                is_verified=False,
+                is_billable=False,
+                cost_exposure=CostExposure.NOT_ATTEMPTED,
             )
 
         # 3. Configured bounded dedicated log destination
@@ -566,6 +746,7 @@ class CloudWatchLiveProofHarness:
                 ),
                 is_verified=False,
                 is_billable=False,
+                cost_exposure=CostExposure.NOT_ATTEMPTED,
             )
 
         # 4. Generate unique proof token and build compliant EMF record
@@ -578,13 +759,17 @@ class CloudWatchLiveProofHarness:
             task_id="P-16.03",
             action_type="EMF_LIVE_PROOF",
             verification_status="VERIFIED",
-            verification_latency_ms=42.0,
+            verification_latency_ms=expected_metric_value,
             is_verified=True,
             readback_contradiction=False,
             writes_performed=1,
         )
         record["ProofToken"] = proof_token
         record["SourceSha"] = source_sha
+        record["Environment"] = self.environment
+        record["TaskId"] = "P-16.03"
+        record["LogGroup"] = self.log_group_name
+        record["LogStream"] = self.log_stream_name
         payload_json = json.dumps(record)
 
         try:
@@ -641,9 +826,10 @@ class CloudWatchLiveProofHarness:
                     ),
                     is_verified=False,
                     is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
-            # 6. Unique proof token observed & 7. Payload verified
+            # 6. Authoritative verification of all contract fields
             if observed_payload.get("ProofToken") != proof_token:
                 return CloudWatchLiveProofResult(
                     status="FAILED",
@@ -655,9 +841,194 @@ class CloudWatchLiveProofHarness:
                     details="Observed record proof token mismatch.",
                     is_verified=False,
                     is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
-            # 8 & 9. Verified and sanitized evidence captured
+            if observed_payload.get("SourceSha") != source_sha:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record SourceSha mismatch: expected '{source_sha}', "
+                        f"got '{observed_payload.get('SourceSha')}'."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            if observed_payload.get("Environment") != self.environment:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record Environment mismatch: expected '{self.environment}', "
+                        f"got '{observed_payload.get('Environment')}'."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            if observed_payload.get("TaskId") != "P-16.03":
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record TaskId mismatch: expected 'P-16.03', "
+                        f"got '{observed_payload.get('TaskId')}'."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            if (
+                observed_payload.get("LogGroup") != self.log_group_name
+                or observed_payload.get("LogStream") != self.log_stream_name
+            ):
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details="Observed record LogGroup or LogStream mismatch.",
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            # Check Namespace in EMF directive
+            cw_metrics = observed_payload.get("_aws", {}).get("CloudWatchMetrics", [])
+            observed_namespaces = [cw.get("Namespace") for cw in cw_metrics if isinstance(cw, dict)]
+            if namespace not in observed_namespaces:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record namespace mismatch: requested '{namespace}', "
+                        f"found {observed_namespaces}."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            # Check Metric Name in EMF directive and top-level
+            observed_metric_names = [
+                m.get("Name")
+                for cw in cw_metrics
+                if isinstance(cw, dict)
+                for m in cw.get("Metrics", [])
+                if isinstance(m, dict)
+            ]
+            if metric_name not in observed_metric_names or metric_name not in observed_payload:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record metric mismatch: requested '{metric_name}', "
+                        f"found {observed_metric_names}."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            # Check Metric Value
+            obs_val = observed_payload.get(metric_name)
+            if expected_metric_value is not None and obs_val != expected_metric_value:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Observed record metric value mismatch: expected {expected_metric_value}, "
+                        f"got {obs_val}."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            # Independent CloudWatch Metric API query if client provided (Stronger proof level)
+            if self._cw_client is not None:
+                try:
+                    cw_resp = self._cw_client.get_metric_data(
+                        MetricDataQueries=[
+                            {
+                                "Id": "m1",
+                                "MetricStat": {
+                                    "Metric": {
+                                        "Namespace": namespace,
+                                        "MetricName": metric_name,
+                                        "Dimensions": [
+                                            {"Name": "Environment", "Value": self.environment}
+                                        ],
+                                    },
+                                    "Period": 60,
+                                    "Stat": "Average",
+                                },
+                            }
+                        ],
+                        StartTime=datetime.fromtimestamp((timestamp_ms // 1000) - 120, UTC),
+                        EndTime=datetime.fromtimestamp((timestamp_ms // 1000) + 120, UTC),
+                    )
+                    vals: list[float] = []
+                    for res in cw_resp.get("MetricDataResults", []):
+                        vals.extend(res.get("Values", []))
+                    if not vals:
+                        return CloudWatchLiveProofResult(
+                            status="FAILED",
+                            namespace=namespace,
+                            metric_name=metric_name,
+                            region=self.region,
+                            source_sha=source_sha,
+                            timestamp_utc=datetime.now(UTC).isoformat(),
+                            details="CloudWatch metric API query returned no metric datapoints.",
+                            is_verified=False,
+                            is_billable=True,
+                            cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                        )
+                except Exception as cw_exc:
+                    return CloudWatchLiveProofResult(
+                        status="FAILED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=f"CloudWatch metric API query failed: {type(cw_exc).__name__}",
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+
             return CloudWatchLiveProofResult(
                 status="PASS",
                 namespace=namespace,
@@ -669,9 +1040,10 @@ class CloudWatchLiveProofHarness:
                     f"EMF record emitted and independently read back from log stream "
                     f"'{self.log_stream_name}'. Proof token '{proof_token}' verified."
                 ),
-                observed_metric_value=42.0,
+                observed_metric_value=float(obs_val) if obs_val is not None else None,
                 is_verified=True,
                 is_billable=True,
+                cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
             )
 
         except Exception as exc:
@@ -684,7 +1056,8 @@ class CloudWatchLiveProofHarness:
                 timestamp_utc=datetime.now(UTC).isoformat(),
                 details=f"Live CloudWatch execution failed: {type(exc).__name__}",
                 is_verified=False,
-                is_billable=False,
+                is_billable=True,
+                cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
             )
 
 
@@ -721,7 +1094,7 @@ class AWSBuilderEvidenceMap:
     aws_services: list[AWSServiceAuditEntry]
     total_estimated_gross_spend_usd: Decimal
     total_net_personal_spend_usd: Decimal | None
-    zero_personal_spend_maintained: bool
+    zero_personal_spend_maintained: bool | None
     promotional_credit_budget_sufficient: bool | None
     observed_account_billing_status: str = "NOT_OBSERVED"
     observed_net_personal_spend: Decimal | None = None
@@ -737,7 +1110,11 @@ class AWSBuilderEvidenceMap:
                 if self.total_net_personal_spend_usd is not None
                 else "NOT_OBSERVED"
             ),
-            "zero_personal_spend_maintained": self.zero_personal_spend_maintained,
+            "zero_personal_spend_maintained": (
+                self.zero_personal_spend_maintained
+                if self.zero_personal_spend_maintained is not None
+                else "NOT_OBSERVED"
+            ),
             "promotional_credit_budget_sufficient": (
                 self.promotional_credit_budget_sufficient
                 if self.promotional_credit_budget_sufficient is not None
@@ -756,7 +1133,7 @@ def generate_aws_builder_evidence_map(
     observation: AWSAccountObservation | None = None,
 ) -> AWSBuilderEvidenceMap:
     """Generate canonical AWS Builder architecture and evidence map (P-16.04, P-16.05)."""
-    services = audit_critical_path_aws_services()
+    services = audit_critical_path_aws_services(observation=observation)
     gross_spend = sum((s.estimated_cost_usd for s in services), Decimal("0.00000000"))
 
     if observation is not None:
@@ -778,7 +1155,7 @@ def generate_aws_builder_evidence_map(
         aws_services=services,
         total_estimated_gross_spend_usd=gross_spend,
         total_net_personal_spend_usd=None,
-        zero_personal_spend_maintained=True,
+        zero_personal_spend_maintained=None,
         promotional_credit_budget_sufficient=None,
         observed_account_billing_status="NOT_OBSERVED",
         observed_net_personal_spend=None,
@@ -793,6 +1170,7 @@ __all__ = [
     "CloudWatchEMFTelemetryEmitter",
     "CloudWatchLiveProofHarness",
     "CloudWatchLiveProofResult",
+    "CostExposure",
     "EMFMetricDefinition",
     "EMFMetricUnit",
     "InvalidEMFRecordError",

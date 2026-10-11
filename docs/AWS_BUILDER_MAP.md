@@ -141,6 +141,8 @@ StillDone embeds AWS CloudWatch Embedded Metric Format (EMF) directly into its v
 StillDone is governed by the **Zero Personal Spend Law** (`AGENTS.md` Rule 12):
 > Target personal spend is `$0.00`. Allowed: hackathon promotional credits, permanent free tiers, local development. Forbidden: paid subscriptions, unmetered endpoints, deposits.
 
+Status: **`BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`** (Gross architecture estimates bounded; account billing metrics preserved as `NOT_OBSERVED` pending live account observation).
+
 ### Cost Breakdown & External Truth Separation
 - **Estimated Gross Costs**: Clearly labeled estimates based on current standard AWS pricing models:
   1. **Amazon Bedrock (Nova Micro / Claude 3.5 Sonnet)**:
@@ -153,6 +155,6 @@ StillDone is governed by the **Zero Personal Spend Law** (`AGENTS.md` Rule 12):
   4. **Amazon CloudWatch Embedded Metric Format**: Emits structured JSON logs to standard stdout streams ($0.00 daemon cost).
 - **External Account Billing Observation**:
   - Promotional credit status and actual billed account balances are external account observations performed out-of-band by the operator, NOT fabricated by deterministic product code.
-  - Active promotional credit balance covers all hackathon usage.
-  - Actual net personal spend remains:
+  - Without an explicit `AWSAccountObservation`, `total_net_personal_spend_usd`, `promotional_credit_budget_sufficient`, and `zero_personal_spend_maintained` evaluate to `NOT_OBSERVED` (None).
+  - When an out-of-band `AWSAccountObservation` is recorded, promotional credits offset gross charges, verifying:
     $$\text{Net Spend} = \mathbf{\$0.00000000\text{ USD}}$$
