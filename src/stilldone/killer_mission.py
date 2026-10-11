@@ -314,11 +314,11 @@ class KillerMissionSliceRunner:
 
     def __init__(
         self,
-        env: KillerMissionEnvironment,
+        env: KillerMissionEnvironment | None = None,
         *,
         mission_id: MissionId | None = None,
     ) -> None:
-        self.env = env
+        self.env = env or KillerMissionEnvironment.create_fixture_environment()
         self.mission_id = mission_id or MissionId("11111111-2222-3333-4444-555555555555")
         self.intent_text = CANONICAL_KILLER_INTENT
         self.contract = MissionContract.create(self.intent_text, mission_id=self.mission_id)

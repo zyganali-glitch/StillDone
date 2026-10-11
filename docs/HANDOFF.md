@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13.01: COMPLETED (PASS Candidate, awaiting independent QA review) | P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13, P-14, P-15: COMPLETED (PASS Candidate, awaiting independent QA review) | P-16, P-17: IN PROGRESS**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 

@@ -1548,25 +1548,67 @@ Goal:
 make complex verification feel simple.
 
 ### P-15.01 — Design one-screen mission timeline and compact receipt
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- 7 canonical step cards structured in one-screen chronological visual timeline (`TimelineStepCard`);
+- compact receipt view clearly separated from current reality (`CompactReceiptView`);
+- receipt preserves issuance state (`READY`) alongside current reconciled state (`DRIFTED`);
+- historical receipt immutability enforced (`is_historically_preserved=True`);
+- verified in `test_p15_01_one_screen_timeline_and_compact_receipt`.
 
 ### P-15.02 — Implement simulated Alexa+ conversational surface with explicit label
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- prominent surface banner explicitly labeled `SIMULATED ALEXA+ EXPERIENCE | REAL STILLDONE ENGINE (STREAMABLE HTTP MCP)`;
+- simulated Alexa+ surface visibly disclaimed while highlighting real backend execution;
+- zero model prose claims execution authority;
+- verified in `test_p15_02_simulated_alexa_conversational_surface_label`.
 
 ### P-15.03 — Implement voice-friendly concise summaries
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- voice summary contract (`VoiceSummary`) with SSML text and plain spoken text;
+- voice prompt under 25 words explaining departure shift and backpack preparation;
+- separate drift spoken notification clearly announcing schedule contradiction;
+- verified in `test_p15_03_voice_friendly_concise_summaries`.
 
 ### P-15.04 — Implement approval card with exact bounded action
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- bounded approval card (`BoundedApprovalAction`) displaying exact target (`Leave for school`), parameter shift (`07:45 -> 07:30`), authority class (`REVERSIBLE_APPROVAL_REQUIRED`), and single-use cryptographic grant binding;
+- explicit approval action controls (Approve once / Reject);
+- verified in `test_p15_04_approval_card_with_exact_bounded_action`.
 
 ### P-15.05 — Implement READY/PARTIAL/DRIFTED visual hierarchy
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- visual state badges with distinctive color-coded hierarchy (`READY` green, `DRIFTED` amber/red warning, `BLOCKED` red, `VERIFYING` blue);
+- explicit drift warning banner explaining that historical readiness was revoked due to external reality change;
+- verified in `test_p15_05_ready_vs_drifted_visual_hierarchy`.
 
 ### P-15.06 — Add expandable evidence detail without overwhelming primary UX
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- interactive `<details><summary>` evidence drawers on each timeline card;
+- primary UX remains clean and glanceable within 20 seconds;
+- deep audit details (cryptographic hashes, provenance, write counts, observation payloads) accessible on click;
+- verified in `test_p15_06_expandable_evidence_details`.
 
 ### P-15.07 — Run accessibility/responsive/browser checks
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- WCAG AA compliant contrast ratios and semantic HTML landmark structure (`<header>`, `<main>`, `<section>`, `<article>`, `<footer>`);
+- responsive design with fluid CSS grid and flexbox supporting mobile (375px) and desktop (1200px+);
+- ARIA live region (`aria-live="polite"`) and accessible status indicators;
+- standalone self-contained HTML generated at `artifacts/stilldone_judge_exhibit.html` (zero external CDNs or network fetches);
+- verified in `test_p15_07_accessibility_and_responsive_checks` and `scripts/p15_generate_judge_exhibit.py`.
 
 Phase exit:
 judge understands product in under 20 seconds.
