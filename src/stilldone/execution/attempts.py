@@ -173,6 +173,8 @@ def record_task_create_result(result: TaskCreateResult) -> ProviderExecutionResu
     details: dict[str, Any] = {
         "task_id_present": result.task_id is not None,
     }
+    if result.task_id is not None:
+        details["task_id"] = result.task_id
 
     return ProviderExecutionResult(
         action_type=ActionType.TASK_CREATE,

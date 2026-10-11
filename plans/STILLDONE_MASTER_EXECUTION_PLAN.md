@@ -1669,8 +1669,10 @@ Acceptance:
 Status: BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross Architecture Estimates Bounded; Account Billing Metrics Preserved as NOT_OBSERVED Pending Live Account Observation)
 
 Acceptance:
-- gross estimated spend strictly bounded under $0.05 USD (actual gross < $0.01 USD);
-- net personal spend, promotional credit sufficiency, and zero personal spend maintenance preserved as `NOT_OBSERVED` without an explicit live `AWSAccountObservation`;
+- gross costs strictly separated into `ESTIMATED_GROSS_COST` (< $0.05 USD bounded) and `RECORDED_HISTORICAL_USAGE` (September 2026 recorded MicroVM usage);
+- promotional credit coverage cannot be asserted to definitively cover all usage without independent account evidence;
+- `AWSAccountObservation` requires an authoritative timestamp, valid provenance, and a source reference resolved against durable repository evidence;
+- net personal spend, promotional credit sufficiency, and zero personal spend maintenance preserved as `NOT_OBSERVED` without an authoritative, verified `AWSAccountObservation`;
 - Zero Personal Spend Law ($0.00) architectural invariants enforced fail-closed;
 - verified in `test_p16_05_cost_impact_validation_against_zero_personal_spend`.
 

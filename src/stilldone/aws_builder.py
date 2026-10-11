@@ -22,15 +22,40 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
     KillerMissionSliceOutcome,
 )
+
+
+def is_resolved_evidence_reference(source_reference: str | None) -> bool:
+    """Validate whether a source reference resolves to a durable evidence artifact in the repo."""
+    if not source_reference or not isinstance(source_reference, str):
+        return False
+    ref = source_reference.strip()
+    if not ref:
+        return False
+    # Reject web URLs or random external strings
+    if ref.startswith("http://") or ref.startswith("https://"):
+        return False
+    try:
+        p = Path(ref)
+        if p.is_file() and p.exists():
+            return True
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        resolved = (repo_root / p).resolve()
+        if resolved.is_file() and resolved.exists():
+            return True
+    except Exception:
+        return False
+    return False
+
 
 # ===========================================================================
 # P-16.01: AWS Critical Path Audit Models
@@ -93,7 +118,13 @@ def audit_critical_path_aws_services(
     Account coverage (covered_by_free_tier_or_credit) derives only from an explicit
     timestamped AWSAccountObservation, returning None ('NOT_OBSERVED') otherwise.
     """
-    coverage = observation.promotional_credit_budget_sufficient if observation is not None else None
+    coverage = (
+        observation.promotional_credit_budget_sufficient
+        if (
+            observation is not None and is_resolved_evidence_reference(observation.source_reference)
+        )
+        else None
+    )
 
     return [
         AWSServiceAuditEntry(
@@ -1003,31 +1034,39 @@ class CloudWatchLiveProofHarness:
                     cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
-            try:
-                cw_resp = cw_client.get_metric_data(
-                    MetricDataQueries=[
-                        {
-                            "Id": "m1",
-                            "MetricStat": {
-                                "Metric": {
-                                    "Namespace": namespace,
-                                    "MetricName": metric_name,
-                                    "Dimensions": [
-                                        {"Name": "Environment", "Value": self.environment}
-                                    ],
+            # Bounded polling for asynchronous EMF extraction (Defect F)
+            emission_dt = datetime.fromtimestamp(timestamp_ms / 1000.0, UTC)
+            window_start = emission_dt - timedelta(seconds=60)
+            window_end = emission_dt + timedelta(seconds=120)
+
+            metric_deadline = time.time() + timeout_seconds
+            observed_metric_value: float | None = None
+            metric_verified = False
+            last_metric_error: str | None = None
+
+            while time.time() < metric_deadline:
+                try:
+                    cw_resp = cw_client.get_metric_data(
+                        MetricDataQueries=[
+                            {
+                                "Id": "m1",
+                                "MetricStat": {
+                                    "Metric": {
+                                        "Namespace": namespace,
+                                        "MetricName": metric_name,
+                                        "Dimensions": [
+                                            {"Name": "Environment", "Value": self.environment}
+                                        ],
+                                    },
+                                    "Period": 60,
+                                    "Stat": "Average",
                                 },
-                                "Period": 60,
-                                "Stat": "Average",
-                            },
-                        }
-                    ],
-                    StartTime=datetime.fromtimestamp((timestamp_ms // 1000) - 120, UTC),
-                    EndTime=datetime.fromtimestamp((timestamp_ms // 1000) + 120, UTC),
-                )
-                vals: list[float] = []
-                for res in cw_resp.get("MetricDataResults", []):
-                    vals.extend(res.get("Values", []))
-                if not vals:
+                            }
+                        ],
+                        StartTime=window_start,
+                        EndTime=window_end,
+                    )
+                except Exception as cw_exc:
                     return CloudWatchLiveProofResult(
                         status="FAILED",
                         namespace=namespace,
@@ -1035,13 +1074,23 @@ class CloudWatchLiveProofHarness:
                         region=self.region,
                         source_sha=source_sha,
                         timestamp_utc=datetime.now(UTC).isoformat(),
-                        details="CloudWatch metric API query returned no metric datapoints.",
+                        details=f"CloudWatch metric API query failed: {type(cw_exc).__name__}",
                         is_verified=False,
                         is_billable=True,
                         cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                     )
-                matching_vals = [v for v in vals if abs(v - expected_metric_value) < 1e-4]
-                if not matching_vals:
+
+                results = cw_resp.get("MetricDataResults", [])
+                if not results:
+                    last_metric_error = (
+                        "CloudWatch metric API query returned empty MetricDataResults."
+                    )
+                    time.sleep(poll_interval_seconds)
+                    continue
+
+                res = results[0]
+                query_id = res.get("Id")
+                if query_id != "m1":
                     return CloudWatchLiveProofResult(
                         status="FAILED",
                         namespace=namespace,
@@ -1050,15 +1099,110 @@ class CloudWatchLiveProofHarness:
                         source_sha=source_sha,
                         timestamp_utc=datetime.now(UTC).isoformat(),
                         details=(
-                            f"CloudWatch metric API query returned values {vals}, "
-                            f"none matching expected {expected_metric_value}."
+                            f"CloudWatch metric query result Id mismatch: expected 'm1', "
+                            f"got '{query_id}'."
                         ),
                         is_verified=False,
                         is_billable=True,
                         cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                     )
-                observed_metric_value = float(matching_vals[0])
-            except Exception as cw_exc:
+
+                status_code = res.get("StatusCode")
+                if status_code != "Complete":
+                    return CloudWatchLiveProofResult(
+                        status="FAILED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=(
+                            f"CloudWatch metric query returned incomplete StatusCode: "
+                            f"'{status_code}'."
+                        ),
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+
+                timestamps = res.get("Timestamps", [])
+                values = res.get("Values", [])
+
+                if len(timestamps) != len(values):
+                    return CloudWatchLiveProofResult(
+                        status="FAILED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=(
+                            f"CloudWatch metric query length mismatch: {len(timestamps)} "
+                            f"timestamps vs {len(values)} values."
+                        ),
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+
+                if not timestamps or not values:
+                    last_metric_error = (
+                        "No extracted metric observed within polling deadline "
+                        "(empty timestamps/values)."
+                    )
+                    time.sleep(poll_interval_seconds)
+                    continue
+
+                # Filter and check correlation window
+                current_pairs: list[tuple[datetime, float]] = []
+                stale_count = 0
+                for ts_point, val_point in zip(timestamps, values, strict=True):
+                    if isinstance(ts_point, datetime):
+                        ts_utc = (
+                            ts_point.replace(tzinfo=UTC) if ts_point.tzinfo is None else ts_point
+                        )
+                    else:
+                        ts_utc = datetime.fromtimestamp(ts_point, UTC)
+                    if window_start <= ts_utc <= window_end:
+                        current_pairs.append((ts_utc, float(val_point)))
+                    else:
+                        stale_count += 1
+
+                if not current_pairs:
+                    last_metric_error = (
+                        f"Stale metric datapoints observed outside emission-correlated "
+                        f"time window ({stale_count} stale points)."
+                    )
+                    time.sleep(poll_interval_seconds)
+                    continue
+
+                # Check value among current pairs
+                matching = [
+                    val for _, val in current_pairs if abs(val - expected_metric_value) < 1e-4
+                ]
+                if not matching:
+                    observed_vals = [val for _, val in current_pairs]
+                    return CloudWatchLiveProofResult(
+                        status="FAILED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=(
+                            f"CloudWatch metric API query returned values {observed_vals}, "
+                            f"none matching expected {expected_metric_value} in emission window."
+                        ),
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+
+                observed_metric_value = float(matching[0])
+                metric_verified = True
+                break
+
+            if not metric_verified:
                 return CloudWatchLiveProofResult(
                     status="FAILED",
                     namespace=namespace,
@@ -1066,7 +1210,8 @@ class CloudWatchLiveProofHarness:
                     region=self.region,
                     source_sha=source_sha,
                     timestamp_utc=datetime.now(UTC).isoformat(),
-                    details=f"CloudWatch metric API query failed: {type(cw_exc).__name__}",
+                    details=last_metric_error
+                    or f"No extracted metric observed within {timeout_seconds}s polling deadline.",
                     is_verified=False,
                     is_billable=True,
                     cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
@@ -1128,8 +1273,14 @@ class AWSAccountObservation:
             raise ValueError("observed_at must be timezone-aware (UTC)")
         if not isinstance(self.provenance, EvidenceProvenance):
             raise TypeError("provenance must be an EvidenceProvenance instance")
-        if self.provenance == EvidenceProvenance.RECORDED_LIVE and not self.source_reference:
-            raise ValueError("source_reference is required when provenance is RECORDED_LIVE")
+        if self.provenance == EvidenceProvenance.RECORDED_LIVE:
+            if not self.source_reference or not self.source_reference.strip():
+                raise ValueError("source_reference is required when provenance is RECORDED_LIVE")
+            if not is_resolved_evidence_reference(self.source_reference):
+                raise ValueError(
+                    "source_reference for RECORDED_LIVE must resolve to an existing durable "
+                    f"evidence artifact in the repository; got {self.source_reference!r}"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1192,7 +1343,8 @@ def generate_aws_builder_evidence_map(
     services = audit_critical_path_aws_services(observation=observation)
     gross_spend = sum((s.estimated_cost_usd for s in services), Decimal("0.00000000"))
 
-    if observation is not None:
+    # Only accept source references that can be resolved against canonical evidence boundary
+    if observation is not None and is_resolved_evidence_reference(observation.source_reference):
         return AWSBuilderEvidenceMap(
             architecture_title="StillDone Verifiable Outcome Engine on AWS",
             aws_services=services,
@@ -1206,6 +1358,7 @@ def generate_aws_builder_evidence_map(
             observed_net_personal_spend=observation.observed_net_personal_spend_usd,
         )
 
+    # Without accepted account evidence all account facts remain NOT_OBSERVED
     return AWSBuilderEvidenceMap(
         architecture_title="StillDone Verifiable Outcome Engine on AWS",
         aws_services=services,
@@ -1232,5 +1385,6 @@ __all__ = [
     "InvalidEMFRecordError",
     "audit_critical_path_aws_services",
     "generate_aws_builder_evidence_map",
+    "is_resolved_evidence_reference",
     "record_killer_mission_telemetry",
 ]

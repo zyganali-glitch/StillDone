@@ -48,6 +48,9 @@ from stilldone.adapters.weather import (
     OpenMeteoHttpTransport,
     OpenMeteoReadAdapter,
     WeatherLocationConfig,
+    WeatherObservation,
+    WeatherReadResult,
+    WeatherReadStatus,
     WeatherTransport,
 )
 from stilldone.approval_binding import (
@@ -143,6 +146,10 @@ from stilldone.verifier.contracts import (
     VerificationObservation,
     VerificationRequest,
 )
+from stilldone.verifier.freshness import (
+    FreshnessStatus,
+    evaluate_freshness,
+)
 from stilldone.verifier.predicates import (
     PredicateTruth,
     evaluate_predicate,
@@ -177,6 +184,12 @@ def get_canonical_mission_timestamps(demo_date: str = "2026-10-04") -> dict[str,
     """Generate canonical UTC timestamps for the killer mission from a single target date."""
     if not DATE_FORMAT_RE.match(demo_date):
         raise ValueError(f"Invalid demo_date format: {demo_date!r}; expected YYYY-MM-DD")
+    try:
+        datetime.strptime(demo_date, "%Y-%m-%d")
+    except ValueError as val_err:
+        raise ValueError(
+            f"Invalid demo_date: {demo_date!r} is not a valid calendar date"
+        ) from val_err
     return {
         "initial_start": f"{demo_date}T07:45:00+00:00",
         "initial_end": f"{demo_date}T08:15:00+00:00",
@@ -253,6 +266,144 @@ class InvalidEnvironmentConfigurationError(KillerMissionError):
 
 class LivePreflightBlockedError(KillerMissionError):
     """Raised when live execution preflight checks fail or require operator consent."""
+
+
+class CanonicalKillerPlanValidationError(KillerMissionError):
+    """Base exception for canonical killer mission plan validation failures."""
+
+
+class InvalidActionCountError(CanonicalKillerPlanValidationError):
+    """Raised when candidate plan does not contain exactly 3 steps."""
+
+
+class InvalidActionOrderError(CanonicalKillerPlanValidationError):
+    """Raised when candidate plan steps are in wrong dependency order."""
+
+
+class InvalidActionTypeError(CanonicalKillerPlanValidationError):
+    """Raised when candidate plan action types do not match expected canonical types."""
+
+
+class InvalidSymbolicTargetError(CanonicalKillerPlanValidationError):
+    """Raised when candidate plan targets do not match expected symbolic targets."""
+
+
+class InvalidPlanParameterError(CanonicalKillerPlanValidationError):
+    """Raised when plan step parameters do not match runtime target date or constraints."""
+
+
+class DuplicatedMutationError(CanonicalKillerPlanValidationError):
+    """Raised when candidate plan contains duplicated mutations."""
+
+
+def validate_canonical_killer_mission_plan(
+    plan: CandidatePlanProposal,
+    *,
+    target_date: str,
+    desired_start_time: str,
+    scope: DemoResourceScope | None = None,
+) -> None:
+    """Validate candidate plan strictly against canonical killer mission contract (Defect B).
+
+    Enforces before any execution or mutation occurs:
+    1. Exactly three expected actions in correct dependency order.
+    2. Expected action types and symbolic target references:
+       - step 0: WEATHER_READ -> WEATHER_LOCATION
+       - step 1: TASK_CREATE -> TASK_LIST
+       - step 2: CALENDAR_UPDATE -> LEAVE_FOR_SCHOOL
+    3. Exact runtime target date and bounded intended parameters:
+       - step 1 parameters: title == "Pack backpacks", due == target_date
+       - step 2 parameters: start_time == desired_start_time
+    4. Dedicated demo scope.
+    5. No additional, missing, repeated or reordered mutation.
+    6. Model output grants no approval, authority, READY or verification.
+    """
+    if not isinstance(plan, CandidatePlanProposal):
+        raise TypeError(f"plan must be CandidatePlanProposal, got {type(plan).__name__}")
+
+    steps = plan.steps
+    if len(steps) != 3:
+        raise InvalidActionCountError(
+            f"Canonical killer mission plan requires exactly 3 steps, got {len(steps)}"
+        )
+
+    action_types = [s.action_type for s in steps]
+    if len(set(action_types)) != 3:
+        raise DuplicatedMutationError(
+            f"Candidate plan contains duplicated action types: {[a.value for a in action_types]}"
+        )
+
+    # 1. Step 0: WEATHER_READ
+    s0 = steps[0]
+    if s0.action_type != ActionType.WEATHER_READ:
+        if ActionType.WEATHER_READ in action_types:
+            raise InvalidActionOrderError(
+                f"Step 0 must be WEATHER_READ, got {s0.action_type.value}"
+            )
+        raise InvalidActionTypeError(
+            f"Step 0 must be ActionType.WEATHER_READ, got {s0.action_type.value}"
+        )
+    if s0.target_ref != SymbolicTargetRef.WEATHER_LOCATION:
+        raise InvalidSymbolicTargetError(
+            f"Step 0 target_ref must be {SymbolicTargetRef.WEATHER_LOCATION.value}, "
+            f"got {s0.target_ref.value}"
+        )
+
+    # 2. Step 1: TASK_CREATE
+    s1 = steps[1]
+    if s1.action_type != ActionType.TASK_CREATE:
+        if ActionType.TASK_CREATE in action_types:
+            raise InvalidActionOrderError(f"Step 1 must be TASK_CREATE, got {s1.action_type.value}")
+        raise InvalidActionTypeError(
+            f"Step 1 must be ActionType.TASK_CREATE, got {s1.action_type.value}"
+        )
+    if s1.target_ref != SymbolicTargetRef.TASK_LIST:
+        raise InvalidSymbolicTargetError(
+            f"Step 1 target_ref must be {SymbolicTargetRef.TASK_LIST.value}, "
+            f"got {s1.target_ref.value}"
+        )
+    task_title = s1.parameters.get("title")
+    if task_title != CANONICAL_DEMO_TASK_TITLE:
+        raise InvalidPlanParameterError(
+            f"Task title mismatch: expected {CANONICAL_DEMO_TASK_TITLE!r}, got {task_title!r}"
+        )
+    task_due = s1.parameters.get("due")
+    if task_due != target_date:
+        raise InvalidPlanParameterError(
+            f"Task due date mismatch: expected {target_date!r}, got {task_due!r}"
+        )
+
+    # 3. Step 2: CALENDAR_UPDATE
+    s2 = steps[2]
+    if s2.action_type != ActionType.CALENDAR_UPDATE:
+        if ActionType.CALENDAR_UPDATE in action_types:
+            raise InvalidActionOrderError(
+                f"Step 2 must be CALENDAR_UPDATE, got {s2.action_type.value}"
+            )
+        raise InvalidActionTypeError(
+            f"Step 2 must be ActionType.CALENDAR_UPDATE, got {s2.action_type.value}"
+        )
+    if s2.target_ref != SymbolicTargetRef.LEAVE_FOR_SCHOOL:
+        raise InvalidSymbolicTargetError(
+            f"Step 2 target_ref must be {SymbolicTargetRef.LEAVE_FOR_SCHOOL.value}, "
+            f"got {s2.target_ref.value}"
+        )
+    cal_start = s2.parameters.get("start_time")
+    if cal_start != desired_start_time:
+        raise InvalidPlanParameterError(
+            f"Calendar start_time mismatch: expected {desired_start_time!r}, got {cal_start!r}"
+        )
+
+    # Scope validation
+    if scope is not None:
+        if scope.calendar_id in ("primary", "default", "@default", ""):
+            raise InvalidPlanParameterError(
+                f"Scope calendar_id {scope.calendar_id!r} is not a dedicated demo container"
+            )
+        if scope.task_list_id in ("primary", "default", "@default", ""):
+            raise InvalidPlanParameterError(
+                f"Scope task_list_id {scope.task_list_id!r} is not a dedicated demo container"
+            )
 
 
 # ===========================================================================
@@ -1025,11 +1176,17 @@ class KillerMissionSliceRunner:
     def _setup_canonical_plan(self) -> None:
         """Compile canonical plan and action tracking (fixture deterministic proposal)."""
         self.candidate_plan = self._create_deterministic_proposal()
+        validate_canonical_killer_mission_plan(
+            self.candidate_plan,
+            target_date=self.demo_date,
+            desired_start_time=self.desired_start_time,
+            scope=self.env.scope,
+        )
 
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
             event_id_mappings={
-                SymbolicTargetRef.LEAVE_FOR_SCHOOL: self.seeded_event_id,
+                SymbolicTargetRef.LEAVE_FOR_SCHOOL: self.seeded_event_id or CANONICAL_DEMO_EVENT_ID,
             },
         )
         self.execution_contract = compile_candidate_plan(
@@ -1063,9 +1220,28 @@ class KillerMissionSliceRunner:
         )
         self.total_writes += seed_result.writes_performed
 
-        if self.live_mode and seed_result.event_id:
-            self.seeded_event_id = seed_result.event_id
-        elif not self.live_mode:
+        if self.live_mode:
+            if not seed_result.event_id or not seed_result.event_id.strip():
+                raise KillerMissionVerificationError(
+                    "Live demo seeding failed to establish an authoritative provider event ID"
+                )
+            self.seeded_event_id = seed_result.event_id.strip()
+            # Rebind calendar update action to the exact provider event_id
+            target_cal = TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id=self.seeded_event_id,
+                parent_id=self.env.scope.calendar_id,
+            )
+            self.action_cal = ActionContract.create(
+                mission_id=self.mission_id,
+                action_type=ActionType.CALENDAR_UPDATE,
+                target=target_cal,
+                parameters={"start_time": self.desired_start_time},
+                action_id=self.action_cal.action_id,
+            )
+            self.validated_action_cal = validate_action_contract(self.action_cal)
+        else:
             self.seeded_event_id = CANONICAL_DEMO_EVENT_ID
 
         # Also seed in fake calendar runtime transport for subsequent steps
@@ -1097,13 +1273,12 @@ class KillerMissionSliceRunner:
             status="PASS",
             provenance=self.env.provenance,
             details=(
-                f"Demo seeded: event '{CANONICAL_DEMO_EVENT_TITLE}' "
-                f"(id={self.seeded_event_id}) at 07:45 UTC, "
+                f"Demo seeded: event '{CANONICAL_DEMO_EVENT_TITLE}' at 07:45 UTC, "
                 "prep task absent (clean pre-state verified)."
             ),
             writes_performed=seed_result.writes_performed,
             is_verified=seed_result.readback_verified,
-            extra_metadata={"seeded_event_id": self.seeded_event_id},
+            extra_metadata={"seeded_event_established": True},
         )
         self.step_results["P-13.01"] = res
         return res
@@ -1136,8 +1311,6 @@ class KillerMissionSliceRunner:
                 "fallback to deterministic proposal is strictly prohibited."
             )
 
-        now = datetime.now(UTC)
-
         # Execute initial read-only weather observation (READ_ONLY, 0 writes)
         weather_gate = execute_gated_action(
             validate_action_contract(self.action_weather),
@@ -1149,19 +1322,61 @@ class KillerMissionSliceRunner:
         if weather_gate.provider_result is None or not weather_gate.provider_result.success:
             raise KillerMissionExecutionError("Weather read provider execution failed")
 
-        weather_prov = (
-            EvidenceProvenance.LIVE_EXTERNAL
-            if (self.live_mode and not is_synthetic_transport(self.env.weather_transport))
-            else (
-                EvidenceProvenance.LOCAL_EXECUTION if self.live_mode else EvidenceProvenance.FIXTURE
-            )
+        # Independent provider observation from canonical OpenMeteoReadAdapter (Defect A)
+        weather_result: WeatherReadResult = self.weather_adapter.read_weather(
+            validate_action_contract(self.action_weather)
         )
+        if weather_result.status != WeatherReadStatus.MATCH or weather_result.observation is None:
+            raise KillerMissionVerificationError(
+                "Weather read failed to produce a valid observation "
+                f"(status={weather_result.status.value})"
+            )
+
+        obs: WeatherObservation = weather_result.observation
+
+        # Validate observation constraints fail-closed
+        if obs.location_id != self.action_weather.target.resource_id:
+            raise KillerMissionVerificationError(
+                f"Weather observation location mismatch: expected "
+                f"{self.action_weather.target.resource_id!r}, got {obs.location_id!r}"
+            )
+        if not obs.provider_valid_time:
+            raise KillerMissionVerificationError("Weather observation missing provider_valid_time")
+        if not obs.attribution or not obs.attribution.provider:
+            raise KillerMissionVerificationError(
+                "Weather observation missing required provider attribution"
+            )
+
+        # Check temporal validity / freshness without refreshing timestamps
+        eval_now = datetime.now(UTC)
+        freshness_eval = evaluate_freshness(
+            obs.observed_at,
+            at=eval_now,
+            freshness_contract=self.pred_weather.freshness,
+        )
+        if freshness_eval.status != FreshnessStatus.FRESH:
+            raise KillerMissionVerificationError(
+                f"Weather observation is stale or temporally invalid: {freshness_eval.status.value}"
+            )
+
+        # Deterministically derive weather properties from verified observation
         self.weather_observation = VerificationObservation(
             target=self.action_weather.target,
-            observed_at=now,
+            observed_at=obs.observed_at,  # actual provider observation time preserved
             exists=True,
-            properties={"weather_status": "available"},
-            provenance=weather_prov,
+            properties={
+                "weather_status": "available",
+                "location_id": obs.location_id,
+                "temperature_2m": obs.temperature_2m,
+                "precipitation": obs.precipitation,
+                "weather_code": obs.weather_code,
+                "wind_speed_10m": obs.wind_speed_10m,
+                "provider_valid_time": obs.provider_valid_time,
+                "provider": obs.attribution.provider,
+                "license": obs.attribution.license,
+            },
+            provenance=obs.provenance,
+            raw_observation=obs,
         )
 
         res = KillerMissionStepResult(
@@ -1226,17 +1441,19 @@ class KillerMissionSliceRunner:
             raise KillerMissionExecutionError("Tasks preparation provider execution failed")
         self.total_writes += 1
 
-        # Discover created task id from transport for independent read-back
-        items, _ = self.env.tasks_transport.list_tasks(self.env.scope.task_list_id)
-        matching = [t for t in items if t.title == CANONICAL_DEMO_TASK_TITLE]
-        if matching:
-            self.created_task_id = matching[0].id
-        else:
-            created_task_id = gate_decision.provider_result.details.get("task_id")
-            if created_task_id:
-                self.created_task_id = str(created_task_id)
+        # Discover created task id strictly from authoritative provider create result (Defect D)
+        created_task_id = gate_decision.provider_result.details.get("task_id")
+        if (
+            not created_task_id
+            or not isinstance(created_task_id, str)
+            or not created_task_id.strip()
+        ):
+            raise KillerMissionVerificationError(
+                "Authoritative task.create result did not return an exact provider task ID"
+            )
+        self.created_task_id = str(created_task_id).strip()
 
-        # Independent provider read-back
+        # Independent provider read-back by exact task ID (NO title-based substitution)
         target_task = TargetIdentity(
             system="google_tasks",
             resource_kind=ResourceKind.TASK,
@@ -1259,6 +1476,15 @@ class KillerMissionSliceRunner:
             raise KillerMissionVerificationError(
                 f"Task title mismatch: expected {CANONICAL_DEMO_TASK_TITLE!r}, "
                 f"got {read_result.observation.title!r}"
+            )
+        if read_result.observation.status != "needsAction":
+            raise KillerMissionVerificationError(
+                f"Expected task status 'needsAction', got {read_result.observation.status!r}"
+            )
+        if read_result.observation.task_list_id != self.env.scope.task_list_id:
+            raise KillerMissionVerificationError(
+                f"Task list mismatch: expected {self.env.scope.task_list_id!r}, "
+                f"got {read_result.observation.task_list_id!r}"
             )
 
         # Evaluate predicate deterministically
@@ -1956,17 +2182,27 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         git_runner: Callable[[list[str]], Any] | None = None,
         demo_date: str | None = None,
         calendar_decision: ApprovalDecision | str | None = None,
+        post_pending_decision_callback: Callable[[PendingApproval], ApprovalDecision | str | None]
+        | None = None,
     ) -> None:
         if env.provenance == EvidenceProvenance.FIXTURE:
             raise InvalidEnvironmentConfigurationError(
                 "LiveKillerMissionSliceRunner cannot run in a FIXTURE environment"
             )
+        # Pre-authorized live APPROVE is strictly prohibited (Defect C)
+        if calendar_decision in (ApprovalDecision.APPROVE, "APPROVE"):
+            raise KillerMissionAuthorityError(
+                "Pre-authorized calendar approval is strictly prohibited in live mode; "
+                "human approval must occur after PendingApproval exists."
+            )
+
         self.source_sha = source_sha
         self.expected_source_sha = expected_source_sha
         self.clean_working_tree_required = clean_working_tree_required
         self.google_credentials = google_credentials
         self.aws_credentials_available = aws_credentials_available
         self.git_runner = git_runner
+        self.post_pending_decision_callback = post_pending_decision_callback
         self.preflight_report: LivePreflightReport | None = None
 
         # Resolve live demo target date: default to tomorrow in UTC if not provided
@@ -2040,6 +2276,14 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         plan_result = self.bedrock_planner.plan(planner_input)
         self.candidate_plan = plan_result.plan
 
+        # Validate exact 3-step killer mission plan before ANY resolution or execution (Defect B)
+        validate_canonical_killer_mission_plan(
+            self.candidate_plan,
+            target_date=self.demo_date,
+            desired_start_time=self.desired_start_time,
+            scope=self.env.scope,
+        )
+
         # Use the exact provider event_id established by seeding / read-back
         actual_event_id = self.seeded_event_id
         resolver = SymbolicTargetResolver(
@@ -2077,7 +2321,10 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
     ) -> KillerMissionStepResult:
         """Execute calendar update step; gated strictly by live preflight."""
         self._require_preflight()
-        return super().step_p13_05_calendar_approve(decision=decision)
+        eff_decision = decision
+        if eff_decision is None and self.post_pending_decision_callback is not None:
+            eff_decision = self.post_pending_decision_callback(self.pending_approval)
+        return super().step_p13_05_calendar_approve(decision=eff_decision)
 
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
         """Produce ready receipt; gated strictly by live preflight."""
@@ -2085,12 +2332,26 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         return super().step_p13_06_ready_receipt()
 
     def step_p13_07_mutate_and_drift(self) -> KillerMissionStepResult:
-        """Mutate and drift; gated strictly by live preflight."""
+        """Mutate and drift; in live execution external drift is NOT exercised automatically."""
         self._require_preflight()
-        return super().step_p13_07_mutate_and_drift()
+        res = KillerMissionStepResult(
+            task_id="P-13.07",
+            step_name="Mutate Calendar Externally & Reconcile Drift",
+            status="NOT_RUN",
+            provenance=self.env.provenance,
+            details=(
+                "External drift was not exercised in live execution. Live drift remains "
+                "NOT_RUN until a separate authorized external mutation occurs."
+            ),
+            writes_performed=0,
+            is_verified=False,
+            extra_metadata={"live_drift_pending": True},
+        )
+        self.step_results["P-13.07"] = res
+        return res
 
     def run_full_slice(self) -> KillerMissionSliceOutcome:
-        """Execute full slice, gated strictly by live preflight before ANY step or mutation."""
+        """Execute full slice, gated strictly by live preflight; stops at READY."""
         report = self.evaluate_preflight()
         if not report.is_ready:
             blocker_text = "; ".join(report.blocker_reasons)
@@ -2127,7 +2388,75 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 is_live=True,
             )
 
-        return super().run_full_slice()
+        self.step_p13_01_seed()
+        step2 = self.step_p13_02_plan()
+        if step2.status == "BLOCKED_LIVE":
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.DRAFT,
+                total_writes_performed=self.total_writes,
+                provenance=self.env.provenance,
+                is_live=True,
+            )
+        self.step_p13_03_tasks_prep()
+        self.step_p13_04_calendar_pause()
+        step5 = self.step_p13_05_calendar_approve()
+        if step5.status in ("AWAITING_APPROVAL", "REJECTED", "PAUSED", "BLOCKED_LIVE"):
+            final_st = (
+                MissionState.CANCELLED
+                if step5.status == "REJECTED"
+                else (
+                    MissionState.NEEDS_APPROVAL
+                    if step5.status == "AWAITING_APPROVAL"
+                    else MissionState.DRAFT
+                )
+            )
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=final_st,
+                total_writes_performed=self.total_writes,
+                provenance=self.env.provenance,
+                is_live=True,
+            )
+        self.step_p13_06_ready_receipt()
+
+        # In live execution, do NOT run fixture-only drift; mark P-13.07 NOT_RUN (Defect E)
+        self.step_results["P-13.07"] = KillerMissionStepResult(
+            task_id="P-13.07",
+            step_name="Mutate Calendar Externally & Reconcile Drift",
+            status="NOT_RUN",
+            provenance=self.env.provenance,
+            details=(
+                "External drift was not exercised in live execution. Live drift remains "
+                "NOT_RUN until a separate authorized external mutation occurs."
+            ),
+            writes_performed=0,
+            is_verified=False,
+            extra_metadata={"live_drift_pending": True},
+        )
+
+        return KillerMissionSliceOutcome(
+            mission_id=self.mission_id,
+            intent=self.intent_text,
+            steps=dict(self.step_results),
+            ready_receipt_hash=self.ready_receipt_hash,
+            drifted_receipt_hash=None,
+            historical_receipt_immutable=True,
+            final_state=MissionState.READY,
+            total_writes_performed=self.total_writes,
+            provenance=self.env.provenance,
+            is_live=True,
+        )
 
 
 __all__ = [

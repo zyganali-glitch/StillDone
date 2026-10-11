@@ -92,8 +92,21 @@ def run_killer_mission(
                 local_blockers.append(
                     f"demo_date must be formatted YYYY-MM-DD; got: '{resolved_date}'."
                 )
+            else:
+                try:
+                    datetime.strptime(resolved_date, "%Y-%m-%d")
+                except ValueError:
+                    local_blockers.append(
+                        f"demo_date '{resolved_date}' is an impossible calendar date."
+                    )
         else:
             resolved_date = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if calendar_decision in ("APPROVE",):
+            local_blockers.append(
+                "Pre-authorized --calendar-decision APPROVE is prohibited in live mode. "
+                "Human approval must occur after the exact PendingApproval has been produced."
+            )
 
         # Git checks (fail-closed)
         try:
@@ -174,9 +187,7 @@ def run_killer_mission(
 
         if has_google_token:
             try:
-                from google.oauth2.credentials import (  # type: ignore[import-not-found]
-                    Credentials,
-                )
+                from google.oauth2.credentials import Credentials
                 from googleapiclient.discovery import (  # type: ignore[import-not-found]
                     build,
                 )
@@ -187,7 +198,9 @@ def run_killer_mission(
                     else creds_path
                 )
                 if resolved_token and os.path.exists(str(resolved_token)):
-                    creds = Credentials.from_authorized_user_file(str(resolved_token))
+                    creds = Credentials.from_authorized_user_file(  # type: ignore[no-untyped-call]
+                        str(resolved_token)
+                    )
                     google_creds = creds
                     cal_service = build("calendar", "v3", credentials=creds)
                     tasks_service = build("tasks", "v1", credentials=creds)

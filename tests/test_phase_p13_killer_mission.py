@@ -966,6 +966,7 @@ def test_adversarial_live_mode_compilation_with_injected_bedrock_planner(
         aws_credentials_available=True,
         bedrock_planner=planner_adapter,
         source_sha="1111111111111111111111111111111111111111",
+        demo_date="2026-10-04",
     )
 
     # Mock preflight pass for isolated step_p13_02 compilation test
@@ -1025,6 +1026,7 @@ def test_adversarial_provider_generated_event_id_propagation(
         aws_credentials_available=True,
         bedrock_planner=fake_planner,
         source_sha="1111111111111111111111111111111111111111",
+        demo_date="2026-10-04",
     )
     mock_report = LivePreflightReport(
         is_ready=True,
@@ -1052,7 +1054,7 @@ def test_adversarial_provider_generated_event_id_propagation(
     step_task = CandidateActionProposal.create(
         action_type=ActionType.TASK_CREATE,
         target_ref=SymbolicTargetRef.TASK_LIST,
-        parameters={"title": "Pack backpacks"},
+        parameters={"title": "Pack backpacks", "due": "2026-10-04"},
         explanation="Create prep task",
     )
     step_cal = CandidateActionProposal.create(
@@ -1185,3 +1187,481 @@ def test_cli_phase_a_zero_sdk_local_gate_halt() -> None:
         demo_date="2026/10/04",
     )
     assert rc_bad_date == 2
+
+    # 5. Impossible calendar date halts with code 2 (Defect H)
+    rc_impossible_date = run_killer_mission(
+        live=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="c_test",
+        demo_task_list_id="tl_test",
+        demo_date="2026-02-31",
+    )
+    assert rc_impossible_date == 2
+
+    # 6. Pre-authorized live calendar APPROVE halts with code 2 (Defect C)
+    rc_pre_auth = run_killer_mission(
+        live=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="c_test",
+        demo_task_list_id="tl_test",
+        calendar_decision="APPROVE",
+    )
+    assert rc_pre_auth == 2
+
+
+def test_defect_a_weather_observation_requirements() -> None:
+    """Verify Defect A: weather fact must come from a validated provider observation."""
+    from datetime import timedelta
+
+    from stilldone.adapters.weather import (
+        ProviderAttribution,
+        WeatherObservation,
+        WeatherReadResult,
+        WeatherReadStatus,
+    )
+    from stilldone.domain.provenance import EvidenceProvenance as _Prov
+    from stilldone.killer_mission import (
+        CANONICAL_WEATHER_LOCATION_ID,
+        KillerMissionSliceRunner,
+        KillerMissionVerificationError,
+    )
+
+    def _obs(
+        *,
+        location_id: str = CANONICAL_WEATHER_LOCATION_ID,
+        observed_at: datetime | None = None,
+        provider_valid_time: str = "2026-10-04T07:00",
+        attribution: ProviderAttribution | None = None,
+    ) -> WeatherObservation:
+        return WeatherObservation(
+            location_id=location_id,
+            temperature_2m=15.0,
+            precipitation=0.0,
+            weather_code=0,
+            wind_speed_10m=5.0,
+            units={"temperature_2m": "°C"},
+            observed_at=observed_at or datetime.now(UTC),
+            attribution=attribution or ProviderAttribution(),
+            provenance=_Prov.FIXTURE,
+            provider_valid_time=provider_valid_time,
+        )
+
+    def _runner_with(result: WeatherReadResult) -> KillerMissionSliceRunner:
+        runner = KillerMissionSliceRunner()
+        runner.step_p13_01_seed()
+        fake = MagicMock()
+        fake.read_weather.return_value = result
+        runner.weather_adapter = fake
+        return runner
+
+    # 1. Provider error -> no READY-capable weather fact; untrusted provider text not echoed
+    r = _runner_with(
+        WeatherReadResult(
+            status=WeatherReadStatus.PROVIDER_ERROR,
+            error_message="secret-ish upstream text SENTINEL_X",
+        )
+    )
+    with pytest.raises(KillerMissionVerificationError, match="Weather read failed") as ei:
+        r.step_p13_02_plan()
+    assert "SENTINEL_X" not in str(ei.value)
+    assert r.weather_observation is None
+
+    # 2. MATCH status but empty observation
+    r = _runner_with(WeatherReadResult(status=WeatherReadStatus.MATCH, observation=None))
+    with pytest.raises(KillerMissionVerificationError, match="Weather read failed"):
+        r.step_p13_02_plan()
+    assert r.weather_observation is None
+
+    # 3. Contradictory metadata: wrong location binding
+    r = _runner_with(
+        WeatherReadResult(status=WeatherReadStatus.MATCH, observation=_obs(location_id="other"))
+    )
+    with pytest.raises(KillerMissionVerificationError, match="location mismatch"):
+        r.step_p13_02_plan()
+
+    # 4. Contradictory metadata: missing provider-valid time
+    r = _runner_with(
+        WeatherReadResult(status=WeatherReadStatus.MATCH, observation=_obs(provider_valid_time=""))
+    )
+    with pytest.raises(KillerMissionVerificationError, match="provider_valid_time"):
+        r.step_p13_02_plan()
+
+    # 5. Contradictory metadata: empty attribution provider
+    r = _runner_with(
+        WeatherReadResult(
+            status=WeatherReadStatus.MATCH,
+            observation=_obs(attribution=ProviderAttribution(provider="")),
+        )
+    )
+    with pytest.raises(KillerMissionVerificationError, match="attribution"):
+        r.step_p13_02_plan()
+
+    # 6. Stale observation is NOT refreshed with a new timestamp
+    r = _runner_with(
+        WeatherReadResult(
+            status=WeatherReadStatus.MATCH,
+            observation=_obs(observed_at=datetime.now(UTC) - timedelta(hours=2)),
+        )
+    )
+    with pytest.raises(KillerMissionVerificationError, match="stale"):
+        r.step_p13_02_plan()
+    assert r.weather_observation is None
+
+    # 7. Genuine observation is projected with its exact provider timestamp and provenance
+    genuine_ts = datetime.now(UTC) - timedelta(seconds=5)
+    genuine = _obs(observed_at=genuine_ts)
+    r = _runner_with(WeatherReadResult(status=WeatherReadStatus.MATCH, observation=genuine))
+    res = r.step_p13_02_plan()
+    assert res.status == "PASS"
+    assert r.weather_observation is not None
+    assert r.weather_observation.observed_at == genuine_ts
+    assert r.weather_observation.provenance == genuine.provenance
+    assert r.weather_observation.properties["provider_valid_time"] == "2026-10-04T07:00"
+    assert r.weather_observation.properties["provider"] == genuine.attribution.provider
+
+
+def _live_runner_for_boundary_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    **kwargs: object,
+) -> LiveKillerMissionSliceRunner:
+    """Live runner over production transport classes with injected (non-network) clients."""
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.killer_mission import LivePreflightReport
+
+    scope = DemoResourceScope("c_boundary_demo", "tl_boundary_demo")
+    live_env = KillerMissionEnvironment.create_live_environment(
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner = LiveKillerMissionSliceRunner(
+        env=live_env,
+        operator_approved=True,
+        aws_credentials_available=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_date="2026-10-04",
+        **kwargs,  # type: ignore[arg-type]
+    )
+    report = LivePreflightReport(
+        is_ready=True,
+        operator_approved=True,
+        source_sha_verified=True,
+        clean_working_tree_verified=True,
+        google_auth_available=True,
+        aws_bedrock_auth_available=True,
+        open_meteo_reachable=True,
+        disposable_scope_verified=True,
+        transports_verified=True,
+        blocker_reasons=[],
+    )
+    monkeypatch.setattr(runner, "evaluate_preflight", lambda: report)
+    return runner
+
+
+def test_defect_b_plan_validation_contract() -> None:
+    """Verify Defect B: exact canonical 3-step plan enforced at the P-13 mission boundary."""
+    from stilldone.killer_mission import (
+        CanonicalKillerPlanValidationError,
+        DuplicatedMutationError,
+        InvalidActionCountError,
+        InvalidActionOrderError,
+        InvalidActionTypeError,
+        InvalidPlanParameterError,
+        InvalidSymbolicTargetError,
+        validate_canonical_killer_mission_plan,
+    )
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        SymbolicTargetRef,
+    )
+
+    mid = "11111111-2222-3333-4444-555555555555"
+    date = "2026-10-04"
+    start = "2026-10-04T07:30:00+00:00"
+
+    def w() -> CandidateActionProposal:
+        return CandidateActionProposal.create(
+            action_type=ActionType.WEATHER_READ,
+            target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+            parameters={},
+            explanation="weather",
+        )
+
+    def t(due: str = date, title: str = CANONICAL_DEMO_TASK_TITLE) -> CandidateActionProposal:
+        return CandidateActionProposal.create(
+            action_type=ActionType.TASK_CREATE,
+            target_ref=SymbolicTargetRef.TASK_LIST,
+            parameters={"title": title, "due": due},
+            explanation="task",
+        )
+
+    def c(
+        start_time: str = start, ref: SymbolicTargetRef = SymbolicTargetRef.LEAVE_FOR_SCHOOL
+    ) -> CandidateActionProposal:
+        return CandidateActionProposal.create(
+            action_type=ActionType.CALENDAR_UPDATE,
+            target_ref=ref,
+            parameters={"start_time": start_time},
+            explanation="cal",
+        )
+
+    def plan(*steps: CandidateActionProposal) -> CandidatePlanProposal:
+        return CandidatePlanProposal.create(mission_id=mid, steps=list(steps), explanation="p")
+
+    def check(p: CandidatePlanProposal) -> None:
+        validate_canonical_killer_mission_plan(p, target_date=date, desired_start_time=start)
+
+    # Valid canonical plan passes
+    check(plan(w(), t(), c()))
+
+    cases: list[tuple[CandidatePlanProposal, type[Exception]]] = [
+        (plan(w(), t()), InvalidActionCountError),  # missing mutation
+        (plan(w(), t(), c(), c()), InvalidActionCountError),  # extra action
+        (plan(w(), c(), c()), DuplicatedMutationError),  # duplicated mutation
+        (plan(t(), w(), c()), InvalidActionOrderError),  # wrong order
+        (plan(w(), t(due="2026-10-05"), c()), InvalidPlanParameterError),  # wrong due date
+        (plan(w(), t(), c(start_time="2026-10-04T08:00:00+00:00")), InvalidPlanParameterError),
+        (plan(w(), t(title="Something else"), c()), InvalidPlanParameterError),
+        (
+            plan(w(), t(), c(ref=SymbolicTargetRef.DEMO_EVENT)),
+            InvalidSymbolicTargetError,
+        ),  # wrong symbolic target
+    ]
+    for bad_plan, err in cases:
+        with pytest.raises(err):
+            check(bad_plan)
+        # every rejection is a bounded typed error from the same hierarchy
+        with pytest.raises(CanonicalKillerPlanValidationError):
+            check(bad_plan)
+
+    # Unsupported action type at a position is a typed type error
+    wrong_type = CandidateActionProposal.create(
+        action_type=ActionType.CALENDAR_READ,
+        target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+        parameters={},
+        explanation="read",
+    )
+    with pytest.raises(InvalidActionTypeError):
+        check(plan(wrong_type, t(), c()))
+
+
+def test_defect_b_live_plan_rejected_before_any_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wrong live candidate plan is rejected before the weather read or any mutation."""
+    from stilldone.killer_mission import InvalidActionOrderError
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        SymbolicTargetRef,
+    )
+
+    fake_planner = MagicMock(spec=BedrockPlannerAdapter)
+    runner = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=fake_planner)
+    runner.seeded_event_id = "provider_evt_boundary"
+    reordered = CandidatePlanProposal.create(
+        mission_id=runner.mission_id,
+        steps=[
+            CandidateActionProposal.create(
+                action_type=ActionType.TASK_CREATE,
+                target_ref=SymbolicTargetRef.TASK_LIST,
+                parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+            ),
+            CandidateActionProposal.create(
+                action_type=ActionType.WEATHER_READ,
+                target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                parameters={},
+            ),
+            CandidateActionProposal.create(
+                action_type=ActionType.CALENDAR_UPDATE,
+                target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+                parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+            ),
+        ],
+    )
+    fake_planner.plan.return_value = MagicMock(plan=reordered)
+    weather_spy = MagicMock()
+    runner.weather_adapter = weather_spy
+    with pytest.raises(InvalidActionOrderError):
+        runner.step_p13_02_plan()
+    weather_spy.read_weather.assert_not_called()
+    assert runner.total_writes == 0
+    assert runner.weather_observation is None
+
+
+def test_defect_c_human_approval_post_pending_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify Defect C: early APPROVE never grants authority; decision binds to exact pending."""
+    from stilldone.killer_mission import KillerMissionAuthorityError
+    from stilldone.pending_approval import ApprovalDecision, PendingApproval
+
+    # 1. Early (pre-pending) APPROVE is rejected at construction for enum and string forms
+    for early in (ApprovalDecision.APPROVE, "APPROVE"):
+        with pytest.raises(KillerMissionAuthorityError, match="Pre-authorized"):
+            _live_runner_for_boundary_tests(monkeypatch, calendar_decision=early)
+
+    # 2. No post-pending decision -> AWAITING_APPROVAL, zero calendar writes, no grant
+    runner = _live_runner_for_boundary_tests(monkeypatch)
+    pause = runner.step_p13_04_calendar_pause()
+    assert pause.status == "PASS" and pause.writes_performed == 0
+    res = runner.step_p13_05_calendar_approve()
+    assert res.status == "AWAITING_APPROVAL"
+    assert res.writes_performed == 0
+    assert runner.total_writes == 0
+    assert not hasattr(runner, "approved_cal_outcome")
+
+    # 3. Post-pending REJECT callback receives the exact pending identity; zero grant/writes
+    seen: list[PendingApproval] = []
+
+    def reject_cb(pending: PendingApproval) -> ApprovalDecision:
+        seen.append(pending)
+        return ApprovalDecision.REJECT
+
+    runner_r = _live_runner_for_boundary_tests(
+        monkeypatch, post_pending_decision_callback=reject_cb
+    )
+    runner_r.step_p13_04_calendar_pause()
+    res_r = runner_r.step_p13_05_calendar_approve()
+    assert len(seen) == 1
+    assert seen[0] is runner_r.pending_approval
+    assert seen[0].pending_approval_id == runner_r.pending_approval.pending_approval_id
+    assert res_r.status == "REJECTED"
+    assert res_r.writes_performed == 0
+    assert runner_r.total_writes == 0
+    assert not hasattr(runner_r, "approved_cal_outcome")
+
+    # 4. Callback is never consulted before a PendingApproval exists
+    called: list[object] = []
+    runner_n = _live_runner_for_boundary_tests(
+        monkeypatch, post_pending_decision_callback=lambda p: called.append(p)
+    )
+    with pytest.raises(Exception):  # noqa: B017 - sequence/attribute guard is acceptable
+        runner_n.step_p13_05_calendar_approve()
+    assert called == []
+
+
+def test_defect_d_exact_provider_identity_and_privacy() -> None:
+    """Verify Defect D: exact provider task ID required; no title substitute; no ID leakage."""
+    from unittest.mock import patch
+
+    from stilldone.execution.state import ProviderExecutionResult
+    from stilldone.killer_mission import KillerMissionVerificationError
+
+    def _gate_with(details: dict[str, object]) -> MagicMock:
+        gate = MagicMock()
+        gate.is_authorized = True
+        gate.provider_result = ProviderExecutionResult(
+            action_type=ActionType.TASK_CREATE,
+            success=True,
+            status_name="EXECUTION_SUCCEEDED",
+            writes_performed=1,
+            details=details,
+        )
+        return gate
+
+    # 1. Missing provider task ID -> fail closed (no title-based discovery)
+    runner = KillerMissionSliceRunner()
+    runner.step_p13_01_seed()
+    runner.step_p13_02_plan()
+    with patch("stilldone.killer_mission.execute_gated_action", return_value=_gate_with({})):
+        with pytest.raises(KillerMissionVerificationError, match="exact provider task ID"):
+            runner.step_p13_03_tasks_prep()
+    assert runner.task_observation is None
+
+    # 2. Non-existent provider task ID -> exact read-back fails; no substitution by title
+    runner2 = KillerMissionSliceRunner()
+    runner2.step_p13_01_seed()
+    runner2.step_p13_02_plan()
+    with patch(
+        "stilldone.killer_mission.execute_gated_action",
+        return_value=_gate_with({"task_id": "t_does_not_exist_SENTINEL"}),
+    ):
+        with pytest.raises(Exception):  # noqa: B017 - any typed read-back failure is acceptable
+            runner2.step_p13_03_tasks_prep()
+    assert runner2.task_observation is None
+
+    # 3. Privacy: raw provider IDs never appear in public step details / JSON outcome
+    runner3 = KillerMissionSliceRunner()
+    outcome = runner3.run_full_slice()
+    public_json = json.dumps(outcome.to_dict())
+    assert runner3.seeded_event_id not in public_json
+    assert runner3.created_task_id not in public_json
+    assert "seeded_event_id" not in outcome.steps["P-13.01"].extra_metadata
+
+
+def test_defect_d_live_seed_requires_provider_event_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live seeding without an actual provider event ID must not fall back to the constant."""
+    from unittest.mock import patch
+
+    from stilldone.killer_mission import KillerMissionVerificationError
+
+    runner = _live_runner_for_boundary_tests(monkeypatch)
+    no_id = MagicMock(event_id=None, writes_performed=1, readback_verified=True)
+    with patch("stilldone.killer_mission.seed_canonical_demo_resources", return_value=no_id):
+        with pytest.raises(KillerMissionVerificationError, match="provider event ID"):
+            runner.step_p13_01_seed()
+    assert runner.action_cal.target.resource_id != "evt_leave_for_school_used_live"
+
+    runner_ok = _live_runner_for_boundary_tests(monkeypatch)
+    with_id = MagicMock(
+        event_id="PROVIDER_EVT_SENTINEL_42", writes_performed=1, readback_verified=True
+    )
+    with patch("stilldone.killer_mission.seed_canonical_demo_resources", return_value=with_id):
+        res = runner_ok.step_p13_01_seed()
+    assert runner_ok.seeded_event_id == "PROVIDER_EVT_SENTINEL_42"
+    assert runner_ok.action_cal.target.resource_id == "PROVIDER_EVT_SENTINEL_42"
+    assert runner_ok.action_cal.target.resource_id != CANONICAL_DEMO_EVENT_ID
+    assert "PROVIDER_EVT_SENTINEL_42" not in json.dumps(res.to_dict())
+
+
+def test_defect_e_live_ready_stops_before_fixture_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify Defect E: live runner stops at READY; fixture drift never invoked or claimed."""
+    from stilldone.killer_mission import FakeGoogleCalendarTransport, KillerMissionStepResult
+
+    runner = _live_runner_for_boundary_tests(monkeypatch)
+
+    def _ok(task_id: str, **meta: object) -> KillerMissionStepResult:
+        res = KillerMissionStepResult(
+            task_id=task_id,
+            step_name=task_id,
+            status="PASS",
+            provenance=runner.env.provenance,
+            details="stubbed live-shaped step",
+            writes_performed=0,
+            is_verified=True,
+        )
+        runner.step_results[task_id] = res
+        return res
+
+    def _ready() -> KillerMissionStepResult:
+        runner.ready_receipt_hash = "a" * 64
+        return _ok("P-13.06")
+
+    monkeypatch.setattr(runner, "step_p13_01_seed", lambda: _ok("P-13.01"))
+    monkeypatch.setattr(runner, "step_p13_02_plan", lambda: _ok("P-13.02"))
+    monkeypatch.setattr(runner, "step_p13_03_tasks_prep", lambda: _ok("P-13.03"))
+    monkeypatch.setattr(runner, "step_p13_04_calendar_pause", lambda: _ok("P-13.04"))
+    monkeypatch.setattr(runner, "step_p13_05_calendar_approve", lambda: _ok("P-13.05"))
+    monkeypatch.setattr(runner, "step_p13_06_ready_receipt", _ready)
+
+    def _forbidden(*_a: object, **_k: object) -> None:
+        raise AssertionError("fixture drift path must never run in live mode")
+
+    monkeypatch.setattr(KillerMissionSliceRunner, "step_p13_07_mutate_and_drift", _forbidden)
+    monkeypatch.setattr(FakeGoogleCalendarTransport, "seed_event", _forbidden)
+
+    outcome = runner.run_full_slice()
+    assert outcome.final_state == MissionState.READY
+    assert outcome.ready_receipt_hash == "a" * 64
+    assert outcome.drifted_receipt_hash is None
+    assert outcome.is_live is True
+    assert outcome.steps["P-13.07"].status == "NOT_RUN"
+    assert outcome.steps["P-13.07"].is_verified is False
+    assert outcome.steps["P-13.07"].writes_performed == 0
+
+    # Direct live P-13.07 call also reports NOT_RUN (no forged DRIFTED)
+    direct = runner.step_p13_07_mutate_and_drift()
+    assert direct.status == "NOT_RUN"
+    assert "DRIFTED" not in json.dumps(direct.to_dict())

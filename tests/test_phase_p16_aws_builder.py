@@ -61,14 +61,28 @@ def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
         assert s.covered_by_free_tier_or_credit is None
         assert s.to_dict()["covered_by_free_tier_or_credit"] == "NOT_OBSERVED"
 
-    # With explicit observation: coverage is proven True
+    # Unresolved source reference cannot certify coverage
+    obs_unresolved = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference="https://aws.amazon.com/billing",
+    )
+    unresolved_services = audit_critical_path_aws_services(observation=obs_unresolved)
+    for s in unresolved_services:
+        assert s.covered_by_free_tier_or_credit is None
+        assert s.to_dict()["covered_by_free_tier_or_credit"] == "NOT_OBSERVED"
+
+    # With explicit observation resolving to repo evidence: coverage is proven True
     obs = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="https://aws.amazon.com/billing",
+        source_reference="docs/AWS_BUILDER_MAP.md",
     )
     observed_services = audit_critical_path_aws_services(observation=obs)
     for s in observed_services:
@@ -169,14 +183,29 @@ def test_p16_04_aws_builder_architecture_and_evidence_map() -> None:
     assert dict_default["total_net_personal_spend_usd"] == "NOT_OBSERVED"
     assert dict_default["promotional_credit_budget_sufficient"] == "NOT_OBSERVED"
 
-    # 2. With explicit operator observation: binds external truth cleanly
+    # 2. Unresolved operator observation: remains NOT_OBSERVED
+    obs_unresolved = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference="https://aws.amazon.com/billing",
+    )
+    ev_map_unresolved = generate_aws_builder_evidence_map(observation=obs_unresolved)
+    dict_unresolved = ev_map_unresolved.to_dict()
+    assert dict_unresolved["observed_account_billing_status"] == "NOT_OBSERVED"
+    assert dict_unresolved["total_net_personal_spend_usd"] == "NOT_OBSERVED"
+    assert dict_unresolved["promotional_credit_budget_sufficient"] == "NOT_OBSERVED"
+
+    # 3. With explicit operator observation resolving to repo evidence: binds external truth cleanly
     obs = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="https://aws.amazon.com/billing",
+        source_reference="docs/AWS_BUILDER_MAP.md",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     dict_obs = ev_map_obs.to_dict()
@@ -204,14 +233,27 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
     assert cw_service.estimated_cost_usd == Decimal("0.00000000")
     assert cw_service.covered_by_free_tier_or_credit is None
 
-    # 2. With explicit operator observation: binds external truth
+    # 2. Unresolved observation: cannot certify zero personal spend
+    obs_unresolved = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference="https://aws.amazon.com/billing",
+    )
+    ev_map_unresolved = generate_aws_builder_evidence_map(observation=obs_unresolved)
+    assert ev_map_unresolved.zero_personal_spend_maintained is None
+    assert ev_map_unresolved.to_dict()["zero_personal_spend_maintained"] == "NOT_OBSERVED"
+
+    # 3. With explicit operator observation resolving to repo evidence: binds external truth
     obs = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="https://aws.amazon.com/billing",
+        source_reference="docs/AWS_BUILDER_MAP.md",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     assert ev_map_obs.zero_personal_spend_maintained is True
@@ -290,8 +332,15 @@ def test_cloudwatch_live_proof_harness_positive_and_negative_verification() -> N
     mock_logs.get_log_events.side_effect = lambda **kwargs: {
         "events": [{"message": rec} for rec in emitted_records]
     }
-    mock_cw.get_metric_data.return_value = {
-        "MetricDataResults": [{"StatusCode": "Complete", "Values": [42.0]}]
+    mock_cw.get_metric_data.side_effect = lambda **kwargs: {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [42.0],
+            }
+        ]
     }
 
     harness = CloudWatchLiveProofHarness(
@@ -410,19 +459,31 @@ def test_aws_account_observation_validation() -> None:
             source_reference=None,
         )
 
-    with pytest.raises(ValueError, match="source_reference is required"):
+    # 3. RECORDED_LIVE with unresolvable or arbitrary URL reference must fail
+    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
         AWSAccountObservation(
             observed_at=datetime.now(UTC),
             observed_billing_status="FREE_TIER_COMPLIANT",
             observed_net_personal_spend_usd=Decimal("0.00"),
             promotional_credit_budget_sufficient=True,
             provenance=EvidenceProvenance.RECORDED_LIVE,
-            source_reference="",
+            source_reference="https://aws.amazon.com/billing",
+        )
+
+    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference="nonexistent_evidence_artifact.md",
         )
 
 
 def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
     """Verify CloudWatchLiveProofHarness fails closed on missing cw_client or metric mismatch."""
+    from datetime import timedelta
     from unittest.mock import MagicMock
 
     from stilldone.aws_builder import CloudWatchLiveProofHarness
@@ -461,7 +522,7 @@ def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
         source_sha=valid_sha,
         operator_approved=True,
         git_runner=git_ok,
-        timeout_seconds=1.0,
+        timeout_seconds=0.5,
         poll_interval_seconds=0.05,
     )
     assert res_no_cw.is_verified is False
@@ -471,11 +532,49 @@ def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
         or "cloudwatch metric api query failed" in res_no_cw.details.lower()
     )
 
-    # 2. Metric value mismatch in CloudWatch metrics API fails closed
+    # 2. Prior / stale datapoints outside emission window fails closed
+    emitted_records.clear()
+    mock_cw_stale = MagicMock()
+    mock_cw_stale.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC) - timedelta(hours=2)],
+                "Values": [42.0],
+            }
+        ]
+    }
+    harness_stale = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_stale,
+        environment="test",
+    )
+    res_stale = harness_stale.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_stale.is_verified is False
+    assert res_stale.status == "FAILED"
+    assert "stale" in res_stale.details.lower()
+
+    # 3. Metric value mismatch in CloudWatch metrics API fails closed
     emitted_records.clear()
     mock_cw_mismatch = MagicMock()
     mock_cw_mismatch.get_metric_data.return_value = {
-        "MetricDataResults": [{"StatusCode": "Complete", "Values": [999.0]}]  # Mismatched!
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [999.0],
+            }
+        ]
     }
     harness_mismatch = CloudWatchLiveProofHarness(
         log_group_name="/aws/stilldone/demo",
@@ -488,9 +587,175 @@ def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
         source_sha=valid_sha,
         operator_approved=True,
         git_runner=git_ok,
-        timeout_seconds=1.0,
+        timeout_seconds=0.2,
         poll_interval_seconds=0.05,
     )
     assert res_mismatch.is_verified is False
     assert res_mismatch.status == "FAILED"
     assert "none matching expected" in res_mismatch.details.lower()
+
+    # 4. No timestamps / empty result fails closed
+    emitted_records.clear()
+    mock_cw_empty = MagicMock()
+    mock_cw_empty.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [],
+                "Values": [],
+            }
+        ]
+    }
+    harness_empty_ts = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_empty,
+        environment="test",
+    )
+    res_empty_ts = harness_empty_ts.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_empty_ts.is_verified is False
+    assert res_empty_ts.status == "FAILED"
+
+    # 5. Incomplete metric result (StatusCode != Complete) fails closed
+    emitted_records.clear()
+    mock_cw_partial = MagicMock()
+    mock_cw_partial.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "PartialData",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [42.0],
+            }
+        ]
+    }
+    harness_partial = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_partial,
+        environment="test",
+    )
+    res_partial = harness_partial.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_partial.is_verified is False
+    assert res_partial.status == "FAILED"
+    assert "incomplete statuscode" in res_partial.details.lower()
+
+    # 6. Query Id mismatch fails closed
+    emitted_records.clear()
+    mock_cw_id = MagicMock()
+    mock_cw_id.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m_wrong",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [42.0],
+            }
+        ]
+    }
+    harness_id = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_id,
+        environment="test",
+    )
+    res_id = harness_id.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_id.is_verified is False
+    assert res_id.status == "FAILED"
+    assert "id mismatch" in res_id.details.lower()
+
+    # 7. Length mismatch between timestamps and values fails closed
+    emitted_records.clear()
+    mock_cw_len = MagicMock()
+    mock_cw_len.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [],
+            }
+        ]
+    }
+    harness_len = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_len,
+        environment="test",
+    )
+    res_len = harness_len.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_len.is_verified is False
+    assert res_len.status == "FAILED"
+    assert "length mismatch" in res_len.details.lower()
+
+    # 8. No extracted metric within polling deadline fails closed
+    emitted_records.clear()
+    mock_cw_empty_results = MagicMock()
+    mock_cw_empty_results.get_metric_data.return_value = {"MetricDataResults": []}
+    harness_empty_results = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_empty_results,
+        environment="test",
+    )
+    res_deadline = harness_empty_results.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_deadline.is_verified is False
+    assert res_deadline.status == "FAILED"
+
+    # 9. Injected provider error fails closed
+    emitted_records.clear()
+    mock_cw_err = MagicMock()
+    mock_cw_err.get_metric_data.side_effect = RuntimeError("ThrottlingException")
+    harness_err = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_err,
+        environment="test",
+    )
+    res_cw_err = harness_err.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.05,
+    )
+    assert res_cw_err.is_verified is False
+    assert res_cw_err.status == "FAILED"
+    assert "query failed" in res_cw_err.details.lower()

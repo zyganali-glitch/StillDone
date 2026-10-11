@@ -70,15 +70,15 @@ Rather than assembling decorative AWS services to inflate hackathon checklists, 
 
 ## 2. Audited AWS Services: 4 Critical-Path + 1 Operational Observability (P-16.01)
 
-| Service | Region | Role | Live Proof Reference | Non-Decorative Justification | Gross Spend | Net Spend |
-|---|---|---|---|---|---|---|
-| **Amazon Bedrock** (Critical Path) | `us-east-1` | Model Reasoning | `P-01.02`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Converts natural language intent to typed plans; strictly stripped of execution and readiness authority. | $\approx \$0.000002$ | **$0.00** (Promo Credit) |
-| **AWS Strands Agents SDK** (Critical Path) | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation (`strands-agents==1.57.2`). | $\$0.000000$ | **$0.00** |
-| **Amazon Bedrock AgentCore Runtime** (Critical Path) | `us-east-1` | Serverless MicroVM MCP Host | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | MicroVM runtime hosting Streamable HTTP MCP server spine (`agentRuntimeArn: stilldone_mcp_runtime-oS0aWdAWg3`). | $\approx \$0.008388$ | **$0.00** (Promo Credit) |
-| **AWS IAM & SigV4** (Critical Path) | `us-east-1` | Ingress Security | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | SigV4 request signing (`AWS4-HMAC-SHA256`) and least-privilege IAM roles (`StillDoneAgentCoreExecutionRole`). | $\$0.000000$ | **$0.00** (Free Tier) |
-| **Amazon CloudWatch (EMF)** (Observability) | `us-east-1` | High-Cardinality Observability | `P-16.02` (PASS Candidate), `P-16.03` (`BLOCKED_LIVE / NOT_RUN`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | $\$0.000000$ | **$0.00** (Free Tier) |
+| Service | Region | Role | Live Proof Reference | Non-Decorative Justification | Cost Classification | Cost Metric | Net Spend Status |
+|---|---|---|---|---|---|---|---|
+| **Amazon Bedrock** (Critical Path) | `us-east-1` | Model Reasoning | `P-01.02`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Converts natural language intent to typed plans; strictly stripped of execution and readiness authority. | `ESTIMATED_GROSS_COST` | $\approx \$0.000002$ | `NOT_OBSERVED` (pending account observation) |
+| **AWS Strands Agents SDK** (Critical Path) | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation (`strands-agents==1.57.2`). | `ESTIMATED_GROSS_COST` | $\$0.000000$ | **$0.00** (Local SDK) |
+| **Amazon Bedrock AgentCore Runtime** (Critical Path) | `us-east-1` | Serverless MicroVM MCP Host | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | MicroVM runtime hosting Streamable HTTP MCP server spine (`agentRuntimeArn: stilldone_mcp_runtime-oS0aWdAWg3`). | `RECORDED_HISTORICAL_USAGE` | $\$0.0083883943$ (Sept 2026) | `NOT_OBSERVED` (pending account observation) |
+| **AWS IAM & SigV4** (Critical Path) | `us-east-1` | Ingress Security | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | SigV4 request signing (`AWS4-HMAC-SHA256`) and least-privilege IAM roles (`StillDoneAgentCoreExecutionRole`). | `ESTIMATED_GROSS_COST` | $\$0.000000$ | **$0.00** (Free Tier) |
+| **Amazon CloudWatch (EMF)** (Observability) | `us-east-1` | High-Cardinality Observability | `P-16.02` (PASS Candidate), `P-16.03` (`BLOCKED_LIVE / NOT_RUN`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | `ESTIMATED_GROSS_COST` | $\$0.000000$ | **$0.00** (Free Tier / stdout) |
 
-*(Note: Gross spend values are bounded architectural estimates. Without an explicit external `AWSAccountObservation`, billed account balances and net spend evaluate to `NOT_OBSERVED` per P-16.05.)*
+*(Note: Cost metrics are explicitly separated into `ESTIMATED_GROSS_COST` (architectural models) and `RECORDED_HISTORICAL_USAGE` (recorded provider evidence). Promotional credit coverage cannot be asserted to definitively cover all usage without independent live account evidence; without an explicit, verified `AWSAccountObservation` resolving against durable repository evidence, actual net spend remains `NOT_OBSERVED` per P-16.05 and AGENTS.md Rule 11/12.)*
 
 ---
 
@@ -147,17 +147,18 @@ StillDone is governed by the **Zero Personal Spend Law** (`AGENTS.md` Rule 12):
 Status: **`BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`** (Gross architecture estimates bounded; account billing metrics preserved as `NOT_OBSERVED` pending live account observation).
 
 ### Cost Breakdown & External Truth Separation
-- **Estimated Gross Costs**: Clearly labeled estimates based on current standard AWS pricing models:
+- **`ESTIMATED_GROSS_COST`**: Clearly labeled architectural estimates based on current standard AWS pricing models:
   1. **Amazon Bedrock (Nova Micro / Claude 3.5 Sonnet)**:
      - Nova Micro: \$0.000035 / 1K input tokens, \$0.00014 / 1K output tokens.
      - Live killer mission execution: 12 tokens $\approx \$0.00000168\text{ USD}$.
-  2. **Amazon Bedrock AgentCore Runtime**:
+  2. **AWS IAM & SigV4 Authentication**: Standard AWS feature: \$0.00 cost.
+  3. **Amazon CloudWatch Embedded Metric Format**: Emits structured JSON logs to standard stdout streams ($0.00 daemon cost).
+- **`RECORDED_HISTORICAL_USAGE`**: Authoritative historical runtime usage recorded from AWS console / billing:
+  1. **Amazon Bedrock AgentCore Runtime**:
      - MicroVM session hosting MCP server: billable usage in September 2026 was `$0.0083883943 USD`.
      - Clean shutdown teardown commands verified in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
-  3. **AWS IAM & SigV4 Authentication**: Standard AWS feature: \$0.00 cost.
-  4. **Amazon CloudWatch Embedded Metric Format**: Emits structured JSON logs to standard stdout streams ($0.00 daemon cost).
-- **External Account Billing Observation**:
+- **External Account Billing Observation & Net Spend (`NOT_OBSERVED`)**:
   - Promotional credit status and actual billed account balances are external account observations performed out-of-band by the operator, NOT fabricated by deterministic product code.
-  - Without an explicit `AWSAccountObservation`, `total_net_personal_spend_usd`, `promotional_credit_budget_sufficient`, and `zero_personal_spend_maintained` evaluate to `NOT_OBSERVED` (None).
-  - When an out-of-band `AWSAccountObservation` is recorded, promotional credits offset gross charges, verifying:
-    $$\text{Net Spend} = \mathbf{\$0.00000000\text{ USD}}$$
+  - Promotional credit coverage cannot be asserted to definitively cover all usage without independent account evidence.
+  - Without an explicit, verified `AWSAccountObservation` resolved against durable repo evidence, `total_net_personal_spend_usd`, `promotional_credit_budget_sufficient`, and `zero_personal_spend_maintained` strictly evaluate to `NOT_OBSERVED` (None).
+  - When an authoritative `AWSAccountObservation` with resolved repo evidence is present, promotional credits offset gross charges, verifying net spend.
