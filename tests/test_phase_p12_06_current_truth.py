@@ -78,9 +78,11 @@ from stilldone.receipt import (
     ReceiptHashMismatchError,
     ReceiptMismatchError,
     ReceiptProjection,
+    compute_current_state_hash,
     compute_mission_content_hash,
     create_mission_ready_receipt,
     project_current_state,
+    validate_authoritative_projection,
 )
 from stilldone.revalidation import (
     StandardTargetReader,
@@ -1205,3 +1207,237 @@ def test_direct_construction_cannot_self_assert_authoritative_and_fixture_not_li
     assert proj_default.is_live_certified is False
     assert proj_default.is_certifying_live_authority is False
     assert proj_default.to_canonical()["is_live_certified"] is False
+
+
+def test_defect1_historical_snapshot_binding_first_ready_receipt(
+    tmp_path: Path,
+    cal_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """DEFECT 1 Discriminating Tests:
+    1. First READY receipt with no snapshot metadata must fail.
+    2. First READY receipt with snapshot_id=None must fail.
+    3. First READY receipt with wrong snapshot version must fail.
+    4. A canonical first READY receipt must succeed.
+    5. Its original hash and bytes must survive DRIFTED reconciliation and restart.
+    """
+    m_id = MissionId.generate()
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, m_id, cal_target)
+
+    # Remove the seeded receipt so we can test first-save gate explicitly
+    receipt_file = tmp_path / "snapshots" / f"{m_id}.receipt.json"
+    if receipt_file.exists():
+        receipt_file.unlink()
+
+    # 1. First READY receipt with no snapshot metadata must fail
+    no_meta_receipt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+        metadata={},
+    )
+    with pytest.raises(SnapshotIntegrityError, match="requires non-empty snapshot_id"):
+        repository.save_receipt(no_meta_receipt)
+
+    # 2. First READY receipt with snapshot_id=None must fail
+    none_snap_id_receipt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+        metadata={"snapshot_id": None, "snapshot_version": snapshot.snapshot_version},
+    )
+    with pytest.raises(SnapshotIntegrityError, match="requires non-empty snapshot_id"):
+        repository.save_receipt(none_snap_id_receipt)
+
+    # Empty string snapshot_id must also fail
+    empty_snap_id_receipt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+        metadata={"snapshot_id": "   ", "snapshot_version": snapshot.snapshot_version},
+    )
+    with pytest.raises(SnapshotIntegrityError, match="requires non-empty snapshot_id"):
+        repository.save_receipt(empty_snap_id_receipt)
+
+    # 3. First READY receipt with wrong snapshot version must fail
+    wrong_ver_receipt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+        metadata={"snapshot_id": snapshot.snapshot_id, "snapshot_version": "v999_wrong"},
+    )
+    with pytest.raises(SnapshotIntegrityError, match="Forged snapshot version"):
+        repository.save_receipt(wrong_ver_receipt)
+
+    # 4. Canonical first READY receipt must succeed
+    canonical_receipt = create_mission_ready_receipt(snapshot)
+    repository.save_receipt(canonical_receipt)
+
+    saved_receipt = repository.load_receipt(m_id)
+    assert saved_receipt.receipt_hash == canonical_receipt.receipt_hash
+    saved_bytes = receipt_file.read_bytes()
+
+    # 5. Its original hash and bytes must survive DRIFTED reconciliation and restart
+    fake_transport = FakeGoogleCalendarTransport()
+    fake_transport.seed_event(
+        calendar_id=cal_target.parent_id or "",
+        event_id=cal_target.resource_id,
+        summary="Contradicting event",
+        start_time="2026-10-03T07:30:00+03:00",
+        end_time="2026-10-03T08:00:00+03:00",
+        status="confirmed",
+    )
+    adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=fake_transport)
+    drift_eval = detect_calendar_drift(snapshot=snapshot, calendar_adapter=adapter)
+    drifted_snapshot = record_drift_in_snapshot(repository, snapshot, drift_eval)
+    assert drifted_snapshot is not None
+    assert drifted_snapshot.state == MissionState.DRIFTED
+
+    # Byte-for-byte check after drift reconciliation
+    after_drift_bytes = receipt_file.read_bytes()
+    assert after_drift_bytes == saved_bytes
+
+    # Restart check: new repository instance on same paths
+    restarted_repo = DurableSnapshotRepository(tmp_path / "snapshots", ledger=ledger)
+    reloaded_receipt = restarted_repo.load_receipt(m_id)
+    assert reloaded_receipt.receipt_hash == canonical_receipt.receipt_hash
+    assert reloaded_receipt.state_at_projection == MissionState.READY
+    assert reloaded_receipt.is_historical is True
+
+
+def test_defect2_direct_create_with_internal_validated_cannot_certify_ready(
+    mission_id: MissionId,
+) -> None:
+    """DEFECT 2 Discriminating Test 1:
+    Direct .create(is_authoritative=True, _internal_validated=True) cannot independently
+    certify READY and fails closed.
+    """
+    eid = EvidenceId("e" * 64)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    # Caller-controlled _internal_validated=True cannot bypass the authority gate
+    with pytest.raises(ReceiptMismatchError, match="cannot self-assert is_authoritative=True"):
+        CurrentStateProjection.create(
+            mission_id=mission_id,
+            state=MissionState.READY,
+            snapshot_id="snap_001",
+            snapshot_version="v1",
+            evidence_ids=(eid,),
+            as_of=now,
+            is_authoritative=True,
+            _internal_validated=True,
+        )
+
+
+def test_defect2_dataclass_construction_and_from_dict_cannot_certify_without_external_validation(
+    tmp_path: Path,
+    cal_target: TargetIdentity,
+) -> None:
+    """DEFECT 2 Discriminating Tests 2-6:
+    2. Direct dataclass construction or from_dict() containing a self-computed
+       authoritative hash cannot serve as canonical certification without external validation.
+    3. Forged snapshot identity/content remains non-authoritative.
+    4. A real persisted canonical READY snapshot can still produce a legitimate
+       authoritative lifecycle projection.
+    5. DRIFTED recovery and receipt preservation remain unchanged.
+    6. Fixture/current-live distinction remains strict.
+    """
+    m_id = MissionId.generate()
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, m_id, cal_target)
+
+    eid = snapshot.evidence_ids[0]
+    now = snapshot.created_at
+
+    # 1. Direct dataclass construction with self-computed authoritative hash
+    valid_auth_hash = compute_current_state_hash(
+        mission_id=m_id,
+        state=MissionState.READY,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_version=snapshot.snapshot_version,
+        evidence_ids=(eid,),
+        as_of=now,
+        is_authoritative=True,
+    )
+    direct_proj = CurrentStateProjection(
+        mission_id=m_id,
+        state=MissionState.READY,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_version=snapshot.snapshot_version,
+        evidence_ids=(eid,),
+        as_of=now,
+        projection_hash=valid_auth_hash,
+        is_historical=False,
+        is_authoritative=True,
+    )
+    # Hash is mathematically consistent
+    assert direct_proj.projection_hash == valid_auth_hash
+    # But cannot independently confer canonical certification
+    assert direct_proj.is_certified_ready is False
+
+    # External validation against forged snapshot fails
+    forged_snap = create_mission_snapshot(
+        mission_id=m_id,
+        state=MissionState.READY,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=now,
+    )
+    object.__setattr__(forged_snap, "snapshot_id", "forged_snap_id_999")
+    object.__setattr__(forged_snap, "is_persisted", True)
+
+    assert direct_proj.validate_against_canonical(snapshot=forged_snap, ledger=ledger) is False
+    with pytest.raises(ReceiptMismatchError, match="external validation"):
+        direct_proj.certify(snapshot=forged_snap, ledger=ledger)
+
+    # External validation against real persisted snapshot + ledger succeeds
+    assert direct_proj.validate_against_canonical(snapshot=snapshot, ledger=ledger) is True
+    certified_direct = direct_proj.certify(snapshot=snapshot, ledger=ledger)
+    assert certified_direct.is_certified_ready is True
+    assert certified_direct.is_live_certified is False
+
+    # 2. Deserialization from_dict() with serialized is_authoritative=True
+    serialized_dict = direct_proj.to_canonical()
+    assert serialized_dict["is_authoritative"] is True
+    deserialized_proj = CurrentStateProjection.from_dict(serialized_dict)
+
+    # Deserialization alone does NOT confer trusted authority
+    assert deserialized_proj.is_certified_ready is False
+    assert (
+        validate_authoritative_projection(deserialized_proj, snapshot=forged_snap, ledger=ledger)
+        is False
+    )
+    with pytest.raises(ReceiptMismatchError, match="external validation"):
+        deserialized_proj.certify(snapshot=forged_snap, ledger=ledger)
+
+    # When validated against canonical context, certification is conferred
+    assert (
+        validate_authoritative_projection(deserialized_proj, snapshot=snapshot, ledger=ledger)
+        is True
+    )
+    certified_deserialized = deserialized_proj.certify(snapshot=snapshot, ledger=ledger)
+    assert certified_deserialized.is_certified_ready is True
+    assert certified_deserialized.is_live_certified is False
+
+    # 3. Legitimate project_current_state produces certified READY
+    proj_auth = project_current_state(
+        snapshot,
+        historical_receipt=receipt,
+        ledger=ledger,
+        authoritative=True,
+    )
+    assert proj_auth.is_authoritative is True
+    assert proj_auth.is_certified_ready is True
+    assert proj_auth.is_live_certified is False

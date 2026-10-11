@@ -588,6 +588,7 @@ def create_mission_ready_receipt(
 
 
 CURRENT_STATE_HASH_DOMAIN_SEPARATOR: str = "stilldone:current-state-projection:v1"
+_CANONICAL_AUTHORITY_CERTIFICATE: object = object()
 
 
 @dataclass(frozen=True)
@@ -684,6 +685,7 @@ class CurrentStateProjection:
     historical_receipt_hash: ReceiptHash | None = None
     historical_state: MissionState | None = None
     reconciliation_reason: str | None = None
+    _canonical_authority: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mission_id, MissionId):
@@ -701,6 +703,18 @@ class CurrentStateProjection:
         if not isinstance(self.is_authoritative, bool):
             raise TypeError(
                 f"is_authoritative must be a bool, got {type(self.is_authoritative).__name__}"
+            )
+        if (
+            self._canonical_authority is not None
+            and self._canonical_authority is not _CANONICAL_AUTHORITY_CERTIFICATE
+        ):
+            raise ReceiptMismatchError("Invalid authority certificate token")
+        if (
+            self._canonical_authority is _CANONICAL_AUTHORITY_CERTIFICATE
+            and not self.is_authoritative
+        ):
+            raise ReceiptMismatchError(
+                "Non-authoritative projection cannot hold canonical authority certificate"
             )
 
         norm_as_of = _normalize_utc_dt(self.as_of, "as_of")
@@ -766,14 +780,14 @@ class CurrentStateProjection:
         historical_state: MissionState | None = None,
         reconciliation_reason: str | None = None,
         is_authoritative: bool = False,
-        _internal_validated: bool = False,
+        **kwargs: Any,
     ) -> CurrentStateProjection:
         """Create a CurrentStateProjection with canonical evidence ordering and computed hash.
 
         Direct public construction cannot self-assert is_authoritative=True;
         authoritative status must be derived from canonical truth via project_current_state().
         """
-        if is_authoritative and not _internal_validated:
+        if is_authoritative:
             raise ReceiptMismatchError(
                 "Direct public construction of CurrentStateProjection cannot self-assert "
                 "is_authoritative=True; authoritative projections must be derived from "
@@ -813,7 +827,7 @@ class CurrentStateProjection:
             historical_receipt_hash=historical_receipt_hash,
             historical_state=historical_state,
             reconciliation_reason=reconciliation_reason,
-            is_authoritative=is_authoritative,
+            is_authoritative=False,
         )
 
         return cls(
@@ -825,10 +839,11 @@ class CurrentStateProjection:
             as_of=norm_as_of,
             projection_hash=proj_hash,
             is_historical=False,
-            is_authoritative=is_authoritative,
+            is_authoritative=False,
             historical_receipt_hash=historical_receipt_hash,
             historical_state=historical_state,
             reconciliation_reason=reconciliation_reason,
+            _canonical_authority=None,
         )
 
     @property
@@ -844,7 +859,49 @@ class CurrentStateProjection:
     @property
     def is_certified_ready(self) -> bool:
         """True if and only if state is READY and certified by canonical authority."""
-        return self.is_ready and self.is_authoritative
+        return (
+            self.is_ready
+            and self.is_authoritative
+            and self._canonical_authority is _CANONICAL_AUTHORITY_CERTIFICATE
+        )
+
+    def validate_against_canonical(
+        self,
+        *,
+        snapshot: Any,
+        ledger: Any,
+        repository: Any | None = None,
+    ) -> bool:
+        """Validate this projection against canonical persisted snapshot and ledger context."""
+        return validate_authoritative_projection(
+            self,
+            snapshot=snapshot,
+            ledger=ledger,
+            repository=repository,
+        )
+
+    def certify(
+        self,
+        *,
+        snapshot: Any,
+        ledger: Any,
+        repository: Any | None = None,
+    ) -> CurrentStateProjection:
+        """Validate against canonical context and return a canonically certified projection."""
+        if not self.validate_against_canonical(
+            snapshot=snapshot,
+            ledger=ledger,
+            repository=repository,
+        ):
+            raise ReceiptMismatchError(
+                "Cannot certify CurrentStateProjection: external validation against "
+                "canonical snapshot and ledger context failed"
+            )
+        import copy
+
+        certified = copy.copy(self)
+        object.__setattr__(certified, "_canonical_authority", _CANONICAL_AUTHORITY_CERTIFICATE)
+        return certified
 
     @property
     def is_live_certified(self) -> bool:
@@ -933,6 +990,7 @@ class CurrentStateProjection:
             historical_receipt_hash=hist_h,
             historical_state=hist_st,
             reconciliation_reason=reason,
+            _canonical_authority=None,
         )
 
 
@@ -1139,16 +1197,155 @@ def project_current_state(
 
     norm_as_of = as_of or snapshot.created_at
 
-    return CurrentStateProjection.create(
+    seen: set[str] = set()
+    eids_list: list[EvidenceId] = []
+    for eid in snapshot.evidence_ids:
+        if not isinstance(eid, EvidenceId):
+            raise TypeError(
+                f"All evidence_ids must be EvidenceId instances, got {type(eid).__name__}"
+            )
+        if eid.value in seen:
+            raise DuplicateEvidenceBindingError(
+                f"Duplicate evidence ID in snapshot evidence_ids: {eid.value}"
+            )
+        seen.add(eid.value)
+        eids_list.append(eid)
+
+    eids_list.sort(key=lambda x: x.value)
+    ordered_eids = tuple(eids_list)
+
+    proj_hash = compute_current_state_hash(
         mission_id=snapshot.mission_id,
         state=snapshot.state,
         snapshot_id=snapshot.snapshot_id,
         snapshot_version=snapshot.snapshot_version,
-        evidence_ids=snapshot.evidence_ids,
+        evidence_ids=ordered_eids,
         as_of=norm_as_of,
         historical_receipt_hash=effective_hist_hash,
         historical_state=effective_hist_state,
         reconciliation_reason=reconciliation_reason,
         is_authoritative=eff_authoritative,
-        _internal_validated=True,
     )
+
+    return CurrentStateProjection(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_version=snapshot.snapshot_version,
+        evidence_ids=ordered_eids,
+        as_of=norm_as_of,
+        projection_hash=proj_hash,
+        is_historical=False,
+        is_authoritative=eff_authoritative,
+        historical_receipt_hash=effective_hist_hash,
+        historical_state=effective_hist_state,
+        reconciliation_reason=reconciliation_reason,
+        _canonical_authority=(_CANONICAL_AUTHORITY_CERTIFICATE if eff_authoritative else None),
+    )
+
+
+def validate_authoritative_projection(
+    projection: CurrentStateProjection,
+    *,
+    snapshot: Any,
+    ledger: Any,
+    repository: Any | None = None,
+) -> bool:
+    """Validate a CurrentStateProjection against canonical persisted snapshot and ledger context.
+
+    A serialized projection or directly constructed projection cannot serve as canonical
+    certification on its own. This function independently validates that:
+    1. The projection is marked is_authoritative.
+    2. Ledger is a genuine MissionLedgerPort.
+    3. Snapshot is a genuine persisted MissionSnapshot.
+    4. Snapshot contract and state match ledger.
+    5. Snapshot identity, version, state, evidence IDs match projection.
+    6. Snapshot matches canonical stored snapshot in ledger or repository.
+    7. All evidence IDs exist in ledger and belong to this mission.
+    8. If state is READY, genuine verification evidence exists in ledger.
+    9. Projection hash is verified against canonical inputs.
+    """
+    assert_not_planner_for_current_state(snapshot, parameter_name="snapshot")
+    from stilldone.application.ports.ledger_port import MissionLedgerPort, _is_verification_evidence
+    from stilldone.snapshot import MissionSnapshot
+
+    if not isinstance(projection, CurrentStateProjection):
+        return False
+    if not projection.is_authoritative:
+        return False
+    if not isinstance(snapshot, MissionSnapshot):
+        return False
+    if not isinstance(ledger, MissionLedgerPort):
+        return False
+    if not getattr(snapshot, "is_persisted", False):
+        return False
+
+    if projection.mission_id != snapshot.mission_id:
+        return False
+    if projection.snapshot_id != snapshot.snapshot_id:
+        return False
+    if projection.snapshot_version != snapshot.snapshot_version:
+        return False
+    if projection.state != snapshot.state:
+        return False
+    if set(projection.evidence_ids) != set(snapshot.evidence_ids):
+        return False
+
+    try:
+        m_rec = ledger.get_mission(snapshot.mission_id)
+    except Exception:
+        return False
+
+    if m_rec.contract != snapshot.contract or m_rec.state != snapshot.state:
+        return False
+
+    for eid in snapshot.evidence_ids:
+        try:
+            ev_rec = ledger.get_evidence(eid)
+            if ev_rec.mission_id != snapshot.mission_id:
+                return False
+        except Exception:
+            return False
+
+    stored_proj: dict[str, Any] | None = None
+    if hasattr(ledger, "get_transition_snapshot"):
+        stored_proj = ledger.get_transition_snapshot(snapshot.mission_id)
+
+    if stored_proj is not None:
+        if stored_proj.get("snapshot_id") != snapshot.snapshot_id:
+            return False
+        if canonical_json(stored_proj) != canonical_json(snapshot.to_dict()):
+            return False
+    elif repository is not None:
+        try:
+            stored_snap = repository.load_snapshot(snapshot.mission_id)
+            if stored_snap.snapshot_id != snapshot.snapshot_id:
+                return False
+            if canonical_json(stored_snap.to_dict()) != canonical_json(snapshot.to_dict()):
+                return False
+        except Exception:
+            return False
+    else:
+        return False
+
+    if snapshot.state == MissionState.READY:
+        mission_evs = ledger.get_evidence_for_mission(snapshot.mission_id)
+        if not any(_is_verification_evidence(ev) for ev in mission_evs):
+            return False
+
+    expected_hash = compute_current_state_hash(
+        mission_id=projection.mission_id,
+        state=projection.state,
+        snapshot_id=projection.snapshot_id,
+        snapshot_version=projection.snapshot_version,
+        evidence_ids=projection.evidence_ids,
+        as_of=projection.as_of,
+        historical_receipt_hash=projection.historical_receipt_hash,
+        historical_state=projection.historical_state,
+        reconciliation_reason=projection.reconciliation_reason,
+        is_authoritative=projection.is_authoritative,
+    )
+    if projection.projection_hash != expected_hash:
+        return False
+
+    return True

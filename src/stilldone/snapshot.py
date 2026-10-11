@@ -165,7 +165,7 @@ class SnapshotNotFoundError(SnapshotError, KeyError):
     """Raised when a requested snapshot is not found in the repository."""
 
 
-class SnapshotLedgerConflictError(SnapshotError, ValueError):
+class SnapshotLedgerConflictError(SnapshotIntegrityError):
     """Raised when snapshot content contradicts the durable mission ledger."""
 
 
@@ -493,6 +493,8 @@ class MissionSnapshot:
         self,
         historical_receipt: Any | None = None,
         as_of: datetime | None = None,
+        ledger: Any | None = None,
+        authoritative: bool | None = None,
     ) -> Any:
         """Project authoritative current truth from this snapshot."""
         from stilldone.receipt import project_current_state
@@ -501,6 +503,8 @@ class MissionSnapshot:
             self,
             historical_receipt=historical_receipt,
             as_of=as_of,
+            ledger=ledger,
+            authoritative=authoritative,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1631,32 +1635,6 @@ class DurableSnapshotRepository:
                         f"Mission {receipt.mission_id} has no canonical historical READY "
                         "snapshot projection in ledger or durable storage"
                     )
-
-                # Reject forged snapshot revision
-                if isinstance(receipt.metadata, Mapping):
-                    rcpt_snap_id = receipt.metadata.get("snapshot_id")
-                    if rcpt_snap_id is not None and rcpt_snap_id != ready_proj.get("snapshot_id"):
-                        raise SnapshotLedgerConflictError(
-                            f"Forged snapshot revision in receipt metadata: {rcpt_snap_id} != "
-                            f"canonical {ready_proj.get('snapshot_id')}"
-                        )
-                    rcpt_snap_ver = receipt.metadata.get("snapshot_version")
-                    if rcpt_snap_ver is not None and rcpt_snap_ver != ready_proj.get(
-                        "snapshot_version"
-                    ):
-                        raise SnapshotLedgerConflictError(
-                            f"Forged snapshot version in receipt metadata: {rcpt_snap_ver} != "
-                            f"canonical {ready_proj.get('snapshot_version')}"
-                        )
-
-                # Reject invented evidence subset or missing canonical evidence
-                canon_eids = {str(e) for e in ready_proj.get("evidence_ids", [])}
-                rcpt_eids = {e.value for e in receipt.evidence_ids}
-                if rcpt_eids != canon_eids:
-                    raise SnapshotLineageError(
-                        f"Receipt evidence subset mismatch: {rcpt_eids} != "
-                        f"canonical READY snapshot evidence {canon_eids}"
-                    )
             else:
                 ready_proj = self._find_historical_ready_snapshot_projection(receipt.mission_id)
                 if ready_proj is None:
@@ -1664,13 +1642,63 @@ class DurableSnapshotRepository:
                         f"Cannot save READY receipt for mission {receipt.mission_id} "
                         "without persisted READY snapshot"
                     )
-                canon_eids = {str(e) for e in ready_proj.get("evidence_ids", [])}
-                rcpt_eids = {e.value for e in receipt.evidence_ids}
-                if rcpt_eids != canon_eids:
-                    raise SnapshotLineageError(
-                        f"Receipt evidence subset mismatch: {rcpt_eids} != "
-                        f"canonical READY snapshot evidence {canon_eids}"
-                    )
+
+            # Common canonical snapshot validation
+            canon_snap_id = ready_proj.get("snapshot_id")
+            canon_snap_ver = ready_proj.get("snapshot_version")
+            if not isinstance(canon_snap_id, str) or not canon_snap_id.strip():
+                raise SnapshotIntegrityError(
+                    f"Canonical historical READY snapshot projection for mission "
+                    f"{receipt.mission_id} lacks valid snapshot_id"
+                )
+            if not isinstance(canon_snap_ver, str) or not canon_snap_ver.strip():
+                raise SnapshotIntegrityError(
+                    f"Canonical historical READY snapshot projection for mission "
+                    f"{receipt.mission_id} lacks valid snapshot_version"
+                )
+
+            # Reject invented evidence subset or missing canonical evidence
+            canon_eids = {str(e) for e in ready_proj.get("evidence_ids", [])}
+            rcpt_eids = {e.value for e in receipt.evidence_ids}
+            if rcpt_eids != canon_eids:
+                raise SnapshotLineageError(
+                    f"Receipt evidence subset mismatch: {rcpt_eids} != "
+                    f"canonical READY snapshot evidence {canon_eids}"
+                )
+
+            # Require both nonempty snapshot_id and snapshot_version in receipt metadata
+            conflict_err_cls = (
+                SnapshotLedgerConflictError if self._ledger is not None else SnapshotIntegrityError
+            )
+            if not isinstance(receipt.metadata, Mapping):
+                raise conflict_err_cls(
+                    f"Historical READY receipt for mission {receipt.mission_id} requires "
+                    "mapping metadata containing canonical snapshot_id and snapshot_version"
+                )
+
+            rcpt_snap_id = receipt.metadata.get("snapshot_id")
+            if not isinstance(rcpt_snap_id, str) or not rcpt_snap_id.strip():
+                raise conflict_err_cls(
+                    f"Historical READY receipt for mission {receipt.mission_id} requires "
+                    f"non-empty snapshot_id in metadata (got {rcpt_snap_id!r})"
+                )
+            if rcpt_snap_id != canon_snap_id:
+                raise conflict_err_cls(
+                    f"Forged snapshot revision in receipt metadata: {rcpt_snap_id} != "
+                    f"canonical {canon_snap_id}"
+                )
+
+            rcpt_snap_ver = receipt.metadata.get("snapshot_version")
+            if not isinstance(rcpt_snap_ver, str) or not rcpt_snap_ver.strip():
+                raise conflict_err_cls(
+                    f"Historical READY receipt for mission {receipt.mission_id} requires "
+                    f"non-empty snapshot_version in metadata (got {rcpt_snap_ver!r})"
+                )
+            if rcpt_snap_ver != canon_snap_ver:
+                raise conflict_err_cls(
+                    f"Forged snapshot version in receipt metadata: {rcpt_snap_ver} != "
+                    f"canonical {canon_snap_ver}"
+                )
 
         serialized = canonical_json(receipt.to_canonical())
 
