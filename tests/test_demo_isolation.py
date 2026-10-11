@@ -703,7 +703,7 @@ def test_zero_provider_or_network_imports() -> None:
         assert not mod_name.startswith("google.auth")
         assert not mod_name.startswith("boto3")
         assert not mod_name.startswith("botocore")
-        assert not mod_name.startswith("mcp")
+        assert not (mod_name == "mcp" or mod_name.startswith("mcp."))
         assert not mod_name.startswith("httpx")
         assert not mod_name.startswith("requests")
         assert not mod_name.startswith("urllib3")
