@@ -76,6 +76,10 @@ def validate_core_mcp() -> None:
                 "--ignore=tests/planning/test_planner_metadata.py",
             ],
         ),
+        (
+            "mcp-verify Wheel Package Smoke",
+            [python, "scripts/smoke_mcp_verify_wheel.py"],
+        ),
     ]
 
     for name, cmd in steps:

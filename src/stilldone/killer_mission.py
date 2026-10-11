@@ -30,17 +30,20 @@ from stilldone.action_policy import (
 from stilldone.adapters.calendar import (
     CalendarTransport,
     FakeGoogleCalendarTransport,
+    GoogleApiClientCalendarTransport,
     GoogleCalendarReadAdapter,
     GoogleCalendarUpdateAdapter,
 )
 from stilldone.adapters.tasks import (
     FakeGoogleTasksTransport,
+    GoogleApiClientTasksTransport,
     GoogleTasksCreateAdapter,
     GoogleTasksReadAdapter,
     TaskTransport,
 )
 from stilldone.adapters.weather import (
     FakeOpenMeteoTransport,
+    OpenMeteoHttpTransport,
     OpenMeteoReadAdapter,
     WeatherLocationConfig,
     WeatherTransport,
@@ -54,8 +57,12 @@ from stilldone.demo_isolation import DemoResourceScope
 from stilldone.demo_seeding import (
     DEFAULT_DEMO_CALENDAR_TITLE,
     DEFAULT_DEMO_TASK_LIST_TITLE,
+    CalendarSeedTransport,
     FakeCalendarSeedTransport,
     FakeTasksSeedTransport,
+    GoogleApiClientCalendarSeedTransport,
+    GoogleApiClientTasksSeedTransport,
+    TasksSeedTransport,
     create_canonical_event_spec,
     seed_canonical_demo_resources,
 )
@@ -111,9 +118,11 @@ from stilldone.pending_approval import (
     PendingApproval,
     create_pending_approval,
 )
+from stilldone.planning.bedrock import BedrockPlannerAdapter
 from stilldone.planning.contracts import (
     CandidateActionProposal,
     CandidatePlanProposal,
+    PlannerInput,
     SymbolicTargetRef,
 )
 from stilldone.receipt import (
@@ -214,6 +223,14 @@ class LiveExecutionBlockedError(KillerMissionError):
     """Raised when live execution path is attempted without operator authorization."""
 
 
+class InvalidEnvironmentConfigurationError(KillerMissionError):
+    """Raised when environment transport and provenance boundaries are violated."""
+
+
+class LivePreflightBlockedError(KillerMissionError):
+    """Raised when live execution preflight checks fail or require operator consent."""
+
+
 # ===========================================================================
 # Live Preflight Evaluation
 # ===========================================================================
@@ -225,20 +242,26 @@ class LivePreflightReport:
 
     is_ready: bool
     operator_approved: bool
+    source_sha_verified: bool
+    clean_working_tree_verified: bool
     google_auth_available: bool
     aws_bedrock_auth_available: bool
     open_meteo_reachable: bool
     disposable_scope_verified: bool
+    transports_verified: bool
     blocker_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "is_ready": self.is_ready,
             "operator_approved": self.operator_approved,
+            "source_sha_verified": self.source_sha_verified,
+            "clean_working_tree_verified": self.clean_working_tree_verified,
             "google_auth_available": self.google_auth_available,
             "aws_bedrock_auth_available": self.aws_bedrock_auth_available,
             "open_meteo_reachable": self.open_meteo_reachable,
             "disposable_scope_verified": self.disposable_scope_verified,
+            "transports_verified": self.transports_verified,
             "blocker_reasons": list(self.blocker_reasons),
         }
 
@@ -247,36 +270,114 @@ def check_live_preflight(
     scope: DemoResourceScope,
     *,
     operator_approved: bool = False,
+    source_sha: str | None = None,
+    expected_source_sha: str | None = None,
+    clean_working_tree_required: bool = False,
     google_credentials: Any = None,
     aws_credentials_available: bool = False,
+    calendar_transport: CalendarTransport | None = None,
+    tasks_transport: TaskTransport | None = None,
+    weather_transport: WeatherTransport | None = None,
+    bedrock_planner_available: bool = False,
 ) -> LivePreflightReport:
-    """Evaluate deterministic preflight before attempting any live mission execution."""
+    """Evaluate deterministic preflight before attempting ANY live mission execution.
+
+    ONE canonical entry gate enforcing zero mutations and zero approval consumption
+    if any preflight requirement is not met.
+    """
     blockers: list[str] = []
+
+    # 1. Explicit operator approval
     if not operator_approved:
         blockers.append(
             "Operator authorization required to maintain Zero Personal Spend Law ($0.00)"
         )
-    if google_credentials is None:
-        blockers.append("Google OAuth 2.0 credentials not configured for demo calendar/tasks")
-    if not aws_credentials_available:
-        blockers.append("AWS credentials not configured for Bedrock / Strands planner")
 
+    # 2. Exact source SHA gate
+    sha_ok = True
+    if not source_sha or len(source_sha) != 40:
+        blockers.append("Exact source SHA gate failed: valid 40-character commit SHA required")
+        sha_ok = False
+    elif expected_source_sha and source_sha != expected_source_sha:
+        blockers.append(
+            f"Source SHA gate mismatch: expected {expected_source_sha}, got {source_sha}"
+        )
+        sha_ok = False
+
+    # 3. Clean working tree / remote gate if required
+    clean_ok = True
+    if clean_working_tree_required:
+        try:
+            import subprocess
+
+            res = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                blockers.append("Working tree is dirty; clean remote gate required for live proof")
+                clean_ok = False
+        except Exception:
+            pass
+
+    # 4. Google OAuth availability
+    google_ok = google_credentials is not None
+    if not google_ok:
+        blockers.append("Google OAuth 2.0 credentials not configured for demo calendar/tasks")
+
+    # 5. AWS short-lived credentials / session availability
+    aws_ok = aws_credentials_available
+    if not aws_ok:
+        blockers.append("AWS short-lived credentials/session not available for Bedrock planner")
+
+    # 6. Dedicated disposable Calendar/Tasks scope
     disposable_ok = (
-        scope.calendar_id not in ("primary", "default")
+        scope.calendar_id not in ("primary", "default", "")
+        and scope.task_list_id not in ("primary", "default", "")
         and len(scope.calendar_id) > 0
         and len(scope.task_list_id) > 0
     )
     if not disposable_ok:
-        blockers.append(f"Invalid disposable resource scope: calendar_id={scope.calendar_id}")
+        blockers.append(
+            f"Invalid disposable resource scope: calendar_id={scope.calendar_id!r}, "
+            f"task_list_id={scope.task_list_id!r}. Primary/default calendars strictly forbidden."
+        )
+
+    # 7. Real transport validation
+    transports_ok = True
+    if calendar_transport is None or not isinstance(
+        calendar_transport, GoogleApiClientCalendarTransport
+    ):
+        blockers.append(
+            "Real Google Calendar production transport (GoogleApiClientCalendarTransport) required"
+        )
+        transports_ok = False
+    if tasks_transport is None or not isinstance(tasks_transport, GoogleApiClientTasksTransport):
+        blockers.append(
+            "Real Google Tasks production transport (GoogleApiClientTasksTransport) required"
+        )
+        transports_ok = False
+    if weather_transport is None or not isinstance(weather_transport, OpenMeteoHttpTransport):
+        blockers.append("Real Open-Meteo production transport (OpenMeteoHttpTransport) required")
+        transports_ok = False
+
+    # 8. Bedrock planner availability
+    if not bedrock_planner_available:
+        blockers.append("Amazon Bedrock planner adapter is not available or unconfigured")
 
     is_ready = len(blockers) == 0
     return LivePreflightReport(
         is_ready=is_ready,
         operator_approved=operator_approved,
-        google_auth_available=google_credentials is not None,
-        aws_bedrock_auth_available=aws_credentials_available,
-        open_meteo_reachable=True,
+        source_sha_verified=sha_ok,
+        clean_working_tree_verified=clean_ok,
+        google_auth_available=google_ok,
+        aws_bedrock_auth_available=aws_ok,
+        open_meteo_reachable=isinstance(weather_transport, OpenMeteoHttpTransport),
         disposable_scope_verified=disposable_ok,
+        transports_verified=transports_ok,
         blocker_reasons=blockers,
     )
 
@@ -356,12 +457,48 @@ class KillerMissionEnvironment:
     def create_fixture_environment(
         cls,
         base_dir: Path | None = None,
+        *,
         provenance: EvidenceProvenance = EvidenceProvenance.FIXTURE,
+        calendar_transport: CalendarTransport | None = None,
+        tasks_transport: TaskTransport | None = None,
+        weather_transport: WeatherTransport | None = None,
+        cal_seed_transport: CalendarSeedTransport | None = None,
+        tasks_seed_transport: TasksSeedTransport | None = None,
     ) -> KillerMissionEnvironment:
+        """Create strict fixture environment with zero live connectivity.
+
+        Provenance MUST be strictly FIXTURE. Caller-selected live decoration is rejected.
+        Only fake/mock transports are permitted.
+        """
+        if provenance != EvidenceProvenance.FIXTURE:
+            raise InvalidEnvironmentConfigurationError(
+                f"Fixture environment requires EvidenceProvenance.FIXTURE; got {provenance.value}. "
+                "LIVE provenance decoration is strictly prohibited in fixture mode."
+            )
+
+        if (
+            isinstance(calendar_transport, GoogleApiClientCalendarTransport)
+            or isinstance(tasks_transport, GoogleApiClientTasksTransport)
+            or isinstance(weather_transport, OpenMeteoHttpTransport)
+            or isinstance(cal_seed_transport, GoogleApiClientCalendarSeedTransport)
+            or isinstance(tasks_seed_transport, GoogleApiClientTasksSeedTransport)
+        ):
+            raise InvalidEnvironmentConfigurationError(
+                "Production live transports are strictly prohibited in fixture environments"
+            )
+
         import tempfile
 
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_killer_mission_"))
-        return cls(base_dir=target_dir, provenance=provenance)
+        return cls(
+            base_dir=target_dir,
+            calendar_transport=calendar_transport,
+            tasks_transport=tasks_transport,
+            weather_transport=weather_transport,
+            cal_seed_transport=cal_seed_transport,
+            tasks_seed_transport=tasks_seed_transport,
+            provenance=EvidenceProvenance.FIXTURE,
+        )
 
     @classmethod
     def create_live_environment(
@@ -372,9 +509,85 @@ class KillerMissionEnvironment:
         calendar_transport: CalendarTransport | None = None,
         tasks_transport: TaskTransport | None = None,
         weather_transport: WeatherTransport | None = None,
-        provenance: EvidenceProvenance = EvidenceProvenance.LIVE_GOOGLE,
+        cal_seed_transport: CalendarSeedTransport | None = None,
+        tasks_seed_transport: TasksSeedTransport | None = None,
     ) -> KillerMissionEnvironment:
-        """Create explicit live environment configured for real provider integrations."""
+        """Create explicit live environment configured for real provider integrations.
+
+        Requires explicit concrete production transports. Missing or fake transports
+        fail-closed with typed InvalidEnvironmentConfigurationError.
+        No default fake transports allowed.
+        """
+        if calendar_transport is None:
+            raise InvalidEnvironmentConfigurationError(
+                "Live environment requires explicit concrete calendar_transport "
+                "(GoogleApiClientCalendarTransport); missing transport is prohibited."
+            )
+        if isinstance(calendar_transport, FakeGoogleCalendarTransport):
+            raise InvalidEnvironmentConfigurationError(
+                "Fake calendar transport supplied to live environment; "
+                "concrete GoogleApiClientCalendarTransport is strictly required."
+            )
+        if not isinstance(calendar_transport, GoogleApiClientCalendarTransport):
+            raise InvalidEnvironmentConfigurationError(
+                f"Invalid calendar transport type for live environment: "
+                f"{type(calendar_transport).__name__}; expected GoogleApiClientCalendarTransport."
+            )
+
+        if tasks_transport is None:
+            raise InvalidEnvironmentConfigurationError(
+                "Live environment requires explicit concrete tasks_transport "
+                "(GoogleApiClientTasksTransport); missing transport is prohibited."
+            )
+        if isinstance(tasks_transport, FakeGoogleTasksTransport):
+            raise InvalidEnvironmentConfigurationError(
+                "Fake tasks transport supplied to live environment; "
+                "concrete GoogleApiClientTasksTransport is strictly required."
+            )
+        if not isinstance(tasks_transport, GoogleApiClientTasksTransport):
+            raise InvalidEnvironmentConfigurationError(
+                f"Invalid tasks transport type for live environment: "
+                f"{type(tasks_transport).__name__}; expected GoogleApiClientTasksTransport."
+            )
+
+        if weather_transport is None:
+            raise InvalidEnvironmentConfigurationError(
+                "Live environment requires explicit concrete weather_transport "
+                "(OpenMeteoHttpTransport); missing transport is prohibited."
+            )
+        if isinstance(weather_transport, FakeOpenMeteoTransport):
+            raise InvalidEnvironmentConfigurationError(
+                "Fake weather transport supplied to live environment; "
+                "concrete OpenMeteoHttpTransport is strictly required."
+            )
+        if not isinstance(weather_transport, OpenMeteoHttpTransport):
+            raise InvalidEnvironmentConfigurationError(
+                f"Invalid weather transport type for live environment: "
+                f"{type(weather_transport).__name__}; expected OpenMeteoHttpTransport."
+            )
+
+        if cal_seed_transport is not None and isinstance(
+            cal_seed_transport, FakeCalendarSeedTransport
+        ):
+            raise InvalidEnvironmentConfigurationError(
+                "Fake calendar seed transport supplied to live environment."
+            )
+        if tasks_seed_transport is not None and isinstance(
+            tasks_seed_transport, FakeTasksSeedTransport
+        ):
+            raise InvalidEnvironmentConfigurationError(
+                "Fake tasks seed transport supplied to live environment."
+            )
+
+        if cal_seed_transport is None and isinstance(
+            calendar_transport, GoogleApiClientCalendarTransport
+        ):
+            cal_seed_transport = GoogleApiClientCalendarSeedTransport(calendar_transport._service)
+        if tasks_seed_transport is None and isinstance(
+            tasks_transport, GoogleApiClientTasksTransport
+        ):
+            tasks_seed_transport = GoogleApiClientTasksSeedTransport(tasks_transport._service)
+
         import tempfile
 
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_live_killer_mission_"))
@@ -384,7 +597,9 @@ class KillerMissionEnvironment:
             calendar_transport=calendar_transport,
             tasks_transport=tasks_transport,
             weather_transport=weather_transport,
-            provenance=provenance,
+            cal_seed_transport=cal_seed_transport,
+            tasks_seed_transport=tasks_seed_transport,
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
         )
 
     def __init__(
@@ -394,6 +609,8 @@ class KillerMissionEnvironment:
         calendar_transport: CalendarTransport | None = None,
         tasks_transport: TaskTransport | None = None,
         weather_transport: WeatherTransport | None = None,
+        cal_seed_transport: CalendarSeedTransport | None = None,
+        tasks_seed_transport: TasksSeedTransport | None = None,
         scope: DemoResourceScope | None = None,
         provenance: EvidenceProvenance = EvidenceProvenance.FIXTURE,
     ) -> None:
@@ -406,22 +623,71 @@ class KillerMissionEnvironment:
         )
         self.provenance = provenance
 
+        # Enforce closed-world consistency: LIVE provenance cannot have fake transports!
+        is_live_provenance = provenance in (
+            EvidenceProvenance.LIVE_GOOGLE,
+            EvidenceProvenance.LIVE_AWS,
+            EvidenceProvenance.LIVE_EXTERNAL,
+        )
+        if is_live_provenance:
+            if (
+                calendar_transport is None
+                or isinstance(calendar_transport, FakeGoogleCalendarTransport)
+                or tasks_transport is None
+                or isinstance(tasks_transport, FakeGoogleTasksTransport)
+                or weather_transport is None
+                or isinstance(weather_transport, FakeOpenMeteoTransport)
+                or isinstance(cal_seed_transport, FakeCalendarSeedTransport)
+                or isinstance(tasks_seed_transport, FakeTasksSeedTransport)
+            ):
+                raise InvalidEnvironmentConfigurationError(
+                    f"Live provenance ({provenance.value}) cannot be combined with fake or "
+                    "missing transports. LIVE provenance + fake transport is strictly forbidden."
+                )
+
+        if provenance == EvidenceProvenance.FIXTURE:
+            if (
+                isinstance(calendar_transport, GoogleApiClientCalendarTransport)
+                or isinstance(tasks_transport, GoogleApiClientTasksTransport)
+                or isinstance(weather_transport, OpenMeteoHttpTransport)
+                or isinstance(cal_seed_transport, GoogleApiClientCalendarSeedTransport)
+                or isinstance(tasks_seed_transport, GoogleApiClientTasksSeedTransport)
+            ):
+                raise InvalidEnvironmentConfigurationError(
+                    "Fixture provenance cannot be combined with production live transports."
+                )
+
         # Transports
         self.calendar_transport = calendar_transport or FakeGoogleCalendarTransport()
         self.tasks_transport = tasks_transport or FakeGoogleTasksTransport()
         self.weather_transport = weather_transport or FakeOpenMeteoTransport()
 
         # Seed transports for P-13.01 preflight/seeding engine
-        self.cal_seed_transport = FakeCalendarSeedTransport()
-        self.cal_seed_transport.add_calendar(
-            self.scope.calendar_id,
-            DEFAULT_DEMO_CALENDAR_TITLE,
-        )
-        self.tasks_seed_transport = FakeTasksSeedTransport()
-        self.tasks_seed_transport.add_task_list(
-            self.scope.task_list_id,
-            DEFAULT_DEMO_TASK_LIST_TITLE,
-        )
+        if cal_seed_transport is not None:
+            self.cal_seed_transport = cal_seed_transport
+        else:
+            if is_live_provenance:
+                raise InvalidEnvironmentConfigurationError(
+                    "Live environment requires concrete calendar seed transport or service"
+                )
+            self.cal_seed_transport = FakeCalendarSeedTransport()
+            self.cal_seed_transport.add_calendar(
+                self.scope.calendar_id,
+                DEFAULT_DEMO_CALENDAR_TITLE,
+            )
+
+        if tasks_seed_transport is not None:
+            self.tasks_seed_transport = tasks_seed_transport
+        else:
+            if is_live_provenance:
+                raise InvalidEnvironmentConfigurationError(
+                    "Live environment requires concrete tasks seed transport or service"
+                )
+            self.tasks_seed_transport = FakeTasksSeedTransport()
+            self.tasks_seed_transport.add_task_list(
+                self.scope.task_list_id,
+                DEFAULT_DEMO_TASK_LIST_TITLE,
+            )
 
         # Durable directories and files
         self.ledger_file = self.base_dir / "ledger.jsonl"
@@ -449,11 +715,13 @@ class KillerMissionSliceRunner:
         mission_id: MissionId | None = None,
         live_mode: bool = False,
         operator_approved: bool = False,
+        bedrock_planner: BedrockPlannerAdapter | None = None,
     ) -> None:
         self.env = env or KillerMissionEnvironment.create_fixture_environment()
         self.mission_id = mission_id or MissionId("11111111-2222-3333-4444-555555555555")
         self.live_mode = live_mode or (self.env.provenance != EvidenceProvenance.FIXTURE)
         self.operator_approved = operator_approved
+        self.bedrock_planner = bedrock_planner
         self.intent_text = CANONICAL_KILLER_INTENT
         self.contract = MissionContract.create(self.intent_text, mission_id=self.mission_id)
 
@@ -541,8 +809,8 @@ class KillerMissionSliceRunner:
         # Compile canonical plan & execution state tracker
         self._setup_canonical_plan()
 
-    def _setup_canonical_plan(self) -> None:
-        """Compile canonical plan and initialize action tracking."""
+    def _create_deterministic_proposal(self) -> CandidatePlanProposal:
+        """Create deterministic proposal for fixture regression testing."""
         step_weather = CandidateActionProposal.create(
             action_type=ActionType.WEATHER_READ,
             target_ref=SymbolicTargetRef.WEATHER_LOCATION,
@@ -561,11 +829,23 @@ class KillerMissionSliceRunner:
             parameters={"start_time": CANONICAL_DESIRED_START_TIME},
             explanation="Move leave for school event to 7:30",
         )
-        self.candidate_plan = CandidatePlanProposal.create(
+        return CandidatePlanProposal.create(
             mission_id=self.mission_id,
             steps=[step_weather, step_task, step_cal],
             explanation="Canonical killer mission plan proposal",
         )
+
+    def _setup_canonical_plan(self) -> None:
+        """Compile canonical plan and initialize action tracking."""
+        if self.live_mode and self.bedrock_planner is not None:
+            planner_input = PlannerInput(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+            )
+            plan_result = self.bedrock_planner.plan(planner_input)
+            self.candidate_plan = plan_result.plan
+        else:
+            self.candidate_plan = self._create_deterministic_proposal()
 
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
@@ -663,6 +943,12 @@ class KillerMissionSliceRunner:
             )
             self.step_results["P-13.02"] = res
             return res
+
+        if self.live_mode and self.bedrock_planner is None:
+            raise KillerMissionExecutionError(
+                "Live mode requires concrete Bedrock / Strands planner adapter; "
+                "fallback to deterministic proposal is strictly prohibited."
+            )
 
         # Execute initial read-only weather observation (READ_ONLY, 0 writes)
         weather_gate = execute_gated_action(
@@ -1278,6 +1564,42 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def run_full_slice(self) -> KillerMissionSliceOutcome:
         """Execute all micro-tasks of the canonical killer mission vertical slice."""
+        if self.live_mode and not self.operator_approved:
+            for task_id, step_name in [
+                ("P-13.01", "Seed Canonical Demo Resources"),
+                ("P-13.02", "Natural Language Planning & Compilation"),
+                ("P-13.03", "Execute & Verify Tasks Preparation Action"),
+                ("P-13.04", "Pause at Calendar Approval Boundary"),
+                ("P-13.05", "Approve, Execute & Verify Calendar Update"),
+                ("P-13.06", "Produce Deterministic READY Mission Receipt"),
+                ("P-13.07", "Mutate Calendar Externally & Reconcile Drift"),
+            ]:
+                self.step_results[task_id] = KillerMissionStepResult(
+                    task_id=task_id,
+                    step_name=step_name,
+                    status="BLOCKED_LIVE",
+                    provenance=self.env.provenance,
+                    details=(
+                        "Live execution path blocked: explicit operator authorization required "
+                        "to maintain Zero Personal Spend Law ($0.00). 0 mutations executed."
+                    ),
+                    writes_performed=0,
+                    is_verified=False,
+                    extra_metadata={"live_preflight_blocked": True},
+                )
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.DRAFT,
+                total_writes_performed=0,
+                provenance=self.env.provenance,
+                is_live=self.live_mode,
+            )
+
         self.step_p13_01_seed()
         step2 = self.step_p13_02_plan()
         if step2.status == "BLOCKED_LIVE":
@@ -1313,6 +1635,143 @@ class KillerMissionSliceRunner:
         )
 
 
+class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
+    """Canonical runner owning strict live dependencies and authoritative preflight gating."""
+
+    def __init__(
+        self,
+        env: KillerMissionEnvironment,
+        *,
+        mission_id: MissionId | None = None,
+        operator_approved: bool = False,
+        source_sha: str | None = None,
+        expected_source_sha: str | None = None,
+        clean_working_tree_required: bool = False,
+        google_credentials: Any = None,
+        aws_credentials_available: bool = False,
+        bedrock_planner: BedrockPlannerAdapter | None = None,
+    ) -> None:
+        if env.provenance == EvidenceProvenance.FIXTURE:
+            raise InvalidEnvironmentConfigurationError(
+                "LiveKillerMissionSliceRunner cannot run in a FIXTURE environment"
+            )
+        self.source_sha = source_sha
+        self.expected_source_sha = expected_source_sha
+        self.clean_working_tree_required = clean_working_tree_required
+        self.google_credentials = google_credentials
+        self.aws_credentials_available = aws_credentials_available
+        self.preflight_report: LivePreflightReport | None = None
+        super().__init__(
+            env=env,
+            mission_id=mission_id,
+            live_mode=True,
+            operator_approved=operator_approved,
+            bedrock_planner=bedrock_planner,
+        )
+
+    def evaluate_preflight(self) -> LivePreflightReport:
+        """Evaluate canonical live preflight against all live gate prerequisites."""
+        report = check_live_preflight(
+            scope=self.env.scope,
+            operator_approved=self.operator_approved,
+            source_sha=self.source_sha,
+            expected_source_sha=self.expected_source_sha,
+            clean_working_tree_required=self.clean_working_tree_required,
+            google_credentials=self.google_credentials,
+            aws_credentials_available=self.aws_credentials_available,
+            calendar_transport=self.env.calendar_transport,
+            tasks_transport=self.env.tasks_transport,
+            weather_transport=self.env.weather_transport,
+            bedrock_planner_available=self.bedrock_planner is not None
+            or self.aws_credentials_available,
+        )
+        self.preflight_report = report
+        return report
+
+    def _require_preflight(self) -> None:
+        """Enforce canonical live preflight before any step execution."""
+        report = self.evaluate_preflight()
+        if not report.is_ready:
+            raise LivePreflightBlockedError(
+                f"Live execution gate failed preflight: {'; '.join(report.blocker_reasons)}"
+            )
+
+    def step_p13_01_seed(self) -> KillerMissionStepResult:
+        """Seed initial pre-state; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_01_seed()
+
+    def step_p13_02_plan(self) -> KillerMissionStepResult:
+        """Execute plan step; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_02_plan()
+
+    def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
+        """Execute tasks prep step; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_03_tasks_prep()
+
+    def step_p13_04_calendar_pause(self) -> KillerMissionStepResult:
+        """Execute approval pause step; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_04_calendar_pause()
+
+    def step_p13_05_calendar_approve(self) -> KillerMissionStepResult:
+        """Execute calendar update step; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_05_calendar_approve()
+
+    def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
+        """Produce ready receipt; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_06_ready_receipt()
+
+    def step_p13_07_mutate_and_drift(self) -> KillerMissionStepResult:
+        """Mutate and drift; gated strictly by live preflight."""
+        self._require_preflight()
+        return super().step_p13_07_mutate_and_drift()
+
+    def run_full_slice(self) -> KillerMissionSliceOutcome:
+        """Execute full slice, gated strictly by live preflight before ANY step or mutation."""
+        report = self.evaluate_preflight()
+        if not report.is_ready:
+            blocker_text = "; ".join(report.blocker_reasons)
+            step_defs = [
+                ("P-13.01", "Seed Canonical Demo Resources"),
+                ("P-13.02", "Natural Language Planning & Compilation"),
+                ("P-13.03", "Execute & Verify Tasks Preparation Action"),
+                ("P-13.04", "Pause at Calendar Approval Boundary"),
+                ("P-13.05", "Approve, Execute & Verify Calendar Update"),
+                ("P-13.06", "Produce Deterministic READY Mission Receipt"),
+                ("P-13.07", "Mutate Calendar Externally & Reconcile Drift"),
+            ]
+            for task_id, step_name in step_defs:
+                self.step_results[task_id] = KillerMissionStepResult(
+                    task_id=task_id,
+                    step_name=step_name,
+                    status="BLOCKED_LIVE",
+                    provenance=self.env.provenance,
+                    details=f"Live execution blocked by preflight: {blocker_text}",
+                    writes_performed=0,
+                    is_verified=False,
+                    extra_metadata={"blocker_reasons": list(report.blocker_reasons)},
+                )
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.DRAFT,
+                total_writes_performed=0,
+                provenance=self.env.provenance,
+                is_live=True,
+            )
+
+        return super().run_full_slice()
+
+
 __all__ = [
     "CANONICAL_CONTRADICTORY_START_TIME",
     "CANONICAL_DEMO_CALENDAR_ID",
@@ -1323,6 +1782,9 @@ __all__ = [
     "CANONICAL_DESIRED_START_TIME",
     "CANONICAL_INITIAL_START_TIME",
     "CANONICAL_KILLER_INTENT",
+    "DemoResourceScope",
+    "FakeGoogleCalendarTransport",
+    "InvalidEnvironmentConfigurationError",
     "KillerMissionAuthorityError",
     "KillerMissionEnvironment",
     "KillerMissionError",
@@ -1336,6 +1798,8 @@ __all__ = [
     "KillerMissionStepResult",
     "KillerMissionVerificationError",
     "LiveExecutionBlockedError",
+    "LiveKillerMissionSliceRunner",
+    "LivePreflightBlockedError",
     "LivePreflightReport",
     "check_live_preflight",
 ]

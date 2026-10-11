@@ -11,9 +11,11 @@ Covers exact micro-tasks:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from stilldone.aws_builder import (
+    AWSAccountObservation,
     AWSBuilderEvidenceMap,
     CloudWatchEMFTelemetryEmitter,
     audit_critical_path_aws_services,
@@ -26,7 +28,7 @@ from stilldone.killer_mission import (
 
 
 def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
-    """Verify P-16.01: Audit accurately captures all AWS services on StillDone's critical path."""
+    """Verify P-16.01: Audit captures AWS services and distinguishes live vs prepared."""
     services = audit_critical_path_aws_services()
     assert len(services) == 5
 
@@ -37,10 +39,17 @@ def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
     assert "AWS Identity and Access Management (IAM)" in service_names
     assert "Amazon CloudWatch (Embedded Metric Format)" in service_names
 
-    # All services must have explicit live proof references
+    # CloudWatch EMF is LOCAL / PREPARED until P-16.03 live proof actually runs
+    cw_service = next(s for s in services if s.service_name.startswith("Amazon CloudWatch"))
+    assert cw_service.is_critical_path is False
+    assert "LOCAL / PREPARED" in cw_service.live_proof_phase
+    assert "BLOCKED_LIVE" in cw_service.live_proof_phase
+
+    # Other 4 services are on critical path
     for s in services:
+        if s.service_name != cw_service.service_name:
+            assert s.is_critical_path is True
         assert s.region == "us-east-1"
-        assert s.is_critical_path is True
         assert len(s.live_proof_phase) > 0
         assert len(s.live_proof_ref) > 0
         assert len(s.non_decorative_justification) > 20
@@ -125,27 +134,43 @@ def test_p16_03_prove_added_aws_service_not_decorative() -> None:
 
 
 def test_p16_04_aws_builder_architecture_and_evidence_map() -> None:
-    """Verify P-16.04: Produce structured architecture and evidence map."""
-    ev_map = generate_aws_builder_evidence_map()
-    assert isinstance(ev_map, AWSBuilderEvidenceMap)
-    assert len(ev_map.aws_services) == 5
+    """Verify P-16.04: Produce structured architecture map without fabricating account billing."""
+    # 1. Default without account observation: billing truth is NOT_OBSERVED, not fabricated
+    ev_map_default = generate_aws_builder_evidence_map()
+    assert isinstance(ev_map_default, AWSBuilderEvidenceMap)
+    assert len(ev_map_default.aws_services) == 5
+    assert ev_map_default.total_net_personal_spend_usd is None
+    assert ev_map_default.promotional_credit_budget_sufficient is None
 
-    dict_repr = ev_map.to_dict()
-    assert dict_repr["architecture_title"] == "StillDone Verifiable Outcome Engine on AWS"
-    assert dict_repr["services_count"] == 5
-    assert dict_repr["zero_personal_spend_maintained"] is True
-    assert dict_repr["promotional_credit_budget_sufficient"] is True
+    dict_default = ev_map_default.to_dict()
+    assert dict_default["architecture_title"] == "StillDone Verifiable Outcome Engine on AWS"
+    assert dict_default["services_count"] == 5
+    assert dict_default["observed_account_billing_status"] == "NOT_OBSERVED"
+    assert dict_default["total_net_personal_spend_usd"] == "NOT_OBSERVED"
+    assert dict_default["promotional_credit_budget_sufficient"] == "NOT_OBSERVED"
+
+    # 2. With explicit operator observation: binds external truth cleanly
+    obs = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+    )
+    ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
+    dict_obs = ev_map_obs.to_dict()
+    assert dict_obs["observed_account_billing_status"] == "FREE_TIER_COMPLIANT"
+    assert dict_obs["total_net_personal_spend_usd"] == "0.00"
+    assert dict_obs["promotional_credit_budget_sufficient"] is True
 
 
 def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
     """Verify P-16.05: Cost impact strictly adheres to Zero Personal Spend Law ($0.00)."""
     ev_map = generate_aws_builder_evidence_map()
 
-    # Gross estimated cost across all services must be minimal (< $0.01 total)
+    # Gross estimated cost across all services must be minimal (< $0.05 total)
     assert ev_map.total_estimated_gross_spend_usd < Decimal("0.05")
 
-    # Net personal spend must be EXACTLY $0.00
-    assert ev_map.total_net_personal_spend_usd == Decimal("0.00")
+    # Policy invariant maintained
     assert ev_map.zero_personal_spend_maintained is True
 
     # CloudWatch EMF itself has zero incremental cost ($0.00)
@@ -154,3 +179,28 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
     )
     assert cw_service.estimated_cost_usd == Decimal("0.00000000")
     assert cw_service.covered_by_free_tier_or_credit is True
+
+
+def test_cloudwatch_live_proof_harness_fail_closed_without_approval() -> None:
+    """Verify CloudWatchLiveProofHarness does not falsely verify on client construction."""
+    from stilldone.aws_builder import CloudWatchLiveProofHarness
+
+    # 1. Missing approval fails closed
+    harness = CloudWatchLiveProofHarness(log_group_name="/aws/stilldone/demo")
+    outcome_no_appr = harness.execute_live_proof(
+        source_sha="1111111111111111111111111111111111111111",
+        operator_approved=False,
+    )
+    assert outcome_no_appr.is_verified is False
+    assert outcome_no_appr.status == "BLOCKED_LIVE"
+    assert "operator authorization" in outcome_no_appr.details.lower()
+
+    # 2. Missing destination log group fails closed
+    harness_no_dest = CloudWatchLiveProofHarness(log_group_name=None)
+    outcome_no_dest = harness_no_dest.execute_live_proof(
+        source_sha="1111111111111111111111111111111111111111",
+        operator_approved=True,
+    )
+    assert outcome_no_dest.is_verified is False
+    assert outcome_no_dest.status == "BLOCKED_LIVE"
+    assert "pre-configured dedicated log group" in outcome_no_dest.details.lower()

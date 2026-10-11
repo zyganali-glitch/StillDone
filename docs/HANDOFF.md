@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13, P-14, P-15, P-16, P-17: COMPLETED (PASS Candidate, awaiting independent QA review) | P-18+: PENDING**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 through P-17: Consolidated Same-Scope Repair Applied (Fixture regression slices & offline tasks PASS; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -49,7 +49,7 @@ Preferred first live service set:
 
 Preferred AWS target:
 - real Bedrock reasoning path (`amazon.nova-micro-v1:0` in `us-east-1` proven);
-- real Strands agent path (`strands-agents 1.57.1` proven);
+- real Strands agent path (`strands-agents 1.57.2` proven);
 - real AgentCore runtime path (`@aws/agentcore` CodeZip serverless microVM in `us-east-1` proven);
 - Architecture v1 frozen at P-01.08 gate.
 
@@ -78,16 +78,16 @@ Active task: Consolidated Macro Repair — P-13 through P-17 Only
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 through P-17: Consolidated Macro Repair applied (PASS Candidate, awaiting independent QA review)
+- P-13 through P-17: Consolidated Same-Scope Repair applied (PASS Candidate, awaiting independent QA review)
   - P-13: P-13.01 COMPLETED; P-13.02–P-13.05, P-13.08, P-13.09 BLOCKED_LIVE / NOT_RUN (fixture regression slice COMPLETED); P-13.06, P-13.07 COMPLETED (FIXTURE Regression Mode)
-  - P-14: P-14.01–P-14.04 COMPLETED (fail-closed runtime ownership verified under python -O)
+  - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
   - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
-  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN
-  - P-17: P-17.01–P-17.04 COMPLETED (real FastMCP server & tools integration example verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN
+  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN (CloudWatch EMF prepared locally; live proof harness fail-closed verified)
+  - P-17: P-17.01–P-17.04 COMPLETED (real official MCPServer over stdio transport verified; wheel package smoke verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN
 - P-18+: PENDING / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
-Starting remote HEAD: `01dbb12c6d5d46c9470e3b66ddea1e166f126fb3`
+Starting remote HEAD: `e83bcc2f7894a247208f5f7cdba6d5704e7b14c6`
 Next exact task: Independent QA Review of Consolidated Macro Repair (P-18 remains strictly PENDING / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:

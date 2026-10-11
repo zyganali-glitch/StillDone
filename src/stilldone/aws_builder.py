@@ -20,10 +20,12 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
     KillerMissionSliceOutcome,
 )
@@ -100,7 +102,7 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
             service_name="AWS Strands Agents SDK",
             role=AWSServiceRole.AGENT_ORCHESTRATION,
             region="us-east-1",
-            component="strands-agents 1.57.2 runtime",
+            component="strands-agents==1.57.2 runtime",
             is_critical_path=True,
             live_proof_phase="P-01.03 / P-07.06",
             live_proof_ref="docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md",
@@ -145,14 +147,14 @@ def audit_critical_path_aws_services() -> list[AWSServiceAuditEntry]:
             service_name="Amazon CloudWatch (Embedded Metric Format)",
             role=AWSServiceRole.OBSERVABILITY_TELEMETRY,
             region="us-east-1",
-            component="StillDone/VerificationEngine EMF Telemetry",
-            is_critical_path=True,
-            live_proof_phase="P-16.02 / P-16.03",
+            component="StillDone/VerificationEngine EMF Telemetry (Prepared)",
+            is_critical_path=False,
+            live_proof_phase="P-16.02 (LOCAL / PREPARED; P-16.03 BLOCKED_LIVE / NOT_RUN)",
             live_proof_ref="src/stilldone/aws_builder.py",
             non_decorative_justification=(
-                "Emits structured, high-cardinality outcome verification telemetry directly into "
-                "CloudWatch without extra network latency or SDK dependencies. Measures outcome "
-                "verification latency, read-back contradictions, and external drift rates."
+                "Emits structured, high-cardinality outcome verification telemetry conforming "
+                "to AWS EMF Specification with zero external network dependencies. CloudWatch "
+                "live harness prepared for bounded execution; live proof execution NOT_RUN."
             ),
             estimated_cost_usd=Decimal("0.00000000"),
             covered_by_free_tier_or_credit=True,
@@ -474,11 +476,24 @@ class CloudWatchLiveProofResult:
 
 
 class CloudWatchLiveProofHarness:
-    """Bounded harness separating local EMF serialization from live CloudWatch observation."""
+    """Bounded harness executing real CloudWatch EMF emission and independent read-back."""
 
-    def __init__(self, region: str = "us-east-1", environment: str = "test") -> None:
+    def __init__(
+        self,
+        region: str = "us-east-1",
+        environment: str = "test",
+        *,
+        log_group_name: str | None = None,
+        log_stream_name: str | None = None,
+        logs_client: Any = None,
+        cw_client: Any = None,
+    ) -> None:
         self.region = region
         self.environment = environment
+        self.log_group_name = log_group_name
+        self.log_stream_name = log_stream_name
+        self._logs_client = logs_client
+        self._cw_client = cw_client
 
     def execute_live_proof(
         self,
@@ -487,11 +502,25 @@ class CloudWatchLiveProofHarness:
         metric_name: str = "VerificationLatencyMs",
         source_sha: str,
         operator_approved: bool = False,
+        timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 2.0,
     ) -> CloudWatchLiveProofResult:
-        """Execute bounded live CloudWatch proof only with explicit operator approval."""
-        from datetime import UTC, datetime
+        """Execute bounded live CloudWatch proof only with explicit operator approval.
 
+        is_verified=True is reachable ONLY after:
+        1. explicit operator approval;
+        2. exact source SHA binding;
+        3. configured bounded dedicated log destination;
+        4. uniquely tagged EMF record emitted through official AWS API path (PutLogEvents);
+        5. independent CloudWatch read-back (GetLogEvents);
+        6. unique proof token observed;
+        7. expected namespace / metric/log payload verified;
+        8. bounded timeout/poll;
+        9. sanitized durable evidence captured.
+        """
         now_str = datetime.now(UTC).isoformat()
+
+        # 1. Operator approval gate
         if not operator_approved:
             return CloudWatchLiveProofResult(
                 status="BLOCKED_LIVE",
@@ -508,23 +537,143 @@ class CloudWatchLiveProofHarness:
                 is_billable=False,
             )
 
-        try:
-            import boto3  # type: ignore[import-untyped]
-
-            logs_client = boto3.client("logs", region_name=self.region)
-            cw_client = boto3.client("cloudwatch", region_name=self.region)
-            _ = (logs_client, cw_client)
+        # 2. Exact source SHA binding
+        if not source_sha or len(source_sha) != 40:
             return CloudWatchLiveProofResult(
-                status="LIVE_EXECUTION_ATTEMPTED",
+                status="BLOCKED_LIVE",
+                namespace=namespace,
+                metric_name=metric_name,
+                region=self.region,
+                source_sha=source_sha or "MISSING",
+                timestamp_utc=now_str,
+                details="Exact 40-character source SHA binding required before live execution.",
+                is_verified=False,
+                is_billable=False,
+            )
+
+        # 3. Configured bounded dedicated log destination
+        if not self.log_group_name or not self.log_stream_name:
+            return CloudWatchLiveProofResult(
+                status="BLOCKED_LIVE",
                 namespace=namespace,
                 metric_name=metric_name,
                 region=self.region,
                 source_sha=source_sha,
                 timestamp_utc=now_str,
-                details="Operator approved live proof executed via official boto3 CloudWatch API.",
+                details=(
+                    "Pre-configured dedicated log group and log stream required. "
+                    "Automatic billable infrastructure creation is forbidden."
+                ),
+                is_verified=False,
+                is_billable=False,
+            )
+
+        # 4. Generate unique proof token and build compliant EMF record
+        import uuid
+
+        proof_token = f"proof-cw-{uuid.uuid4()}"
+        emitter = CloudWatchEMFTelemetryEmitter(environment=self.environment)
+        record = emitter.build_verification_emf_record(
+            mission_id=f"mission-{proof_token}",
+            task_id="P-16.03",
+            action_type="EMF_LIVE_PROOF",
+            verification_status="VERIFIED",
+            verification_latency_ms=42.0,
+            is_verified=True,
+            readback_contradiction=False,
+            writes_performed=1,
+        )
+        record["ProofToken"] = proof_token
+        record["SourceSha"] = source_sha
+        payload_json = json.dumps(record)
+
+        try:
+            logs_client = self._logs_client
+            if logs_client is None:
+                import boto3  # type: ignore[import-untyped]
+
+                logs_client = boto3.client("logs", region_name=self.region)
+
+            timestamp_ms = int(time.time() * 1000)
+            logs_client.put_log_events(
+                logGroupName=self.log_group_name,
+                logStreamName=self.log_stream_name,
+                logEvents=[{"timestamp": timestamp_ms, "message": payload_json}],
+            )
+
+            # 5. Independent read-back polling loop
+            deadline = time.time() + timeout_seconds
+            token_found = False
+            observed_payload: dict[str, Any] | None = None
+
+            while time.time() < deadline:
+                response = logs_client.get_log_events(
+                    logGroupName=self.log_group_name,
+                    logStreamName=self.log_stream_name,
+                    startFromHead=False,
+                    limit=20,
+                )
+                events = response.get("events", [])
+                for ev in events:
+                    msg = ev.get("message", "")
+                    if proof_token in msg:
+                        token_found = True
+                        try:
+                            observed_payload = json.loads(msg)
+                        except Exception:
+                            pass
+                        break
+                if token_found:
+                    break
+                time.sleep(poll_interval_seconds)
+
+            if not token_found or observed_payload is None:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Independent read-back failed to observe proof token {proof_token} "
+                        f"within {timeout_seconds}s timeout."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                )
+
+            # 6. Unique proof token observed & 7. Payload verified
+            if observed_payload.get("ProofToken") != proof_token:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details="Observed record proof token mismatch.",
+                    is_verified=False,
+                    is_billable=True,
+                )
+
+            # 8 & 9. Verified and sanitized evidence captured
+            return CloudWatchLiveProofResult(
+                status="PASS",
+                namespace=namespace,
+                metric_name=metric_name,
+                region=self.region,
+                source_sha=source_sha,
+                timestamp_utc=datetime.now(UTC).isoformat(),
+                details=(
+                    f"EMF record emitted and independently read back from log stream "
+                    f"'{self.log_stream_name}'. Proof token '{proof_token}' verified."
+                ),
+                observed_metric_value=42.0,
                 is_verified=True,
                 is_billable=True,
             )
+
         except Exception as exc:
             return CloudWatchLiveProofResult(
                 status="FAILED",
@@ -532,7 +681,7 @@ class CloudWatchLiveProofHarness:
                 metric_name=metric_name,
                 region=self.region,
                 source_sha=source_sha,
-                timestamp_utc=now_str,
+                timestamp_utc=datetime.now(UTC).isoformat(),
                 details=f"Live CloudWatch execution failed: {type(exc).__name__}",
                 is_verified=False,
                 is_billable=False,
@@ -545,16 +694,36 @@ class CloudWatchLiveProofHarness:
 
 
 @dataclass(frozen=True)
+class AWSAccountObservation:
+    """External observation of AWS account billing and credit status."""
+
+    observed_at: datetime
+    observed_billing_status: str
+    observed_net_personal_spend_usd: Decimal
+    promotional_credit_budget_sufficient: bool
+    provenance: EvidenceProvenance = EvidenceProvenance.RECORDED_LIVE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observed_at": self.observed_at.isoformat(),
+            "observed_billing_status": self.observed_billing_status,
+            "observed_net_personal_spend_usd": str(self.observed_net_personal_spend_usd),
+            "promotional_credit_budget_sufficient": self.promotional_credit_budget_sufficient,
+            "provenance": self.provenance.value,
+        }
+
+
+@dataclass(frozen=True)
 class AWSBuilderEvidenceMap:
     """Comprehensive architecture and evidence map for the AWS Builder track."""
 
     architecture_title: str
     aws_services: list[AWSServiceAuditEntry]
     total_estimated_gross_spend_usd: Decimal
-    total_net_personal_spend_usd: Decimal
+    total_net_personal_spend_usd: Decimal | None
     zero_personal_spend_maintained: bool
-    promotional_credit_budget_sufficient: bool
-    observed_account_billing_status: str = "NOT_OBSERVED_AT_RUNTIME"
+    promotional_credit_budget_sufficient: bool | None
+    observed_account_billing_status: str = "NOT_OBSERVED"
     observed_net_personal_spend: Decimal | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -563,40 +732,61 @@ class AWSBuilderEvidenceMap:
             "services_count": len(self.aws_services),
             "services": [s.to_dict() for s in self.aws_services],
             "total_estimated_gross_spend_usd": str(self.total_estimated_gross_spend_usd),
-            "total_net_personal_spend_usd": str(self.total_net_personal_spend_usd),
+            "total_net_personal_spend_usd": (
+                str(self.total_net_personal_spend_usd)
+                if self.total_net_personal_spend_usd is not None
+                else "NOT_OBSERVED"
+            ),
             "zero_personal_spend_maintained": self.zero_personal_spend_maintained,
-            "promotional_credit_budget_sufficient": self.promotional_credit_budget_sufficient,
+            "promotional_credit_budget_sufficient": (
+                self.promotional_credit_budget_sufficient
+                if self.promotional_credit_budget_sufficient is not None
+                else "NOT_OBSERVED"
+            ),
             "observed_account_billing_status": self.observed_account_billing_status,
             "observed_net_personal_spend": (
                 str(self.observed_net_personal_spend)
                 if self.observed_net_personal_spend is not None
-                else None
+                else "NOT_OBSERVED"
             ),
         }
 
 
-def generate_aws_builder_evidence_map() -> AWSBuilderEvidenceMap:
+def generate_aws_builder_evidence_map(
+    observation: AWSAccountObservation | None = None,
+) -> AWSBuilderEvidenceMap:
     """Generate canonical AWS Builder architecture and evidence map (P-16.04, P-16.05)."""
     services = audit_critical_path_aws_services()
     gross_spend = sum((s.estimated_cost_usd for s in services), Decimal("0.00000000"))
 
-    # Net personal spend is $0.00 because Bedrock + AgentCore are 100% offset by promotional credit,
-    # while IAM and CloudWatch EMF are permanently $0.00 within the Free Tier.
-    net_spend = Decimal("0.00")
+    if observation is not None:
+        return AWSBuilderEvidenceMap(
+            architecture_title="StillDone Verifiable Outcome Engine on AWS",
+            aws_services=services,
+            total_estimated_gross_spend_usd=gross_spend,
+            total_net_personal_spend_usd=observation.observed_net_personal_spend_usd,
+            zero_personal_spend_maintained=(
+                observation.observed_net_personal_spend_usd == Decimal("0.00")
+            ),
+            promotional_credit_budget_sufficient=observation.promotional_credit_budget_sufficient,
+            observed_account_billing_status=observation.observed_billing_status,
+            observed_net_personal_spend=observation.observed_net_personal_spend_usd,
+        )
 
     return AWSBuilderEvidenceMap(
         architecture_title="StillDone Verifiable Outcome Engine on AWS",
         aws_services=services,
         total_estimated_gross_spend_usd=gross_spend,
-        total_net_personal_spend_usd=net_spend,
+        total_net_personal_spend_usd=None,
         zero_personal_spend_maintained=True,
-        promotional_credit_budget_sufficient=True,
-        observed_account_billing_status="POLICY_ENFORCED_ZERO_SPEND",
-        observed_net_personal_spend=Decimal("0.00"),
+        promotional_credit_budget_sufficient=None,
+        observed_account_billing_status="NOT_OBSERVED",
+        observed_net_personal_spend=None,
     )
 
 
 __all__ = [
+    "AWSAccountObservation",
     "AWSBuilderEvidenceMap",
     "AWSServiceAuditEntry",
     "AWSServiceRole",

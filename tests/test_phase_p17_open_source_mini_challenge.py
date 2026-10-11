@@ -156,3 +156,16 @@ def test_p17_06_evidence_description() -> None:
     assert "Open Source Mini Challenge" in content
     assert "mcp-verify" in content
     assert "Apache-2.0" in content
+
+
+def test_p17_05_wheel_package_smoke() -> None:
+    """Verify reproducible package smoke test for built mcp-verify wheel."""
+    smoke_script = root_dir / "scripts" / "smoke_mcp_verify_wheel.py"
+    assert smoke_script.exists()
+    spec = importlib.util.spec_from_file_location("smoke_mcp_verify_wheel", smoke_script)
+    assert spec is not None
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    assert hasattr(mod, "smoke_mcp_verify_wheel")
+    mod.smoke_mcp_verify_wheel()

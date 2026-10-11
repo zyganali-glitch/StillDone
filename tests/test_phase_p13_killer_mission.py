@@ -23,11 +23,18 @@ Constitutional Invariants Verified:
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
+from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+from stilldone.adapters.weather import OpenMeteoHttpTransport
 from stilldone.authority_policy import (
     AuthorityPolicyTypeError,
     PlannerAuthorityError,
@@ -55,8 +62,14 @@ from stilldone.killer_mission import (
     PREDICATE_ID_CALENDAR,
     PREDICATE_ID_TASK,
     PREDICATE_ID_WEATHER,
+    FakeGoogleCalendarTransport,
+    InvalidEnvironmentConfigurationError,
     KillerMissionEnvironment,
+    KillerMissionExecutionError,
     KillerMissionSliceRunner,
+    LiveKillerMissionSliceRunner,
+    LivePreflightBlockedError,
+    check_live_preflight,
 )
 from stilldone.pending_approval import (
     PendingApprovalTypeError,
@@ -415,3 +428,355 @@ def test_readback_mismatch_strictly_prevents_ready(
     assert readiness.is_ready is False
     assert readiness.state != MissionState.READY
     assert PREDICATE_ID_CALENDAR in readiness.failed_predicate_ids
+
+
+# ===========================================================================
+# 10. Mandatory Adversarial Closed-World & Live-Preflight Security Tests
+# ===========================================================================
+
+
+def test_adversarial_fixture_transport_with_live_provenance_rejected(tmp_path: Path) -> None:
+    """Adversarial: Synthetic fixture transports MUST be rejected if LIVE provenance is selected."""
+    # Direct constructor with fake transports + LIVE provenance
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError, match="Live provenance.*cannot be combined"
+    ):
+        KillerMissionEnvironment(
+            base_dir=tmp_path / "env1",
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError, match="Live provenance.*cannot be combined"
+    ):
+        KillerMissionEnvironment(
+            base_dir=tmp_path / "env2",
+            provenance=EvidenceProvenance.LIVE_AWS,
+        )
+
+    # create_fixture_environment must strictly forbid LIVE provenance
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="Fixture environment requires EvidenceProvenance.FIXTURE",
+    ):
+        KillerMissionEnvironment.create_fixture_environment(
+            base_dir=tmp_path / "env3",
+            provenance=EvidenceProvenance.LIVE_GOOGLE,
+        )
+
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="Fixture environment requires EvidenceProvenance.FIXTURE",
+    ):
+        KillerMissionEnvironment.create_fixture_environment(
+            base_dir=tmp_path / "env4",
+            provenance=EvidenceProvenance.LIVE_AWS,
+        )
+
+
+def test_adversarial_live_environment_with_missing_or_fake_transports_rejected(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: Live environment MUST require real concrete transports.
+
+    Missing or fake = fail-closed.
+    """
+    # Missing concrete transports
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="Live environment requires explicit concrete calendar_transport",
+    ):
+        KillerMissionEnvironment.create_live_environment(
+            base_dir=tmp_path / "live_missing",
+            calendar_transport=None,
+            tasks_transport=None,
+        )
+
+    # Fake transport supplied to live environment
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError,
+        match="Fake calendar transport supplied to live environment",
+    ):
+        KillerMissionEnvironment.create_live_environment(
+            base_dir=tmp_path / "live_fake",
+            calendar_transport=FakeGoogleCalendarTransport(),
+            tasks_transport=None,
+        )
+
+
+def test_adversarial_live_preflight_blocks_without_operator_approval() -> None:
+    """Adversarial: Live preflight blocks execution if explicit operator approval is absent."""
+    from stilldone.killer_mission import DemoResourceScope
+
+    scope = DemoResourceScope(calendar_id="demo_calendar_123", task_list_id="demo_tasks_123")
+    report = check_live_preflight(
+        scope=scope,
+        operator_approved=False,
+        aws_credentials_available=True,
+        google_credentials={"token": "mock"},
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    assert report.is_ready is False
+    assert any("operator" in b.lower() for b in report.blocker_reasons)
+
+
+def test_adversarial_live_preflight_blocks_without_aws_credentials() -> None:
+    """Adversarial: Live preflight blocks execution if AWS credentials are not available."""
+    from stilldone.killer_mission import DemoResourceScope
+
+    scope = DemoResourceScope(calendar_id="demo_calendar_123", task_list_id="demo_tasks_123")
+    report = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        aws_credentials_available=False,
+        google_credentials={"token": "mock"},
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    assert report.is_ready is False
+    assert any("aws" in b.lower() for b in report.blocker_reasons)
+
+
+def test_adversarial_live_preflight_blocks_without_source_sha() -> None:
+    """Adversarial: Live preflight blocks execution if exact source SHA gate is invalid."""
+    from stilldone.killer_mission import DemoResourceScope
+
+    scope = DemoResourceScope(calendar_id="demo_calendar_123", task_list_id="demo_tasks_123")
+    report = check_live_preflight(
+        scope=scope,
+        operator_approved=True,
+        aws_credentials_available=True,
+        google_credentials={"token": "mock"},
+        source_sha="not_a_valid_40_char_git_sha",
+    )
+    assert report.is_ready is False
+    assert any("sha" in b.lower() for b in report.blocker_reasons)
+
+
+def test_adversarial_live_runner_preflight_failure_causes_zero_writes_and_zero_approvals(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: Live runner failing preflight guarantees 0 writes and 0 approvals consumed."""
+    env = KillerMissionEnvironment.create_fixture_environment(tmp_path / "adversarial_runner")
+
+    # Live runner strictly forbids running with a FIXTURE environment
+    with pytest.raises(
+        InvalidEnvironmentConfigurationError, match="cannot run in a FIXTURE environment"
+    ):
+        LiveKillerMissionSliceRunner(env, operator_approved=False)
+
+
+def test_p13_cli_fixture_mode_subprocess() -> None:
+    """Verify scripts/p13_killer_mission.py runs cleanly under python and python -O."""
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "p13_killer_mission.py"
+
+    # 1. Standard python run
+    proc_standard = subprocess.run(
+        [sys.executable, str(script_path), "--fixture"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_standard.returncode == 0, f"Standard run failed: {proc_standard.stderr}"
+    assert "ALL 7 P-13 ACCEPTANCE CRITERIA RIGIDLY VERIFIED." in proc_standard.stdout
+
+    # 2. Optimized python -O run (assert statements stripped; deterministic checks must pass)
+    proc_opt = subprocess.run(
+        [sys.executable, "-O", str(script_path), "--fixture"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_opt.returncode == 0, f"Optimized run failed: {proc_opt.stderr}"
+    assert "ALL 7 P-13 ACCEPTANCE CRITERIA RIGIDLY VERIFIED." in proc_opt.stdout
+
+
+def test_p13_cli_live_mode_blocks_fail_closed() -> None:
+    """Verify scripts/p13_killer_mission.py --live immediately exits 2 with BLOCKED_LIVE."""
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "p13_killer_mission.py"
+
+    # Human-readable CLI output
+    proc = subprocess.run(
+        [sys.executable, str(script_path), "--live"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED_LIVE" in proc.stdout
+    assert "0 writes performed; 0 approvals consumed." in proc.stdout
+
+    # JSON CLI output
+    proc_json = subprocess.run(
+        [sys.executable, str(script_path), "--live", "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_json.returncode == 2
+    data = json.loads(proc_json.stdout)
+    assert data["status"] == "BLOCKED_LIVE"
+    assert data["writes_performed"] == 0
+    assert len(data["blocker_reasons"]) > 0
+
+
+def test_p13_cli_live_mode_with_operator_approval_blocks_without_aws_creds() -> None:
+    """Verify scripts/p13_killer_mission.py --live with approval blocks without AWS creds."""
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "p13_killer_mission.py"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            "--live",
+            "--operator-approved",
+            "--source-sha",
+            "1111111111111111111111111111111111111111",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert "BLOCKED_LIVE" in proc.stdout
+
+
+def test_adversarial_live_runner_all_steps_fail_closed_on_preflight_block(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: Every individual step method on LiveKillerMissionSliceRunner fails closed."""
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "live_env_blocked",
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+
+    # Runner without operator approval
+    runner = LiveKillerMissionSliceRunner(live_env, operator_approved=False)
+
+    # Every step must raise LivePreflightBlockedError when called directly
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_01_seed()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_02_plan()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_03_tasks_prep()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_04_calendar_pause()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_05_calendar_approve()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_06_ready_receipt()
+
+    with pytest.raises(LivePreflightBlockedError, match="Operator authorization required"):
+        runner.step_p13_07_mutate_and_drift()
+
+    # run_full_slice must return 7 BLOCKED_LIVE steps with 0 writes performed
+    outcome = runner.run_full_slice()
+    assert outcome.total_writes_performed == 0
+    assert outcome.is_live is True
+    assert outcome.ready_receipt_hash is None
+    assert len(outcome.steps) == 7
+    for _task_id, step in outcome.steps.items():
+        assert step.status == "BLOCKED_LIVE"
+        assert step.writes_performed == 0
+        assert step.is_verified is False
+
+
+def test_adversarial_live_mode_without_bedrock_planner_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Adversarial: Live mode without Bedrock planner adapter strictly fails closed."""
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "live_env_no_planner",
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+
+    # Base runner in live mode with operator approval but NO bedrock planner
+    runner = KillerMissionSliceRunner(
+        env=live_env,
+        live_mode=True,
+        operator_approved=True,
+        bedrock_planner=None,
+    )
+
+    with pytest.raises(
+        KillerMissionExecutionError,
+        match="Live mode requires concrete Bedrock / Strands planner adapter",
+    ):
+        runner.step_p13_02_plan()
+
+
+def test_adversarial_live_mode_with_injected_bedrock_planner(
+    tmp_path: Path,
+) -> None:
+    """Verify live mode compiles candidate proposal from Bedrock adapter with 0 model authority."""
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=tmp_path / "live_env_with_planner",
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+
+    # Injected fake Bedrock client returning valid candidate plan JSON
+    valid_plan_json = json.dumps(
+        {
+            "mission_id": "11111111-2222-3333-4444-555555555555",
+            "steps": [
+                {
+                    "action_type": "weather.read",
+                    "target_ref": "weather_location",
+                    "parameters": {},
+                    "explanation": "Check morning weather",
+                },
+                {
+                    "action_type": "task.create",
+                    "target_ref": "task_list",
+                    "parameters": {"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+                    "explanation": "Pack backpacks",
+                },
+                {
+                    "action_type": "calendar.update",
+                    "target_ref": "leave_for_school",
+                    "parameters": {"start_time": CANONICAL_DESIRED_START_TIME},
+                    "explanation": "Adjust school departure to 7:30",
+                },
+            ],
+            "explanation": "Injected planner proposal",
+        }
+    )
+
+    fake_bedrock_client = MagicMock()
+    fake_bedrock_client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": valid_plan_json}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150},
+        "metrics": {"latencyMs": 120},
+    }
+
+    planner_adapter = BedrockPlannerAdapter(client=fake_bedrock_client)
+
+    runner = KillerMissionSliceRunner(
+        env=live_env,
+        live_mode=True,
+        operator_approved=True,
+        bedrock_planner=planner_adapter,
+    )
+
+    # Step P-13.02 must compile the model proposal through deterministic contracts
+    res = runner.step_p13_02_plan()
+    assert res.status == "PASS"
+    assert res.writes_performed == 0
+    assert res.is_verified is True
+    assert len(runner.schedule) == 3
+    # Model proposal has zero execution authority
+    assert runner.action_cal.action_type == ActionType.CALENDAR_UPDATE

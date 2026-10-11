@@ -24,32 +24,67 @@ import sys
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
+    CANONICAL_DEMO_CALENDAR_ID,
+    CANONICAL_DEMO_TASK_LIST_ID,
+    InvalidEnvironmentConfigurationError,
     KillerMissionEnvironment,
     KillerMissionSliceRunner,
+    check_live_preflight,
 )
 
 
-def run_killer_mission(live: bool = False, as_json: bool = False) -> int:
+def run_killer_mission(
+    live: bool = False,
+    as_json: bool = False,
+    operator_approved: bool = False,
+    source_sha: str | None = None,
+) -> int:
     """Execute the canonical killer mission vertical slice."""
-    provenance = EvidenceProvenance.LIVE_GOOGLE if live else EvidenceProvenance.FIXTURE
-
     if live:
-        # Check credentials boundary before attempting live writes
-        from stilldone.google_oauth_client import get_default_token_storage
+        # Preflight gate: check credentials and operator consent before creating any environment
+        import os
+        from pathlib import Path
 
-        storage = get_default_token_storage()
-        tokens = storage.load_tokens()
-        if not tokens or not tokens.access_token:
+        from stilldone.demo_isolation import DemoResourceScope
+
+        token_path = os.environ.get("GOOGLE_TOKEN_PATH") or (
+            Path.home() / ".stilldone" / "token.json"
+        )
+        creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        has_google_token = (
+            bool(creds_path and os.path.exists(creds_path))
+            or (isinstance(token_path, Path) and token_path.exists())
+            or (isinstance(token_path, str) and os.path.exists(token_path))
+        )
+        google_creds = object() if has_google_token else None
+
+        scope = DemoResourceScope(
+            calendar_id=CANONICAL_DEMO_CALENDAR_ID,
+            task_list_id=CANONICAL_DEMO_TASK_LIST_ID,
+        )
+        preflight = check_live_preflight(
+            scope=scope,
+            operator_approved=operator_approved,
+            source_sha=source_sha,
+            google_credentials=google_creds,
+            aws_credentials_available=False,  # No unapproved/paid AWS credentials in CLI test
+            calendar_transport=None,
+            tasks_transport=None,
+            weather_transport=None,
+        )
+
+        if not preflight.is_ready:
+            blocker_details = "; ".join(preflight.blocker_reasons)
             if as_json:
                 print(
                     json.dumps(
                         {
                             "status": "BLOCKED_LIVE",
-                            "reason": (
-                                "Missing valid live Google OAuth tokens. Run OAuth flow first."
-                            ),
+                            "reason": blocker_details,
                             "provenance": EvidenceProvenance.FIXTURE.value,
                             "is_live": False,
+                            "writes_performed": 0,
+                            "blocker_reasons": preflight.blocker_reasons,
                         },
                         indent=2,
                     )
@@ -59,13 +94,24 @@ def run_killer_mission(live: bool = False, as_json: bool = False) -> int:
                 print("STILLDONE KILLER MISSION -- LIVE EXECUTION BLOCKED")
                 print("=================================================================")
                 print("Status: BLOCKED_LIVE (Fail-closed)")
-                print("Reason: Missing valid live Google OAuth tokens.")
-                print("Live operations require genuine operator consent.")
+                print(f"Reason: {blocker_details}")
+                print("Live operations require genuine operator consent ($0.00 spend law).")
                 print("Zero false-live claims: Fixture proof will NOT claim LIVE.")
+                print("0 writes performed; 0 approvals consumed.")
                 print("=================================================================")
             return 2
 
-    env = KillerMissionEnvironment.create_fixture_environment(provenance=provenance)
+        # If preflight passed, live environment is required.
+        # Strict closed-world invariant: never fall back to fixture.
+        print("Live preflight passed. Live mutations require dedicated operator execution.")
+        return 0
+
+    # Fixture mode: strict closed-world fixture environment with zero live connectivity
+    if live:
+        raise InvalidEnvironmentConfigurationError(
+            "Live mode cannot use fixture environment; strict closed-world boundary enforced."
+        )
+    env = KillerMissionEnvironment.create_fixture_environment()
     runner = KillerMissionSliceRunner(env=env)
 
     if not as_json:
@@ -73,7 +119,7 @@ def run_killer_mission(live: bool = False, as_json: bool = False) -> int:
         print("STILLDONE CANONICAL KILLER MISSION -- P-13 VERTICAL SLICE PROOF")
         print("=================================================================")
         print(f"Intent: '{runner.intent_text}'")
-        print(f"Provenance Mode: {provenance.value}")
+        print(f"Provenance Mode: {runner.env.provenance.value}")
         print(f"Mission ID: {runner.mission_id}")
         print("-----------------------------------------------------------------")
 
@@ -100,12 +146,24 @@ def run_killer_mission(live: bool = False, as_json: bool = False) -> int:
     print(f"Total Mutations Executed:          {outcome.total_writes_performed}")
     print("=================================================================")
 
-    # Verify acceptance criteria
-    assert outcome.final_state == MissionState.DRIFTED
-    assert outcome.historical_receipt_immutable is True
-    assert outcome.ready_receipt_hash == outcome.drifted_receipt_hash
-    assert len(outcome.steps) == 7
-    assert all(s.status == "PASS" for s in outcome.steps.values())
+    # Explicit deterministic acceptance validation (optimization-safe under python -O)
+    acceptance_failures: list[str] = []
+    if outcome.final_state != MissionState.DRIFTED:
+        acceptance_failures.append(f"Expected final state DRIFTED, got {outcome.final_state.value}")
+    if not outcome.historical_receipt_immutable:
+        acceptance_failures.append("Historical receipt immutability violated")
+    if outcome.ready_receipt_hash != outcome.drifted_receipt_hash:
+        acceptance_failures.append("Receipt hash mismatch between READY and DRIFTED")
+    if len(outcome.steps) != 7:
+        acceptance_failures.append(f"Expected 7 steps, got {len(outcome.steps)}")
+    failed_steps = [s.task_id for s in outcome.steps.values() if s.status != "PASS"]
+    if failed_steps:
+        acceptance_failures.append(f"Steps did not PASS: {', '.join(failed_steps)}")
+
+    if acceptance_failures:
+        for failure in acceptance_failures:
+            print(f"ACCEPTANCE FAILURE: {failure}", file=sys.stderr)
+        return 1
 
     print("ALL 7 P-13 ACCEPTANCE CRITERIA RIGIDLY VERIFIED.")
     return 0
@@ -125,13 +183,30 @@ def main() -> None:
         help="Execute deterministic fixture slice (default)",
     )
     parser.add_argument(
+        "--operator-approved",
+        action="store_true",
+        default=False,
+        help="Explicit operator authorization for live execution",
+    )
+    parser.add_argument(
+        "--source-sha",
+        type=str,
+        default=None,
+        help="Exact 40-character source SHA binding for live preflight",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in JSON format",
     )
     args = parser.parse_args()
 
-    exit_code = run_killer_mission(live=args.live, as_json=args.json)
+    exit_code = run_killer_mission(
+        live=args.live,
+        as_json=args.json,
+        operator_approved=args.operator_approved,
+        source_sha=args.source_sha,
+    )
     sys.exit(exit_code)
 
 
