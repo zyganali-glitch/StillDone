@@ -379,8 +379,7 @@ def revalidate_mission(
     effective_actions: Sequence[ActionContract]
     if actions is not None:
         effective_actions = actions
-    else:
-        assert snapshot is not None
+    elif snapshot is not None:
         if hasattr(snapshot, "mission_id") and snapshot.mission_id != mission_id:
             raise RevalidationValueError(
                 f"Snapshot mission {snapshot.mission_id} does not match {mission_id}"
@@ -389,6 +388,8 @@ def revalidate_mission(
             effective_actions = snapshot.actions
         else:
             raise RevalidationTypeError("snapshot must have actions attribute")
+    else:
+        raise RevalidationValueError("Both actions and snapshot cannot be None")
 
     # Derive or validate target_map against snapshot bindings
     if target_map is not None:

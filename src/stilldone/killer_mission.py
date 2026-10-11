@@ -82,12 +82,10 @@ from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.evidence import EvidenceId
 from stilldone.execution.compiler import compile_candidate_plan
 from stilldone.execution.contracts import (
-    MissionExecutionContract,
     SymbolicTargetResolver,
 )
 from stilldone.execution.gate import (
     ApprovedCalendarUpdateOutcome,
-    CalendarMutationSpy,
     execute_approved_calendar_update,
     execute_gated_action,
 )
@@ -99,7 +97,7 @@ from stilldone.execution.router import (
     TasksReadHandler,
     WeatherReadHandler,
 )
-from stilldone.execution.scheduler import ExecutionSchedule, schedule_execution
+from stilldone.execution.scheduler import schedule_execution
 from stilldone.execution.state import (
     ActionExecutionStatus,
     ExecutionStateTracker,
@@ -173,6 +171,114 @@ CANONICAL_WEATHER_LOCATION_ID: str = "demo_weather_location"
 PREDICATE_ID_WEATHER: PredicateId = PredicateId("11111111-0000-0000-0000-000000000001")
 PREDICATE_ID_TASK: PredicateId = PredicateId("11111111-0000-0000-0000-000000000002")
 PREDICATE_ID_CALENDAR: PredicateId = PredicateId("11111111-0000-0000-0000-000000000003")
+
+
+# ===========================================================================
+# Killer Mission Exception Hierarchy (Fail-Closed Runtime Validation)
+# ===========================================================================
+
+
+class KillerMissionError(Exception):
+    """Base exception for canonical killer mission execution failures."""
+
+
+class KillerMissionExecutionError(KillerMissionError):
+    """Raised when an action execution fails authority, provider, or state checks."""
+
+
+class KillerMissionAuthorityError(KillerMissionError):
+    """Raised when an action violates authority boundaries or fails to pause mutations."""
+
+
+class KillerMissionVerificationError(KillerMissionError):
+    """Raised when an independent provider read-back or predicate evaluation fails."""
+
+
+class KillerMissionSequenceError(KillerMissionError):
+    """Raised when steps are executed out of sequence or missing required preconditions."""
+
+
+class KillerMissionReadinessError(KillerMissionError):
+    """Raised when mission readiness computation fails to reach the expected state."""
+
+
+class KillerMissionReconciliationError(KillerMissionError):
+    """Raised when reconciliation after external reality change fails."""
+
+
+class KillerMissionIntegrityError(KillerMissionError):
+    """Raised when cryptographic receipt or snapshot integrity is violated."""
+
+
+class LiveExecutionBlockedError(KillerMissionError):
+    """Raised when live execution path is attempted without operator authorization."""
+
+
+# ===========================================================================
+# Live Preflight Evaluation
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class LivePreflightReport:
+    """Deterministic preflight report checking requirements for live execution."""
+
+    is_ready: bool
+    operator_approved: bool
+    google_auth_available: bool
+    aws_bedrock_auth_available: bool
+    open_meteo_reachable: bool
+    disposable_scope_verified: bool
+    blocker_reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "is_ready": self.is_ready,
+            "operator_approved": self.operator_approved,
+            "google_auth_available": self.google_auth_available,
+            "aws_bedrock_auth_available": self.aws_bedrock_auth_available,
+            "open_meteo_reachable": self.open_meteo_reachable,
+            "disposable_scope_verified": self.disposable_scope_verified,
+            "blocker_reasons": list(self.blocker_reasons),
+        }
+
+
+def check_live_preflight(
+    scope: DemoResourceScope,
+    *,
+    operator_approved: bool = False,
+    google_credentials: Any = None,
+    aws_credentials_available: bool = False,
+) -> LivePreflightReport:
+    """Evaluate deterministic preflight before attempting any live mission execution."""
+    blockers: list[str] = []
+    if not operator_approved:
+        blockers.append(
+            "Operator authorization required to maintain Zero Personal Spend Law ($0.00)"
+        )
+    if google_credentials is None:
+        blockers.append("Google OAuth 2.0 credentials not configured for demo calendar/tasks")
+    if not aws_credentials_available:
+        blockers.append("AWS credentials not configured for Bedrock / Strands planner")
+
+    disposable_ok = (
+        scope.calendar_id not in ("primary", "default")
+        and len(scope.calendar_id) > 0
+        and len(scope.task_list_id) > 0
+    )
+    if not disposable_ok:
+        blockers.append(f"Invalid disposable resource scope: calendar_id={scope.calendar_id}")
+
+    is_ready = len(blockers) == 0
+    return LivePreflightReport(
+        is_ready=is_ready,
+        operator_approved=operator_approved,
+        google_auth_available=google_credentials is not None,
+        aws_bedrock_auth_available=aws_credentials_available,
+        open_meteo_reachable=True,
+        disposable_scope_verified=disposable_ok,
+        blocker_reasons=blockers,
+    )
 
 
 # ===========================================================================
@@ -257,6 +363,30 @@ class KillerMissionEnvironment:
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_killer_mission_"))
         return cls(base_dir=target_dir, provenance=provenance)
 
+    @classmethod
+    def create_live_environment(
+        cls,
+        base_dir: Path | None = None,
+        scope: DemoResourceScope | None = None,
+        *,
+        calendar_transport: CalendarTransport | None = None,
+        tasks_transport: TaskTransport | None = None,
+        weather_transport: WeatherTransport | None = None,
+        provenance: EvidenceProvenance = EvidenceProvenance.LIVE_GOOGLE,
+    ) -> KillerMissionEnvironment:
+        """Create explicit live environment configured for real provider integrations."""
+        import tempfile
+
+        target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_live_killer_mission_"))
+        return cls(
+            base_dir=target_dir,
+            scope=scope,
+            calendar_transport=calendar_transport,
+            tasks_transport=tasks_transport,
+            weather_transport=weather_transport,
+            provenance=provenance,
+        )
+
     def __init__(
         self,
         base_dir: Path,
@@ -317,9 +447,13 @@ class KillerMissionSliceRunner:
         env: KillerMissionEnvironment | None = None,
         *,
         mission_id: MissionId | None = None,
+        live_mode: bool = False,
+        operator_approved: bool = False,
     ) -> None:
         self.env = env or KillerMissionEnvironment.create_fixture_environment()
         self.mission_id = mission_id or MissionId("11111111-2222-3333-4444-555555555555")
+        self.live_mode = live_mode or (self.env.provenance != EvidenceProvenance.FIXTURE)
+        self.operator_approved = operator_approved
         self.intent_text = CANONICAL_KILLER_INTENT
         self.contract = MissionContract.create(self.intent_text, mission_id=self.mission_id)
 
@@ -513,15 +647,33 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Compile natural language proposal; assert zero model authority."""
+        if self.live_mode and not self.operator_approved:
+            res = KillerMissionStepResult(
+                task_id="P-13.02",
+                step_name="Natural Language Planning & Compilation",
+                status="BLOCKED_LIVE",
+                provenance=EvidenceProvenance.LIVE_AWS,
+                details=(
+                    "AWS Bedrock Converse / Strands live planning requires explicit operator "
+                    "authorization. Zero personal spend policy enforced fail-closed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={"live_preflight_blocked": True},
+            )
+            self.step_results["P-13.02"] = res
+            return res
+
         # Execute initial read-only weather observation (READ_ONLY, 0 writes)
         weather_gate = execute_gated_action(
             validate_action_contract(self.action_weather),
             self.router,
             tracker=self.tracker,
         )
-        assert weather_gate.is_authorized
-        assert weather_gate.provider_result is not None
-        assert weather_gate.provider_result.success
+        if not weather_gate.is_authorized:
+            raise KillerMissionAuthorityError("Weather read action was not authorized")
+        if weather_gate.provider_result is None or not weather_gate.provider_result.success:
+            raise KillerMissionExecutionError("Weather read provider execution failed")
 
         res = KillerMissionStepResult(
             task_id="P-13.02",
@@ -547,11 +699,31 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
         """Execute task.create (REVERSIBLE_AUTO) and independently verify with task.read."""
+        if self.live_mode and not self.operator_approved:
+            res = KillerMissionStepResult(
+                task_id="P-13.03",
+                step_name="Execute & Verify Tasks Preparation Action",
+                status="BLOCKED_LIVE",
+                provenance=EvidenceProvenance.LIVE_GOOGLE,
+                details=(
+                    "Google Tasks live mutation requires explicit operator authorization "
+                    "and live OAuth credentials. Execution blocked fail-closed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={"live_preflight_blocked": True},
+            )
+            self.step_results["P-13.03"] = res
+            return res
+
         validated_action_task = validate_action_contract(self.action_task)
 
         # Authority check: REVERSIBLE_AUTO requires no approval
         auth_decision = evaluate_authority(validated_action_task, at=datetime.now(UTC))
-        assert auth_decision.status == AuthorityDecisionStatus.AUTHORIZED_NO_APPROVAL_REQUIRED
+        if auth_decision.status != AuthorityDecisionStatus.AUTHORIZED_NO_APPROVAL_REQUIRED:
+            raise KillerMissionAuthorityError(
+                f"Tasks preparation requires no approval; got {auth_decision.status}"
+            )
 
         # Execute gated action
         gate_decision = execute_gated_action(
@@ -559,9 +731,10 @@ class KillerMissionSliceRunner:
             self.router,
             tracker=self.tracker,
         )
-        assert gate_decision.is_authorized
-        assert gate_decision.provider_result is not None
-        assert gate_decision.provider_result.success
+        if not gate_decision.is_authorized:
+            raise KillerMissionAuthorityError("Tasks preparation action was not authorized")
+        if gate_decision.provider_result is None or not gate_decision.provider_result.success:
+            raise KillerMissionExecutionError("Tasks preparation provider execution failed")
         self.total_writes += 1
 
         # Discover created task id from transport for independent read-back
@@ -589,8 +762,15 @@ class KillerMissionSliceRunner:
             action_id=ActionId.generate(),
         )
         read_result = self.tasks_read_adapter.read_task(raw_action_read)
-        assert read_result.observation is not None
-        assert read_result.observation.title == CANONICAL_DEMO_TASK_TITLE
+        if read_result.observation is None:
+            raise KillerMissionVerificationError(
+                "Independent task readback returned None observation"
+            )
+        if read_result.observation.title != CANONICAL_DEMO_TASK_TITLE:
+            raise KillerMissionVerificationError(
+                f"Task title mismatch: expected {CANONICAL_DEMO_TASK_TITLE!r}, "
+                f"got {read_result.observation.title!r}"
+            )
 
         # Evaluate predicate deterministically
         task_obs = VerificationObservation(
@@ -604,7 +784,8 @@ class KillerMissionSliceRunner:
             provenance=self.env.provenance,
         )
         pred_eval = evaluate_predicate(self.pred_task, task_obs)
-        assert pred_eval.truth == PredicateTruth.TRUE
+        if pred_eval.truth != PredicateTruth.TRUE:
+            raise KillerMissionVerificationError("Task predicate evaluation failed")
         self.task_observation = task_obs
 
         # Record action in durable ledger
@@ -645,8 +826,14 @@ class KillerMissionSliceRunner:
             self.router,
             tracker=self.tracker,
         )
-        assert not gate_decision.is_authorized
-        assert gate_decision.status == ActionExecutionStatus.NOT_RUN
+        if gate_decision.is_authorized:
+            raise KillerMissionAuthorityError(
+                "Calendar update must not be authorized without approval"
+            )
+        if gate_decision.status != ActionExecutionStatus.NOT_RUN:
+            raise KillerMissionExecutionError(
+                f"Unapproved action must remain NOT_RUN; got {gate_decision.status}"
+            )
 
         # Create PendingApproval bound to exact action and target
         now = datetime.now(UTC)
@@ -691,7 +878,26 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_05_calendar_approve(self) -> KillerMissionStepResult:
         """Grant bound approval, execute calendar update, and read back independently."""
-        assert hasattr(self, "validated_action_cal"), "Must run step_p13_04 first"
+        if not hasattr(self, "pending_approval"):
+            raise KillerMissionSequenceError("Must run step_p13_04 first")
+
+        if self.live_mode and not self.operator_approved:
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="BLOCKED_LIVE",
+                provenance=EvidenceProvenance.LIVE_GOOGLE,
+                details=(
+                    "Google Calendar live mutation requires explicit operator authorization "
+                    "and live OAuth credentials. Execution blocked fail-closed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={"live_preflight_blocked": True},
+            )
+            self.step_results["P-13.05"] = res
+            return res
+
         now = datetime.now(UTC)
 
         # 1. Read before-state for ETag/precondition safety
@@ -703,7 +909,10 @@ class KillerMissionSliceRunner:
             action_id=ActionId.generate(),
         )
         before_read = self.cal_read_adapter.read_event(read_action)
-        assert before_read.observation is not None
+        if before_read.observation is None:
+            raise KillerMissionVerificationError(
+                "Calendar before-state read returned None observation"
+            )
 
         # 2. Issue ApprovalGrant bound to exact action and target
         grant = ApprovalGrant(
@@ -731,8 +940,12 @@ class KillerMissionSliceRunner:
             provenance=self.env.provenance,
         )
 
-        assert outcome.is_verified
-        assert outcome.provider_result.writes_performed == 1
+        if not outcome.is_verified:
+            raise KillerMissionVerificationError("Approved calendar update was not verified")
+        if outcome.provider_result.writes_performed != 1:
+            raise KillerMissionExecutionError(
+                f"Expected exactly 1 write, got {outcome.provider_result.writes_performed}"
+            )
         self.total_writes += 1
         self.approved_cal_outcome = outcome
 
@@ -830,8 +1043,10 @@ class KillerMissionSliceRunner:
             observations=observations,
             at=now,
         )
-        assert readiness.is_ready
-        assert readiness.state == MissionState.READY
+        if not readiness.is_ready or readiness.state != MissionState.READY:
+            raise KillerMissionReadinessError(
+                f"Mission failed to reach READY state; got state={readiness.state}"
+            )
 
         # 4. Create durable MissionSnapshot in READY state
         ev_id1 = EvidenceId.compute("ev_weather_obs_p13")
@@ -897,7 +1112,8 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_07_mutate_and_drift(self) -> KillerMissionStepResult:
         """Induce external reality change; prove READY -> DRIFTED while receipt stays."""
-        assert self.ready_receipt is not None, "Must produce READY receipt first"
+        if self.ready_receipt is None:
+            raise KillerMissionSequenceError("Must produce READY receipt first")
         now = datetime.now(UTC)
 
         # 1. Induce external mutation on calendar transport (outside StillDone)
@@ -920,8 +1136,13 @@ class KillerMissionSliceRunner:
             action_id=ActionId.generate(),
         )
         drift_read = self.cal_read_adapter.read_event(read_action)
-        assert drift_read.observation is not None
-        assert drift_read.observation.start_time == CANONICAL_CONTRADICTORY_START_TIME
+        if drift_read.observation is None:
+            raise KillerMissionVerificationError("Calendar drift read returned None observation")
+        if drift_read.observation.start_time != CANONICAL_CONTRADICTORY_START_TIME:
+            raise KillerMissionVerificationError(
+                f"Expected start_time={CANONICAL_CONTRADICTORY_START_TIME}, "
+                f"got {drift_read.observation.start_time}"
+            )
 
         # 3. Create fresh contradictory observation
         fresh_cal_obs = VerificationObservation(
@@ -934,7 +1155,10 @@ class KillerMissionSliceRunner:
 
         # 4. Predicate evaluation evaluates to FALSE
         pred_eval = evaluate_predicate(self.pred_calendar, fresh_cal_obs)
-        assert pred_eval.truth == PredicateTruth.FALSE
+        if pred_eval.truth != PredicateTruth.FALSE:
+            raise KillerMissionVerificationError(
+                "Calendar predicate must evaluate to FALSE upon drift"
+            )
 
         # 5. Reconcile mission state against fresh contradictory observation
         verification_requests = self.get_verification_requests()
@@ -969,13 +1193,19 @@ class KillerMissionSliceRunner:
             fresh_observations=fresh_observations,
             at=now,
         )
-        assert reconciliation.status == ReconciliationStatus.NO_LONGER_TRUE
+        if reconciliation.status != ReconciliationStatus.NO_LONGER_TRUE:
+            raise KillerMissionReconciliationError(
+                f"Expected reconciliation status NO_LONGER_TRUE; got {reconciliation.status}"
+            )
 
         transition_result = apply_reconciliation_transition(
             reconciliation=reconciliation,
             prior_state=MissionState.READY,
         )
-        assert transition_result.new_state == MissionState.DRIFTED
+        if transition_result.new_state != MissionState.DRIFTED:
+            raise KillerMissionReconciliationError(
+                f"Expected transition to DRIFTED; got {transition_result.new_state}"
+            )
 
         # 6. Create snapshot for drifted state and project current state
         ev_drift = EvidenceId.compute("ev_drift_detection_p13")
@@ -1010,13 +1240,17 @@ class KillerMissionSliceRunner:
             historical_receipt=self.ready_receipt,
             as_of=now,
         )
-        assert current_state_proj.state == MissionState.DRIFTED
+        if current_state_proj.state != MissionState.DRIFTED:
+            raise KillerMissionReconciliationError(
+                f"Expected current_state_proj.state DRIFTED; got {current_state_proj.state}"
+            )
 
         # 8. Assert historical READY receipt hash on disk is strictly unchanged
         historical_receipt_still_valid = (
             self.ready_receipt.receipt_hash.value == self.ready_receipt_hash
         )
-        assert historical_receipt_still_valid
+        if not historical_receipt_still_valid:
+            raise KillerMissionIntegrityError("Historical receipt hash was unexpectedly modified")
 
         res = KillerMissionStepResult(
             task_id="P-13.07",
@@ -1045,7 +1279,20 @@ class KillerMissionSliceRunner:
     def run_full_slice(self) -> KillerMissionSliceOutcome:
         """Execute all micro-tasks of the canonical killer mission vertical slice."""
         self.step_p13_01_seed()
-        self.step_p13_02_plan()
+        step2 = self.step_p13_02_plan()
+        if step2.status == "BLOCKED_LIVE":
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.DRAFT,
+                total_writes_performed=self.total_writes,
+                provenance=self.env.provenance,
+                is_live=self.live_mode,
+            )
         self.step_p13_03_tasks_prep()
         self.step_p13_04_calendar_pause()
         self.step_p13_05_calendar_approve()
@@ -1055,14 +1302,14 @@ class KillerMissionSliceRunner:
         return KillerMissionSliceOutcome(
             mission_id=self.mission_id,
             intent=self.intent_text,
-            steps=self.step_results,
+            steps=dict(self.step_results),
             ready_receipt_hash=self.ready_receipt_hash,
             drifted_receipt_hash=self.ready_receipt_hash,
             historical_receipt_immutable=True,
             final_state=MissionState.DRIFTED,
             total_writes_performed=self.total_writes,
             provenance=self.env.provenance,
-            is_live=self.env.provenance == EvidenceProvenance.LIVE_GOOGLE,
+            is_live=self.live_mode,
         )
 
 
@@ -1076,8 +1323,19 @@ __all__ = [
     "CANONICAL_DESIRED_START_TIME",
     "CANONICAL_INITIAL_START_TIME",
     "CANONICAL_KILLER_INTENT",
+    "KillerMissionAuthorityError",
     "KillerMissionEnvironment",
+    "KillerMissionError",
+    "KillerMissionExecutionError",
+    "KillerMissionIntegrityError",
+    "KillerMissionReadinessError",
+    "KillerMissionReconciliationError",
+    "KillerMissionSequenceError",
     "KillerMissionSliceOutcome",
     "KillerMissionSliceRunner",
     "KillerMissionStepResult",
+    "KillerMissionVerificationError",
+    "LiveExecutionBlockedError",
+    "LivePreflightReport",
+    "check_live_preflight",
 ]

@@ -74,17 +74,21 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-13.01 — Seed canonical disposable demo resources reproducibly (Phase P-13: Canonical Killer Mission Vertical Slice)
+Active task: Consolidated Macro Repair — P-13 through P-17 Only
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13.01: COMPLETED (PASS Candidate, awaiting independent QA review)
-- P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-13 through P-17: Consolidated Macro Repair applied (PASS Candidate, awaiting independent QA review)
+  - P-13: P-13.01 COMPLETED; P-13.02–P-13.05, P-13.08, P-13.09 BLOCKED_LIVE / NOT_RUN (fixture regression slice COMPLETED); P-13.06, P-13.07 COMPLETED (FIXTURE Regression Mode)
+  - P-14: P-14.01–P-14.04 COMPLETED (fail-closed runtime ownership verified under python -O)
+  - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
+  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN
+  - P-17: P-17.01–P-17.04 COMPLETED (real FastMCP server & tools integration example verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN
+- P-18+: PENDING / NOT_RUN
 
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
-Audited remote baseline SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
-Current exact task: P-13.01 — Seed canonical disposable demo resources reproducibly (Completed, awaiting independent QA review)
-Next exact task: Independent QA audit for P-13.01 and Phase P-13 continuation decision (P-13.02+ strictly PENDING / NOT AUTHORIZED / NOT_RUN)
+Starting remote HEAD: `01dbb12c6d5d46c9470e3b66ddea1e166f126fb3`
+Next exact task: Independent QA Review of Consolidated Macro Repair (P-18 remains strictly PENDING / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -250,32 +254,75 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Last independently VERIFIED contiguous SHA
 
-`1102b68f3490ab92a358250b8aa49ae481aed5f7`
+`05fd91d767360cbea21573d804bd429ed116ca9c`
 
 ## Current exact task
 
-P-13.01 — Seed canonical disposable demo resources reproducibly (Phase P-13: Canonical Killer Mission Vertical Slice) — Completed, awaiting independent QA review.
+Consolidated Macro Repair — P-13 through P-17 Only — Completed, awaiting independent QA review.
 
 ## Next exact task
 
-Independent QA audit for P-13.01 and Phase P-13 continuation decision (P-13.02+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN).
+Independent QA review of Consolidated Macro Repair (P-18 remains strictly PENDING / NOT_RUN).
 
 ---
 
 ### Phase P-13 Status Summary
 - **P-13.01 — Seed canonical disposable demo resources reproducibly**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
   - Implemented deterministic disposable demo resource seeding and verification engine in `src/stilldone/demo_seeding.py` (`seed_canonical_demo_resources`, `check_demo_resources_preflight`).
-  - Enforced strict `DemoResourceScope` isolation: primary and default calendar/task list aliases fail-closed (`SeedOperationStatus.WRONG_TARGET_REJECTED`, 0 writes).
-  - Provider read-only preflight: checks calendar and task list container existence before any mutation attempt (`SeedOperationStatus.BLOCKED_PREFLIGHT`, 0 writes).
-  - Fail-closed mutation boundary: `permit_mutation=False` halts fail-closed on missing or drifted events (`SeedOperationStatus.BLOCKED_UNAUTHORIZED`, 0 writes).
-  - Idempotency & duplicate prevention: existing canonical event matching pre-state start time (`Leave for school` at `07:45`) returns `VERIFIED_EXISTING` with 0 writes; subsequent runs maintain 0 writes and create 0 duplicate events.
-  - Duplicate contradiction protection: multiple events matching title fail closed with `DUPLICATE_CONTRADICTION` (0 writes).
-  - Authorized mutation & independent read-back: `permit_mutation=True` executes bounded mutation (`writes_performed=1`) and strictly enforces distinct independent provider read-back; write success never substitutes for read-back (`VERIFICATION_FAILED` if read-back missing or inconsistent).
-  - Live preflight boundary truth: checks OAuth client secrets and live token availability; truthfully reports `BLOCKED_LIVE` (`provenance="NOT_RUN"`) when tokens are unestablished or interactive operator consent is required; zero live mutations performed; zero personal spend ($0.00).
-  - 23 unit and adversarial tests passing in `tests/test_phase_p13_01_demo_seeding.py`.
-  - Standalone CLI proof in `scripts/p13_01_proof.py` passing across standard, `python -O`, and `--json` modes.
-- **P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN**.
-- **Last independently VERIFIED contiguous SHA**: `05fd91d767360cbea21573d804bd429ed116ca9c`.
+  - Strict `DemoResourceScope` isolation; fail-closed on missing/drifted events; idempotency and duplicate prevention proven.
+- **P-13.02 — Execute full live mission from natural language through AWS planner**: `BLOCKED_LIVE / NOT_RUN` (Live path); `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Production live wiring prepared in `LiveKillerMissionSliceRunner`; halts fail-closed at preflight without live AWS credentials/consent.
+  - Deterministic fixture vertical slice passes in `KillerMissionSliceRunner.step_p13_02_plan()`.
+- **P-13.03 — Create & independently verify real Tasks preparation action**: `BLOCKED_LIVE / NOT_RUN` (Live path); `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Live Google Tasks mutation path prepared; halts fail-closed without live OAuth.
+  - Fixture execution verifies independent read-back and predicate evaluation.
+- **P-13.04 — Pause real Calendar change at approval boundary**: `BLOCKED_LIVE / NOT_RUN` (Live path); `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Live approval pause path prepared; halts fail-closed without live OAuth.
+  - Fixture execution verifies unapproved action halts before router with bound `PendingApproval` (0 writes).
+- **P-13.05 — Approve, execute, and independently verify real Calendar change**: `BLOCKED_LIVE / NOT_RUN` (Live path); `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Live Google Calendar approved mutation path prepared; halts fail-closed without live OAuth.
+  - Fixture execution verifies atomic grant consumption, 1 mutation write, independent read-back, and `ApprovedActionReceipt`.
+- **P-13.06 — Produce READY mission receipt from deterministic facts**: `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Evaluates all predicates TRUE and FRESH; issues canonical `MissionReceiptProjection`.
+- **P-13.07 — Mutate Calendar externally & prove READY → DRIFTED**: `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+  - Proves external reality mutation shifts mission to `DRIFTED` while immutable historical receipt hash is strictly preserved.
+- **P-13.08 — Reproduce entire live slice from clean checkout**: `BLOCKED_LIVE / NOT_RUN` (Live slice); `COMPLETED (LOCAL_EXECUTION / FIXTURE Regression Slice, PASS Candidate)`.
+  - Clean checkout reproduction passes in terminal (`scripts/p13_killer_mission.py`, `--json`, and 10/10 pytest under standard and `python -O`).
+- **P-13.09 — Run major P-Ω live-milestone audit**: `BLOCKED_LIVE / NOT_RUN` (Live milestone audit); `COMPLETED (FIXTURE Regression Mode, PASS Candidate)`.
+
+---
+
+### Phase P-14 Status Summary
+- **P-14.01 — Weaponize prompt injection against candidate plan compilation**: `COMPLETED (PASS Candidate)`.
+- **P-14.02 — Attempt approval bypass and grant forgery**: `COMPLETED (PASS Candidate)`.
+- **P-14.03 — Attempt fake verification and read-back spoofing**: `COMPLETED (PASS Candidate)`.
+- **P-14.04 — Attempt replay, duplicate mutation, and drift evasion**: `COMPLETED (PASS Candidate)`.
+- **Fail-Closed Runtime Ownership**: All production assertions replaced with typed exceptions; fail-closed behavior verified under `python -O` (`tests/test_fail_closed_under_optimization.py`).
+
+---
+
+### Phase P-15 Status Summary
+- **P-15.01 through P-15.06**: `COMPLETED (PASS Candidate)`.
+- **P-15.07 — Execute judge UX audit across screen sizes**: `COMPLETED (PASS Candidate)`.
+  - Verified with real headless browser tests in `tests/test_phase_p15_judge_ux.py` (8/8 PASS) at 375px mobile and 1200px desktop viewports.
+  - Proved zero horizontal overflow (`scrollWidth <= clientWidth`), visible `SIMULATED ALEXA+ EXPERIENCE` label, interactive details/summary expansion, semantic landmarks, and WCAG AA contrast ratio compliance ($\ge 4.5:1$).
+
+---
+
+### Phase P-16 Status Summary
+- **P-16.01 — Audit AWS services on StillDone's critical path**: `COMPLETED (PASS Candidate)`.
+- **P-16.02 — Integrate Amazon CloudWatch Embedded Metric Format (EMF)**: `COMPLETED (PASS Candidate)`. Local EMF v1.0 structural serialization and schema verification (`LOCAL_EMF_SERIALIZATION`).
+- **P-16.03 — Prove added AWS service live**: `BLOCKED_LIVE / NOT_RUN`. Live CloudWatch log ingestion & observation harness prepared in `src/stilldone/aws_builder.py` (`LiveCloudWatchObservationHarness`); execution requires operator billable authorization.
+- **P-16.04 — Audit cost and operational impact**: `COMPLETED (PASS Candidate)`. Runtime truth pinned to `strands-agents==1.57.2`; external account promotional credit and $0.00 net spend strictly separated from local cost estimates.
+
+---
+
+### Phase P-17 Status Summary
+- **P-17.01 — Extract standalone core verification contract package**: `COMPLETED (PASS Candidate)`.
+- **P-17.02 — Audit package independence, license, and provenance**: `COMPLETED (PASS Candidate)` (Apache 2.0).
+- **P-17.03 — Provide standalone tests, docs, and build metadata**: `COMPLETED (PASS Candidate)`.
+- **P-17.04 — Add at least one real integration example**: `COMPLETED (PASS Candidate)`. Built `packages/mcp_verify/examples/real_mcp_integration.py` utilizing official `FastMCP` tools `create_task_item` and `get_task_item`, proving `VERIFIED` and `CONTRADICTED` outcomes over the real MCP protocol boundary.
+- **P-17.05 — Publish contribution URL/repo/fork/PR during hackathon window**: `BLOCKED_EXTERNAL / NOT_RUN`. Standalone wheel build (`uv build packages/mcp_verify`) and clean venv installation verified; external publishing to PyPI/public repo requires explicit operator authorization.
 
 ---
 

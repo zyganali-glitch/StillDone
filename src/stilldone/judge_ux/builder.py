@@ -20,7 +20,7 @@ from stilldone.judge_ux.models import (
     TimelineStepCard,
     VoiceSummary,
 )
-from stilldone.killer_mission import KillerMissionSliceOutcome, KillerMissionStepResult
+from stilldone.killer_mission import KillerMissionSliceOutcome
 
 
 def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitViewModel:
@@ -32,7 +32,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         visual_state = MissionVisualState.DRIFTED
     elif outcome.final_state == MissionState.READY:
         visual_state = MissionVisualState.READY
-    elif outcome.final_state == MissionState.BLOCKED:
+    elif outcome.final_state in (MissionState.FAILED, MissionState.CANCELLED):
         visual_state = MissionVisualState.BLOCKED
     else:
         visual_state = MissionVisualState.PARTIAL
@@ -40,14 +40,26 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
     # 2. Voice Summary (P-15.03)
     if visual_state == MissionVisualState.DRIFTED:
         voice = VoiceSummary(
-            text="Mission drifted: Calendar departure was moved to 8:00 AM externally, contradicting your 7:30 target. Weather check and packing task remain verified.",
-            spoken_phrase="I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. Backpacks are packed and weather is checked.",
+            text=(
+                "Mission drifted: Calendar departure was moved to 8:00 AM externally, "
+                "contradicting your 7:30 target. Weather check and packing task remain verified."
+            ),
+            spoken_phrase=(
+                "I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning "
+                "is no longer ready for 7:30. Backpacks are packed and weather is checked."
+            ),
             estimated_duration_sec=7.2,
         )
     else:
         voice = VoiceSummary(
-            text="All set for tomorrow morning: Departure confirmed for 7:30 AM, backpacks task verified, and mild weather confirmed.",
-            spoken_phrase="You're ready for tomorrow morning. Departure is set to 7:30, rain gear is ready, and backpacks are packed.",
+            text=(
+                "All set for tomorrow morning: Departure confirmed for 7:30 AM, "
+                "backpacks task verified, and mild weather confirmed."
+            ),
+            spoken_phrase=(
+                "You're ready for tomorrow morning. Departure is set to 7:30, "
+                "rain gear is ready, and backpacks are packed."
+            ),
             estimated_duration_sec=5.8,
         )
 
@@ -55,7 +67,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
     step_cards: list[TimelineStepCard] = []
 
     # Mapping of steps from P-13.01 to P-13.07
-    step_meta = [
+    step_meta: list[tuple[int, str, str, str, StepExecutionState, dict[str, Any], bool]] = [
         (
             1,
             "P-13.01",
@@ -105,7 +117,10 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             6,
             "P-13.06",
             "Produce READY Mission Receipt",
-            "All predicates evaluated TRUE and FRESH. Mission promoted to READY with immutable hash.",
+            (
+                "All predicates evaluated TRUE and FRESH. "
+                "Mission promoted to READY with immutable hash."
+            ),
             StepExecutionState.VERIFIED,
             {"predicates_count": 3, "receipt_hash": outcome.ready_receipt_hash},
             False,
@@ -114,7 +129,10 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             7,
             "P-13.07",
             "External Mutation & Drift Reconciliation",
-            "Departure moved to 08:00 externally. Mission reconciled READY -> DRIFTED. Historical receipt intact.",
+            (
+                "Departure moved to 08:00 externally. "
+                "Mission reconciled READY -> DRIFTED. Historical receipt intact."
+            ),
             StepExecutionState.DRIFT_DETECTED,
             {"observed_start": "08:00:00 UTC", "predicate_truth": False},
             True,
@@ -170,7 +188,9 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
     return JudgeExhibitViewModel(
         mission_id=str(outcome.mission_id),
         user_intent=outcome.intent,
-        surface_banner=f"{SurfaceMode.SIMULATED_ALEXA_PLUS.value} | {SurfaceMode.REAL_ENGINE_BACKEND.value}",
+        surface_banner=(
+            f"{SurfaceMode.SIMULATED_ALEXA_PLUS.value} | {SurfaceMode.REAL_ENGINE_BACKEND.value}"
+        ),
         current_state=visual_state,
         voice_summary=voice,
         timeline_steps=step_cards,

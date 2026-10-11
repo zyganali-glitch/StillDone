@@ -74,14 +74,26 @@ $$\text{INTENT} \to \text{MUTATION} \to \textbf{INDEPENDENT READ-BACK} \to \text
 
 ## 4. Real Integration Example (P-17.04)
 
-`packages/mcp_verify/examples/verifiable_calendar_tool.py` proves `mcp-verify` against two scenarios:
-1. **Normal Verified Write**: Tool updates departure time to 07:30; independent read-back verifies start_time matches 07:30 (`VERIFIED`).
-2. **Corrupted Write**: Tool returns `200 OK`, but backend stores corrupted 08:00 departure; `mcp-verify` intercepts the discrepancy and flags `CONTRADICTED`, preventing false agent confidence.
+StillDone provides both a genuine MCP server/tool protocol integration and an in-memory fixture demo:
+1. **Real MCP Protocol Integration (`packages/mcp_verify/examples/real_mcp_integration.py`)**:
+   - Integrates `mcp-verify` directly with the official MCP Python SDK (`mcp.server.fastmcp.FastMCP`).
+   - Registers a genuine MCP mutation tool (`create_task_item`) and a separate MCP read-back tool (`get_task_item`).
+   - Intercepts tool calls via `VerifiableToolMiddleware`, invokes mutation, executes separate read-back tool, and evaluates the `VerificationPredicate`.
+   - Proves both successful verification (`status=VERIFIED`) and detected discrepancies (`status=CONTRADICTED`) over real MCP tool execution objects.
+2. **In-Memory Fixture Example (`packages/mcp_verify/examples/verifiable_calendar_tool.py`)**:
+   - Demonstrates verification mechanics against a local in-memory calendar mock without MCP SDK dependencies (`[FIXTURE EXAMPLE]`).
 
 ---
 
-## 5. Standalone Packaging & Test Proofs (P-17.03, P-17.05)
+## 5. Standalone Packaging, Wheel Build & Publication Boundary (P-17.03, P-17.05)
 
 - **Build Backend**: `hatchling` via standard PEP 621 `pyproject.toml`.
-- **Standalone Package Tests**: `packages/mcp_verify/tests/test_mcp_verify.py` passing (5 focused tests).
+- **Package Wheel Build & Clean Venv Validation**:
+  - `uv build packages/mcp_verify` successfully builds standard `.whl` and `.tar.gz` distribution artifacts.
+  - Built wheel installed into a clean, isolated virtual environment.
+  - Package test suite (`packages/mcp_verify/tests/test_mcp_verify.py`, 6 tests) executed and passed against the installed wheel.
+- **Standalone Package Tests**: `packages/mcp_verify/tests/test_mcp_verify.py` passing (6 focused tests).
 - **Cross-Repository Tests**: `tests/test_phase_p17_open_source_mini_challenge.py` passing (6 focused tests).
+- **Publication Status (P-17.05)**:
+  - External publication (to public PyPI or public standalone GitHub repository) is classified as `BLOCKED_EXTERNAL / NOT_RUN`.
+  - Publishing is an external irreversible action that requires explicit operator credentials and authorization. Local wheel build, clean venv installation, and metadata purity are 100% verified.

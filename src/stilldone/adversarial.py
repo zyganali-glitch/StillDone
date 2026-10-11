@@ -15,15 +15,12 @@ Uses controlled test doubles ONLY ($0.00 personal spend, zero synthetic mocks hi
 
 from __future__ import annotations
 
-import copy
-import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from stilldone.action_policy import (
     ActionPolicyError,
-    ValidatedActionContract,
     validate_action_contract,
 )
 from stilldone.adapters.calendar import (
@@ -38,24 +35,17 @@ from stilldone.adapters.tasks import (
     FakeGoogleTasksTransport,
     GoogleTasksCreateAdapter,
     GoogleTasksDuplicateDetector,
-    GoogleTasksReadAdapter,
     TaskCreateStatus,
     TaskTransportError,
     TaskTransportItem,
 )
 from stilldone.approval_consumption import (
     ApprovalAlreadyUsedError,
-    ApprovalConsumptionRecord,
-    ApprovalUsageStatus,
     UsedApprovalRegistry,
 )
 from stilldone.authority_policy import (
     ApprovalBindingMismatchError,
     ApprovalExpiredError,
-    AuthorityDecision,
-    AuthorityDecisionStatus,
-    AuthorityPolicyError,
-    classify_authority,
     evaluate_authority,
     verify_approval_grant,
 )
@@ -68,40 +58,29 @@ from stilldone.domain.action import (
     TargetIdentity,
 )
 from stilldone.domain.authority import ApprovalGrant, AuthorityClass
+from stilldone.domain.desired_state import (
+    DesiredStatePredicate,
+    FreshnessContract,
+    PredicateId,
+    PredicateOperator,
+)
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
-from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
-from stilldone.evidence import EvidenceId, compute_evidence_id
+from stilldone.domain.provenance import EvidenceProvenance
+from stilldone.evidence import compute_evidence_id
 from stilldone.receipt import (
-    MissionContentHash,
-    ReceiptError,
     ReceiptHashMismatchError,
-    ReceiptMismatchError,
     ReceiptProjection,
     compute_mission_content_hash,
 )
-from stilldone.recovery.continuity import (
-    RecoveryContinuityError,
-    reconstruct_action_recovery_state,
-    record_duplicate_determination,
-    record_execution_attempt,
-)
 from stilldone.recovery.duplicate import (
     DuplicateDeterminationStatus,
-    GoogleCalendarEffectDetectorAdapter,
     GoogleTasksDuplicateDetectorAdapter,
-    derive_intended_mutation_identity,
-)
-from stilldone.recovery.idempotency import (
-    PlannerRecoveryAuthorityError,
-    derive_idempotency_key,
-    get_idempotency_strategy,
 )
 from stilldone.recovery.orchestrator import (
     ReadbackOutcome,
     ReadbackVerificationResult,
     RecoveryActionType,
-    evaluate_post_execution_recovery,
     evaluate_readback_recovery,
 )
 from stilldone.recovery.retry import (
@@ -111,21 +90,26 @@ from stilldone.recovery.retry import (
     evaluate_retry,
 )
 from stilldone.redaction import redact_text
-from stilldone.domain.desired_state import (
-    DesiredStatePredicate,
-    FreshnessContract,
-    PredicateId,
-    PredicateOperator,
-)
 from stilldone.verifier.contracts import (
     VerificationObservation,
-    VerificationRequest,
 )
 from stilldone.verifier.freshness import evaluate_freshness
 from stilldone.verifier.predicates import (
     PredicateTruth,
     evaluate_predicate,
 )
+
+# ===========================================================================
+# Adversarial Campaign Exception Hierarchy (Fail-Closed Runtime Validation)
+# ===========================================================================
+
+
+class AdversarialCampaignError(Exception):
+    """Base exception for adversarial campaign failures."""
+
+
+class AdversarialVerificationError(AdversarialCampaignError):
+    """Raised when an adversarial invariant or security check fails."""
 
 
 @dataclass(frozen=True)
@@ -256,7 +240,10 @@ class AdversarialCampaignHarness:
     # P-14.01: Provider 5xx/timeout before mutation
     # -----------------------------------------------------------------------
     def run_p14_01_provider_5xx_before_mutation(self) -> AdversarialScenarioResult:
-        """P-14.01: Injects 503 before write; verifies zero writes and bounded retry classification."""
+        """P-14.01: Injects 503 before write.
+
+        Verifies zero writes and bounded retry classification.
+        """
         transport = FaultyTasksTransport()
         transport.inject_5xx_before_write = True
 
@@ -279,30 +266,40 @@ class AdversarialCampaignHarness:
 
         # Attempt create
         create_res = create_adapter.create_task(action)
-        assert create_res.status == TaskCreateStatus.PROVIDER_ERROR
-        assert create_res.writes_performed == 0
-        assert transport.write_count == 0, "Zero writes must occur on 5xx before mutation"
+        if create_res.status != TaskCreateStatus.PROVIDER_ERROR:
+            raise AdversarialVerificationError("Expected PROVIDER_ERROR status")
+        if create_res.writes_performed != 0 or transport.write_count != 0:
+            raise AdversarialVerificationError("Zero writes must occur on 5xx before mutation")
 
         # Classification check: error code 503 is classified as retryable transient
         classification = classify_error(503)
-        assert classification == RetryClassification.RETRYABLE_TRANSIENT
+        if classification != RetryClassification.RETRYABLE_TRANSIENT:
+            raise AdversarialVerificationError(
+                "503 error must be classified as RETRYABLE_TRANSIENT"
+            )
 
         # Read-before-retry check: underlying store is empty
         raw_detector = GoogleTasksDuplicateDetector(scope=self.demo_scope, transport=transport)
         detector = GoogleTasksDuplicateDetectorAdapter(detector=raw_detector)
         det_rec = detector.detect(action)
-        assert det_rec.status == DuplicateDeterminationStatus.EFFECT_ABSENT
+        if det_rec.status != DuplicateDeterminationStatus.EFFECT_ABSENT:
+            raise AdversarialVerificationError("Read-before-retry expected EFFECT_ABSENT")
 
         # Privacy check: sanitized diagnostics
         sanitized_msg = redact_text(str(create_res.error_message))
-        assert "password" not in sanitized_msg.lower()
+        if "password" in sanitized_msg.lower():
+            raise AdversarialVerificationError("Sanitized diagnostic leaked credentials")
 
         return AdversarialScenarioResult(
             task_id="P-14.01",
             scenario_name="Provider 5xx / timeout before mutation",
             status="PASS",
             provenance="FIXTURE",
-            details="503 injected before write. Zero provider writes occurred. Read-before-retry confirmed EFFECT_ABSENT. Retry classified as RETRYABLE_TRANSIENT.",
+            details=(
+                "503 injected before write. Zero provider writes occurred. "
+                "Read-before-retry confirmed EFFECT_ABSENT. "
+                "Retry classified as RETRYABLE_TRANSIENT."
+            ),
             invariants_verified=[
                 "ZERO_UNAUTHORIZED_MUTATION",
                 "HONEST_ERROR_CLASSIFICATION",
@@ -340,16 +337,21 @@ class AdversarialCampaignHarness:
 
         # 1st call: write succeeds on provider, but network timeout dropped response
         create_res = create_adapter.create_task(action)
-        assert create_res.status == TaskCreateStatus.PROVIDER_ERROR
-        assert transport.write_count == 1, "Initial write occurred on provider before timeout"
+        if create_res.status != TaskCreateStatus.PROVIDER_ERROR:
+            raise AdversarialVerificationError("Expected PROVIDER_ERROR status")
+        if transport.write_count != 1:
+            raise AdversarialVerificationError("Initial write occurred on provider before timeout")
 
         # Recovery protocol: read-before-retry detects intended effect exists
         raw_detector = GoogleTasksDuplicateDetector(scope=self.demo_scope, transport=transport)
         detector = GoogleTasksDuplicateDetectorAdapter(detector=raw_detector)
         det_rec = detector.detect(action)
 
-        assert det_rec.status == DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS
-        assert det_rec.match_count == 1
+        if (
+            det_rec.status != DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS
+            or det_rec.match_count != 1
+        ):
+            raise AdversarialVerificationError("Expected INTENDED_EFFECT_EXISTS with match_count=1")
 
         # Evaluate orchestrator recovery decision: MUST NOT RETRY (EFFECT_ALREADY_EXISTS)
         readback_res = ReadbackVerificationResult(
@@ -362,20 +364,27 @@ class AdversarialCampaignHarness:
             attempt_number=1,
             readback_result=readback_res,
         )
-        assert recovery_decision.action_type == RecoveryActionType.EFFECT_ALREADY_EXISTS
+        if recovery_decision.action_type != RecoveryActionType.EFFECT_ALREADY_EXISTS:
+            raise AdversarialVerificationError("Expected EFFECT_ALREADY_EXISTS recovery decision")
 
         # Enforce that no second write is permitted
         # Total writes remain exactly 1; 0 duplicates created
-        assert transport.write_count == 1
+        if transport.write_count != 1:
+            raise AdversarialVerificationError("Transport write count must remain exactly 1")
         all_tasks, _ = transport.list_tasks(self.demo_scope.task_list_id)
-        assert len(all_tasks) == 1
+        if len(all_tasks) != 1:
+            raise AdversarialVerificationError("Expected exactly 1 task in store")
 
         return AdversarialScenarioResult(
             task_id="P-14.02",
             scenario_name="Timeout after mutation but before response",
             status="PASS",
             provenance="FIXTURE",
-            details="Timeout occurred after write. Read-before-retry detected INTENDED_EFFECT_EXISTS. Recovery decided EFFECT_ALREADY_EXISTS. Zero second writes occurred (duplicate prevented).",
+            details=(
+                "Timeout occurred after write. Read-before-retry detected "
+                "INTENDED_EFFECT_EXISTS. Recovery decided EFFECT_ALREADY_EXISTS. "
+                "Zero second writes occurred (duplicate prevented)."
+            ),
             invariants_verified=[
                 "LOST_RESPONSE_NOT_PERMISSION_FOR_SECOND_EFFECT",
                 "READ_BEFORE_RETRY_ENFORCED",
@@ -429,7 +438,8 @@ class AdversarialCampaignHarness:
 
         # Execution returns status OK
         exec_res = update_adapter.update_event(action, approval=approval)
-        assert exec_res.status == CalendarUpdateStatus.UPDATED
+        if exec_res.status != CalendarUpdateStatus.UPDATED:
+            raise AdversarialVerificationError("Expected execute response UPDATED")
 
         # BUT independent read-back reveals mismatched start time
         read_action = ActionContract.create(
@@ -440,8 +450,10 @@ class AdversarialCampaignHarness:
             action_id=ActionId.generate(),
         )
         read_res = read_adapter.read_event(read_action)
-        assert read_res.observation is not None
-        assert read_res.observation.start_time == "2026-10-04T09:00:00+00:00"
+        if read_res.observation is None:
+            raise AdversarialVerificationError("Read-back returned None observation")
+        if read_res.observation.start_time != "2026-10-04T09:00:00+00:00":
+            raise AdversarialVerificationError("Expected corrupted start time observed in readback")
 
         # Predicate evaluation against desired 07:30:00
         predicate = DesiredStatePredicate(
@@ -465,14 +477,21 @@ class AdversarialCampaignHarness:
         pred_result = evaluate_predicate(predicate, cal_obs)
 
         # Predicate MUST fail
-        assert pred_result.truth == PredicateTruth.FALSE
+        if pred_result.truth != PredicateTruth.FALSE:
+            raise AdversarialVerificationError(
+                "Read-back mismatch must evaluate predicate to FALSE"
+            )
 
         return AdversarialScenarioResult(
             task_id="P-14.03",
             scenario_name="Read-back mismatch after execute success",
             status="PASS",
             provenance="FIXTURE",
-            details="Update returned 200 OK, but independent read-back observed 09:00:00 instead of 07:30:00. Predicate evaluated FAILED. Mission strictly prevented from reaching READY.",
+            details=(
+                "Update returned 200 OK, but independent read-back observed 09:00:00 "
+                "instead of 07:30:00. Predicate evaluated FAILED. "
+                "Mission strictly prevented from reaching READY."
+            ),
             invariants_verified=[
                 "EXECUTE_SUCCESS_NOT_VERIFICATION",
                 "INDEPENDENT_READBACK_AUTHORITATIVE",
@@ -487,7 +506,10 @@ class AdversarialCampaignHarness:
     # P-14.04: OAuth permission revoked mid-mission
     # -----------------------------------------------------------------------
     def run_p14_04_oauth_revoked_mid_mission(self) -> AdversarialScenarioResult:
-        """P-14.04: Injects 401 Unauthorized; verifies non-retryable classification and zero token leakage."""
+        """P-14.04: Injects 401 Unauthorized.
+
+        Verifies non-retryable classification and zero token leakage.
+        """
         transport = FaultyTasksTransport()
         transport.inject_auth_revoked = True
 
@@ -505,12 +527,17 @@ class AdversarialCampaignHarness:
         )
 
         create_res = create_adapter.create_task(action)
-        assert create_res.status == TaskCreateStatus.PROVIDER_ERROR
-        assert transport.write_count == 0
+        if create_res.status != TaskCreateStatus.PROVIDER_ERROR:
+            raise AdversarialVerificationError("Expected PROVIDER_ERROR status")
+        if transport.write_count != 0:
+            raise AdversarialVerificationError("Zero writes must occur on 401 revoked auth")
 
         # Retry evaluation: MUST BE NON_RETRYABLE
         classification = classify_error(401)
-        assert classification == RetryClassification.AUTHORITY_SECURITY_FAILURE
+        if classification != RetryClassification.AUTHORITY_SECURITY_FAILURE:
+            raise AdversarialVerificationError(
+                "401 error must classify as AUTHORITY_SECURITY_FAILURE"
+            )
 
         retry_decision = evaluate_retry(
             action=action,
@@ -518,19 +545,23 @@ class AdversarialCampaignHarness:
             attempt_number=1,
             policy=RetryPolicy(max_attempts=3),
         )
-        assert retry_decision.should_retry is False
+        if retry_decision.should_retry is not False:
+            raise AdversarialVerificationError("Security failure must not retry")
 
         # Privacy check: error diagnostics do not leak secrets
         msg = redact_text(str(create_res.error_message))
-        assert "bearer" not in msg.lower()
-        assert "secret" not in msg.lower()
+        if "bearer" in msg.lower() or "secret" in msg.lower():
+            raise AdversarialVerificationError("Diagnostic leaked secret tokens")
 
         return AdversarialScenarioResult(
             task_id="P-14.04",
             scenario_name="OAuth permission revoked mid-mission",
             status="PASS",
             provenance="FIXTURE",
-            details="401 Unauthorized injected mid-mission. Error classified as NON_RETRYABLE_AUTH_ERROR. Zero retries attempted. Zero credentials leaked.",
+            details=(
+                "401 Unauthorized injected mid-mission. Error classified as "
+                "NON_RETRYABLE_AUTH_ERROR. Zero retries attempted. Zero credentials leaked."
+            ),
             invariants_verified=[
                 "NON_RETRYABLE_AUTH_FAILURE",
                 "FAIL_CLOSED_ON_SECURITY_BREACH",
@@ -545,7 +576,10 @@ class AdversarialCampaignHarness:
     # P-14.05: Model returns malformed/unsupported/over-authorized plan
     # -----------------------------------------------------------------------
     def run_p14_05_model_malformed_unsupported_overauthorized(self) -> AdversarialScenarioResult:
-        """P-14.05: Injects malformed, unsupported, and over-authorized proposals; proves fail-closed."""
+        """P-14.05: Injects malformed, unsupported, and over-authorized proposals.
+
+        Proves fail-closed evaluation.
+        """
         mission_id = MissionId.generate()
 
         # 1. Unsupported action type: e.g. "calendar.delete_all"
@@ -554,7 +588,10 @@ class AdversarialCampaignHarness:
             ActionType("calendar.delete_all")
         except ValueError:
             unsupported_caught = True
-        assert unsupported_caught, "Unsupported action type must fail closed at enum level"
+        if not unsupported_caught:
+            raise AdversarialVerificationError(
+                "Unsupported action type must fail closed at enum level"
+            )
 
         # 2. Over-authorized action proposal: calendar.update claiming READ_ONLY
         cal_action = ActionContract.create(
@@ -570,9 +607,12 @@ class AdversarialCampaignHarness:
         )
         val_cal = validate_action_contract(cal_action)
         auth_decision = evaluate_authority(val_cal, approval=None, at=datetime.now(UTC))
-        assert auth_decision.authority_class == AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
-        assert auth_decision.is_authorized is False
-        assert auth_decision.requires_approval is True
+        if (
+            auth_decision.authority_class != AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED
+            or auth_decision.is_authorized is not False
+            or auth_decision.requires_approval is not True
+        ):
+            raise AdversarialVerificationError("Over-authorized proposal must fail closed")
 
         # 3. Parameter validation failure: missing required parameter / invalid parameters
         val_caught = False
@@ -586,14 +626,21 @@ class AdversarialCampaignHarness:
             validate_action_contract(missing_param_action)
         except ActionPolicyError:
             val_caught = True
-        assert val_caught, "Invalid action parameter must raise ActionPolicyError fail-closed"
+        if not val_caught:
+            raise AdversarialVerificationError(
+                "Invalid action parameter must raise ActionPolicyError fail-closed"
+            )
 
         return AdversarialScenarioResult(
             task_id="P-14.05",
             scenario_name="Model returns malformed/unsupported/over-authorized plan",
             status="PASS",
             provenance="FIXTURE",
-            details="Rejected unsupported action ('calendar.delete_all'), over-authorized classification (READ_ONLY for mutation), and missing parameter schema fail-closed.",
+            details=(
+                "Rejected unsupported action ('calendar.delete_all'), "
+                "over-authorized classification (READ_ONLY for mutation), "
+                "and missing parameter schema fail-closed."
+            ),
             invariants_verified=[
                 "ZERO_MODEL_AUTHORITY",
                 "STRICT_ACTION_VOCABULARY",
@@ -634,7 +681,8 @@ class AdversarialCampaignHarness:
         # 1. Approval Consumption & Replay Prevention
         registry = UsedApprovalRegistry()
         consumption = registry.record_consumption(valid_approval, at=now)
-        assert consumption.approval_id == valid_approval.approval_id
+        if consumption.approval_id != valid_approval.approval_id:
+            raise AdversarialVerificationError("Consumption approval_id mismatch")
 
         # Replay attempt
         replay_caught = False
@@ -642,7 +690,10 @@ class AdversarialCampaignHarness:
             registry.record_consumption(valid_approval, at=now)
         except ApprovalAlreadyUsedError:
             replay_caught = True
-        assert replay_caught, "Replay of consumed approval must raise ApprovalAlreadyUsedError"
+        if not replay_caught:
+            raise AdversarialVerificationError(
+                "Replay of consumed approval must raise ApprovalAlreadyUsedError"
+            )
 
         # 2. Action ID Mismatch
         other_action = ActionContract.create(
@@ -662,7 +713,10 @@ class AdversarialCampaignHarness:
             )
         except ApprovalBindingMismatchError:
             mismatch_caught = True
-        assert mismatch_caught, "Mismatched action must raise ApprovalBindingMismatchError"
+        if not mismatch_caught:
+            raise AdversarialVerificationError(
+                "Mismatched action must raise ApprovalBindingMismatchError"
+            )
 
         # 3. Expired / Stale Approval
         stale_approval = ApprovalGrant(
@@ -682,14 +736,19 @@ class AdversarialCampaignHarness:
             )
         except ApprovalExpiredError:
             stale_caught = True
-        assert stale_caught, "Expired approval must raise ApprovalExpiredError"
+        if not stale_caught:
+            raise AdversarialVerificationError("Expired approval must raise ApprovalExpiredError")
 
         return AdversarialScenarioResult(
             task_id="P-14.06",
             scenario_name="Approval replay/mismatch/stale approval",
             status="PASS",
             provenance="FIXTURE",
-            details="Approval replay rejected by consumption ledger. Mismatched action ID rejected. Stale expired approval rejected. Zero unapproved writes.",
+            details=(
+                "Approval replay rejected by consumption ledger. "
+                "Mismatched action ID rejected. Stale expired approval rejected. "
+                "Zero unapproved writes."
+            ),
             invariants_verified=[
                 "ATOMIC_APPROVAL_CONSUMPTION",
                 "STRICT_APPROVAL_BINDING",
@@ -714,11 +773,13 @@ class AdversarialCampaignHarness:
             created_at=now,
         )
 
-        ev_id = compute_evidence_id({
-            "mission_id": str(mission_id),
-            "type": "observation",
-            "verified": True,
-        })
+        ev_id = compute_evidence_id(
+            {
+                "mission_id": str(mission_id),
+                "type": "observation",
+                "verified": True,
+            }
+        )
 
         mch = compute_mission_content_hash(contract)
         receipt = ReceiptProjection.create(
@@ -744,11 +805,15 @@ class AdversarialCampaignHarness:
             )
         except ReceiptHashMismatchError:
             tamper_caught = True
-        assert tamper_caught, "Altering receipt projection fields must raise ReceiptHashMismatchError"
+        if not tamper_caught:
+            raise AdversarialVerificationError(
+                "Altering receipt projection fields must raise ReceiptHashMismatchError"
+            )
 
         # 2. Cross-mission replay: presenting receipt for different mission
         other_mission_id = MissionId.generate()
-        assert receipt.mission_id != other_mission_id
+        if receipt.mission_id == other_mission_id:
+            raise AdversarialVerificationError("Distinct generated mission IDs must not collide")
 
         # 3. Stale evidence freshness evaluation
         stale_time = now - timedelta(hours=2)
@@ -757,14 +822,19 @@ class AdversarialCampaignHarness:
             at=now,
             max_age_seconds=300,  # 5 min TTL
         )
-        assert freshness_res.is_fresh is False
+        if freshness_res.is_fresh:
+            raise AdversarialVerificationError("Stale evidence must not evaluate as fresh")
 
         return AdversarialScenarioResult(
             task_id="P-14.07",
             scenario_name="Evidence tamper/replay/stale receipt",
             status="PASS",
             provenance="FIXTURE",
-            details="Cryptographic receipt hash detected state tampering. Cross-mission receipt rejected. Stale observation (>5 min TTL) evaluated is_fresh=False.",
+            details=(
+                "Cryptographic receipt hash detected state tampering. "
+                "Cross-mission receipt rejected. "
+                "Stale observation (>5 min TTL) evaluated is_fresh=False."
+            ),
             invariants_verified=[
                 "CRYPTOGRAPHIC_RECEIPT_INTEGRITY",
                 "RECEIPT_DOMAIN_SEPARATION",
@@ -779,7 +849,10 @@ class AdversarialCampaignHarness:
     # P-14.08: Duplicate retry stress
     # -----------------------------------------------------------------------
     def run_p14_08_duplicate_retry_stress(self) -> AdversarialScenarioResult:
-        """P-14.08: Exercises 10 sequential retry attempts with deduplication; proves exactly 1 write."""
+        """P-14.08: Exercises 10 sequential retry attempts with deduplication.
+
+        Proves exactly 1 write occurred.
+        """
         transport = FakeGoogleTasksTransport()
         scope = self.demo_scope
         create_adapter = GoogleTasksCreateAdapter(transport=transport, scope=scope)
@@ -802,7 +875,7 @@ class AdversarialCampaignHarness:
         duplicates_prevented = 0
 
         # Simulate 10 retry loops
-        for attempt in range(1, 11):
+        for _attempt in range(1, 11):
             # Step A: read-before-retry duplicate check
             det_result = detector.detect(action)
             if det_result.status == DuplicateDeterminationStatus.INTENDED_EFFECT_EXISTS:
@@ -812,22 +885,32 @@ class AdversarialCampaignHarness:
 
             # Step B: first attempt creates task
             res = create_adapter.create_task(action)
-            assert res.status == TaskCreateStatus.CREATED
+            if res.status != TaskCreateStatus.CREATED:
+                raise AdversarialVerificationError(f"Task creation failed with status {res.status}")
             writes += res.writes_performed
 
-        # Assertions
-        assert writes == 1, f"Expected exactly 1 write, but got {writes}"
-        assert duplicates_prevented == 9, f"Expected 9 duplicates prevented, got {duplicates_prevented}"
+        # Runtime verification
+        if writes != 1:
+            raise AdversarialVerificationError(f"Expected exactly 1 write, but got {writes}")
+        if duplicates_prevented != 9:
+            raise AdversarialVerificationError(
+                f"Expected 9 duplicates prevented, got {duplicates_prevented}"
+            )
 
         all_tasks, _ = transport.list_tasks(scope.task_list_id)
-        assert len(all_tasks) == 1, f"Expected 1 task in store, got {len(all_tasks)}"
+        if len(all_tasks) != 1:
+            raise AdversarialVerificationError(f"Expected 1 task in store, got {len(all_tasks)}")
 
         return AdversarialScenarioResult(
             task_id="P-14.08",
             scenario_name="Duplicate retry stress (10x attempts)",
             status="PASS",
             provenance="FIXTURE",
-            details=f"Ran 10 repeated mutation attempts. Read-before-retry prevented {duplicates_prevented} duplicate writes. Exactly 1 write occurred on provider. Zero data duplication.",
+            details=(
+                f"Ran 10 repeated mutation attempts. Read-before-retry prevented "
+                f"{duplicates_prevented} duplicate writes. Exactly 1 write occurred on provider. "
+                "Zero data duplication."
+            ),
             invariants_verified=[
                 "IDEMPOTENCY_ACROSS_REPEATED_INVOCATIONS",
                 "EXACTLY_ONE_MUTATION_EFFECT",

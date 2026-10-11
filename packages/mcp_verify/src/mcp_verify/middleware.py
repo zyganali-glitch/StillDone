@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from mcp_verify.contracts import (
     PredicateExtractor,
@@ -117,7 +118,10 @@ class VerifiableToolMiddleware:
                 readback_tool_name="",
                 observed_value=None,
                 expected_value=None,
-                details="No verifiable contract registered for tool; execution was not independently verified.",
+                details=(
+                    "No verifiable contract registered for tool; "
+                    "execution was not independently verified."
+                ),
             )
             return VerifiableOutcome(
                 tool_name=tool_name,

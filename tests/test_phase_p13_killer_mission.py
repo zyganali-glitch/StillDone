@@ -23,23 +23,16 @@ Constitutional Invariants Verified:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from stilldone.action_policy import validate_action_contract
-from stilldone.adapters.calendar import FakeGoogleCalendarTransport
-from stilldone.adapters.tasks import FakeGoogleTasksTransport
-from stilldone.adapters.weather import FakeOpenMeteoTransport
 from stilldone.authority_policy import (
-    AuthorityDecisionStatus,
     AuthorityPolicyTypeError,
     PlannerAuthorityError,
     evaluate_authority,
 )
-from stilldone.demo_isolation import DemoResourceScope
 from stilldone.domain.action import (
     ActionContract,
     ActionId,
@@ -47,29 +40,14 @@ from stilldone.domain.action import (
     ResourceKind,
     TargetIdentity,
 )
-from stilldone.domain.authority import (
-    ApprovalGrant,
-    ApprovalId,
-    AuthorityClass,
-)
-from stilldone.domain.desired_state import (
-    DesiredStatePredicate,
-    FreshnessContract,
-    PredicateId,
-    PredicateOperator,
-)
 from stilldone.domain.lifecycle import MissionState
-from stilldone.domain.mission import MissionId
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.execution.gate import (
     PlannerGateAuthorityError,
     evaluate_execution_gate,
 )
 from stilldone.killer_mission import (
-    CANONICAL_CONTRADICTORY_START_TIME,
-    CANONICAL_DEMO_CALENDAR_ID,
     CANONICAL_DEMO_EVENT_ID,
-    CANONICAL_DEMO_TASK_LIST_ID,
     CANONICAL_DEMO_TASK_TITLE,
     CANONICAL_DESIRED_START_TIME,
     CANONICAL_INITIAL_START_TIME,
@@ -81,7 +59,6 @@ from stilldone.killer_mission import (
     KillerMissionSliceRunner,
 )
 from stilldone.pending_approval import (
-    PendingApproval,
     PendingApprovalTypeError,
     create_pending_approval,
 )
@@ -93,10 +70,6 @@ from stilldone.planning.contracts import (
 from stilldone.receipt import (
     PlannerCurrentStateAuthorityError,
     create_mission_ready_receipt,
-)
-from stilldone.snapshot import (
-    PlannerSnapshotAuthorityError,
-    create_mission_snapshot,
 )
 from stilldone.verifier.contracts import (
     VerificationObservation,
@@ -199,7 +172,7 @@ def test_p13_02_model_proposal_has_zero_execution_or_readiness_authority(
 
     # Execution gate rejects model proposal fail-closed
     with pytest.raises((PlannerGateAuthorityError, TypeError)):
-        evaluate_execution_gate(action_prop, router=runner.router)  # type: ignore[arg-type]
+        evaluate_execution_gate(action_prop)  # type: ignore[arg-type]
 
     # Pending approval rejects model proposal fail-closed
     with pytest.raises((PlannerAuthorityError, PendingApprovalTypeError)):

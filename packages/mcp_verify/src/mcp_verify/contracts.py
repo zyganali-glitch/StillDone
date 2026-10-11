@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable
+from enum import StrEnum
+from typing import Any
 
 
-class PredicateOperator(str, Enum):
+class PredicateOperator(StrEnum):
     """Supported operators for independent predicate evaluation."""
 
     EQUALS = "EQUALS"
@@ -19,7 +20,7 @@ class PredicateOperator(str, Enum):
     LESS_THAN = "LESS_THAN"
 
 
-class VerificationStatus(str, Enum):
+class VerificationStatus(StrEnum):
     """Outcome status of the verification pipeline."""
 
     VERIFIED = "VERIFIED"
@@ -50,17 +51,17 @@ class VerificationPredicate:
         observed_val = observed_properties[self.attribute]
 
         if self.operator == PredicateOperator.EQUALS:
-            return observed_val == self.expected_value
+            return bool(observed_val == self.expected_value)
         elif self.operator == PredicateOperator.NOT_EQUALS:
-            return observed_val != self.expected_value
+            return bool(observed_val != self.expected_value)
         elif self.operator == PredicateOperator.CONTAINS:
             if isinstance(observed_val, (list, tuple, set, str)):
-                return self.expected_value in observed_val
+                return bool(self.expected_value in observed_val)
             return False
         elif self.operator == PredicateOperator.GREATER_THAN:
-            return observed_val > self.expected_value
+            return bool(observed_val > self.expected_value)
         elif self.operator == PredicateOperator.LESS_THAN:
-            return observed_val < self.expected_value
+            return bool(observed_val < self.expected_value)
 
         return False
 
@@ -101,7 +102,7 @@ class VerifiableOutcome:
 
     @property
     def is_verified(self) -> bool:
-        """True if and only if both tool execution succeeded and read-back verified expected state."""
+        """True if and only if tool execution succeeded and read-back verified expected state."""
         return self.execution.is_success and self.verification.is_verified
 
     @property

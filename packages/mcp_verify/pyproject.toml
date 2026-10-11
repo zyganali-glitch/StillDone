@@ -9,7 +9,7 @@ description = "Deterministic Execute -> Read-back -> Verification middleware for
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
-    { name = "StillDone Authors", email = "open-source@stilldone.dev" }
+    { name = "StillDone Contributors" }
 ]
 keywords = ["mcp", "ai-agents", "verification", "middleware", "safety"]
 classifiers = [

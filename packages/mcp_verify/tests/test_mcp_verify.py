@@ -2,23 +2,10 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import pytest
-
-# Ensure mcp_verify is importable
-pkg_src = Path(__file__).resolve().parent.parent / "src"
-if str(pkg_src) not in sys.path:
-    sys.path.insert(0, str(pkg_src))
-
 from mcp_verify import (
     PredicateOperator,
-    ToolExecutionResult,
-    VerifiableOutcome,
     VerifiableToolMiddleware,
     VerificationPredicate,
-    VerificationResult,
     VerificationStatus,
     Verifier,
 )

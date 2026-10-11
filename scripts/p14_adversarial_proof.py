@@ -23,7 +23,7 @@ import json
 import logging
 import sys
 
-from stilldone.adversarial import AdversarialCampaignHarness, AdversarialScenarioResult
+from stilldone.adversarial import AdversarialCampaignHarness
 
 
 def main() -> int:
@@ -76,7 +76,7 @@ def main() -> int:
     print(f"{'Task ID':<10} {'Scenario':<42} {'Status':<8} {'Writes':<8} {'Duplicates'}")
     print("--------------------------------------------------------------------------------")
 
-    for task_id, res in results.items():
+    for _task_id, res in results.items():
         print(
             f"{res.task_id:<10} {res.scenario_name[:40]:<42} {res.status:<8} "
             f"{res.writes_performed:<8} {res.duplicates_detected}"

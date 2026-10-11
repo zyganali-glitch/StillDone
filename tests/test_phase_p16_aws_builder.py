@@ -13,12 +13,8 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 
-import pytest
-
 from stilldone.aws_builder import (
     AWSBuilderEvidenceMap,
-    AWSServiceAuditEntry,
-    AWSServiceRole,
     CloudWatchEMFTelemetryEmitter,
     audit_critical_path_aws_services,
     generate_aws_builder_evidence_map,
@@ -98,7 +94,7 @@ def test_p16_02_cloudwatch_emf_telemetry_specification_compliance() -> None:
 
 
 def test_p16_03_prove_added_aws_service_not_decorative() -> None:
-    """Verify P-16.03: CloudWatch EMF telemetry directly models StillDone core verification & drift invariants."""
+    """Verify P-16.03: CloudWatch EMF telemetry directly models core verification invariants."""
     runner = KillerMissionSliceRunner()
     outcome = runner.run_full_slice()
 
@@ -106,7 +102,7 @@ def test_p16_03_prove_added_aws_service_not_decorative() -> None:
     records = record_killer_mission_telemetry(outcome, emitter=emitter)
 
     # Must produce telemetry across all key invariant moments:
-    # 1) task creation verification, 2) calendar approval pause, 3) calendar verified mutation, 4) drift detection
+    # 1) task creation, 2) calendar approval pause, 3) calendar verified mutation, 4) drift
     assert len(records) == 4
 
     # Verify drift detection record
@@ -153,6 +149,8 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
     assert ev_map.zero_personal_spend_maintained is True
 
     # CloudWatch EMF itself has zero incremental cost ($0.00)
-    cw_service = next(s for s in ev_map.aws_services if s.service_name.startswith("Amazon CloudWatch"))
+    cw_service = next(
+        s for s in ev_map.aws_services if s.service_name.startswith("Amazon CloudWatch")
+    )
     assert cw_service.estimated_cost_usd == Decimal("0.00000000")
     assert cw_service.covered_by_free_tier_or_credit is True

@@ -72,10 +72,10 @@ Rather than assembling decorative AWS services to inflate hackathon checklists, 
 | Service | Region | Role | Live Proof Reference | Non-Decorative Justification | Gross Spend | Net Spend |
 |---|---|---|---|---|---|---|
 | **Amazon Bedrock** | `us-east-1` | Model Reasoning | `P-01.02`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Converts natural language intent to typed plans; strictly stripped of execution and readiness authority. | $\approx \$0.000002$ | **$0.00** (Promo Credit) |
-| **AWS Strands Agents SDK** | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation. | $\$0.000000$ | **$0.00** |
+| **AWS Strands Agents SDK** | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation (`strands-agents==1.57.2`). | $\$0.000000$ | **$0.00** |
 | **Amazon Bedrock AgentCore Runtime** | `us-east-1` | Serverless MicroVM MCP Host | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | MicroVM runtime hosting Streamable HTTP MCP server spine (`agentRuntimeArn: stilldone_mcp_runtime-oS0aWdAWg3`). | $\approx \$0.008388$ | **$0.00** (Promo Credit) |
 | **AWS IAM & SigV4** | `us-east-1` | Ingress Security | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | SigV4 request signing (`AWS4-HMAC-SHA256`) and least-privilege IAM roles (`StillDoneAgentCoreExecutionRole`). | $\$0.000000$ | **$0.00** (Free Tier) |
-| **Amazon CloudWatch (EMF)** | `us-east-1` | High-Cardinality Observability | `P-16.02`, `P-16.03` (`src/stilldone/aws_builder.py`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | $\$0.000000$ | **$0.00** (Free Tier) |
+| **Amazon CloudWatch (EMF)** | `us-east-1` | High-Cardinality Observability | `P-16.02` (PASS Candidate), `P-16.03` (`BLOCKED_LIVE / NOT_RUN`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | $\$0.000000$ | **$0.00** (Free Tier) |
 
 ---
 
@@ -124,6 +124,10 @@ StillDone embeds AWS CloudWatch Embedded Metric Format (EMF) directly into its v
 }
 ```
 
+### EMF Implementation vs Live Observation Boundary
+- **P-16.02 (LOCAL_EMF_SERIALIZATION)**: Fully implemented and verified. Validates schema correctness against AWS EMF Specification v1.0, required `_aws.CloudWatchMetrics` directives, dimension sets, and typed metrics with zero unhandled asserts. Status: `COMPLETED (PASS Candidate)`.
+- **P-16.03 (LIVE_CLOUDWATCH_OBSERVATION)**: Bounded live proof harness is implemented in `src/stilldone/aws_builder.py` (`LiveCloudWatchObservationHarness`). It binds region, timestamp, namespace, metric name, and source commit SHA. Because live log ingestion can incur billable usage beyond promotional balances without operator consent, this live execution is strictly classified as `BLOCKED_LIVE / NOT_RUN` pending operator authorization.
+
 ### Emitted Metric Types
 1. **`VerificationLatencyMs`**: Measures the latency delta between mutation execution and independent read-back verification.
 2. **`ReadbackContradictionCount`**: Increments when write execution succeeded (200 OK) but independent read-back contradicted expected state.
@@ -137,19 +141,18 @@ StillDone embeds AWS CloudWatch Embedded Metric Format (EMF) directly into its v
 StillDone is governed by the **Zero Personal Spend Law** (`AGENTS.md` Rule 12):
 > Target personal spend is `$0.00`. Allowed: hackathon promotional credits, permanent free tiers, local development. Forbidden: paid subscriptions, unmetered endpoints, deposits.
 
-### Cost Breakdown
-1. **Amazon Bedrock (Nova Micro / Claude 3.5 Sonnet)**:
-   - Nova Micro: \$0.000035 / 1K input tokens, \$0.00014 / 1K output tokens.
-   - Live killer mission execution: 12 tokens $\approx \$0.00000168\text{ USD}$.
-   - 100% offset by AWS Developer Hackathon promotional credit balance.
-2. **Amazon Bedrock AgentCore Runtime**:
-   - MicroVM session hosting MCP server: billable usage in September 2026 was `$0.0083883943 USD`.
-   - 100% offset by promotional credit (verified in billing audit: net spend `$0.0000000000 USD`).
-   - Clean shutdown teardown commands verified in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
-3. **AWS IAM & SigV4 Authentication**:
-   - Standard AWS feature: \$0.00 cost.
-4. **Amazon CloudWatch Embedded Metric Format**:
-   - Emits structured JSON logs to standard stdout streams.
-   - AWS Free Tier includes 5 GB log ingestion and 10 custom metrics per month at \$0.00 cost.
-5. **Net Personal Spend**:
-   $$\text{Net Spend} = \mathbf{\$0.00000000\text{ USD}}$$
+### Cost Breakdown & External Truth Separation
+- **Estimated Gross Costs**: Clearly labeled estimates based on current standard AWS pricing models:
+  1. **Amazon Bedrock (Nova Micro / Claude 3.5 Sonnet)**:
+     - Nova Micro: \$0.000035 / 1K input tokens, \$0.00014 / 1K output tokens.
+     - Live killer mission execution: 12 tokens $\approx \$0.00000168\text{ USD}$.
+  2. **Amazon Bedrock AgentCore Runtime**:
+     - MicroVM session hosting MCP server: billable usage in September 2026 was `$0.0083883943 USD`.
+     - Clean shutdown teardown commands verified in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
+  3. **AWS IAM & SigV4 Authentication**: Standard AWS feature: \$0.00 cost.
+  4. **Amazon CloudWatch Embedded Metric Format**: Emits structured JSON logs to standard stdout streams ($0.00 daemon cost).
+- **External Account Billing Observation**:
+  - Promotional credit status and actual billed account balances are external account observations performed out-of-band by the operator, NOT fabricated by deterministic product code.
+  - Active promotional credit balance covers all hackathon usage.
+  - Actual net personal spend remains:
+    $$\text{Net Spend} = \mathbf{\$0.00000000\text{ USD}}$$

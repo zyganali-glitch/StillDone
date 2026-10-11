@@ -1370,34 +1370,40 @@ Acceptance:
 - hard stop at P-13.01: P-13.02+ strictly PENDING / NOT AUTHORIZED / NOT_RUN.
 
 ### P-13.02 — Execute full live mission from natural language through AWS planner
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
+- deterministic live planner wiring implemented in `src/stilldone/killer_mission.py` (`step_p13_02_plan(live=True)`);
+- truthful preflight check `check_live_preflight()` enforces required Bedrock and Google OAuth tokens;
+- when credentials/approval are unestablished, truthfully reports `BLOCKED_LIVE` (`provenance="NOT_RUN"`);
+- deterministic regression vertical slice preserved under `provenance="FIXTURE"`;
 - canonical natural language intent parsed and compiled into 3-action structured contract (`weather.read`, `task.create`, `calendar.update`);
 - strict model authority boundary enforced: model proposal confers zero execution authority and zero readiness authority;
-- weather read action executed with 0 writes and observation independently verified;
 - verified in `step_p13_02_plan()` and `test_p13_02_model_proposal_has_zero_execution_or_readiness_authority`.
 
 ### P-13.03 — Create and independently verify real Tasks preparation action
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
-- `task.create` preparation action executed under `REVERSIBLE_AUTO` authority classification (writes=1);
+- live Tasks adapter wired to real Google Tasks endpoint;
+- when live credentials absent, preflight halts fail-closed (`BLOCKED_LIVE`);
+- regression slice executes `task.create` preparation action under `REVERSIBLE_AUTO` authority classification (writes=1);
 - independent `task.read` read adapter read-back invoked on fresh transport;
 - deterministic predicate evaluates task status `needsAction` and title match;
 - verified in `step_p13_03_tasks_prep()` and `test_p13_03_tasks_prep_action_execution_and_readback`.
 
 ### P-13.04 — Pause real Calendar change at approval boundary
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
 - calendar departure time change classified as `REVERSIBLE_APPROVAL_REQUIRED`;
 - unapproved execution router invocation rejected fail-closed with 0 calendar writes (`ActionExecutionStatus.PAUSED_FOR_APPROVAL`);
 - bound `PendingApproval` record emitted with deterministic SHA-256 fingerprint;
+- preflight validates live OAuth scope before prompting; halts `BLOCKED_LIVE` without credentials;
 - verified in `step_p13_04_calendar_pause()` and `test_p13_04_calendar_pause_at_approval_boundary`.
 
 ### P-13.05 — Approve, execute, and independently verify real Calendar change
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
 - human operator `ApprovalGrant` bound strictly to mission, action, target, and payload hash;
@@ -1405,10 +1411,11 @@ Acceptance:
 - calendar update executed once (writes=1);
 - independent read-back via `calendar.read` verifies start time equals `2026-10-04T07:30:00+00:00`;
 - `ApprovedActionReceipt` issued with full evidence lineage;
+- live execution halted `BLOCKED_LIVE` until operator explicitly grants Google OAuth token;
 - verified in `step_p13_05_calendar_approve()` and `test_p13_05_calendar_approve_execute_and_verify`.
 
 ### P-13.06 — Produce `READY` mission receipt from deterministic facts
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: COMPLETED (FIXTURE Regression Mode, PASS Candidate, awaiting independent QA review)
 
 Acceptance:
 - all 3 mission predicates evaluated TRUE and FRESH by deterministic verifier;
@@ -1417,7 +1424,7 @@ Acceptance:
 - verified in `step_p13_06_ready_receipt()` and `test_p13_06_produce_ready_mission_receipt`.
 
 ### P-13.07 — Mutate Calendar externally and prove `READY → DRIFTED`
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: COMPLETED (FIXTURE Regression Mode, PASS Candidate, awaiting independent QA review)
 
 Acceptance:
 - simulated external change shifts calendar event start time to 08:00 UTC;
@@ -1427,22 +1434,23 @@ Acceptance:
 - verified in `step_p13_07_mutate_and_drift()` and `test_p13_07_mutate_calendar_and_reconcile_drift`.
 
 ### P-13.08 — Reproduce the entire live slice from a clean checkout
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Clean Checkout Reproducible under FIXTURE; Live Reproduction Pending Operator Credentials)
 
 Acceptance:
 - standalone CLI harness in `scripts/p13_killer_mission.py` executes cleanly in terminal and supports `--json`;
 - automated test suite in `tests/test_phase_p13_killer_mission.py` passes 10/10 under standard pytest and `python -O`;
-- cumulative test suite passes 2,463 tests with zero failures;
-- total writes strictly bounded to 3 across the entire 7-step lifecycle.
+- cumulative test suite passes 2,290+ tests with zero failures;
+- total writes strictly bounded to 3 across the entire 7-step lifecycle;
+- live mode `--live` reports `BLOCKED_LIVE` fail-closed when live credentials absent.
 
 ### P-13.09 — Run major P-Ω live-milestone audit
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (FIXTURE Milestone Audited; Live Milestone Audit Pending Operator Credentials)
 
 Acceptance:
 - comprehensive audit document in `docs/P13_KILLER_MISSION_AUDIT.md` verifying all 9 P-13 micro-tasks, 9 invariants, evidence provenance, and $0.00 spend;
 - zero personal spend verified;
 - zero synthetic mocks hiding failures;
-- all gates passing.
+- truthful reporting separating FIXTURE proof from BLOCKED_LIVE requirements.
 
 Phase exit:
 competition thesis is real end-to-end.
@@ -1638,12 +1646,14 @@ Acceptance:
 - verified in `test_p16_02_cloudwatch_emf_telemetry_specification_compliance`.
 
 ### P-16.03 — Prove the added AWS service live and document why it is not decorative
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_LIVE / NOT_RUN (Local EMF Compliance Proven; Live CloudWatch Observation Pending Operator Approval)
 
 Acceptance:
 - converts complete `KillerMissionSliceOutcome` into high-resolution EMF records (`record_killer_mission_telemetry`);
 - records emitted for task creation verification, calendar approval boundary, calendar verified mutation, and drift reconciliation;
 - non-decorative justification: monitors StillDone core invariants in real time with zero network overhead and zero third-party daemon dependencies;
+- bounded live proof harness implemented in `CloudWatchLiveProofHarness` (`src/stilldone/aws_builder.py`);
+- live observation call halted fail-closed (`BLOCKED_LIVE`) to preserve Zero Personal Spend Law ($0.00) until operator authorizes billable CloudWatch ingestion;
 - verified in `test_p16_03_prove_added_aws_service_not_decorative`.
 
 ### P-16.04 — Produce AWS Builder architecture/evidence map
@@ -1702,17 +1712,22 @@ Acceptance:
 Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 Acceptance:
-- real integration example implemented in `packages/mcp_verify/examples/verifiable_calendar_tool.py`;
-- demonstrates wrapping an MCP calendar update tool with independent readback and predicate evaluation;
-- proves contradiction detection when execute returns 200 OK but data is corrupted;
+- real integration example using official MCPServer and MCP protocol tools implemented in `packages/mcp_verify/examples/real_mcp_integration.py`;
+- registers mutation tool (`create_task_item`) and separate read-back tool (`get_task_item`) on official `MCPServer`;
+- proves Part 1: Mutation -> MCP Read-back -> Predicate Match -> VERIFIED;
+- proves Part 2: Mutation (200 OK) -> MCP Read-back Mismatch -> CONTRADICTED;
+- fixture in-memory example preserved as `[FIXTURE EXAMPLE]` in `packages/mcp_verify/examples/verifiable_calendar_tool.py`;
 - verified in `test_p17_04_real_integration_example_executes`.
 
 ### P-17.05 — Publish contribution URL/repo/fork/PR during hackathon window
-Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+Status: BLOCKED_EXTERNAL / NOT_RUN (Standalone Wheel Built & Tested Clean; Publication Pending Operator Authorization)
 
 Acceptance:
 - standalone package configuration with PEP 621 metadata and `hatchling` build backend (`packages/mcp_verify/pyproject.toml`);
-- clean packaging ready for standalone distribution or PyPI publishing;
+- clean standalone build validated via `uv build packages/mcp_verify`;
+- wheel installed into clean temporary environment and test suite passed 6/6 against installed wheel;
+- installation instructions documented truthful local/wheel installation;
+- external publication to PyPI/Git halted fail-closed until operator provides credentials and explicit authorization;
 - verified in `test_p17_05_pyproject_metadata`.
 
 ### P-17.06 — Produce Open Source mini-challenge evidence description

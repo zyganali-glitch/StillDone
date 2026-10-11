@@ -48,67 +48,65 @@ This milestone exercises every core architectural principle of StillDone across 
 ### P-13.01: Seed Canonical Disposable Demo Resources Reproducibly
 - **Contract**: Pre-condition setup for killer mission. Calendar must contain "Leave for school" event at 07:45 UTC; Tasks must not contain "Pack backpacks".
 - **Evidence**: `step_p13_01_seed()` validates pre-state using dedicated disposable resource IDs (`cal-demo-family-001`, `tasklist-demo-family-001`). Primary calendar and default task list are strictly rejected.
-- **Result**: `PASS` (`FIXTURE`).
+- **Result**: `PASS` (`FIXTURE` / deterministic demo mode).
 
 ### P-13.02: Execute Full Live Mission From Natural Language Through AWS Planner
 - **Contract**: Intent translated to structured proposal. Model has 0 execution authority.
-- **Evidence**: `step_p13_02_plan()` compiles intent to 3 actions: weather check (`READ_ONLY`), backpacks task (`REVERSIBLE_AUTO`), and calendar move (`REVERSIBLE_APPROVAL_REQUIRED`). Weather action is executed with 0 writes; observation verified.
-- **Result**: `PASS` (`FIXTURE`).
+- **Evidence**: Production wiring for Bedrock / Strands planner is prepared in `LiveKillerMissionSliceRunner`. Without live credentials/approval, live execution halts fail-closed (`BLOCKED_LIVE / NOT_RUN`). Deterministic regression slice passes in fixture mode (`step_p13_02_plan()` compiles intent to 3 actions with 0 writes).
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live path); `PASS` (`FIXTURE` regression mode).
 
 ### P-13.03: Create & Independently Verify Real Tasks Preparation Action
 - **Contract**: Execute `task.create` and verify via independent read-back.
-- **Evidence**: `step_p13_03_tasks_prep()` executes mutation (writes=1). Read adapter reads back task object. Predicate verifies `status == "needsAction"` and title matches.
-- **Result**: `PASS` (`FIXTURE`).
+- **Evidence**: Production wiring for real Google Tasks mutation is prepared. Without live Google OAuth tokens, live execution halts fail-closed (`BLOCKED_LIVE / NOT_RUN`). Deterministic regression slice executes in fixture mode (`step_p13_03_tasks_prep()` executes mutation with writes=1 and verifies read-back).
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live path); `PASS` (`FIXTURE` regression mode).
 
 ### P-13.04: Pause Real Calendar Change at Approval Boundary
 - **Contract**: Unapproved calendar change must pause fail-closed.
-- **Evidence**: `step_p13_04_calendar_pause()` invokes execution router with unapproved action. Router rejects execution, records 0 calendar writes, and emits a bound `PendingApproval`.
-- **Result**: `PASS` (`FIXTURE`).
+- **Evidence**: Production wiring for real Google Calendar approval pause is prepared. Without live Google OAuth tokens, live execution halts fail-closed (`BLOCKED_LIVE / NOT_RUN`). Deterministic regression slice pauses fail-closed at approval boundary in fixture mode (`step_p13_04_calendar_pause()` emits bound `PendingApproval` with 0 writes).
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live path); `PASS` (`FIXTURE` regression mode).
 
 ### P-13.05: Approve, Execute, and Independently Verify Real Calendar Change
 - **Contract**: Provide valid `ApprovalGrant`, execute mutation once, verify via read-back.
-- **Evidence**: `step_p13_05_calendar_approve()` consumes grant, invokes router (writes=1), reads back event via calendar read adapter, and verifies start time equals `2026-10-04T07:30:00+00:00`. Emits `ApprovedActionReceipt`.
-- **Result**: `PASS` (`FIXTURE`).
+- **Evidence**: Production wiring for real Google Calendar approved execution is prepared. Without live Google OAuth tokens, live execution halts fail-closed (`BLOCKED_LIVE / NOT_RUN`). Deterministic regression slice executes in fixture mode (`step_p13_05_calendar_approve()` consumes grant, writes=1, and emits `ApprovedActionReceipt`).
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live path); `PASS` (`FIXTURE` regression mode).
 
 ### P-13.06: Produce READY Mission Receipt from Deterministic Facts
 - **Contract**: All predicates TRUE and FRESH; issue immutable receipt.
-- **Evidence**: `step_p13_06_ready_receipt()` checks all 3 predicates, snapshots mission as `READY`, and creates `MissionReceiptProjection` with SHA-256 hash `74b7eb94854b8963...`.
-- **Result**: `PASS` (`FIXTURE`).
+- **Evidence**: `step_p13_06_ready_receipt()` checks all 3 predicates, snapshots mission as `READY`, and creates `MissionReceiptProjection` with SHA-256 hash.
+- **Result**: `PASS` (`FIXTURE` regression mode).
 
 ### P-13.07: Mutate Calendar Externally & Prove READY → DRIFTED
 - **Contract**: External reality divergence causes deterministic drift downgrade without tampering historical receipt.
 - **Evidence**: `step_p13_07_mutate_and_drift()` simulates external change to 08:00 UTC. Re-verification fails calendar predicate. Mission snapshot transitions `READY -> DRIFTED`. Historical receipt hash is strictly unchanged.
-- **Result**: `PASS` (`FIXTURE`).
+- **Result**: `PASS` (`FIXTURE` regression mode).
 
 ### P-13.08: Reproduce Entire Live Slice From Clean Checkout
 - **Contract**: Deterministic, standalone reproducibility without side effects.
 - **Evidence**:
-  - `python scripts/p13_killer_mission.py` executes cleanly in terminal.
-  - `python scripts/p13_killer_mission.py --json` emits structured JSON report with 0 errors.
-  - `pytest tests/test_phase_p13_killer_mission.py` passes 10/10.
-  - `python -O -m pytest tests/test_phase_p13_killer_mission.py` passes 10/10.
-- **Result**: `PASS` (`LOCAL_EXECUTION`).
+  - Live execution slice: `BLOCKED_LIVE / NOT_RUN` pending operator credentials and consent.
+  - Fixture execution slice: `python scripts/p13_killer_mission.py` executes cleanly in terminal; `--json` emits structured report; `pytest tests/test_phase_p13_killer_mission.py` passes 10/10 in both standard and `python -O` mode.
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live slice); `PASS` (`LOCAL_EXECUTION` / fixture regression slice).
 
 ### P-13.09: Run Major P-Ω Live-Milestone Audit
 - **Contract**: Comprehensive audit document verifying all Phase P-13 gates, invariants, and provenance boundaries.
 - **Evidence**: This audit document (`docs/P13_KILLER_MISSION_AUDIT.md`).
-- **Result**: `PASS`.
+- **Result**: `BLOCKED_LIVE / NOT_RUN` (Live milestone audit); `PASS` (Fixture regression milestone audit).
 
 ---
 
 ## 4. Test Verification Summary
 
 - **Focused Tests**: `tests/test_phase_p13_killer_mission.py` (10/10 PASS)
-- **Cumulative Test Suite**: 2,463 tests across 50+ test modules (2,463 PASS, 0 FAIL)
+- **Cumulative Test Suite**: 2,290 core tests + 1,155 planner tests across dual runtimes (100% PASS, 0 FAIL)
 - **Runtime Matrix**:
   - Python 3.13.5 (standard mode)
-  - Python 3.13.5 (`-O` optimized mode)
-- **Total Writes Enforced**: Exactly 3 writes throughout the entire 7-step lifecycle (1 seed write, 1 task write, 1 calendar write; 0 unapproved writes).
+  - Python 3.13.5 (`-O` optimized mode — fail-closed under optimization verified)
+- **Total Writes Enforced**: Exactly 3 writes throughout the entire 7-step fixture lifecycle (1 seed write, 1 task write, 1 calendar write; 0 unapproved writes).
 
 ---
 
 ## 5. Provenance & Budget Declaration
 
-- **Evidence Provenance**: `FIXTURE` (fixture transports exercising deterministic runtime contracts). Real Google OAuth / live credentials remain unconfigured in this checkout, truthfully labeled as `BLOCKED_LIVE` for live external calls.
+- **Evidence Provenance**: `FIXTURE` for deterministic regression/demo slice (`KillerMissionSliceRunner`). Real Google OAuth and live Bedrock calls remain unexecuted in this automated pass, truthfully labeled as `BLOCKED_LIVE / NOT_RUN`.
 - **Personal Spend**: Exactly `$0.00`.
-- **Integrity**: Zero synthetic mocks hiding failures; zero assertions weakened.
+- **Integrity**: Zero synthetic mocks hiding failures; zero assertions weakened; distinct provenance between fixture and live paths.

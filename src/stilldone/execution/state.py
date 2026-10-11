@@ -403,7 +403,11 @@ class ExecutionStateTracker:
             )
         can_run, unsatisfied_prereq = self.can_execute(action_id)
         if not can_run:
-            assert unsatisfied_prereq is not None
+            if unsatisfied_prereq is None:
+                raise ExecutionDependencyError(
+                    f"Cannot transition action {action_id} to IN_PROGRESS: "
+                    f"prerequisites not satisfied"
+                )
             prereq_status = self._records[unsatisfied_prereq].status
             raise ExecutionDependencyError(
                 f"Cannot transition action {action_id} to IN_PROGRESS: "

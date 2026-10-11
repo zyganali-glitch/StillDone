@@ -497,7 +497,11 @@ def _process_strands_result(
         rejection_err.__context__ = None
         raise rejection_err from None
 
-    assert parsed_plan is not None
+    if parsed_plan is None:
+        raise StrandsPlanRejectionError(
+            "Strands candidate plan proposal could not be parsed",
+            rejection_class=ValueError,
+        )
     return StrandsPlannerResult(
         plan=parsed_plan,
         stop_reason=stop_reason,

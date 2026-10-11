@@ -351,12 +351,15 @@ _raw_policy_store: dict[ActionType, ActionAuthorityPolicy] = {
 }
 
 # Module-level invariants: exact 1:1 mapping with ActionType
-assert set(_raw_policy_store.keys()) == set(ActionType), (
-    "ACTION_AUTHORITY_POLICY_TABLE must cover all canonical ActionType members"
-)
-assert len(_raw_policy_store) == len(ActionType) == 5, (
-    "ACTION_AUTHORITY_POLICY_TABLE must have exactly 5 entries"
-)
+if (
+    set(_raw_policy_store.keys()) != set(ActionType)
+    or len(_raw_policy_store) != len(ActionType)
+    or len(ActionType) != 5
+):
+    raise RuntimeError(
+        "ACTION_AUTHORITY_POLICY_TABLE must cover all canonical "
+        "ActionType members with exactly 5 entries"
+    )
 
 ACTION_AUTHORITY_POLICY_TABLE: Mapping[ActionType, ActionAuthorityPolicy] = types.MappingProxyType(
     _raw_policy_store

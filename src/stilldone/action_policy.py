@@ -171,10 +171,14 @@ _POLICY_ENTRIES: dict[ActionType, ActionPolicy] = {
 }
 
 # Module-level invariant: exact 1:1 mapping with ActionType
-assert set(_POLICY_ENTRIES.keys()) == set(ActionType), (
-    "ACTION_POLICIES must cover all canonical ActionType members"
-)
-assert len(_POLICY_ENTRIES) == len(ActionType) == 5, "ACTION_POLICIES must have exactly 5 entries"
+if (
+    set(_POLICY_ENTRIES.keys()) != set(ActionType)
+    or len(_POLICY_ENTRIES) != len(ActionType)
+    or len(ActionType) != 5
+):
+    raise RuntimeError(
+        "ACTION_POLICIES must cover all canonical ActionType members with exactly 5 entries"
+    )
 
 ACTION_POLICIES: Mapping[ActionType, ActionPolicy] = types.MappingProxyType(_POLICY_ENTRIES)
 
@@ -293,9 +297,8 @@ _PARAMETER_VALIDATORS: dict[ActionType, Callable[[ActionContract], None]] = {
     ActionType.WEATHER_READ: _validate_weather_read_parameters,
 }
 
-assert set(_PARAMETER_VALIDATORS.keys()) == set(ActionType), (
-    "All ActionType members must have a dedicated parameter validator"
-)
+if set(_PARAMETER_VALIDATORS.keys()) != set(ActionType):
+    raise RuntimeError("All ActionType members must have a dedicated parameter validator")
 
 
 # ===========================================================================

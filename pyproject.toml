@@ -40,6 +40,7 @@ select = [
 
 [tool.mypy]
 python_version = "3.11"
+mypy_path = ["src", "packages/mcp_verify/src"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -53,7 +54,7 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "packages/mcp_verify/src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]

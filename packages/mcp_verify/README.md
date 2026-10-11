@@ -26,8 +26,14 @@ If the independent read-back query cannot observe the expected state, `mcp-verif
 
 ## Installation
 
+Install locally from source or from built wheel:
+
 ```bash
-pip install mcp-verify
+# From local repository checkout
+pip install ./packages/mcp_verify
+
+# Or from built wheel package
+pip install dist/mcp_verify-0.1.0-py3-none-any.whl
 ```
 
 ---
@@ -46,6 +52,7 @@ from mcp_verify import (
 
 middleware = VerifiableToolMiddleware()
 
+
 # 1. Register a verifiable tool contract
 @middleware.register_verifiable_tool(
     tool_name="create_reminder",
@@ -60,11 +67,13 @@ def extract_verification_predicate(tool_args: dict, tool_result: dict) -> Verifi
         expected_value=tool_args["title"],
     )
 
+
 # 2. Register readback handler
 @middleware.register_readback_handler("get_reminder")
 def handle_readback(target_id: str) -> dict:
     # Query your backend independently
     return fetch_reminder_from_database(target_id)
+
 
 # 3. Execute tool through verification middleware
 result = middleware.execute_and_verify(
@@ -73,8 +82,8 @@ result = middleware.execute_and_verify(
     tool_executor=lambda args: {"created_id": "rem_123", "title": "Pack backpacks"},
 )
 
-print(result.status)        # VerificationStatus.VERIFIED
-print(result.is_verified)   # True
+print(result.status)  # VerificationStatus.VERIFIED
+print(result.is_verified)  # True
 ```
 
 If the readback returned a different title, `result.status` would evaluate to `VerificationStatus.CONTRADICTED` with `is_verified=False`.

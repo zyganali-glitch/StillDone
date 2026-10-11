@@ -179,7 +179,8 @@ def evaluate_freshness(
         if not isinstance(freshness_contract, FreshnessContract):
             raise TypeError("freshness_contract must be a FreshnessContract instance")
         if freshness_contract.mode == FreshnessMode.MAX_AGE:
-            assert freshness_contract.max_age_seconds is not None
+            if freshness_contract.max_age_seconds is None:
+                raise ValueError("max_age_seconds must not be None when mode is MAX_AGE")
             effective_valid_until = obs_utc + timedelta(seconds=freshness_contract.max_age_seconds)
         elif freshness_contract.mode == FreshnessMode.CURRENT:
             effective_valid_until = obs_utc + timedelta(seconds=current_window_seconds)

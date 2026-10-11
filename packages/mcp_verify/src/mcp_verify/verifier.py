@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from mcp_verify.contracts import (
-    PredicateOperator,
     VerificationPredicate,
     VerificationResult,
     VerificationStatus,
@@ -57,7 +55,8 @@ class Verifier:
                 expected_value=predicate.expected_value,
                 readback_latency_ms=readback_latency_ms,
                 details=(
-                    f"Contradiction: attribute '{predicate.attribute}' observed as '{observed_val}', "
-                    f"expected '{predicate.expected_value}' ({predicate.operator.value})."
+                    f"Contradiction: attribute '{predicate.attribute}' "
+                    f"observed as '{observed_val}', expected "
+                    f"'{predicate.expected_value}' ({predicate.operator.value})."
                 ),
             )

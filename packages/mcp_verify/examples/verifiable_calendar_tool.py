@@ -1,21 +1,13 @@
-"""Example: Wrapping an MCP Calendar update tool with mcp-verify.
+"""[FIXTURE EXAMPLE] Wrapping a mock Calendar update tool with mcp-verify.
 
 Demonstrates:
-1. Tool executes mutation (POST /calendar/events/evt_123).
-2. Middleware intercepts result and queries independent read-back (GET /calendar/events/evt_123).
-3. Verifier deterministically verifies that start_time matches 07:30.
-4. Demonstrates contradiction detection when read-back observes corrupted state (08:00).
+1. Tool executes mutation against in-memory mock store.
+2. Middleware intercepts result and queries independent read-back.
+3. Verifier deterministically verifies expected predicate.
+4. Demonstrates contradiction detection when read-back observes corrupted state.
 """
 
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-# Add src to sys.path for local running
-src_dir = Path(__file__).resolve().parent.parent / "src"
-if str(src_dir) not in sys.path:
-    sys.path.insert(0, str(src_dir))
 
 from mcp_verify import (
     PredicateOperator,

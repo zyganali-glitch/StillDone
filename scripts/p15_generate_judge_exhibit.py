@@ -20,15 +20,9 @@ import json
 import sys
 from pathlib import Path
 
-# Add src to sys.path if not installed
-src_path = Path(__file__).resolve().parent.parent / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
-
 from stilldone.judge_ux.builder import build_judge_view_model
 from stilldone.judge_ux.html_renderer import render_judge_exhibit_html
 from stilldone.killer_mission import (
-    KillerMissionEnvironment,
     KillerMissionSliceRunner,
 )
 
@@ -88,7 +82,9 @@ def main() -> int:
         print(f" Surface:           {view_model.surface_banner}")
         print(f" Current State:     {view_model.current_state.value}")
         print(f" Timeline Steps:    {len(view_model.timeline_steps)} canonical cards")
-        print(f" Compact Receipt:   Issuance={view_model.compact_receipt.state_at_issuance} -> Current={view_model.compact_receipt.current_reconciled_state.value}")
+        issuance = view_model.compact_receipt.state_at_issuance
+        curr = view_model.compact_receipt.current_reconciled_state.value
+        print(f" Compact Receipt:   Issuance={issuance} -> Current={curr}")
         print(f" Output File:       {out_path}")
         print(f" Size:              {len(html.encode('utf-8')):,} bytes")
         print(" Status:            PASS (WCAG AA accessible, self-contained)")

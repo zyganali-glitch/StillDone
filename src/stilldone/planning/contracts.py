@@ -64,12 +64,8 @@ MAX_PLANNER_JSON_BYTES: int = 64 * 1024
 
 # Canonical Action Vocabulary: EXACTLY the five canonical ActionType members.
 PLANNER_ACTION_VOCABULARY: frozenset[ActionType] = frozenset(ActionType)
-assert len(PLANNER_ACTION_VOCABULARY) == 5, (
-    "Planner vocabulary must have exactly 5 canonical actions"
-)
-assert PLANNER_ACTION_VOCABULARY == set(ActionType), (
-    "Planner vocabulary must match ActionType set exactly"
-)
+if len(PLANNER_ACTION_VOCABULARY) != 5 or PLANNER_ACTION_VOCABULARY != set(ActionType):
+    raise RuntimeError("Planner vocabulary must match ActionType set exactly with 5 members")
 
 
 # ===========================================================================
@@ -149,9 +145,8 @@ ACTION_SYMBOLIC_TARGET_COMPATIBILITY: Mapping[ActionType, frozenset[SymbolicTarg
     )
 )
 
-assert set(ACTION_SYMBOLIC_TARGET_COMPATIBILITY.keys()) == set(ActionType), (
-    "All ActionType members must have defined symbolic target compatibility"
-)
+if set(ACTION_SYMBOLIC_TARGET_COMPATIBILITY.keys()) != set(ActionType):
+    raise RuntimeError("All ActionType members must have defined symbolic target compatibility")
 
 
 # ===========================================================================
@@ -1054,9 +1049,10 @@ _CANONICAL_PARAM_JSON_SCHEMAS: Mapping[str, dict[str, Any]] = types.MappingProxy
 _ALL_SUPPORTED_PARAM_KEYS: frozenset[str] = frozenset.union(
     *(policy.supported_parameters for policy in ACTION_POLICIES.values())
 )
-assert set(_CANONICAL_PARAM_JSON_SCHEMAS.keys()) == _ALL_SUPPORTED_PARAM_KEYS, (
-    "Parameter JSON schemas must exactly match union of canonical supported parameters"
-)
+if set(_CANONICAL_PARAM_JSON_SCHEMAS.keys()) != _ALL_SUPPORTED_PARAM_KEYS:
+    raise RuntimeError(
+        "Parameter JSON schemas must exactly match union of canonical supported parameters"
+    )
 
 
 def _build_action_proposal_json_schema(action_type: ActionType) -> dict[str, Any]:

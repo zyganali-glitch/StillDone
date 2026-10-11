@@ -3,7 +3,7 @@
 
 Reproduces the full P-13 Canonical Killer Mission Vertical Slice end-to-end:
 - P-13.01: Seed canonical disposable demo resources reproducibly
-- P-13.02: Execute full mission plan from natural language through compiler (assert 0 model authority)
+- P-13.02: Execute full mission plan through compiler (0 model authority)
 - P-13.03: Execute and independently verify Tasks preparation action (REVERSIBLE_AUTO)
 - P-13.04: Pause Calendar mutation at approval boundary (REVERSIBLE_APPROVAL_REQUIRED -> NOT_RUN)
 - P-13.05: Issue bound approval, execute Calendar update once (writes=1), and read back
@@ -20,12 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
-
-# Add project root to sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.provenance import EvidenceProvenance
@@ -51,7 +45,9 @@ def run_killer_mission(live: bool = False, as_json: bool = False) -> int:
                     json.dumps(
                         {
                             "status": "BLOCKED_LIVE",
-                            "reason": "Missing valid live Google OAuth tokens. Run OAuth flow first.",
+                            "reason": (
+                                "Missing valid live Google OAuth tokens. Run OAuth flow first."
+                            ),
                             "provenance": EvidenceProvenance.FIXTURE.value,
                             "is_live": False,
                         },

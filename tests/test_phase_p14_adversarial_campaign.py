@@ -17,9 +17,6 @@ import pytest
 
 from stilldone.adversarial import (
     AdversarialCampaignHarness,
-    AdversarialScenarioResult,
-    FaultyCalendarTransport,
-    FaultyTasksTransport,
 )
 
 
