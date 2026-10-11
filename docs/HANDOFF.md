@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-11: CLOSED (independent QA PASS ✅) | P-Ω Phase P-10 boundary: PASS ✅ | P-11.01 through P-11.06: CLOSED (independent QA PASS ✅) | P-12.01 through P-12.05: CLOSED (independent QA PASS ✅) | P-12.06 and P-12.07: COMPLETED (PASS Candidate, awaiting independent QA review) | P-13+: PENDING / NOT AUTHORIZED / NOT_RUN | Last independently VERIFIED contiguous SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13.01: COMPLETED (PASS Candidate, awaiting independent QA review) | P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,22 +74,17 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-12.06 and P-12.07 Bounded Phase-Closure Batch (Phase P-12: Durable Mission Continuity & Drift)
+Active task: P-13.01 — Seed canonical disposable demo resources reproducibly (Phase P-13: Canonical Killer Mission Vertical Slice)
 
 Status:
-- P-00 through P-11: CLOSED — independent QA PASS ✅
-- P-Ω Phase P-10 boundary: PASS ✅
-- P-11.01 through P-11.06: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
-- Phase P-11 exit: CLOSED — independent QA PASS ✅ (Verified closure SHA: `f09137e06f99a3364ccff9c2c7f25b67ee1f9be9`)
-- P-12.01 through P-12.05: CLOSED — independent QA PASS ✅ (Verified closure baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`)
-- P-12.06: COMPLETED (PASS Candidate, awaiting independent QA review)
-- P-12.07: COMPLETED (PASS Candidate, awaiting independent QA review)
-- P-13+: PENDING / NOT AUTHORIZED / NOT_RUN
+- P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
+- P-13.01: COMPLETED (PASS Candidate, awaiting independent QA review)
+- P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN
 
-Last Independently VERIFIED contiguous SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`
-Audited remote baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`
-Current exact task: P-12.06 and P-12.07 Bounded Phase-Closure Batch (Completed, awaiting independent QA review)
-Next exact task: Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
+Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
+Audited remote baseline SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
+Current exact task: P-13.01 — Seed canonical disposable demo resources reproducibly (Completed, awaiting independent QA review)
+Next exact task: Independent QA audit for P-13.01 and Phase P-13 continuation decision (P-13.02+ strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
@@ -259,11 +254,28 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Current exact task
 
-P-12.06 and P-12.07 — Bounded Phase-Closure Batch (Phase P-12: Durable Mission Continuity & Drift) — Completed, awaiting independent QA review.
+P-13.01 — Seed canonical disposable demo resources reproducibly (Phase P-13: Canonical Killer Mission Vertical Slice) — Completed, awaiting independent QA review.
 
 ## Next exact task
 
-Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN).
+Independent QA audit for P-13.01 and Phase P-13 continuation decision (P-13.02+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN).
+
+---
+
+### Phase P-13 Status Summary
+- **P-13.01 — Seed canonical disposable demo resources reproducibly**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
+  - Implemented deterministic disposable demo resource seeding and verification engine in `src/stilldone/demo_seeding.py` (`seed_canonical_demo_resources`, `check_demo_resources_preflight`).
+  - Enforced strict `DemoResourceScope` isolation: primary and default calendar/task list aliases fail-closed (`SeedOperationStatus.WRONG_TARGET_REJECTED`, 0 writes).
+  - Provider read-only preflight: checks calendar and task list container existence before any mutation attempt (`SeedOperationStatus.BLOCKED_PREFLIGHT`, 0 writes).
+  - Fail-closed mutation boundary: `permit_mutation=False` halts fail-closed on missing or drifted events (`SeedOperationStatus.BLOCKED_UNAUTHORIZED`, 0 writes).
+  - Idempotency & duplicate prevention: existing canonical event matching pre-state start time (`Leave for school` at `07:45`) returns `VERIFIED_EXISTING` with 0 writes; subsequent runs maintain 0 writes and create 0 duplicate events.
+  - Duplicate contradiction protection: multiple events matching title fail closed with `DUPLICATE_CONTRADICTION` (0 writes).
+  - Authorized mutation & independent read-back: `permit_mutation=True` executes bounded mutation (`writes_performed=1`) and strictly enforces distinct independent provider read-back; write success never substitutes for read-back (`VERIFICATION_FAILED` if read-back missing or inconsistent).
+  - Live preflight boundary truth: checks OAuth client secrets and live token availability; truthfully reports `BLOCKED_LIVE` (`provenance="NOT_RUN"`) when tokens are unestablished or interactive operator consent is required; zero live mutations performed; zero personal spend ($0.00).
+  - 23 unit and adversarial tests passing in `tests/test_phase_p13_01_demo_seeding.py`.
+  - Standalone CLI proof in `scripts/p13_01_proof.py` passing across standard, `python -O`, and `--json` modes.
+- **P-13.02+: PENDING / NOT AUTHORIZED / NOT_RUN**.
+- **Last independently VERIFIED contiguous SHA**: `05fd91d767360cbea21573d804bd429ed116ca9c`.
 
 ---
 
@@ -273,13 +285,13 @@ Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-
 - **P-12.03 — Implement bounded revalidation command/tool**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
 - **P-12.04 — Implement external-change drift detection on Calendar**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
 - **P-12.05 — Implement external-change drift detection on Tasks**: `CLOSED — independent QA PASS ✅` (Verified baseline SHA: `1102b68f3490ab92a358250b8aa49ae481aed5f7`).
-- **P-12.06 — Preserve historical receipt while publishing current truth**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
+- **P-12.06 — Preserve historical receipt while publishing current truth**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`).
   - Implemented immutable historical receipt preservation (`ReceiptProjection`, `is_historical=True`, domain-separated `stilldone:receipt-projection:v1`) alongside authoritative separate current-state projection (`CurrentStateProjection`, `is_historical=False`, domain-separated `stilldone:current-state-projection:v1`).
   - Current truth is bound to exact mission ID, snapshot revision, evidence IDs, observation timestamps, and deterministic lifecycle state; reopening or revalidating a mission does not overwrite old receipts or rewrite historical evidence.
   - Fail-closed model boundary: `assert_not_planner_for_current_state` ensures model prose and planner proposals cannot override deterministic current truth.
   - Provider errors and stale reads never masquerade as drift; duplicate drift transitions fail closed or handle idempotently.
   - 11 unit and adversarial tests passing in `tests/test_phase_p12_06_current_truth.py`.
-- **P-12.07 — Run fresh-session 'Are we still ready?' proof**: `COMPLETED (PASS Candidate, awaiting independent QA review)`.
+- **P-12.07 — Run fresh-session 'Are we still ready?' proof**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`).
   - Executed 4-process reproducible proof script (`scripts/p12_07_proof.py`) running across discrete OS subprocesses via `sys.executable`.
   - Process 1 (Seed): Persists canonical READY mission and immutable historical receipt to durable disk.
   - Process 2 (Revalidate): Fresh OS subprocess reloads state from disk, reads external targets via read-only verifiers, recomputes freshness and predicates, revalidates TRUE, and projects READY current truth with 0 provider writes and 0 approval consumption.
@@ -287,8 +299,8 @@ Independent QA audit for P-12.06 and P-12.07 and Phase P-12 closure decision (P-
   - Process 4 (Subsequent Restart): Fresh OS subprocess re-reloads from disk, verifies recovered DRIFTED projection, intact evidence lineage, and unchanged historical receipt hash.
   - Provenance strictly classified as LOCAL_EXECUTION / FIXTURE; live certification gate truthfully reported as NOT_RUN; zero personal spend ($0.00); 0 writes/approvals consumed during revalidation.
   - 11 comprehensive tests passing in `tests/test_phase_p12_07_fresh_session_proof.py`; 141 tests passing across Phase P-12.
-- **P-13+: PENDING / NOT AUTHORIZED / NOT_RUN**.
-- **Last independently VERIFIED contiguous SHA**: `1102b68f3490ab92a358250b8aa49ae481aed5f7`.
+- **Phase P-12 Exit**: `CLOSED — independent QA PASS ✅` (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`).
+- **Last independently VERIFIED contiguous SHA**: `05fd91d767360cbea21573d804bd429ed116ca9c`.
 
 ---
 

@@ -1343,7 +1343,8 @@ Acceptance:
 - Standalone CLI proof passes in default, `--json`, and individual step modes.
 
 Phase exit:
-P-12.01 through P-12.05 accepted by independent QA at baseline `1102b68f3490ab92a358250b8aa49ae481aed5f7`. P-12.06 and P-12.07 completed as PASS candidates awaiting independent QA review for Phase P-12 closure. Phase P-13+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN.
+P-12.01 through P-12.07 CLOSED by independent QA PASS at verified baseline SHA `05fd91d767360cbea21573d804bd429ed116ca9c`.
+Phase P-12 is COMPLETE.
 
 ---
 
@@ -1353,7 +1354,20 @@ Goal:
 assemble the complete competition-defining experience.
 
 ### P-13.01 — Seed canonical disposable demo resources reproducibly
-Status: PENDING
+Status: COMPLETED (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- demo resource seeding and pre-state verification engine implemented in `src/stilldone/demo_seeding.py` (`seed_canonical_demo_resources`, `check_demo_resources_preflight`);
+- strict `DemoResourceScope` enforcement: rejects primary/default calendar/task list aliases fail-closed (`SeedOperationStatus.WRONG_TARGET_REJECTED`, 0 writes);
+- provider read-only preflight: checks calendar and task list container existence before any mutation attempt (`SeedOperationStatus.BLOCKED_PREFLIGHT`, 0 writes);
+- fail-closed mutation boundary: `permit_mutation=False` halts fail-closed on missing or drifted events (`SeedOperationStatus.BLOCKED_UNAUTHORIZED`, 0 writes);
+- idempotency & duplicate prevention: existing canonical event matching pre-state start time (`Leave for school` at `07:45`) returns `VERIFIED_EXISTING` with 0 writes; subsequent runs maintain 0 writes and create 0 duplicate events;
+- duplicate contradiction protection: multiple events matching title fail closed (`SeedOperationStatus.DUPLICATE_CONTRADICTION`, 0 writes);
+- authorized mutation & independent read-back: `permit_mutation=True` executes bounded mutation (`writes_performed=1`) and strictly enforces distinct independent provider read-back; write success never substitutes for read-back (`VERIFICATION_FAILED` if read-back missing or inconsistent);
+- live preflight truth: checks OAuth client secrets and live token availability; truthfully reports `BLOCKED_LIVE` (`provenance="NOT_RUN"`) when tokens are unestablished or interactive operator consent is required; zero live mutations performed; zero personal spend ($0.00);
+- comprehensive test suite in `tests/test_phase_p13_01_demo_seeding.py` (23 tests passing);
+- standalone proof CLI in `scripts/p13_01_proof.py` passing under standard, `python -O`, and `--json` modes;
+- hard stop at P-13.01: P-13.02+ strictly PENDING / NOT AUTHORIZED / NOT_RUN.
 
 ### P-13.02 — Execute full live mission from natural language through AWS planner
 Status: PENDING
