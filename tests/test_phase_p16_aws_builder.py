@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from stilldone.aws_builder import (
     AWSAccountObservation,
     AWSBuilderEvidenceMap,
@@ -23,6 +25,7 @@ from stilldone.aws_builder import (
     generate_aws_builder_evidence_map,
     record_killer_mission_telemetry,
 )
+from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
     KillerMissionSliceRunner,
 )
@@ -64,6 +67,8 @@ def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.RECORDED_LIVE,
+        source_reference="https://aws.amazon.com/billing",
     )
     observed_services = audit_critical_path_aws_services(observation=obs)
     for s in observed_services:
@@ -170,6 +175,8 @@ def test_p16_04_aws_builder_architecture_and_evidence_map() -> None:
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.RECORDED_LIVE,
+        source_reference="https://aws.amazon.com/billing",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     dict_obs = ev_map_obs.to_dict()
@@ -203,6 +210,8 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.RECORDED_LIVE,
+        source_reference="https://aws.amazon.com/billing",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     assert ev_map_obs.zero_personal_spend_maintained is True
@@ -376,3 +385,112 @@ def test_cloudwatch_live_proof_harness_positive_and_negative_verification() -> N
     assert res_exc.status == "FAILED"
     assert res_exc.is_billable is True
     assert res_exc.cost_exposure == CostExposure.MAY_HAVE_INCURRED_USAGE
+
+
+def test_aws_account_observation_validation() -> None:
+    """Verify AWSAccountObservation enforces timezone awareness and source reference."""
+    # 1. Naive datetime must fail
+    with pytest.raises(ValueError, match="timezone-aware"):
+        AWSAccountObservation(
+            observed_at=datetime.now(),  # naive!
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.LOCAL_EXECUTION,
+        )
+
+    # 2. RECORDED_LIVE without source_reference must fail
+    with pytest.raises(ValueError, match="source_reference is required"):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference=None,
+        )
+
+    with pytest.raises(ValueError, match="source_reference is required"):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference="",
+        )
+
+
+def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
+    """Verify CloudWatchLiveProofHarness fails closed on missing cw_client or metric mismatch."""
+    from unittest.mock import MagicMock
+
+    from stilldone.aws_builder import CloudWatchLiveProofHarness
+
+    def git_ok(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        return 0, "", ""
+
+    valid_sha = "1111111111111111111111111111111111111111"
+
+    mock_logs = MagicMock()
+    emitted_records: list[str] = []
+
+    def mock_put_log_events(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs.put_log_events.side_effect = mock_put_log_events
+    mock_logs.get_log_events.side_effect = lambda **kwargs: {
+        "events": [{"message": rec} for rec in emitted_records]
+    }
+
+    # 1. Missing cw_client fails closed when log read-back succeeds
+    harness_no_cw = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=None,
+        environment="test",
+    )
+    res_no_cw = harness_no_cw.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+    assert res_no_cw.is_verified is False
+    assert res_no_cw.status == "FAILED"
+    assert (
+        "requires cw_client" in res_no_cw.details
+        or "cloudwatch metric api query failed" in res_no_cw.details.lower()
+    )
+
+    # 2. Metric value mismatch in CloudWatch metrics API fails closed
+    emitted_records.clear()
+    mock_cw_mismatch = MagicMock()
+    mock_cw_mismatch.get_metric_data.return_value = {
+        "MetricDataResults": [{"StatusCode": "Complete", "Values": [999.0]}]  # Mismatched!
+    }
+    harness_mismatch = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw_mismatch,
+        environment="test",
+    )
+    res_mismatch = harness_mismatch.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+    assert res_mismatch.is_verified is False
+    assert res_mismatch.status == "FAILED"
+    assert "none matching expected" in res_mismatch.details.lower()

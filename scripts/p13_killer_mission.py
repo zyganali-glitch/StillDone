@@ -27,8 +27,6 @@ from stilldone.adapters.weather import OpenMeteoHttpTransport
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.killer_mission import (
-    CANONICAL_DEMO_CALENDAR_ID,
-    CANONICAL_DEMO_TASK_LIST_ID,
     InvalidEnvironmentConfigurationError,
     KillerMissionEnvironment,
     KillerMissionSliceRunner,
@@ -43,13 +41,122 @@ def run_killer_mission(
     as_json: bool = False,
     operator_approved: bool = False,
     source_sha: str | None = None,
+    demo_calendar_id: str | None = None,
+    demo_task_list_id: str | None = None,
+    demo_date: str | None = None,
+    calendar_decision: str | None = None,
 ) -> int:
     """Execute the canonical killer mission vertical slice."""
     if live:
-        # Preflight gate: check credentials and operator consent before creating any environment
+        # Phase A: Zero SDK / Local Gate
+        # Validate operator consent, source SHA format, git status, container IDs, date format.
+        # MUST halt with 0 SDK imports, 0 network, 0 external calls if any local check fails.
         import os
+        import re
+        import subprocess
+        from datetime import UTC, datetime, timedelta
         from pathlib import Path
 
+        local_blockers: list[str] = []
+
+        if not operator_approved:
+            local_blockers.append("Operator approval required for live mode (--operator-approved).")
+
+        if not source_sha or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+            local_blockers.append(
+                "A valid 40-character lowercase hex source_sha is required for live execution."
+            )
+
+        resolved_cal_id = (
+            demo_calendar_id or os.environ.get("STILLDONE_DEMO_CALENDAR_ID") or ""
+        ).strip()
+        resolved_tasks_id = (
+            demo_task_list_id or os.environ.get("STILLDONE_DEMO_TASK_LIST_ID") or ""
+        ).strip()
+
+        disallowed_containers = {"primary", "default", "@default", "tasks", ""}
+        if not resolved_cal_id or resolved_cal_id.lower() in disallowed_containers:
+            local_blockers.append(
+                "Dedicated demo calendar container ID required "
+                f"(cannot be empty, primary, default, or @default; got: '{resolved_cal_id}')."
+            )
+        if not resolved_tasks_id or resolved_tasks_id.lower() in disallowed_containers:
+            local_blockers.append(
+                "Dedicated demo task list container ID required "
+                f"(cannot be empty, primary, default, or @default; got: '{resolved_tasks_id}')."
+            )
+
+        resolved_date = demo_date
+        if resolved_date is not None:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", resolved_date):
+                local_blockers.append(
+                    f"demo_date must be formatted YYYY-MM-DD; got: '{resolved_date}'."
+                )
+        else:
+            resolved_date = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Git checks (fail-closed)
+        try:
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], stderr=subprocess.PIPE, text=True
+            ).strip()
+            origin_main_sha = subprocess.check_output(
+                ["git", "rev-parse", "origin/main"], stderr=subprocess.PIPE, text=True
+            ).strip()
+            status_output = subprocess.check_output(
+                ["git", "status", "--porcelain"], stderr=subprocess.PIPE, text=True
+            ).strip()
+
+            if source_sha and head_sha != source_sha:
+                local_blockers.append(
+                    f"HEAD SHA ({head_sha}) does not match expected source_sha ({source_sha})."
+                )
+            if source_sha and origin_main_sha != source_sha:
+                local_blockers.append(
+                    f"origin/main SHA ({origin_main_sha}) does not match expected "
+                    f"source_sha ({source_sha})."
+                )
+            if head_sha != origin_main_sha:
+                local_blockers.append(
+                    f"Local HEAD ({head_sha}) does not match origin/main ({origin_main_sha})."
+                )
+            if status_output:
+                local_blockers.append(
+                    "Working tree has uncommitted modifications; "
+                    "live execution requires a clean working tree."
+                )
+        except Exception as e:
+            local_blockers.append(f"Git repository integrity check failed: {e}")
+
+        if local_blockers:
+            blocker_details = "; ".join(local_blockers)
+            if as_json:
+                print(
+                    json.dumps(
+                        {
+                            "status": "BLOCKED_LIVE",
+                            "phase": "PHASE_A_LOCAL_GATE",
+                            "reason": blocker_details,
+                            "provenance": EvidenceProvenance.FIXTURE.value,
+                            "is_live": False,
+                            "writes_performed": 0,
+                            "blocker_reasons": local_blockers,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print("=================================================================")
+                print("STILLDONE KILLER MISSION -- LIVE EXECUTION BLOCKED (PHASE A)")
+                print("=================================================================")
+                print("Status: BLOCKED_LIVE (Fail-closed)")
+                print(f"Reason: {blocker_details}")
+                print("Live operations require genuine operator consent and clean git source.")
+                print("0 SDK calls; 0 writes performed; 0 approvals consumed.")
+                print("=================================================================")
+            return 2
+
+        # Phase B: External Preflight & Runner
         from stilldone.demo_isolation import DemoResourceScope
 
         token_path = os.environ.get("GOOGLE_TOKEN_PATH") or (
@@ -67,8 +174,12 @@ def run_killer_mission(
 
         if has_google_token:
             try:
-                from google.oauth2.credentials import Credentials  # type: ignore[import-untyped]
-                from googleapiclient.discovery import build  # type: ignore[import-untyped]
+                from google.oauth2.credentials import (  # type: ignore[import-not-found]
+                    Credentials,
+                )
+                from googleapiclient.discovery import (  # type: ignore[import-not-found]
+                    build,
+                )
 
                 resolved_token = (
                     token_path
@@ -105,8 +216,8 @@ def run_killer_mission(
         weather_transport = OpenMeteoHttpTransport()
 
         scope = DemoResourceScope(
-            calendar_id=CANONICAL_DEMO_CALENDAR_ID,
-            task_list_id=CANONICAL_DEMO_TASK_LIST_ID,
+            calendar_id=resolved_cal_id,
+            task_list_id=resolved_tasks_id,
         )
         preflight = check_live_preflight(
             scope=scope,
@@ -127,6 +238,7 @@ def run_killer_mission(
                     json.dumps(
                         {
                             "status": "BLOCKED_LIVE",
+                            "phase": "PHASE_B_PREFLIGHT_GATE",
                             "reason": blocker_details,
                             "provenance": EvidenceProvenance.FIXTURE.value,
                             "is_live": False,
@@ -138,7 +250,7 @@ def run_killer_mission(
                 )
             else:
                 print("=================================================================")
-                print("STILLDONE KILLER MISSION -- LIVE EXECUTION BLOCKED")
+                print("STILLDONE KILLER MISSION -- LIVE EXECUTION BLOCKED (PHASE B)")
                 print("=================================================================")
                 print("Status: BLOCKED_LIVE (Fail-closed)")
                 print(f"Reason: {blocker_details}")
@@ -162,6 +274,8 @@ def run_killer_mission(
             bedrock_planner=bedrock_planner,
             aws_credentials_available=aws_credentials_available,
             google_credentials=google_creds,
+            demo_date=resolved_date,
+            calendar_decision=calendar_decision,
         )
         outcome = runner.run_full_slice()
         if as_json:
@@ -180,18 +294,18 @@ def run_killer_mission(
             "Live mode cannot use fixture environment; strict closed-world boundary enforced."
         )
     env = KillerMissionEnvironment.create_fixture_environment()
-    runner = KillerMissionSliceRunner(env=env)
+    fixture_runner = KillerMissionSliceRunner(env=env)
 
     if not as_json:
         print("=================================================================")
         print("STILLDONE CANONICAL KILLER MISSION -- P-13 VERTICAL SLICE PROOF")
         print("=================================================================")
-        print(f"Intent: '{runner.intent_text}'")
-        print(f"Provenance Mode: {runner.env.provenance.value}")
-        print(f"Mission ID: {runner.mission_id}")
+        print(f"Intent: '{fixture_runner.intent_text}'")
+        print(f"Provenance Mode: {fixture_runner.env.provenance.value}")
+        print(f"Mission ID: {fixture_runner.mission_id}")
         print("-----------------------------------------------------------------")
 
-    outcome = runner.run_full_slice()
+    outcome = fixture_runner.run_full_slice()
 
     if as_json:
         print(json.dumps(outcome.to_dict(), indent=2))
@@ -263,6 +377,31 @@ def main() -> None:
         help="Exact 40-character source SHA binding for live preflight",
     )
     parser.add_argument(
+        "--demo-calendar-id",
+        type=str,
+        default=None,
+        help="Dedicated demo calendar container ID (not primary, default, or @default)",
+    )
+    parser.add_argument(
+        "--demo-task-list-id",
+        type=str,
+        default=None,
+        help="Dedicated demo task list container ID (not primary, default, or @default)",
+    )
+    parser.add_argument(
+        "--demo-date",
+        type=str,
+        default=None,
+        help="Target date for the mission in YYYY-MM-DD format",
+    )
+    parser.add_argument(
+        "--calendar-decision",
+        type=str,
+        default=None,
+        choices=["APPROVE", "REJECT", "PENDING", "NONE"],
+        help="Explicit operator decision for Calendar mutation approval",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in JSON format",
@@ -274,6 +413,10 @@ def main() -> None:
         as_json=args.json,
         operator_approved=args.operator_approved,
         source_sha=args.source_sha,
+        demo_calendar_id=args.demo_calendar_id,
+        demo_task_list_id=args.demo_task_list_id,
+        demo_date=args.demo_date,
+        calendar_decision=args.calendar_decision,
     )
     sys.exit(exit_code)
 

@@ -403,6 +403,7 @@ def test_readback_mismatch_strictly_prevents_ready(
 
     pred_eval = evaluate_predicate(runner.pred_calendar, cal_mismatch_obs)
     assert pred_eval.truth == PredicateTruth.FALSE
+    assert runner.task_observation is not None
 
     observations = {
         PREDICATE_ID_WEATHER: VerificationObservation(
@@ -991,3 +992,196 @@ def test_adversarial_live_mode_compilation_with_injected_bedrock_planner(
     # Model proposal has zero execution authority
     assert runner.action_cal.action_type == ActionType.CALENDAR_UPDATE
     assert fake_bedrock_client.converse.call_count == 1
+
+
+def test_adversarial_provider_generated_event_id_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify provider event_id different from evt_leave_for_school propagates into
+    action target.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.killer_mission import LivePreflightReport
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        SymbolicTargetRef,
+    )
+
+    scope = DemoResourceScope("c_custom_demo", "tl_custom_demo")
+    live_env = KillerMissionEnvironment.create_live_environment(
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    fake_planner = MagicMock(spec=BedrockPlannerAdapter)
+    runner = LiveKillerMissionSliceRunner(
+        env=live_env,
+        operator_approved=True,
+        aws_credentials_available=True,
+        bedrock_planner=fake_planner,
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    mock_report = LivePreflightReport(
+        is_ready=True,
+        operator_approved=True,
+        source_sha_verified=True,
+        clean_working_tree_verified=True,
+        google_auth_available=True,
+        aws_bedrock_auth_available=True,
+        open_meteo_reachable=True,
+        disposable_scope_verified=True,
+        transports_verified=True,
+        blocker_reasons=[],
+    )
+    monkeypatch.setattr(runner, "evaluate_preflight", lambda: mock_report)
+
+    # In step_p13_01, simulate seeding returning a provider-generated event_id
+    runner.seeded_event_id = "provider_generated_evt_998877"
+
+    step_weather = CandidateActionProposal.create(
+        action_type=ActionType.WEATHER_READ,
+        target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+        parameters={},
+        explanation="Check weather",
+    )
+    step_task = CandidateActionProposal.create(
+        action_type=ActionType.TASK_CREATE,
+        target_ref=SymbolicTargetRef.TASK_LIST,
+        parameters={"title": "Pack backpacks"},
+        explanation="Create prep task",
+    )
+    step_cal = CandidateActionProposal.create(
+        action_type=ActionType.CALENDAR_UPDATE,
+        target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+        parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+        explanation="Adjust school departure",
+    )
+    fake_plan = CandidatePlanProposal.create(
+        mission_id=runner.mission_id,
+        steps=[step_weather, step_task, step_cal],
+        explanation="Injected plan proposal",
+    )
+    fake_planner.plan.return_value = MagicMock(plan=fake_plan)
+
+    res = runner.step_p13_02_plan()
+    assert res.status == "PASS"
+    # Canonical provider event_id MUST propagate into the compiled calendar action target:
+    assert runner.action_cal.target.resource_id == "provider_generated_evt_998877"
+    assert runner.action_cal.target.resource_id != CANONICAL_DEMO_EVENT_ID
+
+
+def test_runtime_target_date_propagation() -> None:
+    """Verify runtime demo_date propagates across initial/desired/end/task times and predicates."""
+    custom_date = "2026-11-20"
+    runner = KillerMissionSliceRunner(demo_date=custom_date)
+
+    assert runner.demo_date == custom_date
+    assert runner.initial_start_time == "2026-11-20T07:45:00+00:00"
+    assert runner.initial_end_time == "2026-11-20T08:15:00+00:00"
+    assert runner.desired_start_time == "2026-11-20T07:30:00+00:00"
+    assert runner.desired_end_time == "2026-11-20T08:00:00+00:00"
+    assert runner.contradictory_start_time == "2026-11-20T08:00:00+00:00"
+    assert runner.contradictory_end_time == "2026-11-20T08:30:00+00:00"
+    assert runner.task_due_date == "2026-11-20"
+
+    # Predicates check desired start time
+    assert runner.pred_calendar.expected_value == "2026-11-20T07:30:00+00:00"
+    # Action cal parameters check desired start time
+    assert runner.action_cal.parameters["start_time"] == "2026-11-20T07:30:00+00:00"
+    # Action task parameters check due date
+    assert runner.action_task.parameters["due"] == "2026-11-20"
+
+
+def test_calendar_decision_branches_awaiting_and_reject() -> None:
+    """Verify calendar mutation pauses when decision is None and halts when REJECT."""
+    from stilldone.pending_approval import ApprovalDecision
+
+    # 1. Decision is None (Awaiting decision) -> 0 writes, status AWAITING_APPROVAL
+    runner_pending = KillerMissionSliceRunner(calendar_decision=None)
+    runner_pending.step_p13_01_seed()
+    runner_pending.step_p13_02_plan()
+    runner_pending.step_p13_03_tasks_prep()
+    runner_pending.step_p13_04_calendar_pause()
+    res_await = runner_pending.step_p13_05_calendar_approve()
+    assert res_await.status == "AWAITING_APPROVAL"
+    assert res_await.writes_performed == 0
+    assert res_await.is_verified is False
+
+    outcome_pending = KillerMissionSliceRunner(calendar_decision=None).run_full_slice()
+    assert outcome_pending.final_state == MissionState.NEEDS_APPROVAL
+    assert outcome_pending.ready_receipt_hash is None
+
+    # 2. Decision is REJECT -> 0 writes, status REJECTED
+    runner_reject = KillerMissionSliceRunner(calendar_decision=ApprovalDecision.REJECT)
+    runner_reject.step_p13_01_seed()
+    runner_reject.step_p13_02_plan()
+    runner_reject.step_p13_03_tasks_prep()
+    runner_reject.step_p13_04_calendar_pause()
+    res_rej = runner_reject.step_p13_05_calendar_approve()
+    assert res_rej.status == "REJECTED"
+    assert res_rej.writes_performed == 0
+    assert res_rej.is_verified is False
+
+    outcome_rej = KillerMissionSliceRunner(
+        calendar_decision=ApprovalDecision.REJECT
+    ).run_full_slice()
+    assert outcome_rej.final_state == MissionState.CANCELLED
+    assert outcome_rej.ready_receipt_hash is None
+
+
+def test_actual_observation_requirement_in_p13_06_fails_closed() -> None:
+    """Verify P-13.06 fails closed if actual observations are missing or contradictory."""
+    from stilldone.killer_mission import KillerMissionVerificationError
+
+    runner = KillerMissionSliceRunner()
+    runner.step_p13_01_seed()
+    runner.step_p13_02_plan()
+    runner.step_p13_03_tasks_prep()
+    runner.step_p13_04_calendar_pause()
+    runner.step_p13_05_calendar_approve()
+
+    # Tamper with weather observation -> delete it
+    runner.weather_observation = None
+    with pytest.raises(KillerMissionVerificationError, match="Missing actual weather observation"):
+        runner.step_p13_06_ready_receipt()
+
+
+def test_cli_phase_a_zero_sdk_local_gate_halt() -> None:
+    """Verify Phase A halts with code 2 before any SDK calls when local checks fail."""
+    from scripts.p13_killer_mission import run_killer_mission
+
+    # 1. Missing operator consent halts with code 2
+    rc_no_consent = run_killer_mission(live=True, operator_approved=False)
+    assert rc_no_consent == 2
+
+    # 2. Invalid source SHA halts with code 2
+    rc_bad_sha = run_killer_mission(
+        live=True, operator_approved=True, source_sha="not-a-40-hex-sha"
+    )
+    assert rc_bad_sha == 2
+
+    # 3. Disallowed container (@default or primary) halts with code 2
+    rc_disallowed = run_killer_mission(
+        live=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="primary",
+        demo_task_list_id="tl_test",
+    )
+    assert rc_disallowed == 2
+
+    # 4. Bad date format halts with code 2
+    rc_bad_date = run_killer_mission(
+        live=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="c_test",
+        demo_task_list_id="tl_test",
+        demo_date="2026/10/04",
+    )
+    assert rc_bad_date == 2

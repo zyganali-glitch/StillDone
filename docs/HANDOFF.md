@@ -79,12 +79,12 @@ Active task: Consolidated Macro Repair — P-13 through P-17 Only
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
 - P-13 through P-17: Consolidated Same-Scope Repair applied (PASS Candidate, awaiting independent QA review)
-  - P-13: P-13.01 COMPLETED; P-13.02–P-13.05, P-13.08, P-13.09 BLOCKED_LIVE / NOT_RUN (fixture regression slice COMPLETED); P-13.06, P-13.07 COMPLETED (FIXTURE Regression Mode)
+  - P-13: P-13.01 COMPLETED; P-13.02–P-13.05, P-13.08, P-13.09 BLOCKED_LIVE / NOT_RUN (fixture regression slice COMPLETED); P-13.06, P-13.07 COMPLETED (FIXTURE Regression Mode); Live-boundary integrity repaired (single canonical live entry point, deferred planner execution past preflight, fail-closed preflight, dynamic provider event ID propagation, runtime target date propagation, canonical P-11.03/P-11.04 approval separation, zero-SDK CLI Phase A local gate halting with code 2).
   - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
   - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
-  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross architecture estimates bounded; account billing metrics preserved as NOT_OBSERVED pending live account observation)
-  - P-17: P-17.01–P-17.04 COMPLETED (real official MCPServer over stdio transport verified; wheel package smoke verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN
-- P-18+: PENDING / NOT_RUN
+  - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN (`CloudWatchLiveProofHarness` requires real client, fails closed on mismatch/missing client); P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross architecture estimates bounded; account billing metrics preserved as NOT_OBSERVED pending live account observation; `AWSAccountObservation` requires valid provenance, timezone-aware timestamp, source reference for RECORDED_LIVE).
+  - P-17: P-17.01–P-17.04 COMPLETED (real official MCPServer over stdio transport verified; wheel package smoke verified); P-17.05 BLOCKED_EXTERNAL / NOT_RUN (strictly NOT_RUN; no external package publication)
+- P-18+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18)
 
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main` (eliminates stale self-referential tracking)

@@ -976,46 +976,58 @@ class CloudWatchLiveProofHarness:
                     cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
-            # Independent CloudWatch Metric API query if client provided (Stronger proof level)
-            if self._cw_client is not None:
+            # Mandatory CloudWatch Metric API query (Stronger authoritative proof level)
+            cw_client = self._cw_client
+            if cw_client is None:
                 try:
-                    cw_resp = self._cw_client.get_metric_data(
-                        MetricDataQueries=[
-                            {
-                                "Id": "m1",
-                                "MetricStat": {
-                                    "Metric": {
-                                        "Namespace": namespace,
-                                        "MetricName": metric_name,
-                                        "Dimensions": [
-                                            {"Name": "Environment", "Value": self.environment}
-                                        ],
-                                    },
-                                    "Period": 60,
-                                    "Stat": "Average",
+                    import boto3
+
+                    cw_client = boto3.client("cloudwatch", region_name=self.region)
+                except Exception:
+                    cw_client = None
+
+            if cw_client is None:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        "Authoritative CloudWatch EMF metric proof requires cw_client "
+                        "(GetMetricData API); metric query client unavailable."
+                    ),
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
+            try:
+                cw_resp = cw_client.get_metric_data(
+                    MetricDataQueries=[
+                        {
+                            "Id": "m1",
+                            "MetricStat": {
+                                "Metric": {
+                                    "Namespace": namespace,
+                                    "MetricName": metric_name,
+                                    "Dimensions": [
+                                        {"Name": "Environment", "Value": self.environment}
+                                    ],
                                 },
-                            }
-                        ],
-                        StartTime=datetime.fromtimestamp((timestamp_ms // 1000) - 120, UTC),
-                        EndTime=datetime.fromtimestamp((timestamp_ms // 1000) + 120, UTC),
-                    )
-                    vals: list[float] = []
-                    for res in cw_resp.get("MetricDataResults", []):
-                        vals.extend(res.get("Values", []))
-                    if not vals:
-                        return CloudWatchLiveProofResult(
-                            status="FAILED",
-                            namespace=namespace,
-                            metric_name=metric_name,
-                            region=self.region,
-                            source_sha=source_sha,
-                            timestamp_utc=datetime.now(UTC).isoformat(),
-                            details="CloudWatch metric API query returned no metric datapoints.",
-                            is_verified=False,
-                            is_billable=True,
-                            cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
-                        )
-                except Exception as cw_exc:
+                                "Period": 60,
+                                "Stat": "Average",
+                            },
+                        }
+                    ],
+                    StartTime=datetime.fromtimestamp((timestamp_ms // 1000) - 120, UTC),
+                    EndTime=datetime.fromtimestamp((timestamp_ms // 1000) + 120, UTC),
+                )
+                vals: list[float] = []
+                for res in cw_resp.get("MetricDataResults", []):
+                    vals.extend(res.get("Values", []))
+                if not vals:
                     return CloudWatchLiveProofResult(
                         status="FAILED",
                         namespace=namespace,
@@ -1023,11 +1035,42 @@ class CloudWatchLiveProofHarness:
                         region=self.region,
                         source_sha=source_sha,
                         timestamp_utc=datetime.now(UTC).isoformat(),
-                        details=f"CloudWatch metric API query failed: {type(cw_exc).__name__}",
+                        details="CloudWatch metric API query returned no metric datapoints.",
                         is_verified=False,
                         is_billable=True,
                         cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                     )
+                matching_vals = [v for v in vals if abs(v - expected_metric_value) < 1e-4]
+                if not matching_vals:
+                    return CloudWatchLiveProofResult(
+                        status="FAILED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=(
+                            f"CloudWatch metric API query returned values {vals}, "
+                            f"none matching expected {expected_metric_value}."
+                        ),
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+                observed_metric_value = float(matching_vals[0])
+            except Exception as cw_exc:
+                return CloudWatchLiveProofResult(
+                    status="FAILED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=f"CloudWatch metric API query failed: {type(cw_exc).__name__}",
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
 
             return CloudWatchLiveProofResult(
                 status="PASS",
@@ -1037,10 +1080,11 @@ class CloudWatchLiveProofHarness:
                 source_sha=source_sha,
                 timestamp_utc=datetime.now(UTC).isoformat(),
                 details=(
-                    f"EMF record emitted and independently read back from log stream "
-                    f"'{self.log_stream_name}'. Proof token '{proof_token}' verified."
+                    f"EMF record emitted, verified in log stream '{self.log_stream_name}', "
+                    f"and confirmed via CloudWatch Metric API ({observed_metric_value}). "
+                    f"Proof token '{proof_token}' verified."
                 ),
-                observed_metric_value=float(obs_val) if obs_val is not None else None,
+                observed_metric_value=observed_metric_value,
                 is_verified=True,
                 is_billable=True,
                 cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
@@ -1074,7 +1118,18 @@ class AWSAccountObservation:
     observed_billing_status: str
     observed_net_personal_spend_usd: Decimal
     promotional_credit_budget_sufficient: bool
-    provenance: EvidenceProvenance = EvidenceProvenance.RECORDED_LIVE
+    provenance: EvidenceProvenance
+    source_reference: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.observed_at, datetime):
+            raise TypeError("observed_at must be a datetime instance")
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+            raise ValueError("observed_at must be timezone-aware (UTC)")
+        if not isinstance(self.provenance, EvidenceProvenance):
+            raise TypeError("provenance must be an EvidenceProvenance instance")
+        if self.provenance == EvidenceProvenance.RECORDED_LIVE and not self.source_reference:
+            raise ValueError("source_reference is required when provenance is RECORDED_LIVE")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1083,6 +1138,7 @@ class AWSAccountObservation:
             "observed_net_personal_spend_usd": str(self.observed_net_personal_spend_usd),
             "promotional_credit_budget_sufficient": self.promotional_credit_budget_sufficient,
             "provenance": self.provenance.value,
+            "source_reference": self.source_reference,
         }
 
 

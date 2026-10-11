@@ -1406,13 +1406,14 @@ Acceptance:
 Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
-- human operator `ApprovalGrant` bound strictly to mission, action, target, and payload hash;
-- approval consumed atomically (replays rejected);
-- calendar update executed once (writes=1);
-- independent read-back via `calendar.read` verifies start time equals `2026-10-04T07:30:00+00:00`;
+- human operator decision requires explicit `ApprovalDecision` bound to exact `PendingApproval` via canonical `resolve_pending_approval`;
+- `None` decision halts fail-closed (`AWAITING_APPROVAL`, 0 writes); `REJECT` decision halts fail-closed (`REJECTED`, 0 writes);
+- `APPROVE` decision produces exact single-use `ApprovalGrant` consumed via canonical P-11.04 path;
+- calendar update executed once (`writes_performed=1`);
+- independent read-back via `calendar.read` verifies start time matches mission target date departure time;
 - `ApprovedActionReceipt` issued with full evidence lineage;
 - live execution halted `BLOCKED_LIVE` until operator explicitly grants Google OAuth token;
-- verified in `step_p13_05_calendar_approve()` and `test_p13_05_calendar_approve_execute_and_verify`.
+- verified in `step_p13_05_calendar_approve()` and test suite.
 
 ### P-13.06 — Produce `READY` mission receipt from deterministic facts
 Status: COMPLETED (FIXTURE Regression Mode, PASS Candidate, awaiting independent QA review)
@@ -1632,7 +1633,7 @@ maximize real AWS value without decorative service sprawl.
 Status: COMPLETED (PASS Candidate, awaiting independent QA review)
 
 Acceptance:
-- comprehensive audit of all 5 AWS services on StillDone's critical path (`audit_critical_path_aws_services`): Amazon Bedrock, AWS Strands SDK, Amazon Bedrock AgentCore Runtime, AWS IAM/SigV4, Amazon CloudWatch EMF;
+- comprehensive audit of AWS services used by StillDone (`audit_critical_path_aws_services`): 4 critical-path services (Amazon Bedrock, AWS Strands SDK, Amazon Bedrock AgentCore Runtime, AWS IAM/SigV4) + 1 operational observability service (Amazon CloudWatch EMF);
 - each service mapped to exact region (`us-east-1`), live proof reference, and non-decorative justification;
 - verified in `test_p16_01_audit_actual_aws_services_on_critical_path`.
 

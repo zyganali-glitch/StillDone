@@ -2,7 +2,8 @@
 
 **Track**: AWS Builder Mini Challenge / Build, Ship, Shape: Amazon Developer Hackathon  
 **Target Personal Spend**: Strictly `$0.00`  
-**Current Net Spend**: `$0.00000000 USD` (100% covered by AWS Promotional Credit and AWS Free Tier)
+**Current Net Spend**: `NOT_OBSERVED` (pending live account observation; estimated gross spend fully within AWS Promotional Credit and AWS Free Tier)  
+**Credit/Free-Tier Coverage**: `NOT_OBSERVED`
 
 ---
 
@@ -10,13 +11,13 @@
 
 StillDone solves the foundational problem in autonomous AI agent systems: **a tool execution response (`200 OK`) does not prove that an outcome was actually verified or that reality will not drift later.**
 
-Rather than assembling decorative AWS services to inflate hackathon checklists, StillDone's AWS architecture is **strictly lean, purposeful, and non-decorative**. Every service on the critical path defends a constitutional product invariant:
+Rather than assembling decorative AWS services to inflate hackathon checklists, StillDone's AWS architecture is **strictly lean, purposeful, and non-decorative**, composed of **4 critical-path services** plus **1 operational observability service**:
 
-1. **Amazon Bedrock**: Translates messy human intent into typed, fail-closed candidate plans without prompt injection vulnerabilities.
-2. **AWS Strands Agents SDK**: Orchestrates the planning lifecycle in dual-runtime isolation, keeping runtime dependencies separate from modern Streamable HTTP MCP libraries.
-3. **Amazon Bedrock AgentCore Runtime**: Hosts the live self-hosted MCP server over Streamable HTTP in a secure microVM.
-4. **AWS Identity and Access Management (IAM) & SigV4**: Cryptographically signs every request (`AWS4-HMAC-SHA256`) with least-privilege role boundaries and ephemeral credentials.
-5. **Amazon CloudWatch Embedded Metric Format (EMF)**: Directly measures outcome verification latency, read-back contradictions, and external drift rates with zero network overhead, zero SDK bloat, and $0.00 spend.
+1. **Amazon Bedrock** (Critical Path): Translates messy human intent into typed, fail-closed candidate plans without prompt injection vulnerabilities.
+2. **AWS Strands Agents SDK** (Critical Path): Orchestrates the planning lifecycle in dual-runtime isolation, keeping runtime dependencies separate from modern Streamable HTTP MCP libraries.
+3. **Amazon Bedrock AgentCore Runtime** (Critical Path): Hosts the live self-hosted MCP server over Streamable HTTP in a secure microVM.
+4. **AWS Identity and Access Management (IAM) & SigV4** (Critical Path): Cryptographically signs every request (`AWS4-HMAC-SHA256`) with least-privilege role boundaries and ephemeral credentials.
+5. **Amazon CloudWatch Embedded Metric Format (EMF)** (Observability): Directly measures outcome verification latency, read-back contradictions, and external drift rates with zero network overhead, zero SDK bloat, and $0.00 spend.
 
 ```
                     +------------------------------------------+
@@ -67,15 +68,17 @@ Rather than assembling decorative AWS services to inflate hackathon checklists, 
 
 ---
 
-## 2. Audited AWS Critical Path Services (P-16.01)
+## 2. Audited AWS Services: 4 Critical-Path + 1 Operational Observability (P-16.01)
 
 | Service | Region | Role | Live Proof Reference | Non-Decorative Justification | Gross Spend | Net Spend |
 |---|---|---|---|---|---|---|
-| **Amazon Bedrock** | `us-east-1` | Model Reasoning | `P-01.02`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Converts natural language intent to typed plans; strictly stripped of execution and readiness authority. | $\approx \$0.000002$ | **$0.00** (Promo Credit) |
-| **AWS Strands Agents SDK** | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation (`strands-agents==1.57.2`). | $\$0.000000$ | **$0.00** |
-| **Amazon Bedrock AgentCore Runtime** | `us-east-1` | Serverless MicroVM MCP Host | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | MicroVM runtime hosting Streamable HTTP MCP server spine (`agentRuntimeArn: stilldone_mcp_runtime-oS0aWdAWg3`). | $\approx \$0.008388$ | **$0.00** (Promo Credit) |
-| **AWS IAM & SigV4** | `us-east-1` | Ingress Security | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | SigV4 request signing (`AWS4-HMAC-SHA256`) and least-privilege IAM roles (`StillDoneAgentCoreExecutionRole`). | $\$0.000000$ | **$0.00** (Free Tier) |
-| **Amazon CloudWatch (EMF)** | `us-east-1` | High-Cardinality Observability | `P-16.02` (PASS Candidate), `P-16.03` (`BLOCKED_LIVE / NOT_RUN`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | $\$0.000000$ | **$0.00** (Free Tier) |
+| **Amazon Bedrock** (Critical Path) | `us-east-1` | Model Reasoning | `P-01.02`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Converts natural language intent to typed plans; strictly stripped of execution and readiness authority. | $\approx \$0.000002$ | **$0.00** (Promo Credit) |
+| **AWS Strands Agents SDK** (Critical Path) | `us-east-1` | Agent Orchestration | `P-01.03`, `P-07.06` (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`) | Agent framework running planning loop in dual-runtime isolation (`strands-agents==1.57.2`). | $\$0.000000$ | **$0.00** |
+| **Amazon Bedrock AgentCore Runtime** (Critical Path) | `us-east-1` | Serverless MicroVM MCP Host | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | MicroVM runtime hosting Streamable HTTP MCP server spine (`agentRuntimeArn: stilldone_mcp_runtime-oS0aWdAWg3`). | $\approx \$0.008388$ | **$0.00** (Promo Credit) |
+| **AWS IAM & SigV4** (Critical Path) | `us-east-1` | Ingress Security | `P-05.06` (`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`) | SigV4 request signing (`AWS4-HMAC-SHA256`) and least-privilege IAM roles (`StillDoneAgentCoreExecutionRole`). | $\$0.000000$ | **$0.00** (Free Tier) |
+| **Amazon CloudWatch (EMF)** (Observability) | `us-east-1` | High-Cardinality Observability | `P-16.02` (PASS Candidate), `P-16.03` (`BLOCKED_LIVE / NOT_RUN`) | Zero-latency structured telemetry capturing verification latency, read-back contradictions, and drift rates. | $\$0.000000$ | **$0.00** (Free Tier) |
+
+*(Note: Gross spend values are bounded architectural estimates. Without an explicit external `AWSAccountObservation`, billed account balances and net spend evaluate to `NOT_OBSERVED` per P-16.05.)*
 
 ---
 
@@ -126,7 +129,7 @@ StillDone embeds AWS CloudWatch Embedded Metric Format (EMF) directly into its v
 
 ### EMF Implementation vs Live Observation Boundary
 - **P-16.02 (LOCAL_EMF_SERIALIZATION)**: Fully implemented and verified. Validates schema correctness against AWS EMF Specification v1.0, required `_aws.CloudWatchMetrics` directives, dimension sets, and typed metrics with zero unhandled asserts. Status: `COMPLETED (PASS Candidate)`.
-- **P-16.03 (LIVE_CLOUDWATCH_OBSERVATION)**: Bounded live proof harness is implemented in `src/stilldone/aws_builder.py` (`LiveCloudWatchObservationHarness`). It binds region, timestamp, namespace, metric name, and source commit SHA. Because live log ingestion can incur billable usage beyond promotional balances without operator consent, this live execution is strictly classified as `BLOCKED_LIVE / NOT_RUN` pending operator authorization.
+- **P-16.03 (LIVE_CLOUDWATCH_OBSERVATION)**: Bounded live proof harness is implemented in `src/stilldone/aws_builder.py` (`CloudWatchLiveProofHarness`). It binds region, timestamp, namespace, metric name, and source commit SHA. Because live log ingestion can incur billable usage beyond promotional balances without operator consent, this live execution is strictly classified as `BLOCKED_LIVE / NOT_RUN` pending operator authorization.
 
 ### Emitted Metric Types
 1. **`VerificationLatencyMs`**: Measures the latency delta between mutation execution and independent read-back verification.

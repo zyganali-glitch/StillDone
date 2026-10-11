@@ -50,6 +50,11 @@ from stilldone.adapters.weather import (
     WeatherLocationConfig,
     WeatherTransport,
 )
+from stilldone.approval_binding import (
+    ApprovalBindingResult,
+    ApprovalBindingStatus,
+    resolve_pending_approval,
+)
 from stilldone.approval_consumption import ApprovalLedger
 from stilldone.authority_policy import (
     AuthorityDecisionStatus,
@@ -74,10 +79,6 @@ from stilldone.domain.action import (
     ActionType,
     ResourceKind,
     TargetIdentity,
-)
-from stilldone.domain.authority import (
-    ApprovalGrant,
-    AuthorityClass,
 )
 from stilldone.domain.desired_state import (
     DesiredStatePredicate,
@@ -117,6 +118,7 @@ from stilldone.ledger import (
     MissionRecord,
 )
 from stilldone.pending_approval import (
+    ApprovalDecision,
     PendingApproval,
     create_pending_approval,
 )
@@ -167,13 +169,33 @@ CANONICAL_DEMO_EVENT_ID: str = "evt_leave_for_school"
 CANONICAL_DEMO_EVENT_TITLE: str = "Leave for school"
 CANONICAL_DEMO_TASK_TITLE: str = "Pack backpacks"
 
-# Explicit UTC timestamps: pre-state is 07:45, desired target is 07:30
-CANONICAL_INITIAL_START_TIME: str = "2026-10-04T07:45:00+00:00"
-CANONICAL_INITIAL_END_TIME: str = "2026-10-04T08:15:00+00:00"
-CANONICAL_DESIRED_START_TIME: str = "2026-10-04T07:30:00+00:00"
-CANONICAL_DESIRED_END_TIME: str = "2026-10-04T08:00:00+00:00"
-CANONICAL_CONTRADICTORY_START_TIME: str = "2026-10-04T08:00:00+00:00"
-CANONICAL_CONTRADICTORY_END_TIME: str = "2026-10-04T08:30:00+00:00"
+FIXTURE_SOURCE_SHA: str = "0000000000000000000000000000000000000000"
+DATE_FORMAT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def get_canonical_mission_timestamps(demo_date: str = "2026-10-04") -> dict[str, str]:
+    """Generate canonical UTC timestamps for the killer mission from a single target date."""
+    if not DATE_FORMAT_RE.match(demo_date):
+        raise ValueError(f"Invalid demo_date format: {demo_date!r}; expected YYYY-MM-DD")
+    return {
+        "initial_start": f"{demo_date}T07:45:00+00:00",
+        "initial_end": f"{demo_date}T08:15:00+00:00",
+        "desired_start": f"{demo_date}T07:30:00+00:00",
+        "desired_end": f"{demo_date}T08:00:00+00:00",
+        "contradictory_start": f"{demo_date}T08:00:00+00:00",
+        "contradictory_end": f"{demo_date}T08:30:00+00:00",
+        "task_due": demo_date,
+    }
+
+
+# Explicit UTC timestamps: pre-state is 07:45, desired target is 07:30 (fixture date)
+_DEFAULT_TIMESTAMPS = get_canonical_mission_timestamps("2026-10-04")
+CANONICAL_INITIAL_START_TIME: str = _DEFAULT_TIMESTAMPS["initial_start"]
+CANONICAL_INITIAL_END_TIME: str = _DEFAULT_TIMESTAMPS["initial_end"]
+CANONICAL_DESIRED_START_TIME: str = _DEFAULT_TIMESTAMPS["desired_start"]
+CANONICAL_DESIRED_END_TIME: str = _DEFAULT_TIMESTAMPS["desired_end"]
+CANONICAL_CONTRADICTORY_START_TIME: str = _DEFAULT_TIMESTAMPS["contradictory_start"]
+CANONICAL_CONTRADICTORY_END_TIME: str = _DEFAULT_TIMESTAMPS["contradictory_end"]
 
 CANONICAL_WEATHER_LAT: float = 40.7128
 CANONICAL_WEATHER_LON: float = -74.0060
@@ -437,8 +459,8 @@ def check_live_preflight(
 
     # 6. Dedicated disposable Calendar/Tasks scope
     disposable_ok = (
-        scope.calendar_id not in ("primary", "default", "")
-        and scope.task_list_id not in ("primary", "default", "")
+        scope.calendar_id not in ("primary", "default", "@default", "")
+        and scope.task_list_id not in ("primary", "default", "@default", "")
         and len(scope.calendar_id) > 0
         and len(scope.task_list_id) > 0
     )
@@ -847,6 +869,8 @@ class KillerMissionSliceRunner:
         live_mode: bool = False,
         operator_approved: bool = False,
         bedrock_planner: BedrockPlannerAdapter | None = None,
+        demo_date: str = "2026-10-04",
+        calendar_decision: ApprovalDecision | str | None = ApprovalDecision.APPROVE,
     ) -> None:
         if type(self) is KillerMissionSliceRunner:
             if live_mode or (env is not None and env.provenance != EvidenceProvenance.FIXTURE):
@@ -863,6 +887,30 @@ class KillerMissionSliceRunner:
         self.bedrock_planner = bedrock_planner
         self.intent_text = CANONICAL_KILLER_INTENT
         self.contract = MissionContract.create(self.intent_text, mission_id=self.mission_id)
+
+        # Target date driving all timestamps for the entire mission
+        self.demo_date = demo_date
+        ts = get_canonical_mission_timestamps(self.demo_date)
+        self.initial_start_time = ts["initial_start"]
+        self.initial_end_time = ts["initial_end"]
+        self.desired_start_time = ts["desired_start"]
+        self.desired_end_time = ts["desired_end"]
+        self.contradictory_start_time = ts["contradictory_start"]
+        self.contradictory_end_time = ts["contradictory_end"]
+        self.task_due_date = ts["task_due"]
+
+        # Human approval decision for calendar update
+        if isinstance(calendar_decision, str):
+            calendar_decision = ApprovalDecision(calendar_decision)
+        self.calendar_decision: ApprovalDecision | None = calendar_decision
+
+        # Seeded event ID (dynamic in live mode, deterministic constant in fixture)
+        self.seeded_event_id: str = CANONICAL_DEMO_EVENT_ID
+
+        # Actual provider observations captured across steps
+        self.weather_observation: VerificationObservation | None = None
+        self.task_observation: VerificationObservation | None = None
+        self.calendar_observation: VerificationObservation | None = None
 
         # Setup router and adapters
         self.cal_read_adapter = GoogleCalendarReadAdapter(
@@ -903,7 +951,7 @@ class KillerMissionSliceRunner:
         self.total_writes: int = 0
         self.created_task_id: str = "t_pack_backpacks_001"
 
-        # Canonical Desired-State Predicates
+        # Canonical Desired-State Predicates driven by single target date
         self.pred_weather = DesiredStatePredicate(
             predicate_id=PREDICATE_ID_WEATHER,
             mission_id=self.mission_id,
@@ -927,7 +975,7 @@ class KillerMissionSliceRunner:
             mission_id=self.mission_id,
             subject="start_time",
             operator=PredicateOperator.EQUALS,
-            expected_value=CANONICAL_DESIRED_START_TIME,
+            expected_value=self.desired_start_time,
             required=True,
             freshness=FreshnessContract.current(),
         )
@@ -959,13 +1007,13 @@ class KillerMissionSliceRunner:
         step_task = CandidateActionProposal.create(
             action_type=ActionType.TASK_CREATE,
             target_ref=SymbolicTargetRef.TASK_LIST,
-            parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+            parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": self.task_due_date},
             explanation="Create reminder to pack backpacks",
         )
         step_cal = CandidateActionProposal.create(
             action_type=ActionType.CALENDAR_UPDATE,
             target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
-            parameters={"start_time": CANONICAL_DESIRED_START_TIME},
+            parameters={"start_time": self.desired_start_time},
             explanation="Move leave for school event to 7:30",
         )
         return CandidatePlanProposal.create(
@@ -981,7 +1029,7 @@ class KillerMissionSliceRunner:
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
             event_id_mappings={
-                SymbolicTargetRef.LEAVE_FOR_SCHOOL: CANONICAL_DEMO_EVENT_ID,
+                SymbolicTargetRef.LEAVE_FOR_SCHOOL: self.seeded_event_id,
             },
         )
         self.execution_contract = compile_candidate_plan(
@@ -1002,8 +1050,8 @@ class KillerMissionSliceRunner:
     def step_p13_01_seed(self) -> KillerMissionStepResult:
         """Seed initial pre-state: Leave for school at 07:45, no prep task."""
         seed_spec = create_canonical_event_spec(
-            start_time=CANONICAL_INITIAL_START_TIME,
-            end_time=CANONICAL_INITIAL_END_TIME,
+            start_time=self.initial_start_time,
+            end_time=self.initial_end_time,
         )
         seed_result = seed_canonical_demo_resources(
             scope=self.env.scope,
@@ -1015,14 +1063,19 @@ class KillerMissionSliceRunner:
         )
         self.total_writes += seed_result.writes_performed
 
+        if self.live_mode and seed_result.event_id:
+            self.seeded_event_id = seed_result.event_id
+        elif not self.live_mode:
+            self.seeded_event_id = CANONICAL_DEMO_EVENT_ID
+
         # Also seed in fake calendar runtime transport for subsequent steps
         if isinstance(self.env.calendar_transport, FakeGoogleCalendarTransport):
             self.env.calendar_transport.seed_event(
                 calendar_id=self.env.scope.calendar_id,
-                event_id=CANONICAL_DEMO_EVENT_ID,
+                event_id=self.seeded_event_id,
                 summary=CANONICAL_DEMO_EVENT_TITLE,
-                start_time=CANONICAL_INITIAL_START_TIME,
-                end_time=CANONICAL_INITIAL_END_TIME,
+                start_time=self.initial_start_time,
+                end_time=self.initial_end_time,
             )
 
         if not seed_result.is_seed_complete:
@@ -1044,11 +1097,13 @@ class KillerMissionSliceRunner:
             status="PASS",
             provenance=self.env.provenance,
             details=(
-                f"Demo seeded: event '{CANONICAL_DEMO_EVENT_TITLE}' at 07:45 UTC, "
-                f"prep task absent (clean pre-state verified)."
+                f"Demo seeded: event '{CANONICAL_DEMO_EVENT_TITLE}' "
+                f"(id={self.seeded_event_id}) at 07:45 UTC, "
+                "prep task absent (clean pre-state verified)."
             ),
             writes_performed=seed_result.writes_performed,
             is_verified=seed_result.readback_verified,
+            extra_metadata={"seeded_event_id": self.seeded_event_id},
         )
         self.step_results["P-13.01"] = res
         return res
@@ -1081,6 +1136,8 @@ class KillerMissionSliceRunner:
                 "fallback to deterministic proposal is strictly prohibited."
             )
 
+        now = datetime.now(UTC)
+
         # Execute initial read-only weather observation (READ_ONLY, 0 writes)
         weather_gate = execute_gated_action(
             validate_action_contract(self.action_weather),
@@ -1091,6 +1148,21 @@ class KillerMissionSliceRunner:
             raise KillerMissionAuthorityError("Weather read action was not authorized")
         if weather_gate.provider_result is None or not weather_gate.provider_result.success:
             raise KillerMissionExecutionError("Weather read provider execution failed")
+
+        weather_prov = (
+            EvidenceProvenance.LIVE_EXTERNAL
+            if (self.live_mode and not is_synthetic_transport(self.env.weather_transport))
+            else (
+                EvidenceProvenance.LOCAL_EXECUTION if self.live_mode else EvidenceProvenance.FIXTURE
+            )
+        )
+        self.weather_observation = VerificationObservation(
+            target=self.action_weather.target,
+            observed_at=now,
+            exists=True,
+            properties={"weather_status": "available"},
+            provenance=weather_prov,
+        )
 
         res = KillerMissionStepResult(
             task_id="P-13.02",
@@ -1190,6 +1262,13 @@ class KillerMissionSliceRunner:
             )
 
         # Evaluate predicate deterministically
+        task_prov = (
+            EvidenceProvenance.LIVE_GOOGLE
+            if (self.live_mode and not is_synthetic_transport(self.env.tasks_transport))
+            else (
+                EvidenceProvenance.LOCAL_EXECUTION if self.live_mode else EvidenceProvenance.FIXTURE
+            )
+        )
         task_obs = VerificationObservation(
             target=target_task,
             observed_at=datetime.now(UTC),
@@ -1198,7 +1277,7 @@ class KillerMissionSliceRunner:
                 "task_title": read_result.observation.title,
                 "status": read_result.observation.status,
             },
-            provenance=self.env.provenance,
+            provenance=task_prov,
         )
         pred_eval = evaluate_predicate(self.pred_task, task_obs)
         if pred_eval.truth != PredicateTruth.TRUE:
@@ -1293,7 +1372,10 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     # Step 5: P-13.05 — Approve, execute, and verify real Calendar change
     # -----------------------------------------------------------------------
-    def step_p13_05_calendar_approve(self) -> KillerMissionStepResult:
+    def step_p13_05_calendar_approve(
+        self,
+        decision: ApprovalDecision | str | None = None,
+    ) -> KillerMissionStepResult:
         """Grant bound approval, execute calendar update, and read back independently."""
         if not hasattr(self, "pending_approval"):
             raise KillerMissionSequenceError("Must run step_p13_04 first")
@@ -1315,9 +1397,80 @@ class KillerMissionSliceRunner:
             self.step_results["P-13.05"] = res
             return res
 
+        eff_decision: ApprovalDecision | None = None
+        dec_to_check = decision if decision is not None else self.calendar_decision
+        if dec_to_check is not None:
+            eff_decision = (
+                dec_to_check
+                if isinstance(dec_to_check, ApprovalDecision)
+                else ApprovalDecision(dec_to_check)
+            )
+
         now = datetime.now(UTC)
 
-        # 1. Read before-state for ETag/precondition safety
+        # 1. If no explicit decision is given, pause awaiting human decision
+        if eff_decision is None:
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="AWAITING_APPROVAL",
+                provenance=self.env.provenance,
+                details=(
+                    "Mutation paused awaiting explicit human ApprovalDecision on PendingApproval; "
+                    "0 calendar writes."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={
+                    "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                    "approval_status": "PENDING_DECISION",
+                },
+            )
+            self.step_results["P-13.05"] = res
+            return res
+
+        # 2. If decision is REJECT: resolve via canonical P-11.03 path
+        if eff_decision == ApprovalDecision.REJECT:
+            rejection_result = resolve_pending_approval(
+                self.pending_approval,
+                ApprovalDecision.REJECT,
+                issued_at=now,
+                expires_at=now + timedelta(minutes=15),
+                rejection_reason="Operator rejected calendar mutation",
+            )
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="REJECTED",
+                provenance=self.env.provenance,
+                details=(
+                    "PendingApproval rejected by operator; 0 grant issued; "
+                    "0 calendar writes performed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={
+                    "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                    "rejection_status": rejection_result.status.value,
+                },
+            )
+            self.step_results["P-13.05"] = res
+            return res
+
+        # 3. Decision is APPROVE: resolve via canonical P-11.03 path
+        binding_result: ApprovalBindingResult = resolve_pending_approval(
+            self.pending_approval,
+            ApprovalDecision.APPROVE,
+            issued_at=now - timedelta(seconds=1),
+            expires_at=now + timedelta(minutes=15),
+        )
+        if binding_result.status != ApprovalBindingStatus.APPROVED or binding_result.grant is None:
+            raise KillerMissionAuthorityError(
+                "Failed to obtain valid ApprovalGrant for APPROVE decision"
+            )
+        grant = binding_result.grant
+
+        # Read before-state for ETag/precondition safety
         read_action = ActionContract.create(
             mission_id=self.mission_id,
             action_type=ActionType.CALENDAR_READ,
@@ -1331,15 +1484,12 @@ class KillerMissionSliceRunner:
                 "Calendar before-state read returned None observation"
             )
 
-        # 2. Issue ApprovalGrant bound to exact action and target
-        grant = ApprovalGrant(
-            action=self.action_cal,
-            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
-            issued_at=now - timedelta(seconds=1),
-            expires_at=now + timedelta(minutes=15),
+        active_source_sha = (
+            self.source_sha
+            if (self.live_mode and hasattr(self, "source_sha") and self.source_sha)
+            else FIXTURE_SOURCE_SHA
         )
 
-        # 3. Execute approved calendar update with independent read-back & receipt factory
         outcome: ApprovedCalendarUpdateOutcome = execute_approved_calendar_update(
             action=self.validated_action_cal,
             router=self.router,
@@ -1347,7 +1497,7 @@ class KillerMissionSliceRunner:
             ledger=self.env.approval_ledger,
             read_adapter=self.cal_read_adapter,
             predicate=self.pred_calendar,
-            source_sha="af2747f9c9b7562af8b9a226bb1e7f42b105af4f",
+            source_sha=active_source_sha,
             tracker=self.tracker,
             pending_approval=self.pending_approval,
             before_read=before_read,
@@ -1366,20 +1516,38 @@ class KillerMissionSliceRunner:
         self.total_writes += 1
         self.approved_cal_outcome = outcome
 
+        # Store verified calendar observation from outcome's independent read-back
+        cal_prov = (
+            EvidenceProvenance.LIVE_GOOGLE
+            if (self.live_mode and not is_synthetic_transport(self.env.calendar_transport))
+            else (
+                EvidenceProvenance.LOCAL_EXECUTION if self.live_mode else EvidenceProvenance.FIXTURE
+            )
+        )
+        if outcome.after_read.observation is not None:
+            self.calendar_observation = VerificationObservation(
+                target=self.action_cal.target,
+                observed_at=outcome.after_read.observation.observed_at,
+                exists=True,
+                properties={"start_time": outcome.after_read.observation.start_time},
+                provenance=cal_prov,
+            )
+
         res = KillerMissionStepResult(
             task_id="P-13.05",
             step_name="Approve, Execute & Verify Calendar Update",
             status="PASS",
             provenance=self.env.provenance,
             details=(
-                "Approval consumed atomically. Event updated to 07:30 (writes=1). "
+                "Approval consumed atomically. "
+                f"Event updated to {self.desired_start_time} (writes=1). "
                 "Independent read-back verified. ApprovedActionReceipt issued."
             ),
             writes_performed=1,
             is_verified=True,
             extra_metadata={
                 "approval_id": str(grant.approval_id),
-                "start_time": CANONICAL_DESIRED_START_TIME,
+                "start_time": self.desired_start_time,
             },
         )
         self.step_results["P-13.05"] = res
@@ -1418,39 +1586,30 @@ class KillerMissionSliceRunner:
     # Step 6: P-13.06 — Produce READY mission receipt from deterministic facts
     # -----------------------------------------------------------------------
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
-        """Evaluate all predicates; transition to READY; produce immutable receipt."""
+        """Evaluate all predicates from actual provider observations; transition to READY."""
         now = datetime.now(UTC)
 
-        # 1. Weather observation
-        target_weather = TargetIdentity(
-            system="open_meteo",
-            resource_kind=ResourceKind.WEATHER_LOCATION,
-            resource_id=CANONICAL_WEATHER_LOCATION_ID,
-        )
-        weather_obs = VerificationObservation(
-            target=target_weather,
-            observed_at=now,
-            exists=True,
-            properties={"weather_status": "available"},
-            provenance=self.env.provenance,
-        )
-
-        # 2. Calendar observation from verified read-back
-        cal_obs = VerificationObservation(
-            target=self.action_cal.target,
-            observed_at=now,
-            exists=True,
-            properties={"start_time": CANONICAL_DESIRED_START_TIME},
-            provenance=self.env.provenance,
-        )
+        # Strictly require real observations captured from P-13.02, P-13.03, and P-13.05
+        if self.weather_observation is None:
+            raise KillerMissionVerificationError(
+                "Missing actual weather observation from P-13.02; cannot reach READY"
+            )
+        if self.task_observation is None:
+            raise KillerMissionVerificationError(
+                "Missing actual tasks observation from P-13.03; cannot reach READY"
+            )
+        if self.calendar_observation is None:
+            raise KillerMissionVerificationError(
+                "Missing actual calendar observation from P-13.05; cannot reach READY"
+            )
 
         observations = {
-            PREDICATE_ID_WEATHER: weather_obs,
+            PREDICATE_ID_WEATHER: self.weather_observation,
             PREDICATE_ID_TASK: self.task_observation,
-            PREDICATE_ID_CALENDAR: cal_obs,
+            PREDICATE_ID_CALENDAR: self.calendar_observation,
         }
 
-        # 3. Deterministic readiness determination
+        # Deterministic readiness determination
         verification_requests = self.get_verification_requests()
         readiness: MissionReadinessDetermination = compute_mission_readiness(
             mission_id=self.mission_id,
@@ -1465,7 +1624,7 @@ class KillerMissionSliceRunner:
                 f"Mission failed to reach READY state; got state={readiness.state}"
             )
 
-        # 4. Create durable MissionSnapshot in READY state
+        # Create durable MissionSnapshot in READY state
         ev_id1 = EvidenceId.compute("ev_weather_obs_p13")
         ev_id2 = EvidenceId.compute("ev_tasks_obs_p13")
         ev_id3 = EvidenceId.compute("ev_cal_obs_p13")
@@ -1499,7 +1658,7 @@ class KillerMissionSliceRunner:
         )
         self.env.snapshot_repo.save_snapshot(snapshot)
 
-        # 6. Produce immutable historical ReceiptProjection
+        # Produce immutable historical ReceiptProjection
         receipt_proj: ReceiptProjection = create_mission_ready_receipt(snapshot)
         self.ready_receipt = receipt_proj
         self.ready_receipt_hash = receipt_proj.receipt_hash.value
@@ -1510,7 +1669,8 @@ class KillerMissionSliceRunner:
             status="PASS",
             provenance=self.env.provenance,
             details=(
-                "All predicates evaluated TRUE and FRESH. Mission promoted to READY. "
+                "All predicates evaluated TRUE and FRESH from actual provider observations. "
+                "Mission promoted to READY. "
                 f"Immutable receipt created: {self.ready_receipt_hash[:16]}..."
             ),
             writes_performed=0,
@@ -1534,14 +1694,14 @@ class KillerMissionSliceRunner:
         now = datetime.now(UTC)
 
         # 1. Induce external mutation on calendar transport (outside StillDone)
-        # Event is moved back to 08:00 (departure window violated!)
+        # Event is moved back to contradictory start time (departure window violated!)
         if isinstance(self.env.calendar_transport, FakeGoogleCalendarTransport):
             self.env.calendar_transport.seed_event(
                 calendar_id=self.env.scope.calendar_id,
-                event_id=CANONICAL_DEMO_EVENT_ID,
+                event_id=self.seeded_event_id,
                 summary=CANONICAL_DEMO_EVENT_TITLE,
-                start_time=CANONICAL_CONTRADICTORY_START_TIME,
-                end_time=CANONICAL_CONTRADICTORY_END_TIME,
+                start_time=self.contradictory_start_time,
+                end_time=self.contradictory_end_time,
             )
 
         # 2. Independent read-back observes changed reality
@@ -1555,54 +1715,44 @@ class KillerMissionSliceRunner:
         drift_read = self.cal_read_adapter.read_event(read_action)
         if drift_read.observation is None:
             raise KillerMissionVerificationError("Calendar drift read returned None observation")
-        if drift_read.observation.start_time != CANONICAL_CONTRADICTORY_START_TIME:
+        if drift_read.observation.start_time != self.contradictory_start_time:
             raise KillerMissionVerificationError(
-                f"Expected start_time={CANONICAL_CONTRADICTORY_START_TIME}, "
+                f"Expected start_time={self.contradictory_start_time}, "
                 f"got {drift_read.observation.start_time}"
             )
 
-        # 3. Create fresh contradictory observation
+        cal_prov = (
+            EvidenceProvenance.LIVE_GOOGLE
+            if (self.live_mode and not is_synthetic_transport(self.env.calendar_transport))
+            else (
+                EvidenceProvenance.LOCAL_EXECUTION if self.live_mode else EvidenceProvenance.FIXTURE
+            )
+        )
         fresh_cal_obs = VerificationObservation(
             target=self.action_cal.target,
             observed_at=now,
             exists=True,
-            properties={"start_time": CANONICAL_CONTRADICTORY_START_TIME},
-            provenance=self.env.provenance,
+            properties={"start_time": self.contradictory_start_time},
+            provenance=cal_prov,
         )
 
-        # 4. Predicate evaluation evaluates to FALSE
         pred_eval = evaluate_predicate(self.pred_calendar, fresh_cal_obs)
         if pred_eval.truth != PredicateTruth.FALSE:
             raise KillerMissionVerificationError(
                 "Calendar predicate must evaluate to FALSE upon drift"
             )
 
-        # 5. Reconcile mission state against fresh contradictory observation
-        verification_requests = self.get_verification_requests()
-
+        if self.weather_observation is None or self.task_observation is None:
+            raise KillerMissionVerificationError(
+                "Missing prior observations for drift reconciliation"
+            )
         fresh_observations = {
-            PREDICATE_ID_WEATHER: VerificationObservation(
-                target=self.action_weather.target,
-                observed_at=now,
-                exists=True,
-                properties={"weather_status": "available"},
-                provenance=self.env.provenance,
-            ),
-            PREDICATE_ID_TASK: VerificationObservation(
-                target=TargetIdentity(
-                    "google_tasks",
-                    ResourceKind.TASK,
-                    self.created_task_id,
-                    self.env.scope.task_list_id,
-                ),
-                observed_at=now,
-                exists=True,
-                properties={"task_title": CANONICAL_DEMO_TASK_TITLE},
-                provenance=self.env.provenance,
-            ),
+            PREDICATE_ID_WEATHER: self.weather_observation,
+            PREDICATE_ID_TASK: self.task_observation,
             PREDICATE_ID_CALENDAR: fresh_cal_obs,
         }
 
+        verification_requests = self.get_verification_requests()
         reconciliation: ReconciliationDetermination = reconcile_mission_state(
             mission_id=self.mission_id,
             predicates=self.canonical_predicates,
@@ -1624,7 +1774,7 @@ class KillerMissionSliceRunner:
                 f"Expected transition to DRIFTED; got {transition_result.new_state}"
             )
 
-        # 6. Create snapshot for drifted state and project current state
+        # Create snapshot for drifted state and project current state
         ev_drift = EvidenceId.compute("ev_drift_detection_p13")
         predicate_bindings = {
             PREDICATE_ID_WEATHER: self.action_weather.target,
@@ -1662,7 +1812,7 @@ class KillerMissionSliceRunner:
                 f"Expected current_state_proj.state DRIFTED; got {current_state_proj.state}"
             )
 
-        # 8. Assert historical READY receipt hash on disk is strictly unchanged
+        # Assert historical READY receipt hash on disk is strictly unchanged
         historical_receipt_still_valid = (
             self.ready_receipt.receipt_hash.value == self.ready_receipt_hash
         )
@@ -1675,7 +1825,7 @@ class KillerMissionSliceRunner:
             status="PASS",
             provenance=self.env.provenance,
             details=(
-                "External calendar change observed (start_time=08:00). "
+                f"External calendar change observed (start_time={self.contradictory_start_time}). "
                 "Predicate evaluated FALSE. Mission reconciled READY -> DRIFTED. "
                 "Original historical receipt hash strictly preserved."
             ),
@@ -1748,7 +1898,29 @@ class KillerMissionSliceRunner:
             )
         self.step_p13_03_tasks_prep()
         self.step_p13_04_calendar_pause()
-        self.step_p13_05_calendar_approve()
+        step5 = self.step_p13_05_calendar_approve()
+        if step5.status in ("AWAITING_APPROVAL", "REJECTED", "PAUSED", "BLOCKED_LIVE"):
+            final_st = (
+                MissionState.CANCELLED
+                if step5.status == "REJECTED"
+                else (
+                    MissionState.NEEDS_APPROVAL
+                    if step5.status == "AWAITING_APPROVAL"
+                    else MissionState.DRAFT
+                )
+            )
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=final_st,
+                total_writes_performed=self.total_writes,
+                provenance=self.env.provenance,
+                is_live=self.live_mode,
+            )
         self.step_p13_06_ready_receipt()
         self.step_p13_07_mutate_and_drift()
 
@@ -1782,6 +1954,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         aws_credentials_available: bool = False,
         bedrock_planner: BedrockPlannerAdapter | None = None,
         git_runner: Callable[[list[str]], Any] | None = None,
+        demo_date: str | None = None,
+        calendar_decision: ApprovalDecision | str | None = None,
     ) -> None:
         if env.provenance == EvidenceProvenance.FIXTURE:
             raise InvalidEnvironmentConfigurationError(
@@ -1794,12 +1968,22 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.aws_credentials_available = aws_credentials_available
         self.git_runner = git_runner
         self.preflight_report: LivePreflightReport | None = None
+
+        # Resolve live demo target date: default to tomorrow in UTC if not provided
+        resolved_demo_date = (
+            demo_date
+            if demo_date is not None
+            else (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%d")
+        )
+
         super().__init__(
             env=env,
             mission_id=mission_id,
             live_mode=True,
             operator_approved=operator_approved,
             bedrock_planner=bedrock_planner,
+            demo_date=resolved_demo_date,
+            calendar_decision=calendar_decision,
         )
 
     def evaluate_preflight(self) -> LivePreflightReport:
@@ -1832,7 +2016,12 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
     def step_p13_01_seed(self) -> KillerMissionStepResult:
         """Seed initial pre-state; gated strictly by live preflight."""
         self._require_preflight()
-        return super().step_p13_01_seed()
+        res = super().step_p13_01_seed()
+        if not self.seeded_event_id:
+            raise KillerMissionVerificationError(
+                "Seeding did not return a canonical provider event_id"
+            )
+        return res
 
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Execute plan step; gated strictly by live preflight."""
@@ -1850,10 +2039,13 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         )
         plan_result = self.bedrock_planner.plan(planner_input)
         self.candidate_plan = plan_result.plan
+
+        # Use the exact provider event_id established by seeding / read-back
+        actual_event_id = self.seeded_event_id
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
             event_id_mappings={
-                SymbolicTargetRef.LEAVE_FOR_SCHOOL: CANONICAL_DEMO_EVENT_ID,
+                SymbolicTargetRef.LEAVE_FOR_SCHOOL: actual_event_id,
             },
         )
         self.execution_contract = compile_candidate_plan(
@@ -1879,10 +2071,13 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self._require_preflight()
         return super().step_p13_04_calendar_pause()
 
-    def step_p13_05_calendar_approve(self) -> KillerMissionStepResult:
+    def step_p13_05_calendar_approve(
+        self,
+        decision: ApprovalDecision | str | None = None,
+    ) -> KillerMissionStepResult:
         """Execute calendar update step; gated strictly by live preflight."""
         self._require_preflight()
-        return super().step_p13_05_calendar_approve()
+        return super().step_p13_05_calendar_approve(decision=decision)
 
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
         """Produce ready receipt; gated strictly by live preflight."""
@@ -1946,6 +2141,7 @@ __all__ = [
     "CANONICAL_INITIAL_START_TIME",
     "CANONICAL_KILLER_INTENT",
     "DemoResourceScope",
+    "FIXTURE_SOURCE_SHA",
     "FakeGoogleCalendarTransport",
     "InvalidEnvironmentConfigurationError",
     "KillerMissionAuthorityError",
@@ -1965,6 +2161,7 @@ __all__ = [
     "LivePreflightBlockedError",
     "LivePreflightReport",
     "check_live_preflight",
+    "get_canonical_mission_timestamps",
     "is_synthetic_service",
     "is_synthetic_transport",
 ]
