@@ -1435,6 +1435,88 @@ class DurableSnapshotRepository:
             object.__setattr__(snapshot, "is_persisted", True)
             return snapshot
 
+    def _find_historical_ready_snapshot_projection(
+        self, mission_id: MissionId
+    ) -> dict[str, Any] | None:
+        """Find the canonical historical READY snapshot projection for a mission.
+
+        Searches:
+        1. Ledger latest transition snapshot if state is READY.
+        2. Repository durable log / file for historical snapshot entry in state READY.
+        3. Ledger durable log / transition snapshots for transition record into state READY.
+        """
+        mid_str = str(mission_id)
+
+        # 1. Check ledger current transition snapshot
+        if self._ledger is not None and hasattr(self._ledger, "get_transition_snapshot"):
+            proj = self._ledger.get_transition_snapshot(mission_id)
+            if proj is not None and proj.get("state") == MissionState.READY.value:
+                return dict(proj)
+
+        # 2. Check repository storage
+        if self._is_file_mode and self._path.exists():
+            with open(self._path, encoding="utf-8") as f:
+                for line in f:
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    try:
+                        data = json.loads(line_str)
+                    except Exception:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    if data.get("mission_id") == mid_str:
+                        is_snapshot = (
+                            data.get("_type") == "snapshot"
+                            or "snapshot_id" in data
+                            or "state" in data
+                        )
+                        if is_snapshot and data.get("state") == MissionState.READY.value:
+                            return {k: v for k, v in data.items() if k != "_type"}
+        elif not self._is_file_mode:
+            target_snap = self._snapshot_file_for_mission(mission_id)
+            if target_snap.exists():
+                try:
+                    with open(target_snap, encoding="utf-8") as f:
+                        data = json.loads(f.read())
+                    if isinstance(data, dict) and data.get("state") == MissionState.READY.value:
+                        return {k: v for k, v in data.items() if k != "_type"}
+                except Exception:
+                    pass
+
+        # 3. Check ledger durable log if available
+        if self._ledger is not None and hasattr(self._ledger, "_path"):
+            l_path = self._ledger._path
+            if isinstance(l_path, Path) and l_path.exists():
+                with open(l_path, encoding="utf-8") as f:
+                    for line in f:
+                        line_str = line.strip()
+                        if not line_str:
+                            continue
+                        try:
+                            data = json.loads(line_str)
+                        except Exception:
+                            continue
+                        if not isinstance(data, dict):
+                            continue
+                        if data.get("mission_id") == mid_str:
+                            new_st = data.get("state") or data.get("new_state")
+                            if new_st == MissionState.READY.value:
+                                proj = data.get("snapshot_projection")
+                                if isinstance(proj, dict):
+                                    return dict(proj)
+
+        # 4. Check ledger in-memory transition snapshots dictionary if available
+        if self._ledger is not None and hasattr(self._ledger, "_transition_snapshots"):
+            ts_dict = self._ledger._transition_snapshots
+            if isinstance(ts_dict, dict) and mid_str in ts_dict:
+                entry = ts_dict[mid_str]
+                if isinstance(entry, dict) and entry.get("state") == MissionState.READY.value:
+                    return dict(entry)
+
+        return None
+
     def _receipt_file_for_mission(self, mission_id: MissionId) -> Path:
         if self._is_file_mode:
             return self._path
@@ -1443,16 +1525,20 @@ class DurableSnapshotRepository:
     def save_receipt(self, receipt: Any) -> None:
         """Save a historical receipt projection durably with atomic write and fsync.
 
-        Enforces write-once identity per mission:
-        - First save succeeds.
+        Enforces write-once identity per mission and strict canonical READY authority:
+        - First save succeeds only with proven historical READY lineage and matching contract.
         - Identical repeated save is safely idempotent.
         - Conflicting receipt fails closed.
-        - Preserves original receipt hash, metadata, and evidence bindings.
-        - Validates evidence lineage and foreign-mission rejection.
-        - Validates linkage to genuine historical verification without requiring current READY.
+        - Rejects READY receipt for missions that never entered READY (e.g. in VERIFYING).
+        - Rejects forged snapshot revisions and invented evidence subsets.
+        - Preserves original receipt hash, metadata, and evidence bindings after later drift.
         """
         assert_not_planner_for_snapshot(receipt, parameter_name="receipt")
-        from stilldone.receipt import ReceiptProjection
+        from stilldone.receipt import (
+            ReceiptNotFoundError,
+            ReceiptProjection,
+            compute_mission_content_hash,
+        )
 
         if not isinstance(receipt, ReceiptProjection):
             raise SnapshotTypeError(
@@ -1461,14 +1547,22 @@ class DurableSnapshotRepository:
         if not receipt.is_historical:
             raise SnapshotValueError("Only historical receipt projections can be saved")
 
-        if self._ledger is not None:
+        if receipt.state_at_projection == MissionState.READY and self._ledger is not None:
             try:
-                self._ledger.get_mission(receipt.mission_id)
+                m_rec = self._ledger.get_mission(receipt.mission_id)
             except RecordNotFoundError as exc:
                 raise SnapshotLedgerConflictError(
                     f"Mission {receipt.mission_id} in receipt does not exist in ledger"
                 ) from exc
 
+            expected_mch = compute_mission_content_hash(m_rec.contract)
+            if receipt.mission_content_hash != expected_mch:
+                raise SnapshotLedgerConflictError(
+                    f"Receipt mission_content_hash {receipt.mission_content_hash} "
+                    f"does not match ledger mission contract {expected_mch}"
+                )
+
+            # Validate evidence IDs: existence, mission attribution, verification quality
             if not receipt.evidence_ids:
                 raise SnapshotLineageError(
                     f"Historical READY receipt for mission {receipt.mission_id} "
@@ -1491,16 +1585,13 @@ class DurableSnapshotRepository:
                 if _is_verification_evidence(ev_rec):
                     has_verif_ev = True
 
-            # Validate receipt linkage to genuine historical mission verification
-            if receipt.state_at_projection == MissionState.READY and not has_verif_ev:
+            if not has_verif_ev:
                 raise SnapshotLedgerConflictError(
                     f"Historical READY receipt for mission {receipt.mission_id} lacks "
                     "verification evidence in ledger"
                 )
 
         # Enforce write-once historical receipt identity per mission
-        from stilldone.receipt import ReceiptNotFoundError
-
         existing_receipt: ReceiptProjection | None = None
         try:
             existing_receipt = self.load_receipt(receipt.mission_id)
@@ -1517,6 +1608,69 @@ class DurableSnapshotRepository:
                 f"existing receipt hash {existing_receipt.receipt_hash} != "
                 f"new {receipt.receipt_hash}"
             )
+
+        # First save authority gate: validate canonical READY lineage and contract
+        if receipt.state_at_projection == MissionState.READY:
+            if self._ledger is not None:
+                # Reject READY receipt for a mission that has never entered READY
+                if m_rec.state in (
+                    MissionState.DRAFT,
+                    MissionState.PLANNED,
+                    MissionState.EXECUTING,
+                    MissionState.NEEDS_APPROVAL,
+                    MissionState.VERIFYING,
+                ):
+                    raise SnapshotLedgerConflictError(
+                        f"Mission {receipt.mission_id} has never entered READY state in "
+                        f"canonical ledger (current state: {m_rec.state.value})"
+                    )
+
+                ready_proj = self._find_historical_ready_snapshot_projection(receipt.mission_id)
+                if ready_proj is None:
+                    raise SnapshotLedgerConflictError(
+                        f"Mission {receipt.mission_id} has no canonical historical READY "
+                        "snapshot projection in ledger or durable storage"
+                    )
+
+                # Reject forged snapshot revision
+                if isinstance(receipt.metadata, Mapping):
+                    rcpt_snap_id = receipt.metadata.get("snapshot_id")
+                    if rcpt_snap_id is not None and rcpt_snap_id != ready_proj.get("snapshot_id"):
+                        raise SnapshotLedgerConflictError(
+                            f"Forged snapshot revision in receipt metadata: {rcpt_snap_id} != "
+                            f"canonical {ready_proj.get('snapshot_id')}"
+                        )
+                    rcpt_snap_ver = receipt.metadata.get("snapshot_version")
+                    if rcpt_snap_ver is not None and rcpt_snap_ver != ready_proj.get(
+                        "snapshot_version"
+                    ):
+                        raise SnapshotLedgerConflictError(
+                            f"Forged snapshot version in receipt metadata: {rcpt_snap_ver} != "
+                            f"canonical {ready_proj.get('snapshot_version')}"
+                        )
+
+                # Reject invented evidence subset or missing canonical evidence
+                canon_eids = {str(e) for e in ready_proj.get("evidence_ids", [])}
+                rcpt_eids = {e.value for e in receipt.evidence_ids}
+                if rcpt_eids != canon_eids:
+                    raise SnapshotLineageError(
+                        f"Receipt evidence subset mismatch: {rcpt_eids} != "
+                        f"canonical READY snapshot evidence {canon_eids}"
+                    )
+            else:
+                ready_proj = self._find_historical_ready_snapshot_projection(receipt.mission_id)
+                if ready_proj is None:
+                    raise SnapshotIntegrityError(
+                        f"Cannot save READY receipt for mission {receipt.mission_id} "
+                        "without persisted READY snapshot"
+                    )
+                canon_eids = {str(e) for e in ready_proj.get("evidence_ids", [])}
+                rcpt_eids = {e.value for e in receipt.evidence_ids}
+                if rcpt_eids != canon_eids:
+                    raise SnapshotLineageError(
+                        f"Receipt evidence subset mismatch: {rcpt_eids} != "
+                        f"canonical READY snapshot evidence {canon_eids}"
+                    )
 
         serialized = canonical_json(receipt.to_canonical())
 

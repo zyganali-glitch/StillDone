@@ -23,6 +23,7 @@ from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
 from stilldone.evidence import EvidenceId
 from stilldone.serialization import (
+    canonical_json,
     canonical_serialize,
     normalize_datetime,
     to_canonical_primitive,
@@ -679,7 +680,7 @@ class CurrentStateProjection:
     as_of: datetime
     projection_hash: CurrentStateHash
     is_historical: bool = False
-    is_authoritative: bool = True
+    is_authoritative: bool = False
     historical_receipt_hash: ReceiptHash | None = None
     historical_state: MissionState | None = None
     reconciliation_reason: str | None = None
@@ -764,9 +765,20 @@ class CurrentStateProjection:
         historical_receipt_hash: ReceiptHash | None = None,
         historical_state: MissionState | None = None,
         reconciliation_reason: str | None = None,
-        is_authoritative: bool = True,
+        is_authoritative: bool = False,
+        _internal_validated: bool = False,
     ) -> CurrentStateProjection:
-        """Create a CurrentStateProjection with canonical evidence ordering and computed hash."""
+        """Create a CurrentStateProjection with canonical evidence ordering and computed hash.
+
+        Direct public construction cannot self-assert is_authoritative=True;
+        authoritative status must be derived from canonical truth via project_current_state().
+        """
+        if is_authoritative and not _internal_validated:
+            raise ReceiptMismatchError(
+                "Direct public construction of CurrentStateProjection cannot self-assert "
+                "is_authoritative=True; authoritative projections must be derived from "
+                "canonical truth via project_current_state()"
+            )
         if not isinstance(mission_id, MissionId):
             raise TypeError(f"mission_id must be MissionId, got {type(mission_id).__name__}")
         if not isinstance(state, MissionState):
@@ -834,6 +846,16 @@ class CurrentStateProjection:
         """True if and only if state is READY and certified by canonical authority."""
         return self.is_ready and self.is_authoritative
 
+    @property
+    def is_live_certified(self) -> bool:
+        """Authoritative current truth never claims live certification from local/fixture."""
+        return False
+
+    @property
+    def is_certifying_live_authority(self) -> bool:
+        """Local/fixture projections never certify live authority."""
+        return False
+
     def to_canonical(self) -> dict[str, Any]:
         """Project current state to a canonical JSON-compatible dictionary."""
         return {
@@ -849,6 +871,7 @@ class CurrentStateProjection:
             "is_certified_ready": self.is_certified_ready,
             "is_drifted": self.is_drifted,
             "is_historical": self.is_historical,
+            "is_live_certified": self.is_live_certified,
             "is_ready": self.is_ready,
             "mission_id": str(self.mission_id),
             "projection_hash": self.projection_hash.to_canonical(),
@@ -895,7 +918,7 @@ class CurrentStateProjection:
             MissionState(str(data["historical_state"])) if data.get("historical_state") else None
         )
         reason = data.get("reconciliation_reason")
-        is_auth = bool(data.get("is_authoritative", True))
+        is_auth = bool(data.get("is_authoritative", False))
 
         return cls(
             mission_id=m_id,
@@ -922,6 +945,7 @@ def project_current_state(
     as_of: datetime | None = None,
     reconciliation_reason: str | None = None,
     ledger: Any | None = None,
+    repository: Any | None = None,
     authoritative: bool | None = None,
 ) -> CurrentStateProjection:
     """Project authoritative current truth from a mission snapshot.
@@ -930,6 +954,8 @@ def project_current_state(
     - Never lets model prose or execution response override current truth.
     - Preserves historical receipt immutability while publishing current state.
     - Distinguishes authoritative ledger-backed truth from non-certifying fixture/preview.
+    - Compares full persisted snapshot identity/content against canonical transition truth.
+    - Rejects caller-created or modified snapshots from claiming authoritative current truth.
     - Validates snapshot and ledger consistency, evidence lineage, and historical receipt linkage.
     - Historical completion (historical_state=READY) does not make current state READY if drifted.
     """
@@ -973,6 +999,7 @@ def project_current_state(
         effective_hist_state = historical_receipt.state_at_projection
 
     is_persisted = bool(getattr(snapshot, "is_persisted", False))
+    snapshot_matches_persisted = False
 
     if ledger is not None:
         from stilldone.application.ports.ledger_port import MissionLedgerPort
@@ -1022,6 +1049,53 @@ def project_current_state(
                         f"{ev_rec.mission_id}"
                     )
 
+        # Validate canonical persisted snapshot revision and content
+        stored_proj: dict[str, Any] | None = None
+        if hasattr(ledger, "get_transition_snapshot"):
+            stored_proj = ledger.get_transition_snapshot(snapshot.mission_id)
+
+        if stored_proj is not None:
+            if stored_proj.get("snapshot_id") != snapshot.snapshot_id:
+                if authoritative is True:
+                    raise ReceiptMismatchError(
+                        f"Snapshot id {snapshot.snapshot_id} does not match "
+                        f"canonical persisted snapshot {stored_proj.get('snapshot_id')}"
+                    )
+                snapshot_matches_persisted = False
+            elif canonical_json(stored_proj) != canonical_json(snapshot.to_dict()):
+                if authoritative is True:
+                    raise ReceiptMismatchError(
+                        "Supplied snapshot content has been modified from canonical "
+                        "persisted transition snapshot"
+                    )
+                snapshot_matches_persisted = False
+            else:
+                snapshot_matches_persisted = True
+        elif repository is not None:
+            try:
+                stored_snap = repository.load_snapshot(snapshot.mission_id)
+                if stored_snap.snapshot_id != snapshot.snapshot_id:
+                    if authoritative is True:
+                        raise ReceiptMismatchError(
+                            f"Snapshot id {snapshot.snapshot_id} does not match "
+                            f"repository snapshot {stored_snap.snapshot_id}"
+                        )
+                    snapshot_matches_persisted = False
+                elif canonical_json(stored_snap.to_dict()) != canonical_json(snapshot.to_dict()):
+                    if authoritative is True:
+                        raise ReceiptMismatchError(
+                            "Supplied snapshot content modified from repository snapshot"
+                        )
+                    snapshot_matches_persisted = False
+                else:
+                    snapshot_matches_persisted = True
+            except Exception:
+                snapshot_matches_persisted = False
+        else:
+            snapshot_matches_persisted = False
+    else:
+        snapshot_matches_persisted = False
+
     # Determine authority qualification
     if authoritative is True:
         if ledger is None:
@@ -1031,6 +1105,11 @@ def project_current_state(
         if not is_persisted:
             raise ReceiptMismatchError(
                 "Cannot publish authoritative current state for unpersisted snapshot"
+            )
+        if not snapshot_matches_persisted:
+            raise ReceiptMismatchError(
+                "Authoritative current-state projection requires an independently validated "
+                "canonical persisted snapshot revision"
             )
         if snapshot.state == MissionState.READY:
             from stilldone.application.ports.ledger_port import _is_verification_evidence
@@ -1045,8 +1124,9 @@ def project_current_state(
     elif authoritative is False:
         eff_authoritative = False
     else:
-        # Derived authority: true only when backed by ledger, persisted, and verified
-        if ledger is not None and is_persisted:
+        # Derived authority: true only when backed by ledger, persisted,
+        # and matches canonical stored snapshot
+        if ledger is not None and is_persisted and snapshot_matches_persisted:
             if snapshot.state == MissionState.READY:
                 from stilldone.application.ports.ledger_port import _is_verification_evidence
 
@@ -1070,4 +1150,5 @@ def project_current_state(
         historical_state=effective_hist_state,
         reconciliation_reason=reconciliation_reason,
         is_authoritative=eff_authoritative,
+        _internal_validated=True,
     )

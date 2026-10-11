@@ -78,6 +78,7 @@ from stilldone.receipt import (
     ReceiptHashMismatchError,
     ReceiptMismatchError,
     ReceiptProjection,
+    compute_mission_content_hash,
     create_mission_ready_receipt,
     project_current_state,
 )
@@ -969,3 +970,238 @@ def test_authoritative_vs_preview_current_truth_and_hash_binding(
     )
     with pytest.raises(ReceiptMismatchError, match="does not exist in canonical ledger"):
         project_current_state(tampered_snapshot, historical_receipt=receipt, ledger=ledger)
+
+
+def test_verifying_mission_with_verification_evidence_cannot_mint_first_ready_receipt(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """DEFECT A discriminating test: seeds a VERIFYING mission with apparently valid
+    verification evidence but no legal READY transition. Attempting to save a historical
+    READY receipt fails closed.
+    """
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    ledger_path = tmp_path / "ledger.jsonl"
+    snapshots_dir = tmp_path / "snapshots"
+    ledger = DurableFileLedger(ledger_path)
+    repository = DurableSnapshotRepository(snapshots_dir, ledger=ledger)
+
+    contract = MissionContract.create(
+        text="Mission in verification",
+        mission_id=mission_id,
+        created_at=now,
+    )
+    ledger.append_mission(
+        MissionRecord(
+            mission_id=mission_id,
+            state=MissionState.VERIFYING,
+            created_at=now,
+            updated_at=now,
+            contract=contract,
+        )
+    )
+
+    action = ActionContract.create(
+        mission_id=mission_id,
+        action_type=ActionType.CALENDAR_READ,
+        target=cal_target,
+        parameters={},
+    )
+    ledger.append_action(
+        ActionRecord(
+            action_id=action.action_id,
+            mission_id=mission_id,
+            action=action,
+            approval_id=None,
+            created_at=now,
+        )
+    )
+
+    pred_id = PredicateId.generate()
+    verif_ev = EvidenceRecord.create(
+        action_id=action.action_id,
+        mission_id=mission_id,
+        origin=EvidenceOrigin(provenance=EvidenceProvenance.LOCAL_EXECUTION, observed_at=now),
+        payload={
+            "evidence_type": "PREDICATE_EVALUATION",
+            "predicate_id": str(pred_id),
+            "truth": "TRUE",
+            "observed_value": "test_summary",
+            "is_match": True,
+            "observations": {"summary": "test_summary"},
+            "target": {
+                "system": cal_target.system,
+                "resource_kind": cal_target.resource_kind.value,
+                "resource_id": cal_target.resource_id,
+                "parent_id": cal_target.parent_id,
+            },
+        },
+        created_at=now,
+    )
+    ledger.append_evidence(verif_ev)
+
+    # Attempt to mint and save a first historical READY receipt for this VERIFYING mission
+    content_hash = compute_mission_content_hash(contract)
+    forged_ready_receipt = ReceiptProjection.create(
+        mission_id=mission_id,
+        mission_content_hash=content_hash,
+        evidence_ids=[verif_ev.evidence_id],
+        state_at_projection=MissionState.READY,
+        projected_at=now,
+    )
+
+    with pytest.raises(SnapshotLedgerConflictError, match="never entered READY state"):
+        repository.save_receipt(forged_ready_receipt)
+
+
+def test_forged_first_receipt_snapshot_revision_and_incomplete_evidence_rejected(
+    tmp_path: Path,
+    cal_target: TargetIdentity,
+) -> None:
+    """DEFECT A discriminating test: forged snapshot revision or incomplete
+    evidence subset fails closed.
+    """
+    m_id = MissionId.generate()
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, m_id, cal_target)
+
+    # Remove the saved receipt to test first receipt save validation on this READY mission
+    receipt_file = tmp_path / "snapshots" / f"{m_id}.receipt.json"
+    if receipt_file.exists():
+        receipt_file.unlink()
+
+    # 1. Forged snapshot revision in metadata is rejected
+    forged_rev_rcpt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=receipt.evidence_ids,
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+        metadata={"snapshot_id": "forged_snapshot_rev_9999", "snapshot_version": "v1"},
+    )
+    with pytest.raises(SnapshotLedgerConflictError, match="Forged snapshot revision"):
+        repository.save_receipt(forged_rev_rcpt)
+
+    # 2. Incomplete evidence subset (empty or missing canonical evidence) is rejected
+    incomplete_rcpt = ReceiptProjection.create(
+        mission_id=m_id,
+        mission_content_hash=receipt.mission_content_hash,
+        evidence_ids=[],
+        state_at_projection=MissionState.READY,
+        projected_at=receipt.projected_at,
+    )
+    with pytest.raises(SnapshotLineageError, match="empty evidence_ids"):
+        repository.save_receipt(incomplete_rcpt)
+
+
+def test_caller_created_snapshot_cannot_claim_authoritative_current_truth(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+) -> None:
+    """DEFECT B discriminating test: caller-created or modified snapshot cannot
+    claim authoritative current truth, even with is_persisted=True and genuine ledger evidence.
+    """
+    repository, ledger, snapshot, receipt = _seed_ready_mission(tmp_path, mission_id, cal_target)
+
+    # 1. Caller constructs a snapshot with different snapshot_id but is_persisted=True
+    caller_snap = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=snapshot.desired_state,
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=snapshot.created_at,
+    )
+    object.__setattr__(caller_snap, "snapshot_id", "caller_invented_snap_001")
+    object.__setattr__(caller_snap, "is_persisted", True)
+
+    # Non-authoritative by default when snapshot_id does not match canonical persisted snapshot
+    proj_derived = project_current_state(caller_snap, historical_receipt=receipt, ledger=ledger)
+    assert proj_derived.is_authoritative is False
+    assert proj_derived.is_certified_ready is False
+
+    # Explicit authoritative=True fails closed
+    with pytest.raises(ReceiptMismatchError, match="does not match canonical persisted snapshot"):
+        project_current_state(
+            caller_snap,
+            historical_receipt=receipt,
+            ledger=ledger,
+            authoritative=True,
+        )
+
+    # 2. Caller modifies desired_state predicates in snapshot
+    orig_pred = snapshot.desired_state[0]
+    modified_pred = DesiredStatePredicate(
+        predicate_id=orig_pred.predicate_id,
+        mission_id=mission_id,
+        subject=orig_pred.subject,
+        operator=orig_pred.operator,
+        expected_value="Tampered expected value",
+        freshness=orig_pred.freshness,
+        required=True,
+    )
+    modified_snap = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=(modified_pred,),
+        actions=snapshot.actions,
+        step_records=snapshot.step_records,
+        execution_attempts=snapshot.execution_attempts,
+        evidence_ids=snapshot.evidence_ids,
+        predicate_bindings=snapshot.predicate_bindings,
+        created_at=snapshot.created_at,
+    )
+    # Even if caller sets the canonical snapshot_id
+    object.__setattr__(modified_snap, "snapshot_id", snapshot.snapshot_id)
+    object.__setattr__(modified_snap, "is_persisted", True)
+
+    with pytest.raises(ReceiptMismatchError, match="modified from canonical persisted"):
+        project_current_state(
+            modified_snap,
+            historical_receipt=receipt,
+            ledger=ledger,
+            authoritative=True,
+        )
+
+
+def test_direct_construction_cannot_self_assert_authoritative_and_fixture_not_live(
+    mission_id: MissionId,
+) -> None:
+    """DEFECT B discriminating test: direct CurrentStateProjection.create cannot
+    self-assert is_authoritative=True, and fixture projections never claim live certification.
+    """
+    eid = EvidenceId("e" * 64)
+    now = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+
+    # 1. Direct construction with is_authoritative=True without internal validation fails closed
+    with pytest.raises(ReceiptMismatchError, match="cannot self-assert is_authoritative=True"):
+        CurrentStateProjection.create(
+            mission_id=mission_id,
+            state=MissionState.READY,
+            snapshot_id="snap_001",
+            snapshot_version="v1",
+            evidence_ids=(eid,),
+            as_of=now,
+            is_authoritative=True,
+        )
+
+    # 2. Direct construction defaults to is_authoritative=False
+    proj_default = CurrentStateProjection.create(
+        mission_id=mission_id,
+        state=MissionState.READY,
+        snapshot_id="snap_001",
+        snapshot_version="v1",
+        evidence_ids=(eid,),
+        as_of=now,
+    )
+    assert proj_default.is_authoritative is False
+    assert proj_default.is_certified_ready is False
+    assert proj_default.is_live_certified is False
+    assert proj_default.is_certifying_live_authority is False
+    assert proj_default.to_canonical()["is_live_certified"] is False
