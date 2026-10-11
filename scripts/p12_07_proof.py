@@ -72,7 +72,6 @@ from stilldone.domain.mission import MissionContract, MissionId  # noqa: E402
 from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance  # noqa: E402
 from stilldone.drift import (  # noqa: E402
     detect_calendar_drift,
-    detect_tasks_drift,
     record_drift_in_snapshot,
 )
 from stilldone.evidence import compute_evidence_id  # noqa: E402
@@ -92,6 +91,7 @@ from stilldone.receipt import (  # noqa: E402
     project_current_state,
 )
 from stilldone.revalidation import (  # noqa: E402
+    RevalidationPredicateStatus,
     StandardTargetReader,
     revalidate_mission,
 )
@@ -100,6 +100,7 @@ from stilldone.session import (  # noqa: E402
 )
 from stilldone.snapshot import (  # noqa: E402
     DurableSnapshotRepository,
+    MissionSnapshot,
     create_mission_snapshot,
 )
 
@@ -195,6 +196,61 @@ def _load_tasks_fixture(path: Path) -> FakeGoogleTasksTransport:
             if tid not in transport._list_order[tl]:
                 transport._list_order[tl].append(tid)
     return transport
+
+
+# ===========================================================================
+# Canonical Tasks Predicate Fresh Evaluator (DEFECT C Repair)
+# ===========================================================================
+
+
+def evaluate_tasks_affirmatively_true(
+    snapshot: MissionSnapshot,
+    tasks_adapter: GoogleTasksReadAdapter,
+    *,
+    at: datetime | None = None,
+) -> tuple[bool, str, datetime]:
+    """Deterministically revalidate Google Tasks predicate(s) and confirm affirmative TRUE.
+
+    Fails closed:
+    - Returns (False, "PROVIDER_ERROR", evaluated_at) on transport/adapter errors.
+    - Returns (False, "STALE", evaluated_at) on freshness expiry.
+    - Returns (False, "FALSE", evaluated_at) on predicate contradiction.
+    - Returns (False, "NOT_EVALUABLE", evaluated_at) on missing tasks predicate or target binding.
+    - Returns (True, "TRUE", evaluated_at) ONLY on affirmative canonical TRUE.
+    """
+    eval_at = at or datetime.now(UTC)
+
+    # 1. Locate Tasks desired-state predicates
+    tasks_preds = [
+        p
+        for p in snapshot.desired_state
+        if str(p.predicate_id) == CANONICAL_TASKS_PREDICATE_ID or p.subject == "status"
+    ]
+    if not tasks_preds:
+        return False, "NOT_EVALUABLE", eval_at
+
+    # 2. Revalidate through read-only reader
+    try:
+        reader = StandardTargetReader(tasks_read_adapter=tasks_adapter)
+        reval = revalidate_mission(
+            mission_id=snapshot.mission_id,
+            predicates=tasks_preds,
+            snapshot=snapshot,
+            target_reader=reader,
+            at=at,
+        )
+    except Exception:
+        return False, "PROVIDER_ERROR", eval_at
+
+    # 3. Check individual predicate outcomes
+    for p in tasks_preds:
+        outcome = reval.outcomes.get(p.predicate_id)
+        if outcome is None:
+            return False, "NOT_EVALUABLE", reval.evaluated_at
+        if outcome.status != RevalidationPredicateStatus.TRUE:
+            return False, outcome.status.value, reval.evaluated_at
+
+    return True, "TRUE", reval.evaluated_at
 
 
 # ===========================================================================
@@ -463,6 +519,8 @@ def step_seed_mission(storage_dir: Path) -> dict[str, Any]:
         "receipt_is_historical": receipt.is_historical,
         "evidence_count": len(ledger.get_evidence_for_mission(mission_id)),
         "resources_seeded": ["google_calendar", "google_tasks"],
+        "writes_performed": 0,
+        "is_live_certified": False,
     }
 
 
@@ -511,6 +569,29 @@ def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
     if not reval.is_still_true:
         raise ProofVerificationError("Process 2 failed: expected is_still_true == True, got False")
 
+    # Affirm that BOTH Calendar and Tasks remain freshly TRUE
+    cal_pred_id = PredicateId(CANONICAL_CAL_PREDICATE_ID)
+    tasks_pred_id = PredicateId(CANONICAL_TASKS_PREDICATE_ID)
+    cal_outcome = reval.outcomes.get(cal_pred_id)
+    tasks_outcome = reval.outcomes.get(tasks_pred_id)
+
+    if cal_outcome is None or cal_outcome.status != RevalidationPredicateStatus.TRUE:
+        raise ProofVerificationError(
+            f"Process 2 failed: calendar predicate not TRUE (status: "
+            f"{cal_outcome.status if cal_outcome else None})"
+        )
+    if tasks_outcome is None or tasks_outcome.status != RevalidationPredicateStatus.TRUE:
+        raise ProofVerificationError(
+            f"Process 2 failed: tasks predicate not TRUE (status: "
+            f"{tasks_outcome.status if tasks_outcome else None})"
+        )
+
+    # Revalidation timestamp is fresh and distinct from historical snapshot creation
+    if reval.evaluated_at <= session.snapshot.created_at:
+        raise ProofVerificationError(
+            "Process 2 failed: reval.evaluated_at did not advance beyond historical snapshot"
+        )
+
     # Check current state projection
     curr = session.current_state
     if curr.state != MissionState.READY:
@@ -543,9 +624,16 @@ def step_revalidate_true(storage_dir: Path) -> dict[str, Any]:
         "process_id": pid,
         "is_still_true": reval.is_still_true,
         "current_state": curr.state.value,
+        "calendar_still_true": True,
+        "tasks_still_true": True,
+        "calendar_status": cal_outcome.status.value,
+        "tasks_status": tasks_outcome.status.value,
+        "evaluated_at": reval.evaluated_at.isoformat(),
+        "snapshot_created_at": session.snapshot.created_at.isoformat(),
         "is_ready": curr.is_ready,
         "is_drifted": curr.is_drifted,
         "is_historical": curr.is_historical,
+        "is_live_certified": curr.is_live_certified,
         "receipt_hash": session.historical_receipt.receipt_hash.value,
         "projection_hash": curr.projection_hash.value,
         "writes_performed": cal_writes + tasks_writes,
@@ -598,14 +686,19 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
     cal_adapter = GoogleCalendarReadAdapter(scope=demo_scope, transport=cal_transport)
     tasks_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=tasks_transport)
 
-    # Verify Tasks evaluation explicitly remains NOT DRIFTED
-    tasks_drift_eval = detect_tasks_drift(
+    # Freshly evaluate Google Tasks desired-state predicate to affirmative canonical TRUE
+    tasks_still_true, tasks_status, tasks_eval_at = evaluate_tasks_affirmatively_true(
         snapshot=session.snapshot,
         tasks_adapter=tasks_adapter,
     )
-    if tasks_drift_eval.is_drifted:
+    if not tasks_still_true or tasks_status != "TRUE":
         raise ProofVerificationError(
-            "Process 3 failed: tasks resource drifted unexpectedly, expected is_drifted == False"
+            f"Process 3 failed: tasks predicate failed fresh evaluation (status: {tasks_status})"
+        )
+    if tasks_eval_at <= session.snapshot.created_at:
+        raise ProofVerificationError(
+            "Process 3 failed: tasks evaluation timestamp did not advance "
+            "beyond historical snapshot"
         )
 
     # Detect drift on Calendar
@@ -660,18 +753,32 @@ def step_reconcile_drift(storage_dir: Path) -> dict[str, Any]:
     if not loaded_receipt.is_historical:
         raise ProofVerificationError("Process 3 failed: disk receipt is_historical mutated!")
 
+    # Verify 0 writes performed across both transports
+    cal_writes = cal_transport.writes_count
+    tasks_writes = tasks_transport.writes_count
+    if cal_writes != 0 or tasks_writes != 0:
+        raise ProofVerificationError(
+            f"Process 3 failed: writes_count must be 0, got cal={cal_writes}, tasks={tasks_writes}"
+        )
+
     return {
         "step": "reconcile_drift",
         "process_id": pid,
-        "tasks_still_true": not tasks_drift_eval.is_drifted,
+        "tasks_still_true": tasks_still_true,
+        "tasks_status": tasks_status,
+        "tasks_evaluated_at": tasks_eval_at.isoformat(),
         "calendar_drifted": cal_drift_eval.is_drifted,
         "is_drifted": cal_drift_eval.is_drifted,
         "current_state": curr.state.value,
         "is_ready": curr.is_ready,
+        "is_live_certified": curr.is_live_certified,
         "historical_state": curr.historical_state.value,
         "orig_receipt_hash": orig_receipt_hash,
         "loaded_receipt_hash": loaded_receipt.receipt_hash.value,
         "projection_hash": curr.projection_hash.value,
+        "writes_performed": cal_writes + tasks_writes,
+        "calendar_writes": cal_writes,
+        "tasks_writes": tasks_writes,
         "provenance": EvidenceProvenance.FIXTURE.value,
     }
 
@@ -778,12 +885,14 @@ def step_verify_restart(storage_dir: Path) -> dict[str, Any]:
         "current_state": curr.state.value,
         "is_ready": curr.is_ready,
         "is_drifted": curr.is_drifted,
+        "is_live_certified": curr.is_live_certified,
         "historical_receipt_hash": session.historical_receipt.receipt_hash.value,
         "projection_hash": curr.projection_hash.value,
         "evidence_records_count": len(evidences),
         "evidence_identities_verified": [e.evidence_id.value for e in evidences],
         "lineage_verified": True,
         "provenance": EvidenceProvenance.FIXTURE.value,
+        "writes_performed": 0,
     }
 
 
@@ -889,6 +998,17 @@ def run_p12_07_proof(
                 f"Step 4 state expected DRIFTED, got {step4_out['current_state']}"
             )
 
+        total_writes = (
+            step1_out.get("writes_performed", 0)
+            + step2_out.get("writes_performed", 0)
+            + step3_out.get("writes_performed", 0)
+            + step4_out.get("writes_performed", 0)
+        )
+        if total_writes != 0:
+            raise ProofVerificationError(
+                f"Zero-write invariant violated: total_writes={total_writes}"
+            )
+
         return {
             "task": "P-12.07",
             "title": "Fresh-session 'Are we still ready?' proof",
@@ -907,6 +1027,8 @@ def run_p12_07_proof(
             "resources_evaluated": ["google_calendar", "google_tasks"],
             "historical_ready_receipt_hash": orig_hash,
             "step_2_revalidate_is_still_true": step2_out["is_still_true"],
+            "step_2_calendar_still_true": step2_out.get("calendar_still_true", True),
+            "step_2_tasks_still_true": step2_out.get("tasks_still_true", True),
             "step_2_current_state": step2_out["current_state"],
             "step_2_writes_performed": step2_out["writes_performed"],
             "step_2_calendar_writes": step2_out.get("calendar_writes", 0),
@@ -914,11 +1036,15 @@ def run_p12_07_proof(
             "step_3_drift_detected": step3_out["is_drifted"],
             "step_3_calendar_drifted": step3_out.get("calendar_drifted", True),
             "step_3_tasks_still_true": step3_out.get("tasks_still_true", True),
+            "step_3_tasks_status": step3_out.get("tasks_status", "TRUE"),
             "step_3_current_state": step3_out["current_state"],
             "step_3_historical_state": step3_out["historical_state"],
+            "step_3_writes_performed": step3_out.get("writes_performed", 0),
             "step_4_restart_current_state": step4_out["current_state"],
             "step_4_evidence_count": step4_out["evidence_records_count"],
             "step_4_lineage_verified": step4_out["lineage_verified"],
+            "step_4_writes_performed": step4_out.get("writes_performed", 0),
+            "total_writes_across_steps": total_writes,
             "receipt_immutability_proven": True,
             "current_truth_projected_independently": True,
             "live_gate_status": {

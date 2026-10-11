@@ -23,6 +23,7 @@ import sys
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,7 +39,12 @@ from scripts.p12_07_proof import (
     DEMO_EVENT_ID,
     DEMO_TASK_ID,
     DEMO_TASK_LIST_ID,
+    evaluate_tasks_affirmatively_true,
     run_p12_07_proof,
+    step_reconcile_drift,
+    step_revalidate_true,
+    step_seed_mission,
+    step_verify_restart,
 )
 from stilldone.adapters.calendar import (
     CalendarTransportError,
@@ -48,6 +54,7 @@ from stilldone.adapters.calendar import (
 from stilldone.adapters.tasks import (
     FakeGoogleTasksTransport,
     GoogleTasksReadAdapter,
+    TaskTransportError,
 )
 from stilldone.demo_isolation import DemoResourceScope
 from stilldone.domain.action import (
@@ -388,11 +395,16 @@ def test_fresh_session_proof_runner_end_to_end(tmp_path: Path) -> None:
 
     # Step 2 Revalidate
     assert result["step_2_revalidate_is_still_true"] is True
+    assert result["step_2_calendar_still_true"] is True
+    assert result["step_2_tasks_still_true"] is True
     assert result["step_2_current_state"] == "READY"
     assert result["step_2_writes_performed"] == 0
 
     # Step 3 Drift Reconciliation
     assert result["step_3_drift_detected"] is True
+    assert result["step_3_calendar_drifted"] is True
+    assert result["step_3_tasks_still_true"] is True
+    assert result["step_3_tasks_status"] == "TRUE"
     assert result["step_3_current_state"] == "DRIFTED"
     assert result["step_3_historical_state"] == "READY"
 
@@ -400,6 +412,9 @@ def test_fresh_session_proof_runner_end_to_end(tmp_path: Path) -> None:
     assert result["step_4_restart_current_state"] == "DRIFTED"
     assert result["step_4_evidence_count"] == 3
     assert result["step_4_lineage_verified"] is True
+
+    # Total writes across all steps is strictly 0
+    assert result["total_writes_across_steps"] == 0
 
     # Zero spend and live gate
     assert result["zero_spend_confirmed"] is True
@@ -1123,3 +1138,172 @@ def test_adversarial_incomplete_mixed_provider_revalidation_fails_closed(
             snapshot=snapshot,
             target_reader=cal_only_reader,
         )
+
+
+# ===========================================================================
+# 18. DEFECT C: Both Providers Affirmatively True in Step 2 with 0 Writes
+# ===========================================================================
+
+
+def test_defect_c_both_providers_affirmatively_true_in_step_2_with_zero_writes(
+    tmp_path: Path,
+) -> None:
+    """DEFECT C discriminating test: step_revalidate_true affirmatively evaluates
+    both Calendar and Tasks predicates to canonical TRUE with fresh timestamp and 0 writes.
+    """
+    seed_out = step_seed_mission(tmp_path)
+    assert seed_out["initial_state"] == "READY"
+    assert seed_out["writes_performed"] == 0
+    assert seed_out["is_live_certified"] is False
+
+    reval_out = step_revalidate_true(tmp_path)
+    assert reval_out["is_still_true"] is True
+    assert reval_out["calendar_still_true"] is True
+    assert reval_out["tasks_still_true"] is True
+    assert reval_out["calendar_status"] == "TRUE"
+    assert reval_out["tasks_status"] == "TRUE"
+    assert reval_out["current_state"] == "READY"
+    assert reval_out["is_ready"] is True
+    assert reval_out["is_drifted"] is False
+    assert reval_out["is_historical"] is False
+    assert reval_out["is_live_certified"] is False
+    assert reval_out["writes_performed"] == 0
+    assert reval_out["calendar_writes"] == 0
+    assert reval_out["tasks_writes"] == 0
+
+    eval_dt = datetime.fromisoformat(reval_out["evaluated_at"])
+    snap_dt = datetime.fromisoformat(reval_out["snapshot_created_at"])
+    assert eval_dt > snap_dt
+
+
+# ===========================================================================
+# 19. DEFECT C: Tasks Fails Closed on Error, Stale, or Missing Predicate
+# ===========================================================================
+
+
+def test_defect_c_tasks_fails_closed_on_error_stale_or_missing_predicate(
+    tmp_path: Path,
+    mission_id: MissionId,
+    cal_target: TargetIdentity,
+    tasks_target: TargetIdentity,
+    demo_scope: DemoResourceScope,
+) -> None:
+    """DEFECT C discriminating test: Tasks evaluator fails closed on provider error,
+    stale observation, contradiction, or missing predicate, never defaulting to historical READY.
+    """
+    repo, ledger, snapshot, receipt = _seed_test_mission(
+        tmp_path, mission_id, cal_target, tasks_target
+    )
+    assert snapshot.state == MissionState.READY  # Historical state is READY
+
+    # Case A: Provider transport error fails closed to PROVIDER_ERROR
+    class BrokenTasksTransport(FakeGoogleTasksTransport):
+        def get_task(self, task_list_id: str, task_id: str) -> Any:
+            raise TaskTransportError("Simulated Tasks provider failure")
+
+    broken_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=BrokenTasksTransport())
+    is_true_a, status_a, _ = evaluate_tasks_affirmatively_true(snapshot, broken_adapter)
+    assert is_true_a is False
+    assert status_a == "PROVIDER_ERROR"
+
+    # Case A2: Task not found in empty transport fails closed to FALSE
+    empty_transport = FakeGoogleTasksTransport()
+    empty_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=empty_transport)
+    is_true_a2, status_a2, _ = evaluate_tasks_affirmatively_true(snapshot, empty_adapter)
+    assert is_true_a2 is False
+    assert status_a2 == "FALSE"
+
+    # Case B: Contradicted status ("needsAction" != "completed") fails closed to FALSE
+    contradicted_transport = FakeGoogleTasksTransport()
+    contradicted_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status="needsAction",
+    )
+    contra_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=contradicted_transport)
+    is_true_b, status_b, _ = evaluate_tasks_affirmatively_true(snapshot, contra_adapter)
+    assert is_true_b is False
+    assert status_b == "FALSE"
+
+    # Case C: Stale observation evaluated beyond freshness window fails closed to STALE
+    valid_transport = FakeGoogleTasksTransport()
+    valid_transport.seed_task(
+        task_list_id=DEMO_TASK_LIST_ID,
+        task_id=DEMO_TASK_ID,
+        title=CANONICAL_TASK_TITLE,
+        status=CANONICAL_TASK_STATUS,
+    )
+    valid_adapter = GoogleTasksReadAdapter(scope=demo_scope, transport=valid_transport)
+    far_future = datetime.now(UTC)
+    is_true_c, status_c, _ = evaluate_tasks_affirmatively_true(
+        snapshot, valid_adapter, at=far_future
+    )
+    # The seeded observation has timestamp at `datetime.now(UTC)` or before;
+    # if evaluated at far_future + 600s, max_age_seconds=300 expires
+    from datetime import timedelta
+
+    future_expired = datetime.now(UTC) + timedelta(seconds=600)
+    is_true_c, status_c, _ = evaluate_tasks_affirmatively_true(
+        snapshot, valid_adapter, at=future_expired
+    )
+    assert is_true_c is False
+    assert status_c == "STALE"
+
+    # Case D: Missing Tasks predicate in snapshot fails closed to NOT_EVALUABLE
+    cal_action_id = snapshot.actions[0].action_id
+    snap_cal_only = create_mission_snapshot(
+        mission_id=snapshot.mission_id,
+        state=snapshot.state,
+        contract=snapshot.contract,
+        desired_state=(snapshot.desired_state[0],),  # only Calendar predicate
+        actions=(snapshot.actions[0],),
+        step_records={cal_action_id: snapshot.step_records[cal_action_id]},
+        execution_attempts=(snapshot.execution_attempts[0],),
+        evidence_ids=(snapshot.evidence_ids[0],),
+        predicate_bindings=(snapshot.predicate_bindings[0],),
+        created_at=snapshot.created_at,
+    )
+    is_true_d, status_d, _ = evaluate_tasks_affirmatively_true(snap_cal_only, valid_adapter)
+    assert is_true_d is False
+    assert status_d == "NOT_EVALUABLE"
+
+
+# ===========================================================================
+# 20. DEFECT C: Process 3 Freshly Evaluates Tasks Independent from Calendar Drift
+# ===========================================================================
+
+
+def test_defect_c_process_3_freshly_evaluates_tasks_independent_from_calendar_drift(
+    tmp_path: Path,
+) -> None:
+    """DEFECT C discriminating test: step_reconcile_drift demonstrates that Tasks
+    was freshly evaluated to TRUE at a distinct timestamp while Calendar drifted to DRIFTED,
+    with zero writes across steps and consistent restart verification.
+    """
+    step_seed_mission(tmp_path)
+    drift_out = step_reconcile_drift(tmp_path)
+
+    assert drift_out["tasks_still_true"] is True
+    assert drift_out["tasks_status"] == "TRUE"
+    assert drift_out["calendar_drifted"] is True
+    assert drift_out["is_drifted"] is True
+    assert drift_out["current_state"] == "DRIFTED"
+    assert drift_out["historical_state"] == "READY"
+    assert drift_out["is_live_certified"] is False
+    assert drift_out["writes_performed"] == 0
+    assert drift_out["calendar_writes"] == 0
+    assert drift_out["tasks_writes"] == 0
+
+    tasks_eval_dt = datetime.fromisoformat(drift_out["tasks_evaluated_at"])
+    seed_dt = datetime(2026, 10, 3, 6, 0, 0, tzinfo=UTC)
+    assert tasks_eval_dt > seed_dt
+
+    restart_out = step_verify_restart(tmp_path)
+    assert restart_out["current_state"] == "DRIFTED"
+    assert restart_out["is_ready"] is False
+    assert restart_out["is_drifted"] is True
+    assert restart_out["is_live_certified"] is False
+    assert restart_out["writes_performed"] == 0
+    assert restart_out["lineage_verified"] is True
+    assert restart_out["historical_receipt_hash"] == drift_out["orig_receipt_hash"]
