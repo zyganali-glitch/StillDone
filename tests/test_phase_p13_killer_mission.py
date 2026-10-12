@@ -1332,8 +1332,12 @@ def _live_runner_for_boundary_tests(
     from stilldone.killer_mission import LivePreflightReport
 
     if live_env is None:
+        import tempfile
+
+        test_base_dir = Path(tempfile.mkdtemp(prefix="stilldone_test_live_storage_"))
         scope = DemoResourceScope("c_boundary_demo", "tl_boundary_demo")
         live_env = KillerMissionEnvironment.create_live_environment(
+            base_dir=test_base_dir,
             scope=scope,
             calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
             tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
@@ -2474,27 +2478,45 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
     assert "failing_dec_1" not in runner._consumed_approval_decision_ids
     monkeypatch.undo()
 
+    # Retry on degraded runner fails closed
+    with pytest.raises(
+        KillerMissionIntegrityError, match="Persistence failure previously occurred"
+    ):
+        runner._persist_consumed_decision_id("retry_after_fail")
+
     # 2. Corrupt or truncated consumption record fails closed with KillerMissionIntegrityError
     dec_file = runner._consumed_decisions_file
-    dec_file.write_text('{"decision_id": "valid_1"}\n{"corrupt_json":\n', encoding="utf-8")
+    dec_file.write_text(
+        '{"decision_id": "valid_1", "consumed_at": "2026-10-04T12:00:00+00:00"}\n'
+        '{"corrupt_json":\n',
+        encoding="utf-8",
+    )
     runner._consumed_approval_decision_ids.clear()
     with pytest.raises(KillerMissionIntegrityError, match="Corrupt or truncated"):
         runner._load_consumed_decision_ids()
 
     # 3. Invalid record structure (missing decision_id) fails closed
-    dec_file.write_text('{"some_key": 123}\n', encoding="utf-8")
+    dec_file.write_text(
+        '{"decision_id": "", "consumed_at": "2026-10-04T12:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
     runner._consumed_approval_decision_ids.clear()
     with pytest.raises(KillerMissionIntegrityError, match="missing valid 'decision_id'"):
         runner._load_consumed_decision_ids()
 
     # 4. Duplicate decision ID in persistent log fails closed
-    dec_file.write_text('{"decision_id": "dup_1"}\n{"decision_id": "dup_1"}\n', encoding="utf-8")
+    dec_file.write_text(
+        '{"decision_id": "dup_1", "consumed_at": "2026-10-04T12:00:00+00:00"}\n'
+        '{"decision_id": "dup_1", "consumed_at": "2026-10-04T12:01:00+00:00"}\n',
+        encoding="utf-8",
+    )
     runner._consumed_approval_decision_ids.clear()
     with pytest.raises(KillerMissionIntegrityError, match="Duplicate consumed decision ID"):
         runner._load_consumed_decision_ids()
 
     # 5. Duplicate decision ID via _persist_consumed_decision_id raises KillerMissionAuthorityError
     dec_file.write_text("", encoding="utf-8")
+    runner._persistence_failed = False
     runner._consumed_approval_decision_ids.clear()
     runner._persist_consumed_decision_id("unique_dec_1")
     assert "unique_dec_1" in runner._consumed_approval_decision_ids
@@ -2551,3 +2573,425 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
     match_msg = "Stable durable storage boundary is required"
     with pytest.raises(KillerMissionAuthorityError, match=match_msg):
         runner_ephemeral.reload_consumed_decisions(require_durable=True)
+
+
+def test_repair_a2_durable_consumption_integrity_adversarial(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Repair A2: Adversarial testing of durable consumption integrity.
+
+    Covers:
+    - Partial append with atomic rollback/truncation to orig_size.
+    - Persistence failure flag prevents further authorization-sensitive operations.
+    - Corrupted/naive timestamps and unparseable datetime strings fail closed.
+    - Unexpected and missing fields in persisted JSONL fail closed.
+    - Rejection is durably recorded with 'decision': 'REJECT' and cannot be replayed.
+    - Process restart reloads state and enforces replay prohibition.
+    """
+    import builtins
+    from typing import Any
+    from unittest.mock import MagicMock
+
+    from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
+    from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+    from stilldone.adapters.weather import OpenMeteoHttpTransport
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.domain.mission import MissionId
+    from stilldone.killer_mission import (
+        KillerMissionAuthorityError,
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+
+    stable_dir = tmp_path / "a2_adversarial_storage"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    scope = DemoResourceScope("c_a2_demo", "tl_a2_demo")
+
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=live_env,
+        mission_id=MissionId("11111111-2222-3333-4444-555555555555"),
+        operator_approved=True,
+    )
+
+    # 1. First write a valid decision
+    runner._persist_consumed_decision_id("init_dec_1", decision=ApprovalDecision.REJECT)
+    assert "init_dec_1" in runner._consumed_approval_decision_ids
+    dec_file = runner._consumed_decisions_file
+    orig_size = dec_file.stat().st_size
+    assert orig_size > 0
+
+    # 2. Simulate partial failed append: write 10 bytes then crash
+    real_open = builtins.open
+
+    class FailingPartialWriter:
+        def __init__(self, raw_file: Any) -> None:
+            self.raw_file = raw_file
+
+        def write(self, s: str) -> int:
+            self.raw_file.write(s[:10])
+            self.raw_file.flush()
+            raise OSError("Simulated partial write failure halfway through append")
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.raw_file, name)
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self.raw_file.__exit__(*args)
+
+    def partial_failing_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        is_consumed = str(file).endswith("consumed_approval_decisions.jsonl")
+        is_append = "a" in args or kwargs.get("mode") == "a"
+        if is_consumed and is_append:
+            raw = real_open(file, *args, **kwargs)
+            return FailingPartialWriter(raw)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", partial_failing_open)
+    with pytest.raises(KillerMissionIntegrityError, match="Failed to durably commit"):
+        runner._persist_consumed_decision_id("partial_dec_fail")
+
+    monkeypatch.undo()
+
+    # Verify atomic rollback: file must be truncated back to orig_size
+    assert dec_file.stat().st_size == orig_size
+    assert "partial_dec_fail" not in runner._consumed_approval_decision_ids
+    assert runner._persistence_failed is True
+
+    # 3. Retry on degraded runner fails closed
+    with pytest.raises(
+        KillerMissionIntegrityError, match="Persistence failure previously occurred"
+    ):
+        runner._persist_consumed_decision_id("any_retry_id")
+
+    # 4. Corrupted timestamp tests
+    dec_file.write_text(
+        '{"decision_id": "bad_ts_1", "consumed_at": "not-a-datetime"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Corrupted consumed_at timestamp"):
+        runner._load_consumed_decision_ids()
+
+    # Naive timestamp without timezone
+    dec_file.write_text(
+        '{"decision_id": "naive_ts_1", "consumed_at": "2026-10-04T12:00:00"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(
+        KillerMissionIntegrityError, match="consumed_at timestamp must be timezone-aware UTC"
+    ):
+        runner._load_consumed_decision_ids()
+
+    # Non-UTC timezone offset (+03:00)
+    dec_file.write_text(
+        '{"decision_id": "offset_ts_1", "consumed_at": "2026-10-04T12:00:00+03:00"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="consumed_at timestamp must be UTC"):
+        runner._load_consumed_decision_ids()
+
+    # 5. Unexpected fields in record
+    dec_file.write_text(
+        '{"decision_id": "extra_1", "consumed_at": "2026-10-04T12:00:00+00:00", '
+        '"unauthorized_extra": "leak"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Unexpected fields"):
+        runner._load_consumed_decision_ids()
+
+    # Missing consumed_at field
+    dec_file.write_text(
+        '{"decision_id": "missing_cat_1"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Missing required fields"):
+        runner._load_consumed_decision_ids()
+
+    # Invalid decision enum string
+    dec_file.write_text(
+        '{"decision_id": "bad_dec_val", "consumed_at": "2026-10-04T12:00:00+00:00", '
+        '"decision": "MAYBE"}\n',
+        encoding="utf-8",
+    )
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Invalid decision value"):
+        runner._load_consumed_decision_ids()
+
+    # 6. Rejection durability and restart recovery
+    dec_file.write_text("", encoding="utf-8")
+    runner._persistence_failed = False
+    runner._consumed_approval_decision_ids.clear()
+    runner._persist_consumed_decision_id("durable_reject_1", decision=ApprovalDecision.REJECT)
+    assert "durable_reject_1" in runner._consumed_approval_decision_ids
+
+    # Read back raw jsonl
+    lines = [json.loads(line) for line in dec_file.read_text(encoding="utf-8").strip().splitlines()]
+    assert len(lines) == 1
+    assert lines[0]["decision_id"] == "durable_reject_1"
+    assert lines[0]["decision"] == "REJECT"
+
+    # Restart runner on same directory
+    live_env_restart = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner_restarted = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=live_env_restart,
+        mission_id=MissionId("99999999-8888-7777-6666-555555555555"),
+        operator_approved=True,
+    )
+    assert runner_restarted.is_restored_session is True
+    assert runner_restarted.is_first_time_storage is False
+    assert "durable_reject_1" in runner_restarted._consumed_approval_decision_ids
+
+    # Replay must be rejected
+    with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+        runner_restarted._persist_consumed_decision_id("durable_reject_1")
+
+
+def test_repair_a3_enforce_storage_gate_in_actual_live_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Repair A3: Enforce stable durable storage prerequisite on actual production live path."""
+    from typing import Any
+    from unittest.mock import MagicMock
+
+    from scripts.p13_killer_mission import run_killer_mission
+    from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
+    from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+    from stilldone.adapters.weather import OpenMeteoHttpTransport
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.killer_mission import (
+        KillerMissionAuthorityError,
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+        LiveKillerMissionSliceRunner,
+    )
+
+    # 1. Production CLI entry point without storage directory fails closed at Phase A
+    exit_code = run_killer_mission(
+        live=True,
+        as_json=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="c_valid_demo",
+        demo_task_list_id="tl_valid_demo",
+        storage_dir=None,
+    )
+    assert exit_code == 2
+
+    # 2. Production CLI entry point with unwritable storage directory fails closed at Phase A
+    unwritable = tmp_path / "unwritable_storage_dir"
+    unwritable.mkdir(parents=True, exist_ok=True)
+    real_write = Path.write_text
+
+    def failing_write_text(self_path: Path, *args: Any, **kwargs: Any) -> Any:
+        if ".storage_write_test" in str(self_path):
+            raise OSError("Permission denied on storage directory")
+        return real_write(self_path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_write_text)
+    exit_code_unwritable = run_killer_mission(
+        live=True,
+        as_json=True,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+        demo_calendar_id="c_valid_demo",
+        demo_task_list_id="tl_valid_demo",
+        storage_dir=str(unwritable),
+    )
+    assert exit_code_unwritable == 2
+    monkeypatch.undo()
+
+    # 3. Live runner evaluate_preflight rejects ephemeral storage
+    scope = DemoResourceScope("c_live_gate_demo", "tl_live_gate_demo")
+    ephemeral_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=None,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner_ephemeral = LiveKillerMissionSliceRunner(
+        env=ephemeral_env,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    preflight = runner_ephemeral.evaluate_preflight()
+    assert preflight.is_ready is False
+    assert any(
+        "Stable durable storage boundary is required" in b for b in preflight.blocker_reasons
+    )
+
+    # Calling approval-sensitive steps directly on ephemeral env raises KillerMissionAuthorityError
+    with pytest.raises(
+        KillerMissionAuthorityError, match="Stable durable storage boundary is required"
+    ):
+        runner_ephemeral.step_p13_04_calendar_pause()
+
+    with pytest.raises(
+        KillerMissionAuthorityError, match="Stable durable storage boundary is required"
+    ):
+        runner_ephemeral.step_p13_05_calendar_approve()
+
+    # 4. First-time vs Restored session identification
+    fresh_storage = tmp_path / "fresh_storage_dir"
+    fresh_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=fresh_storage,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    fresh_runner = LiveKillerMissionSliceRunner(
+        env=fresh_env,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    assert fresh_runner.is_first_time_storage is True
+    assert fresh_runner.is_restored_session is False
+
+    # Persist one decision to establish history
+    fresh_runner._persist_consumed_decision_id("first_time_dec_1")
+
+    # Second runner on same directory must be detected as restored session (restarting process)
+    restored_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=fresh_storage,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    restored_runner = LiveKillerMissionSliceRunner(
+        env=restored_env,
+        operator_approved=True,
+        source_sha="1111111111111111111111111111111111111111",
+    )
+    assert restored_runner.is_first_time_storage is False
+    assert restored_runner.is_restored_session is True
+
+    # 5. Inaccessible or corrupt existing state is NEVER silently treated as fresh
+    corrupt_log = fresh_storage / "consumed_approval_decisions.jsonl"
+    corrupt_log.write_text("corrupted_non_json_data\n", encoding="utf-8")
+    with pytest.raises(KillerMissionIntegrityError, match="Corrupt or truncated"):
+        LiveKillerMissionSliceRunner(
+            env=fresh_env,
+            operator_approved=True,
+            source_sha="1111111111111111111111111111111111111111",
+        )
+
+
+def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -> None:
+    """Repair D2: Adversarial validation of standalone public decision contract privacy."""
+    from datetime import UTC, datetime
+
+    from stilldone.domain.action import ActionId, ActionType
+    from stilldone.domain.authority import AuthorityClass
+    from stilldone.domain.mission import MissionId
+    from stilldone.pending_approval import (
+        ApprovalDecision,
+        OneDecisionContract,
+        PendingApprovalId,
+        PendingApprovalStatus,
+    )
+    from stilldone.redaction import REDACTED_IDENTIFIER
+
+    secret_event_id = "cal_event_secret_998877_alpha_bravo"
+    hist_summary = (
+        f"Update Google Calendar event on 'google_calendar' ({secret_event_id}): "
+        "start_time='2026-10-04T07:30:00+00:00'"
+    )
+
+    contract = OneDecisionContract(
+        pending_approval_id=PendingApprovalId("a" * 64),
+        mission_id=MissionId("11111111-2222-3333-4444-555555555555"),
+        action_id=ActionId("11111111-2222-3333-4444-555555555555"),
+        action_type=ActionType.CALENDAR_UPDATE,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+        human_summary=hist_summary,
+        status=PendingApprovalStatus.PENDING,
+        requested_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
+    )
+
+    # 1. Standalone to_public_dict() called without provider_ids:
+    pub_dict = contract.to_public_dict()
+    pub_json = json.dumps(pub_dict)
+
+    # Provider ID must be completely absent from public output
+    assert secret_event_id not in pub_json
+    assert REDACTED_IDENTIFIER in pub_dict["human_summary"]
+    assert pub_dict["human_summary"] == (
+        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER}): "
+        "start_time='2026-10-04T07:30:00+00:00'"
+    )
+
+    # 2. Default to_dict() defaults to redact_identifiers=True
+    def_dict = contract.to_dict()
+    assert secret_event_id not in json.dumps(def_dict)
+    assert REDACTED_IDENTIFIER in def_dict["human_summary"]
+
+    # 3. Explicit authoritative dictionary retains raw unredacted historical summary
+    auth_dict = contract.to_authoritative_dict()
+    assert secret_event_id in auth_dict["human_summary"]
+    assert auth_dict["human_summary"] == hist_summary
+
+    # Calling to_dict(redact_identifiers=False) delegates to to_authoritative_dict()
+    assert contract.to_dict(redact_identifiers=False) == auth_dict
+
+    # 4. Canonical summaries without raw provider ID remain usable
+    canonical_summary = (
+        "Update Google Calendar event on 'google_calendar': start_time='2026-10-04T07:30:00+00:00'"
+    )
+    canon_contract = OneDecisionContract(
+        pending_approval_id=PendingApprovalId("b" * 64),
+        mission_id=MissionId("11111111-2222-3333-4444-555555555555"),
+        action_id=ActionId("22222222-3333-4444-5555-666666666666"),
+        action_type=ActionType.CALENDAR_UPDATE,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+        human_summary=canonical_summary,
+        status=PendingApprovalStatus.PENDING,
+        requested_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
+    )
+    canon_pub = canon_contract.to_public_dict()
+    assert canon_pub["human_summary"] == canonical_summary
+
+    # 5. Free-form arbitrary summary without known structure is suppressed fail-closed
+    adversarial_free_form = f"Custom operator note regarding secret event {secret_event_id} at 10am"
+    free_form_contract = OneDecisionContract(
+        pending_approval_id=PendingApprovalId("c" * 64),
+        mission_id=MissionId("11111111-2222-3333-4444-555555555555"),
+        action_id=ActionId("33333333-4444-5555-6666-777777777777"),
+        action_type=ActionType.CALENDAR_UPDATE,
+        authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+        decision_options=(ApprovalDecision.APPROVE, ApprovalDecision.REJECT),
+        human_summary=adversarial_free_form,
+        status=PendingApprovalStatus.PENDING,
+        requested_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
+    )
+    ff_pub = free_form_contract.to_public_dict()
+    assert secret_event_id not in json.dumps(ff_pub)
+    assert ff_pub["human_summary"] == f"Execute action 'calendar.update' ({REDACTED_IDENTIFIER})"

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
@@ -289,10 +290,75 @@ class OneDecisionContract:
             f"options={[o.value for o in self.decision_options]}, status={self.status.value})"
         )
 
+    def to_authoritative_dict(self) -> dict[str, Any]:
+        """Convert presentation contract to authoritative private dictionary.
+
+        Retains the exact historical human_summary and contract fields for
+        deterministic cryptographic validation and snapshot integrity checks.
+        """
+        return {
+            "pending_approval_id": self.pending_approval_id.value,
+            "mission_id": str(self.mission_id),
+            "action_id": str(self.action_id),
+            "action_type": self.action_type.value,
+            "authority_class": self.authority_class.value,
+            "decision_options": [d.value for d in self.decision_options],
+            "human_summary": self.human_summary,
+            "status": self.status.value,
+            "requested_at": self.requested_at.isoformat(),
+        }
+
+    def _sanitize_standalone_summary(self, summary: str) -> str:
+        """Sanitize standalone summary without known provider_ids context.
+
+        Fails closed or suppresses unsafe free-form historical summaries containing
+        unredacted provider target identifiers, while keeping canonical summaries usable.
+        """
+        if REDACTED_IDENTIFIER in summary:
+            return redact_text(summary)
+
+        # 1. Canonical calendar update format:
+        # "Update Google Calendar event on '<system>': <param_desc>"
+        # Notice: after '<system>', there is directly ': ' without target identifiers
+        cal_canon_match = re.match(r"^Update Google Calendar event on '([^']+)':\s*(.*)$", summary)
+        if cal_canon_match:
+            return redact_text(summary)
+
+        # 2. Canonical generic action format:
+        # "Execute action '<action_type>' on '<system>'"
+        other_canon_match = re.match(r"^Execute action '([^']+)' on '([^']*)'$", summary)
+        if other_canon_match:
+            return redact_text(summary)
+
+        # 3. Known historical calendar update format embedding resource_id:
+        # "Update Google Calendar event on '<system>' (<resource_id>): <param_desc>"
+        hist_cal_match = re.match(
+            r"^(Update Google Calendar event on '[^']+')\s*\([^)]+\):\s*(.*)$",
+            summary,
+        )
+        if hist_cal_match:
+            prefix = hist_cal_match.group(1)
+            params = hist_cal_match.group(2)
+            return redact_text(f"{prefix} ({REDACTED_IDENTIFIER}): {params}")
+
+        # 4. Known historical generic action format:
+        # "Execute action '<action_type>' on '<system>' target '<resource_id>'"
+        hist_other_match = re.match(
+            r"^(Execute action '[^']+' on '[^']+')\s+target\s+'[^']*'$",
+            summary,
+        )
+        if hist_other_match:
+            prefix = hist_other_match.group(1)
+            return redact_text(f"{prefix} target '{REDACTED_IDENTIFIER}'")
+
+        # 5. Any other non-canonical or free-form historical summary:
+        # Suppress the unsafe free-form summary fail-closed
+        return redact_text(f"Execute action '{self.action_type.value}' ({REDACTED_IDENTIFIER})")
+
     def to_dict(
         self,
         *,
-        redact_identifiers: bool = False,
+        redact_identifiers: bool = True,
         provider_ids: Iterable[str] | None = None,
     ) -> dict[str, Any]:
         """Convert presentation contract to a serializable dictionary.
@@ -301,15 +367,21 @@ class OneDecisionContract:
         This is the operator-facing privacy-safe presentation dictionary. It exposes
         only the bounded human decision surface (decision options, human summary, status,
         and lineage identifiers) and never exposes internal execution machinery or raw payloads.
-        When redact_identifiers=True, sanitizes any raw provider IDs from human_summary.
+        Defaults to redact_identifiers=True to prevent accidental exposure of raw provider
+        identifiers in operator-facing presentation surfaces.
+        When redact_identifiers=False, delegates strictly to to_authoritative_dict().
         """
+        if not redact_identifiers:
+            return self.to_authoritative_dict()
+
         summary = self.human_summary
-        if redact_identifiers:
-            if provider_ids:
-                for pid in provider_ids:
-                    if pid and pid in summary and not pid.startswith("sym_"):
-                        summary = summary.replace(pid, REDACTED_IDENTIFIER)
+        if provider_ids:
+            for pid in provider_ids:
+                if pid and pid in summary and not pid.startswith("sym_"):
+                    summary = summary.replace(pid, REDACTED_IDENTIFIER)
             summary = redact_text(summary)
+        else:
+            summary = self._sanitize_standalone_summary(summary)
 
         return {
             "pending_approval_id": self.pending_approval_id.value,

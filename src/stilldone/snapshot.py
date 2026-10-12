@@ -585,7 +585,9 @@ class MissionSnapshot:
                     "parameters_digest": pa.parameters_digest,
                     "requested_at": pa.requested_at.isoformat(),
                     "decision_contract": (
-                        pa.decision_contract.to_dict()
+                        pa.decision_contract.to_authoritative_dict()
+                        if hasattr(pa.decision_contract, "to_authoritative_dict")
+                        else pa.decision_contract.to_dict(redact_identifiers=False)
                         if hasattr(pa.decision_contract, "to_dict")
                         else pa.decision_contract
                     ),
@@ -1031,7 +1033,9 @@ class MissionSnapshot:
                     raise SnapshotIntegrityError("PendingApproval decision_contract was tampered")
 
                 base_contract_dict = (
-                    base_pa.decision_contract.to_dict()
+                    base_pa.decision_contract.to_authoritative_dict()
+                    if hasattr(base_pa.decision_contract, "to_authoritative_dict")
+                    else base_pa.decision_contract.to_dict(redact_identifiers=False)
                     if hasattr(base_pa.decision_contract, "to_dict")
                     else base_pa.decision_contract
                 )
@@ -1042,7 +1046,9 @@ class MissionSnapshot:
                     base_pa.decision_contract, human_summary=historical_summary
                 )
                 historical_contract_dict = (
-                    historical_contract.to_dict()
+                    historical_contract.to_authoritative_dict()
+                    if hasattr(historical_contract, "to_authoritative_dict")
+                    else historical_contract.to_dict(redact_identifiers=False)
                     if hasattr(historical_contract, "to_dict")
                     else historical_contract
                 )

@@ -45,6 +45,7 @@ def run_killer_mission(
     demo_task_list_id: str | None = None,
     demo_date: str | None = None,
     calendar_decision: str | None = None,
+    storage_dir: str | None = None,
 ) -> int:
     """Execute the canonical killer mission vertical slice."""
     if live:
@@ -66,6 +67,24 @@ def run_killer_mission(
             local_blockers.append(
                 "A valid 40-character lowercase hex source_sha is required for live execution."
             )
+
+        resolved_storage = storage_dir or os.environ.get("STILLDONE_STORAGE_DIR")
+        if not resolved_storage or not str(resolved_storage).strip():
+            local_blockers.append(
+                "Stable durable storage directory required for live execution "
+                "(--storage-dir or STILLDONE_STORAGE_DIR)."
+            )
+        else:
+            try:
+                storage_path = Path(resolved_storage).resolve()
+                storage_path.mkdir(parents=True, exist_ok=True)
+                test_file = storage_path / ".storage_write_test"
+                test_file.write_text("test", encoding="utf-8")
+                test_file.unlink()
+            except Exception as e:
+                local_blockers.append(
+                    f"Storage directory '{resolved_storage}' is inaccessible or not writable: {e}"
+                )
 
         resolved_cal_id = (
             demo_calendar_id or os.environ.get("STILLDONE_DEMO_CALENDAR_ID") or ""
@@ -275,6 +294,7 @@ def run_killer_mission(
 
         # If preflight passed, construct canonical live environment and runner
         live_env = KillerMissionEnvironment.create_live_environment(
+            base_dir=Path(str(resolved_storage)).resolve(),
             scope=scope,
             calendar_transport=cal_transport,
             tasks_transport=tasks_transport,
@@ -415,6 +435,12 @@ def main() -> None:
         help="Explicit operator decision for Calendar mutation approval",
     )
     parser.add_argument(
+        "--storage-dir",
+        type=str,
+        default=None,
+        help="Path to stable durable storage directory for mission state and approval records",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in JSON format",
@@ -430,6 +456,7 @@ def main() -> None:
         demo_task_list_id=args.demo_task_list_id,
         demo_date=args.demo_date,
         calendar_decision=args.calendar_decision,
+        storage_dir=args.storage_dir,
     )
     sys.exit(exit_code)
 
