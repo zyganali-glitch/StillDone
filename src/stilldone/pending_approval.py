@@ -364,14 +364,10 @@ def compute_human_summary(action: ActionContract | ValidatedActionContract) -> s
         if "all_day" in params:
             parts.append(f"all_day={params['all_day']}")
         param_desc = ", ".join(parts) if parts else "parameters updated"
-        raw_text = (
-            f"Update Google Calendar event on '{actual_action.target.system}' "
-            f"({actual_action.target.resource_id}): {param_desc}"
-        )
+        raw_text = f"Update Google Calendar event on '{actual_action.target.system}': {param_desc}"
     else:
         raw_text = (
-            f"Execute action '{actual_action.action_type.value}' on "
-            f"'{actual_action.target.system}' target '{actual_action.target.resource_id}'"
+            f"Execute action '{actual_action.action_type.value}' on '{actual_action.target.system}'"
         )
 
     return redact_text(raw_text)

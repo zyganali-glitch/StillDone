@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -75,19 +76,33 @@ def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
         assert s.covered_by_free_tier_or_credit is None
         assert s.to_dict()["covered_by_free_tier_or_credit"] == "NOT_OBSERVED"
 
-    # With explicit observation resolving to repo evidence: coverage is proven True
-    obs = AWSAccountObservation(
+    # Repository fixture cannot authorize RECORDED_LIVE (fails closed)
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference="tests/fixtures/aws_account_evidence_record.json",
+        )
+
+    # Legitimate offline fixture observation does NOT promote coverage to verified
+    obs_fixture = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
-        provenance=EvidenceProvenance.RECORDED_LIVE,
+        provenance=EvidenceProvenance.FIXTURE,
         source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
-    observed_services = audit_critical_path_aws_services(observation=obs)
+    observed_services = audit_critical_path_aws_services(observation=obs_fixture)
     for s in observed_services:
-        assert s.covered_by_free_tier_or_credit is True
-        assert s.to_dict()["covered_by_free_tier_or_credit"] is True
+        assert s.covered_by_free_tier_or_credit is None
+        assert s.to_dict()["covered_by_free_tier_or_credit"] == "NOT_OBSERVED"
 
 
 def test_p16_02_cloudwatch_emf_telemetry_specification_compliance() -> None:
@@ -198,20 +213,34 @@ def test_p16_04_aws_builder_architecture_and_evidence_map() -> None:
     assert dict_unresolved["total_net_personal_spend_usd"] == "NOT_OBSERVED"
     assert dict_unresolved["promotional_credit_budget_sufficient"] == "NOT_OBSERVED"
 
-    # 3. With explicit operator observation resolving to repo evidence: binds external truth cleanly
-    obs = AWSAccountObservation(
+    # 3. Repository fixture cannot authorize RECORDED_LIVE (fails closed)
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference="tests/fixtures/aws_account_evidence_record.json",
+        )
+
+    # Legitimate offline fixture observation does NOT promote billing facts
+    obs_fixture = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
-        provenance=EvidenceProvenance.RECORDED_LIVE,
+        provenance=EvidenceProvenance.FIXTURE,
         source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
-    ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
+    ev_map_obs = generate_aws_builder_evidence_map(observation=obs_fixture)
     dict_obs = ev_map_obs.to_dict()
-    assert dict_obs["observed_account_billing_status"] == "FREE_TIER_COMPLIANT"
-    assert dict_obs["total_net_personal_spend_usd"] == "0.00"
-    assert dict_obs["promotional_credit_budget_sufficient"] is True
+    assert dict_obs["observed_account_billing_status"] == "NOT_OBSERVED"
+    assert dict_obs["total_net_personal_spend_usd"] == "NOT_OBSERVED"
+    assert dict_obs["promotional_credit_budget_sufficient"] == "NOT_OBSERVED"
 
 
 def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
@@ -246,22 +275,36 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
     assert ev_map_unresolved.zero_personal_spend_maintained is None
     assert ev_map_unresolved.to_dict()["zero_personal_spend_maintained"] == "NOT_OBSERVED"
 
-    # 3. With explicit operator observation resolving to repo evidence: binds external truth
-    obs = AWSAccountObservation(
+    # 3. Repository fixture cannot authorize RECORDED_LIVE (fails closed)
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference="tests/fixtures/aws_account_evidence_record.json",
+        )
+
+    # Legitimate offline fixture observation does NOT promote zero personal spend
+    obs_fixture_2 = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
-        provenance=EvidenceProvenance.RECORDED_LIVE,
+        provenance=EvidenceProvenance.FIXTURE,
         source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
-    ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
-    assert ev_map_obs.zero_personal_spend_maintained is True
-    assert ev_map_obs.to_dict()["zero_personal_spend_maintained"] is True
+    ev_map_obs_2 = generate_aws_builder_evidence_map(observation=obs_fixture_2)
+    assert ev_map_obs_2.zero_personal_spend_maintained is None
+    assert ev_map_obs_2.to_dict()["zero_personal_spend_maintained"] == "NOT_OBSERVED"
     cw_obs = next(
-        s for s in ev_map_obs.aws_services if s.service_name.startswith("Amazon CloudWatch")
+        s for s in ev_map_obs_2.aws_services if s.service_name.startswith("Amazon CloudWatch")
     )
-    assert cw_obs.covered_by_free_tier_or_credit is True
+    assert cw_obs.covered_by_free_tier_or_credit is None
 
 
 def test_cloudwatch_live_proof_harness_fail_closed_without_approval() -> None:
@@ -460,7 +503,10 @@ def test_aws_account_observation_validation() -> None:
         )
 
     # 3. RECORDED_LIVE with unresolvable or arbitrary URL reference must fail
-    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
+    with pytest.raises(
+        ValueError,
+        match="must resolve to an authentic, independently verified durable account observation",
+    ):
         AWSAccountObservation(
             observed_at=datetime.now(UTC),
             observed_billing_status="FREE_TIER_COMPLIANT",
@@ -470,7 +516,10 @@ def test_aws_account_observation_validation() -> None:
             source_reference="https://aws.amazon.com/billing",
         )
 
-    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
+    with pytest.raises(
+        ValueError,
+        match="must resolve to an authentic, independently verified durable account observation",
+    ):
         AWSAccountObservation(
             observed_at=datetime.now(UTC),
             observed_billing_status="FREE_TIER_COMPLIANT",
@@ -777,7 +826,10 @@ def test_existing_documentation_file_falsely_claiming_zero_spend_rejected() -> N
     assert is_resolved_evidence_reference(doc_path) is False
 
     # 2. RECORDED_LIVE cannot bind to an existing doc file
-    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
+    with pytest.raises(
+        ValueError,
+        match="must resolve to an authentic, independently verified durable account observation",
+    ):
         AWSAccountObservation(
             observed_at=datetime.now(UTC),
             observed_billing_status="FREE_TIER_COMPLIANT",
@@ -851,16 +903,30 @@ def test_aws_account_evidence_provenance_validation_controls() -> None:
     )
     assert is_resolved_evidence_reference(valid_ref, observation=obs_mismatch) is False
 
-    # 6. Caller-provided observation with matching spend accepted
+    # 6. Matching spend in FIXTURE provenance is accepted for offline testing
     obs_match = AWSAccountObservation(
         observed_at=datetime.now(UTC),
         observed_billing_status="FREE_TIER_COMPLIANT",
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
-        provenance=EvidenceProvenance.RECORDED_LIVE,
+        provenance=EvidenceProvenance.FIXTURE,
         source_reference=valid_ref,
     )
     assert is_resolved_evidence_reference(valid_ref, observation=obs_match) is True
+
+    # 7. But RECORDED_LIVE referencing the fixture must fail closed
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference=valid_ref,
+        )
 
 
 def test_cloudwatch_live_proof_conflicting_emission_same_interval_fails_closed() -> None:
@@ -942,3 +1008,283 @@ def test_cloudwatch_live_proof_conflicting_emission_same_interval_fails_closed()
     assert outcome.is_billable is True
     assert outcome.cost_exposure == CostExposure.MAY_HAVE_INCURRED_USAGE
     assert outcome.observed_metric_value is None
+
+
+def test_defect_1_copied_renamed_or_modified_fixture_cannot_authorize_live_billing_evidence(
+    tmp_path: Path,
+) -> None:
+    """Adversarial (Defect 1): Copied, modified, renamed, or developer-created fixture JSON
+
+    cannot authorize RECORDED_LIVE or LIVE_AWS, even if all monetary fields match $0.00.
+    Missing or untrusted account observation leaves all billing facts as NOT_OBSERVED.
+    """
+    from pathlib import Path
+
+    now = datetime.now(UTC)
+    fixture_src = Path("tests/fixtures/aws_account_evidence_record.json")
+    original_data = json.loads(fixture_src.read_text(encoding="utf-8"))
+
+    # 1. Copied fixture with identical $0.00 data in new location
+    copied_file = tmp_path / "copied_account_record.json"
+    copied_file.write_text(json.dumps(original_data), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=now,
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference=str(copied_file),
+        )
+
+    # 2. Renamed file with developer claim of "genuine live observation"
+    renamed_file = tmp_path / "genuine_live_aws_billing_observation.json"
+    renamed_data = dict(original_data)
+    renamed_data["source_identity"] = "independent-live-billing-observer"
+    renamed_data["integrity_reference"] = "sha256:fedcba9876543210fedcba9876543210"
+    renamed_file.write_text(json.dumps(renamed_data), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="repository fixtures and developer-created JSON files",
+    ):
+        AWSAccountObservation(
+            observed_at=now,
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference=str(renamed_file),
+        )
+
+    # 3. Caller-controlled provenance string cannot promote fixture
+    with pytest.raises(ValueError):
+        AWSAccountObservation(
+            observed_at=now,
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.LIVE_AWS,
+            source_reference=str(copied_file),
+        )
+
+    # 4. Offline fixture testing is preserved without granting external authority
+    obs_fixture = AWSAccountObservation(
+        observed_at=now,
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference=str(copied_file),
+    )
+    assert obs_fixture.provenance == EvidenceProvenance.FIXTURE
+
+    # 5. In generate_aws_builder_evidence_map, untrusted/fixture observation remains NOT_OBSERVED
+    ev_map = generate_aws_builder_evidence_map(observation=obs_fixture)
+    assert ev_map.observed_account_billing_status == "NOT_OBSERVED"
+    assert ev_map.total_net_personal_spend_usd is None
+    assert ev_map.zero_personal_spend_maintained is None
+    assert ev_map.promotional_credit_budget_sufficient is None
+    assert ev_map.to_dict()["observed_account_billing_status"] == "NOT_OBSERVED"
+
+
+def test_defect_4_cloudwatch_proof_adversarial_pagination_repeated_values_and_window_bounds() -> (
+    None
+):
+    """Adversarial (Defect 4): >20 records, pagination truncation, repeated metric values,
+
+    and non-exhaustive windows cannot produce an unsupported VERIFIED_METRIC_EXTRACTION.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.aws_builder import CloudWatchLiveProofHarness
+
+    def git_ok(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        return 0, "", ""
+
+    valid_sha = "1111111111111111111111111111111111111111"
+
+    # -------------------------------------------------------------------------
+    # Case A: More than 20 records across multiple pages with conflict on page 2
+    # -------------------------------------------------------------------------
+    mock_logs_a = MagicMock()
+    mock_cw_a = MagicMock()
+    emitted_records_a: list[str] = []
+
+    def mock_put_log_events_a(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records_a.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs_a.put_log_events.side_effect = mock_put_log_events_a
+
+    # 25 filler records (first page)
+    page1_events = [
+        {"message": json.dumps({"Filler": i, "VerificationLatencyMs": 10.0 + i})} for i in range(25)
+    ]
+    # Conflicting identical value 42.0 on page 2
+    conflicting_record_a = json.dumps(
+        {
+            "_aws": {
+                "Timestamp": int(datetime.now(UTC).timestamp() * 1000),
+                "CloudWatchMetrics": [
+                    {
+                        "Namespace": "StillDone/VerificationEngine",
+                        "Dimensions": [["Environment"]],
+                        "Metrics": [{"Name": "VerificationLatencyMs", "Unit": "Milliseconds"}],
+                    }
+                ],
+            },
+            "Environment": "test",
+            "ProofToken": "other-token-on-page-2",
+            "VerificationLatencyMs": 42.0,  # duplicate value across window!
+        }
+    )
+
+    def get_log_events_paginated(**kwargs: Any) -> dict[str, Any]:
+        token = kwargs.get("nextToken")
+        if not token:
+            return {"events": page1_events, "nextForwardToken": "page_2_tok"}
+        if token == "page_2_tok":
+            page2 = [{"message": rec} for rec in emitted_records_a] + [
+                {"message": conflicting_record_a}
+            ]
+            return {"events": page2, "nextForwardToken": None}
+        return {"events": []}
+
+    mock_logs_a.get_log_events.side_effect = get_log_events_paginated
+
+    harness_a = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs_a,
+        cw_client=mock_cw_a,
+        environment="test",
+    )
+
+    outcome_a = harness_a.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+
+    # Across >20 events and 2 pages, the conflict is caught: LOG_INGESTION_OBSERVED
+    assert outcome_a.is_verified is False
+    assert outcome_a.status == "LOG_INGESTION_OBSERVED"
+    assert "LOG_INGESTION_OBSERVED" in outcome_a.details
+
+    # -------------------------------------------------------------------------
+    # Case B: Truncated / infinite pagination (non-exhaustive retrieval)
+    # -------------------------------------------------------------------------
+    mock_logs_b = MagicMock()
+    mock_cw_b = MagicMock()
+    emitted_records_b: list[str] = []
+
+    def mock_put_log_events_b(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records_b.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs_b.put_log_events.side_effect = mock_put_log_events_b
+
+    # Always returns nextToken without ending
+    call_count = 0
+
+    def get_log_events_infinite(**kwargs: Any) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        evs = (
+            [{"message": rec} for rec in emitted_records_b]
+            if emitted_records_b
+            else [{"message": "{}"}]
+        )
+        return {
+            "events": evs,
+            "nextForwardToken": f"infinite_tok_{call_count}",
+        }
+
+    mock_logs_b.get_log_events.side_effect = get_log_events_infinite
+
+    harness_b = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs_b,
+        cw_client=mock_cw_b,
+        environment="test",
+    )
+
+    outcome_b = harness_b.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+
+    assert outcome_b.is_verified is False
+    assert outcome_b.status == "LOG_INGESTION_OBSERVED"
+    assert "Non-exhaustive log event retrieval" in outcome_b.details
+
+    # -------------------------------------------------------------------------
+    # Case C: Repeated metric values in CloudWatch metric query (len(matching) > 1)
+    # -------------------------------------------------------------------------
+    mock_logs_c = MagicMock()
+    mock_cw_c = MagicMock()
+    emitted_records_c: list[str] = []
+
+    def mock_put_log_events_c(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records_c.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs_c.put_log_events.side_effect = mock_put_log_events_c
+    mock_logs_c.get_log_events.side_effect = lambda **kwargs: {
+        "events": [{"message": rec} for rec in emitted_records_c]
+    }
+
+    # CloudWatch get_metric_data returns multiple matching values [42.0, 42.0]
+    now_dt = datetime.now(UTC)
+    mock_cw_c.get_metric_data.return_value = {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Values": [42.0, 42.0],  # repeated metric value in shared series!
+                "Timestamps": [now_dt, now_dt],
+            }
+        ]
+    }
+
+    harness_c = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs_c,
+        cw_client=mock_cw_c,
+        environment="test",
+    )
+
+    outcome_c = harness_c.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+
+    assert outcome_c.is_verified is False
+    assert outcome_c.status == "LOG_INGESTION_OBSERVED"
+    assert "Repeated metric values observed in emission window" in outcome_c.details

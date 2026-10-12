@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote SHA: `714f28dc6b4fd252012532007e507ce4e3b525d4` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Consolidated Closure Repair Applied (all offline & dual-runtime tests PASS; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote SHA: `ac58e057d7618b1a32e73103e4c1a1d93c71e4ad` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Final Authority & Evidence Closure Applied (Defects 1-5 closed; all offline & dual-runtime tests PASS: 2,334 core + 1,155 strands; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,20 +74,19 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: Consolidated Closure Repair — P-13 + P-16 Integrity Defects
+Active task: STILLDONE — P-13 + P-16 FINAL AUTHORITY & EVIDENCE CLOSURE (Defects 1-5)
 
-Starting Remote SHA: `714f28dc6b4fd252012532007e507ce4e3b525d4`
+Starting Remote SHA: `ac58e057d7618b1a32e73103e4c1a1d93c71e4ad`
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 + P-16: Consolidated Closure Repair Applied (PASS Candidate, awaiting independent QA review)
-  - Item 1 (CI Typing): Dynamic typed import boundary in `scripts/p13_killer_mission.py` resolving `google.oauth2.credentials` and unused `type: ignore` without adding Google SDK to core dependencies or weakening mypy.
-  - Item 2 (AWS Account Evidence Authority): Typed `AWSAccountEvidenceRecord` JSON fixture required; arbitrary files (`docs/AWS_BUILDER_MAP.md`), empty files, traversal, untrusted paths, and caller claim mismatches rejected fail-closed; unverified evidence leaves account facts `NOT_OBSERVED`; P-16.05 remains `BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`.
-  - Item 3 (Live Plan Validation Order): Bedrock proposal + canonical 3-step contract validation strictly precede disposable seeding; invalid candidate plan produces zero Google Calendar/Tasks mutations (`total_writes_performed == 0`, `writes_performed == 0`), zero approval consumption, and `MissionState.FAILED`.
-  - Item 4 (Live Approval Alternate Entry Closed): Direct `decision="APPROVE"` bypass rejected with `KillerMissionAuthorityError`; requires `AuthorizedPostPendingApprovalDecision` binding pending ID, target event ID, parameter fingerprint, decided_at freshness, and one-time consumption to prevent replay.
-  - Item 5 (CloudWatch Single-Emission Correlation): Conflicting emission with identical value within 60-second window without matching proof token fails closed as `LOG_INGESTION_OBSERVED` with `is_verified=False` (not `VERIFIED_METRIC_EXTRACTION`). P-16.03 remains `BLOCKED_LIVE / NOT_RUN`.
-  - Item 6 (Raw Provider ID Redaction): External Calendar/Tasks IDs redacted across public serializers (`snapshot.to_dict()`, `outcome.to_dict()`, `receipt.to_dict()`, `step_record.to_dict()`, `step_result.to_dict()`), while preserved internally in `ProviderExecutionResult.details` for read-back verification.
+- P-13 + P-16: Final Authority & Evidence Closure Applied (Defects 1-5 closed; PASS Candidate, awaiting independent QA review)
+  - Defect 1 (AWS Account Fixture Boundary): Enforced strict provenance boundary rejecting test fixtures, repository paths, synthetic integrity references, and arbitrary caller provenance strings from authorizing `RECORDED_LIVE` or live billing evidence; untrusted observations fail closed to `NOT_OBSERVED`; P-16.05 remains `BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`.
+  - Defect 2 (Authenticated Human Approval Channel): Removed raw `APPROVE` callback auto-promotion in `LiveKillerMissionSliceRunner.step_p13_05_calendar_approve()`; self-declared callbacks/dataclasses cannot grant consent; requires verified `approval_channel` protocol; unauthenticated approval reports `BLOCKED_APPROVAL_CHANNEL` with 0 Calendar writes (negative invariant proven).
+  - Defect 3 (Canonical Execution Ordering): Removed test-only production bypass `if "step_p13_02_plan" in self.__dict__:` from `LiveKillerMissionSliceRunner.run_full_slice()`; enforced strict canonical order: preflight -> candidate Bedrock proposal & plan validation -> authorized resource seeding -> binding -> compilation & execution -> read-back -> transition; invalid plan fails closed with 0 writes before seeding.
+  - Defect 4 (CloudWatch Metric Proof Correlation): CloudWatch proof harness handles paginated log retrieval across up to 10 pages; non-exhaustive pagination, truncated event windows, or duplicate/repeated metric values retain `status="LOG_INGESTION_OBSERVED"` with `is_verified=False` rather than overclaiming `VERIFIED_METRIC_EXTRACTION`; P-16.03 remains `BLOCKED_LIVE / NOT_RUN`.
+  - Defect 5 (Public Snapshot Privacy Separation): Created explicit boundary between privacy-safe public serialization (`to_public_dict()`) and authoritative durable serialization (`to_authoritative_dict()`); public output redacts all external Calendar event IDs, Tasks IDs, `resource_id`, `parent_id`, and human summaries with zero leakage; authoritative reload preserves exact identities; `from_dict()` fails closed with `SnapshotIntegrityError` if fed public redacted JSON.
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
 - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.

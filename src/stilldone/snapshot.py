@@ -76,6 +76,7 @@ from stilldone.pending_approval import (
     PendingApproval,
     PendingApprovalStatus,
 )
+from stilldone.redaction import REDACTED_IDENTIFIER, redact
 from stilldone.serialization import (
     canonical_json,
 )
@@ -507,9 +508,14 @@ class MissionSnapshot:
             authoritative=authoritative,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert snapshot to deterministic serializable dictionary."""
+    def to_authoritative_dict(self) -> dict[str, Any]:
+        """Convert snapshot to authoritative durable persistence dictionary.
+
+        Retains all exact external resource IDs, parent IDs, parameters, and details
+        necessary for reload, approval binding, authoritative read-back, and reconciliation.
+        """
         return {
+            "serialization_boundary": "AUTHORITATIVE_DURABLE",
             "snapshot_id": self.snapshot_id,
             "snapshot_version": self.snapshot_version,
             "mission_id": str(self.mission_id),
@@ -559,7 +565,7 @@ class MissionSnapshot:
                 str(aid): [str(d) for d in deps] for aid, deps in self.action_dependencies.items()
             },
             "step_records": {
-                str(aid): sr.to_dict(redact_identifiers=True)
+                str(aid): sr.to_dict(redact_identifiers=False)
                 for aid, sr in self.step_records.items()
             },
             "pending_approvals": [
@@ -578,7 +584,11 @@ class MissionSnapshot:
                     "parameters": pa.parameters.to_dict(),
                     "parameters_digest": pa.parameters_digest,
                     "requested_at": pa.requested_at.isoformat(),
-                    "decision_contract": pa.decision_contract,
+                    "decision_contract": (
+                        pa.decision_contract.to_dict()
+                        if hasattr(pa.decision_contract, "to_dict")
+                        else pa.decision_contract
+                    ),
                     "status": pa.status.value,
                     "decision_options": list(pa.decision_options),
                 }
@@ -610,6 +620,167 @@ class MissionSnapshot:
             "evidence_ids": [str(eid) for eid in self.evidence_ids],
             "predicate_bindings": [b.to_dict() for b in self.predicate_bindings],
         }
+
+    @staticmethod
+    def _sanitize_decision_contract_dict(
+        contract_data: Any,
+        resource_id: str | None = None,
+        parent_id: str | None = None,
+    ) -> Any:
+        if not isinstance(contract_data, dict):
+            return contract_data
+        res = dict(contract_data)
+        if "human_summary" in res and isinstance(res["human_summary"], str):
+            summary = res["human_summary"]
+            if resource_id and resource_id in summary:
+                summary = summary.replace(resource_id, REDACTED_IDENTIFIER)
+            if parent_id and parent_id in summary:
+                summary = summary.replace(parent_id, REDACTED_IDENTIFIER)
+            res["human_summary"] = summary
+        return res
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Convert snapshot to privacy-safe public / judge serialization dictionary.
+
+        Redacts all raw external provider identifiers (Google Calendar event IDs,
+        Google Tasks IDs, task list IDs, calendar IDs, private resource identifiers,
+        tokens, and secrets) across actions, targets, parameters, pending approvals,
+        step records, and predicate bindings.
+        """
+        return {
+            "serialization_boundary": "PUBLIC_JUDGE_VIEW",
+            "snapshot_id": self.snapshot_id,
+            "snapshot_version": self.snapshot_version,
+            "mission_id": str(self.mission_id),
+            "state": self.state.value,
+            "created_at": self.created_at.isoformat(),
+            "contract": {
+                "mission_id": str(self.contract.mission_id),
+                "created_at": self.contract.created_at.isoformat(),
+                "schema_version": self.contract.schema_version,
+                "intent": {
+                    "text": self.contract.intent.text,
+                    "captured_at": self.contract.intent.captured_at.isoformat(),
+                    "mission_id": str(self.contract.intent.mission_id),
+                },
+            },
+            "desired_state": [
+                {
+                    "predicate_id": str(p.predicate_id),
+                    "mission_id": str(p.mission_id),
+                    "subject": p.subject,
+                    "operator": p.operator.value,
+                    "expected_value": p.expected_value,
+                    "required": p.required,
+                    "freshness": {
+                        "mode": p.freshness.mode.value,
+                        "max_age_seconds": p.freshness.max_age_seconds,
+                    },
+                }
+                for p in self.desired_state
+            ],
+            "actions": [
+                {
+                    "action_id": str(a.action_id),
+                    "mission_id": str(a.mission_id),
+                    "action_type": a.action_type.value,
+                    "target": {
+                        "system": a.target.system,
+                        "resource_kind": a.target.resource_kind.value,
+                        "resource_id": REDACTED_IDENTIFIER,
+                        "parent_id": REDACTED_IDENTIFIER if a.target.parent_id else None,
+                    },
+                    "parameters": redact(a.parameters.to_dict()),
+                }
+                for a in self.actions
+            ],
+            "action_dependencies": {
+                str(aid): [str(d) for d in deps] for aid, deps in self.action_dependencies.items()
+            },
+            "step_records": {
+                str(aid): redact(sr.to_dict(redact_identifiers=True))
+                for aid, sr in self.step_records.items()
+            },
+            "pending_approvals": [
+                {
+                    "pending_approval_id": str(pa.pending_approval_id),
+                    "mission_id": str(pa.mission_id),
+                    "action_id": str(pa.action_id),
+                    "action_type": pa.action_type.value,
+                    "authority_class": pa.authority_class.value,
+                    "target": {
+                        "system": pa.target.system,
+                        "resource_kind": pa.target.resource_kind.value,
+                        "resource_id": REDACTED_IDENTIFIER,
+                        "parent_id": REDACTED_IDENTIFIER if pa.target.parent_id else None,
+                    },
+                    "parameters": redact(pa.parameters.to_dict()),
+                    "parameters_digest": pa.parameters_digest,
+                    "requested_at": pa.requested_at.isoformat(),
+                    "decision_contract": (
+                        self._sanitize_decision_contract_dict(
+                            pa.decision_contract.to_dict()
+                            if hasattr(pa.decision_contract, "to_dict")
+                            else pa.decision_contract,
+                            pa.target.resource_id,
+                            pa.target.parent_id,
+                        )
+                    ),
+                    "status": pa.status.value,
+                    "decision_options": list(pa.decision_options),
+                }
+                for pa in self.pending_approvals
+            ],
+            "consumed_approvals": [
+                {
+                    "approval_id": str(ca.approval_id),
+                    "mission_id": str(ca.mission_id),
+                    "action_id": str(ca.action_id),
+                    "binding_hash": str(ca.binding_hash),
+                    "status": ca.status.value,
+                    "consumed_at": ca.consumed_at.isoformat(),
+                    "attempt_number": ca.attempt_number,
+                    "reason": ca.reason,
+                }
+                for ca in self.consumed_approvals
+            ],
+            "execution_attempts": [
+                {
+                    "action_id": str(att.action_id),
+                    "idempotency_key": str(att.idempotency_key),
+                    "attempt_number": att.attempt_number,
+                    "started_at": att.started_at.isoformat(),
+                    "attempt_id": str(att.attempt_id),
+                }
+                for att in self.execution_attempts
+            ],
+            "evidence_ids": [str(eid) for eid in self.evidence_ids],
+            "predicate_bindings": [
+                {
+                    "predicate_id": str(b.predicate_id),
+                    "mission_id": str(b.mission_id),
+                    "target": {
+                        "system": b.target.system,
+                        "resource_kind": b.target.resource_kind.value,
+                        "resource_id": REDACTED_IDENTIFIER,
+                        "parent_id": REDACTED_IDENTIFIER if b.target.parent_id else None,
+                    },
+                }
+                for b in self.predicate_bindings
+            ],
+        }
+
+    def to_dict(self, *, for_public: bool = False) -> dict[str, Any]:
+        """Convert snapshot to dictionary.
+
+        Defaults to authoritative durable serialization for persistence, reload,
+        and receipt verification. When for_public is True, returns privacy-safe
+        public / judge serialization with all raw external provider identifiers
+        redacted.
+        """
+        if for_public:
+            return self.to_public_dict()
+        return self.to_authoritative_dict()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MissionSnapshot:
@@ -643,6 +814,12 @@ class MissionSnapshot:
         version = data["snapshot_version"]
         if not isinstance(version, str) or version not in SUPPORTED_SNAPSHOT_VERSIONS:
             raise UnknownSnapshotVersionError(f"Unsupported snapshot version: {version!r}")
+
+        if data.get("serialization_boundary") == "PUBLIC_JUDGE_VIEW":
+            raise SnapshotIntegrityError(
+                "Cannot deserialize authoritative snapshot from public redacted serialization. "
+                "Private authoritative persistence is required."
+            )
 
         try:
             m_id = MissionId(data["mission_id"])
@@ -687,6 +864,13 @@ class MissionSnapshot:
             acts: list[ActionContract] = []
             for ad in data["actions"]:
                 td = ad["target"]
+                r_id = td.get("resource_id", "")
+                p_id = td.get("parent_id") or ""
+                if "[REDACTED" in str(r_id) or "[REDACTED" in str(p_id):
+                    raise SnapshotIntegrityError(
+                        "Cannot deserialize authoritative snapshot containing "
+                        "redacted provider identifiers."
+                    )
                 target = TargetIdentity(
                     system=td["system"],
                     resource_kind=ResourceKind(td["resource_kind"]),

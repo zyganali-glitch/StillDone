@@ -108,6 +108,8 @@ SENSITIVE_IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "calendar_event_id",
         "target_event_id",
         "target_task_id",
+        "resource_id",
+        "parent_id",
     }
 )
 

@@ -1337,6 +1337,38 @@ def _live_runner_for_boundary_tests(
         tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
         weather_transport=OpenMeteoHttpTransport(),
     )
+    if "bedrock_planner" not in kwargs:
+        from stilldone.planning.bedrock import BedrockPlannerAdapter
+        from stilldone.planning.contracts import (
+            CandidateActionProposal,
+            CandidatePlanProposal,
+            SymbolicTargetRef,
+        )
+
+        fake_p = MagicMock(spec=BedrockPlannerAdapter)
+        valid_p = CandidatePlanProposal.create(
+            mission_id="11111111-2222-3333-4444-555555555555",
+            steps=[
+                CandidateActionProposal.create(
+                    action_type=ActionType.WEATHER_READ,
+                    target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                    parameters={},
+                ),
+                CandidateActionProposal.create(
+                    action_type=ActionType.TASK_CREATE,
+                    target_ref=SymbolicTargetRef.TASK_LIST,
+                    parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+                ),
+                CandidateActionProposal.create(
+                    action_type=ActionType.CALENDAR_UPDATE,
+                    target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+                    parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+                ),
+            ],
+        )
+        fake_p.plan.return_value = MagicMock(plan=valid_p)
+        kwargs["bedrock_planner"] = fake_p
+
     runner = LiveKillerMissionSliceRunner(
         env=live_env,
         operator_approved=True,
@@ -1639,7 +1671,11 @@ def test_defect_e_live_ready_stops_before_fixture_drift(monkeypatch: pytest.Monk
         runner.ready_receipt_hash = "a" * 64
         return _ok("P-13.06")
 
-    monkeypatch.setattr(runner, "step_p13_01_seed", lambda: _ok("P-13.01"))
+    def _seed() -> KillerMissionStepResult:
+        runner.seeded_event_id = "PROVIDER_EVT_READY_TEST"
+        return _ok("P-13.01")
+
+    monkeypatch.setattr(runner, "step_p13_01_seed", _seed)
     monkeypatch.setattr(runner, "step_p13_02_plan", lambda: _ok("P-13.02"))
     monkeypatch.setattr(runner, "step_p13_03_tasks_prep", lambda: _ok("P-13.03"))
     monkeypatch.setattr(runner, "step_p13_04_calendar_pause", lambda: _ok("P-13.04"))
@@ -1900,3 +1936,296 @@ def test_raw_provider_ids_redacted_in_public_serializers() -> None:
     assert step_res_dict["extra_metadata"]["event_id"] == REDACTED_IDENTIFIER
     assert sentinel_task not in json.dumps(step_res_dict)
     assert sentinel_event not in json.dumps(step_res_dict)
+
+
+def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defect 2: Human approval must come from an authenticated, trusted human channel.
+
+    Negative invariant: Unauthenticated approval -> 0 Calendar writes.
+    - Raw callback return value "APPROVE" -> BLOCKED_APPROVAL_CHANNEL, 0 writes.
+    - Self-constructed AuthorizedPostPendingApprovalDecision without channel
+      -> BLOCKED_APPROVAL_CHANNEL, 0 writes.
+    - Direct call to step_p13_05_calendar_approve without channel
+      -> BLOCKED_APPROVAL_CHANNEL, 0 writes.
+    - Approval channel returning False -> BLOCKED_APPROVAL_CHANNEL, 0 writes.
+    - Authenticated approval channel returning True -> grants live mutation authority.
+    - Rejection -> REJECTED with 0 writes.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.killer_mission import (
+        AuthenticatedHumanApprovalChannel,
+        KillerMissionSliceRunner,
+        KillerMissionStepResult,
+        create_authorized_post_pending_decision,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+
+    runner = _live_runner_for_boundary_tests(monkeypatch)
+    runner.seeded_event_id = "provider_evt_live_test_456"
+
+    # Setup up to approval pause
+    runner.step_p13_04_calendar_pause()
+    assert runner.pending_approval is not None
+    pending = runner.pending_approval
+
+    super_approve_spy = MagicMock(
+        return_value=KillerMissionStepResult(
+            task_id="P-13.05",
+            step_name="Approve, Execute & Verify Calendar Update",
+            status="PASS",
+            provenance=runner.env.provenance,
+            details="Mocked super pass",
+            writes_performed=1,
+            is_verified=True,
+        )
+    )
+    monkeypatch.setattr(KillerMissionSliceRunner, "step_p13_05_calendar_approve", super_approve_spy)
+
+    # Case 2A: Callback returns raw "APPROVE" -> blocked, 0 writes
+    runner.post_pending_decision_callback = lambda p: "APPROVE"
+    res_raw = runner.step_p13_05_calendar_approve()
+    assert res_raw.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_raw.writes_performed == 0
+    assert "Live calendar mutation blocked" in res_raw.details
+    assert "0 writes performed" in res_raw.details
+    super_approve_spy.assert_not_called()
+
+    # Case 2B: Callback returns decision WITHOUT approval_channel -> blocked, 0 writes
+    auth_dec = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.APPROVE,
+    )
+    runner.post_pending_decision_callback = lambda p: auth_dec
+    runner.approval_channel = None
+    res_no_channel = runner.step_p13_05_calendar_approve()
+    assert res_no_channel.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_no_channel.writes_performed == 0
+    assert "no authenticated, trusted human decision channel" in res_no_channel.details
+    super_approve_spy.assert_not_called()
+
+    # Case 2C: Direct call with decision WITHOUT approval_channel -> blocked, 0 writes
+    auth_dec_direct = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.APPROVE,
+    )
+    res_direct = runner.step_p13_05_calendar_approve(decision=auth_dec_direct)
+    assert res_direct.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_direct.writes_performed == 0
+    super_approve_spy.assert_not_called()
+
+    # Case 2D: Approval channel rejects/untrusted -> blocked, 0 writes
+    mock_untrusted_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
+    mock_untrusted_channel.verify_decision.return_value = False
+    runner.approval_channel = mock_untrusted_channel
+    auth_dec_untrusted = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.APPROVE,
+    )
+    res_untrusted = runner.step_p13_05_calendar_approve(decision=auth_dec_untrusted)
+    assert res_untrusted.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_untrusted.writes_performed == 0
+    super_approve_spy.assert_not_called()
+
+    # Case 2E: Authenticated trusted channel (verify_decision returns True) -> succeeds
+    mock_trusted_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
+    mock_trusted_channel.verify_decision.return_value = True
+    runner.approval_channel = mock_trusted_channel
+    auth_dec_trusted = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.APPROVE,
+    )
+    res_trusted = runner.step_p13_05_calendar_approve(decision=auth_dec_trusted)
+    assert res_trusted.status == "PASS"
+    assert res_trusted.writes_performed == 1
+    super_approve_spy.assert_called_once_with(decision=ApprovalDecision.APPROVE)
+
+
+def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defect 3: Remove test-only production execution bypass completely.
+
+    Enforce canonical order:
+    1. Bounded Bedrock proposal & exact canonical plan validation BEFORE ANY SEEDING.
+    2. Invalid plan -> fails closed with final_state=FAILED, 0 seeding writes, 0 action writes.
+    3. step_p13_01_seed() fails closed before seeding if candidate plan is invalid.
+    """
+    # Verify no test-only bypass in source code of LiveKillerMissionSliceRunner.run_full_slice
+    import inspect
+    from unittest.mock import MagicMock
+
+    from stilldone.killer_mission import LiveKillerMissionSliceRunner
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        SymbolicTargetRef,
+    )
+
+    run_full_slice_source = inspect.getsource(LiveKillerMissionSliceRunner.run_full_slice)
+    assert '"step_p13_02_plan" in self.__dict__' not in run_full_slice_source
+    assert "__dict__" not in run_full_slice_source
+
+    # 1. Invalid plan: only 2 steps (missing CALENDAR_UPDATE)
+    bad_planner = MagicMock(spec=BedrockPlannerAdapter)
+    bad_plan = CandidatePlanProposal.create(
+        mission_id="11111111-2222-3333-4444-555555555555",
+        steps=[
+            CandidateActionProposal.create(
+                action_type=ActionType.WEATHER_READ,
+                target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                parameters={},
+            ),
+            CandidateActionProposal.create(
+                action_type=ActionType.TASK_CREATE,
+                target_ref=SymbolicTargetRef.TASK_LIST,
+                parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+            ),
+        ],
+    )
+    bad_planner.plan.return_value = MagicMock(plan=bad_plan)
+
+    runner = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=bad_planner)
+
+    cal_seed_spy = MagicMock()
+    tasks_seed_spy = MagicMock()
+    runner.env.cal_seed_transport.create_event = cal_seed_spy  # type: ignore[attr-defined]
+    runner.env.tasks_seed_transport.create_task_list = tasks_seed_spy  # type: ignore[attr-defined]
+
+    # run_full_slice must fail closed before any seeding mutation
+    outcome = runner.run_full_slice()
+    assert outcome.final_state == MissionState.FAILED
+    assert outcome.total_writes_performed == 0
+    assert outcome.steps["P-13.01"].status == "NOT_RUN"
+    assert outcome.steps["P-13.02"].status == "FAILED"
+    assert "InvalidActionCountError" in outcome.steps["P-13.02"].details
+    cal_seed_spy.assert_not_called()
+    tasks_seed_spy.assert_not_called()
+
+    # Direct call to step_p13_01_seed() must also fail before mutating
+    runner_direct = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=bad_planner)
+    cal_seed_spy2 = MagicMock()
+    runner_direct.env.cal_seed_transport.create_event = cal_seed_spy2  # type: ignore[attr-defined]
+    from stilldone.killer_mission import CanonicalKillerPlanValidationError
+
+    with pytest.raises(CanonicalKillerPlanValidationError):
+        runner_direct.step_p13_01_seed()
+    cal_seed_spy2.assert_not_called()
+    assert runner_direct.total_writes == 0
+
+
+def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload() -> None:
+    """Defect 5: Public snapshot must not leak raw external provider identifiers,
+
+    while private durable snapshot preserves exact identifiers for authoritative recovery.
+    """
+    from stilldone.action_policy import validate_action_contract
+    from stilldone.domain.action import (
+        ActionContract,
+        ActionType,
+        ResourceKind,
+        TargetIdentity,
+    )
+    from stilldone.domain.desired_state import (
+        DesiredStatePredicate,
+        FreshnessContract,
+        PredicateId,
+        PredicateOperator,
+    )
+    from stilldone.domain.mission import MissionContract, MissionId
+    from stilldone.pending_approval import create_pending_approval
+    from stilldone.redaction import REDACTED_IDENTIFIER
+    from stilldone.snapshot import (
+        MissionSnapshot,
+        SnapshotIntegrityError,
+        create_mission_snapshot,
+    )
+
+    mid = MissionId("11111111-2222-3333-4444-555555555555")
+    contract = MissionContract.create("demo intent", mission_id=mid)
+    act = ActionContract.create(
+        mission_id=mid,
+        action_type=ActionType.CALENDAR_UPDATE,
+        target=TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="provider_evt_secret_calendar_99999",
+            parent_id="provider_cal_secret_11111",
+        ),
+        parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+    )
+    pred = DesiredStatePredicate(
+        predicate_id=PredicateId("22222222-2222-2222-2222-222222222222"),
+        mission_id=mid,
+        subject="start_time",
+        operator=PredicateOperator.EQUALS,
+        expected_value="2026-10-04T07:30:00+00:00",
+        required=True,
+        freshness=FreshnessContract.current(),
+    )
+    val_act = validate_action_contract(act)
+    pending = create_pending_approval(val_act, requested_at=datetime.now(UTC))
+
+    snapshot = create_mission_snapshot(
+        mission_id=mid,
+        state=MissionState.NEEDS_APPROVAL,
+        contract=contract,
+        desired_state=[pred],
+        actions=[act],
+        pending_approvals=[pending],
+        created_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
+    )
+
+    # 1. Authoritative durable serialization
+    auth_dict = snapshot.to_authoritative_dict()
+    assert auth_dict["serialization_boundary"] == "AUTHORITATIVE_DURABLE"
+    auth_json = json.dumps(auth_dict)
+    assert "provider_evt_secret_calendar_99999" in auth_json
+    assert "provider_cal_secret_11111" in auth_json
+
+    # Round-trip recovery from authoritative durable serialization
+    recovered = MissionSnapshot.from_dict(auth_dict)
+    assert recovered.mission_id == snapshot.mission_id
+    assert recovered.state == snapshot.state
+    assert len(recovered.actions) == len(snapshot.actions)
+    assert recovered.actions[0].target.resource_id == "provider_evt_secret_calendar_99999"
+    assert recovered.actions[0].target.parent_id == "provider_cal_secret_11111"
+    assert recovered.pending_approvals[0].target.resource_id == "provider_evt_secret_calendar_99999"
+
+    # 2. Public judge serialization
+    pub_dict = snapshot.to_public_dict()
+    assert pub_dict["serialization_boundary"] == "PUBLIC_JUDGE_VIEW"
+    pub_json = json.dumps(pub_dict)
+
+    # Zero raw external provider identifiers leak into public serialization
+    assert "provider_evt_secret_calendar_99999" not in pub_json
+    assert "provider_cal_secret_11111" not in pub_json
+
+    # Actions and pending approvals have their target resource_id and parent_id redacted
+    for a_pub in pub_dict.get("actions", []):
+        assert a_pub["target"]["resource_id"] == REDACTED_IDENTIFIER
+        if a_pub["target"].get("parent_id"):
+            assert a_pub["target"]["parent_id"] == REDACTED_IDENTIFIER
+
+    for pa_pub in pub_dict.get("pending_approvals", []):
+        assert pa_pub["target"]["resource_id"] == REDACTED_IDENTIFIER
+        if pa_pub["target"].get("parent_id"):
+            assert pa_pub["target"]["parent_id"] == REDACTED_IDENTIFIER
+
+    # 3. Fail-closed recovery: Deserializing public redacted view must raise SnapshotIntegrityError
+    with pytest.raises(
+        SnapshotIntegrityError,
+        match="Cannot deserialize authoritative snapshot from public redacted serialization",
+    ):
+        MissionSnapshot.from_dict(pub_dict)

@@ -178,9 +178,37 @@ def is_resolved_evidence_reference(
     source_reference: str | None,
     observation: AWSAccountObservation | None = None,
 ) -> bool:
-    """Validate whether a source reference resolves to a valid durable AWS account record."""
-    valid, _ = validate_account_evidence_record(source_reference, observation=observation)
-    return valid
+    """Validate whether a source reference resolves to a valid durable AWS account record.
+
+    Enforces:
+    - Syntactic and schema validity of the durable JSON record.
+    - Strict provenance boundary: A repository fixture, developer-created JSON file,
+      arbitrary source label, or placeholder hash must never authorize RECORDED_LIVE or LIVE_AWS.
+    - Untrusted or synthetic files cannot serve as live account billing evidence.
+    """
+    valid, rec = validate_account_evidence_record(source_reference, observation=observation)
+    if not valid or rec is None:
+        return False
+
+    # Enforce provenance and authenticity boundary for live evidence:
+    if observation is not None and observation.provenance in (
+        EvidenceProvenance.RECORDED_LIVE,
+        EvidenceProvenance.LIVE_AWS,
+    ):
+        if not source_reference:
+            return False
+        normalized_ref = source_reference.replace("\\", "/").lower()
+        if "tests/" in normalized_ref or "fixtures/" in normalized_ref:
+            return False
+        if rec.integrity_reference.startswith("sha256:0123456789abcdef"):
+            return False
+        if rec.source_identity in ("aws-cost-explorer-cli", "test-fixture", "placeholder"):
+            return False
+        # Genuine external observation verification is not implemented in offline repo;
+        # fail closed fail-safe against simulated live evidence promotion.
+        return False
+
+    return True
 
 
 # ===========================================================================
@@ -247,7 +275,12 @@ def audit_critical_path_aws_services(
     coverage = (
         observation.promotional_credit_budget_sufficient
         if (
-            observation is not None and is_resolved_evidence_reference(observation.source_reference)
+            observation is not None
+            and observation.provenance
+            in (EvidenceProvenance.LIVE_AWS, EvidenceProvenance.RECORDED_LIVE)
+            and is_resolved_evidence_reference(
+                observation.source_reference, observation=observation
+            )
         )
         else None
     )
@@ -943,20 +976,47 @@ class CloudWatchLiveProofHarness:
                 logEvents=[{"timestamp": timestamp_ms, "message": payload_json}],
             )
 
-            # 5. Independent read-back polling loop
+            # 5. Independent read-back polling loop with pagination and exhaustive retrieval
             deadline = time.time() + timeout_seconds
             token_found = False
             observed_payload: dict[str, Any] | None = None
+            all_window_events: list[dict[str, Any]] = []
+            is_exhaustive = True
+            pagination_truncated = False
 
             while time.time() < deadline:
-                response = logs_client.get_log_events(
-                    logGroupName=self.log_group_name,
-                    logStreamName=self.log_stream_name,
-                    startFromHead=False,
-                    limit=20,
-                )
-                events = response.get("events", [])
-                for ev in events:
+                page_events: list[dict[str, Any]] = []
+                next_token: str | None = None
+                pages_fetched = 0
+                max_pages = 10
+
+                while pages_fetched < max_pages:
+                    kwargs: dict[str, Any] = {
+                        "logGroupName": self.log_group_name,
+                        "logStreamName": self.log_stream_name,
+                        "startFromHead": False,
+                        "limit": 100,
+                    }
+                    if next_token:
+                        kwargs["nextToken"] = next_token
+
+                    response = logs_client.get_log_events(**kwargs)
+                    cur_events = response.get("events", [])
+                    page_events.extend(cur_events)
+                    pages_fetched += 1
+
+                    new_token = response.get("nextForwardToken") or response.get("nextToken")
+                    if not new_token or new_token == next_token:
+                        break
+                    next_token = new_token
+
+                if pages_fetched >= max_pages and next_token:
+                    pagination_truncated = True
+                    is_exhaustive = False
+
+                all_window_events = page_events
+
+                for ev in all_window_events:
                     msg = ev.get("message", "")
                     if proof_token in msg:
                         token_found = True
@@ -965,6 +1025,7 @@ class CloudWatchLiveProofHarness:
                         except Exception:
                             pass
                         break
+
                 if token_found:
                     break
                 time.sleep(poll_interval_seconds)
@@ -986,9 +1047,30 @@ class CloudWatchLiveProofHarness:
                     cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
+            # Non-exhaustive event retrieval cannot establish uniqueness or absence of conflicts
+            if not is_exhaustive or pagination_truncated:
+                return CloudWatchLiveProofResult(
+                    status="LOG_INGESTION_OBSERVED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        "Non-exhaustive log event retrieval (pagination truncated or incomplete); "
+                        "absence of conflicting metric emissions cannot be established without "
+                        "exhaustive stream observation. Classifying as LOG_INGESTION_OBSERVED, "
+                        "not VERIFIED_METRIC_EXTRACTION."
+                    ),
+                    observed_metric_value=None,
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
             # Correlation check: detect if another emission in the interval carries identical value
             conflicting_emissions: list[dict[str, Any]] = []
-            for ev in events:
+            for ev in all_window_events:
                 msg = ev.get("message", "")
                 try:
                     parsed_ev = json.loads(msg)
@@ -1360,6 +1442,27 @@ class CloudWatchLiveProofHarness:
                         cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                     )
 
+                if len(matching) > 1:
+                    return CloudWatchLiveProofResult(
+                        status="LOG_INGESTION_OBSERVED",
+                        namespace=namespace,
+                        metric_name=metric_name,
+                        region=self.region,
+                        source_sha=source_sha,
+                        timestamp_utc=datetime.now(UTC).isoformat(),
+                        details=(
+                            f"Repeated metric values observed in emission window ({matching}); "
+                            "shared metric-series observation cannot prove exact 1:1 "
+                            "emission-to-metric extraction without unmetered high-cardinality "
+                            "dimensions. Classifying as LOG_INGESTION_OBSERVED, not "
+                            "VERIFIED_METRIC_EXTRACTION."
+                        ),
+                        observed_metric_value=None,
+                        is_verified=False,
+                        is_billable=True,
+                        cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                    )
+
                 observed_metric_value = float(matching[0])
                 metric_verified = True
                 break
@@ -1435,13 +1538,15 @@ class AWSAccountObservation:
             raise ValueError("observed_at must be timezone-aware (UTC)")
         if not isinstance(self.provenance, EvidenceProvenance):
             raise TypeError("provenance must be an EvidenceProvenance instance")
-        if self.provenance == EvidenceProvenance.RECORDED_LIVE:
+        if self.provenance in (EvidenceProvenance.RECORDED_LIVE, EvidenceProvenance.LIVE_AWS):
             if not self.source_reference or not self.source_reference.strip():
                 raise ValueError("source_reference is required when provenance is RECORDED_LIVE")
             if not is_resolved_evidence_reference(self.source_reference, observation=self):
                 raise ValueError(
-                    "source_reference for RECORDED_LIVE must resolve to an existing durable "
-                    f"evidence artifact in the repository; got {self.source_reference!r}"
+                    "source_reference for RECORDED_LIVE must resolve to an authentic, "
+                    "independently verified durable account observation; repository fixtures and "
+                    "developer-created JSON files cannot authorize live billing evidence "
+                    f"(got {self.source_reference!r})"
                 )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1505,9 +1610,12 @@ def generate_aws_builder_evidence_map(
     services = audit_critical_path_aws_services(observation=observation)
     gross_spend = sum((s.estimated_cost_usd for s in services), Decimal("0.00000000"))
 
-    # Only accept source references that can be resolved against canonical evidence boundary
-    if observation is not None and is_resolved_evidence_reference(
-        observation.source_reference, observation=observation
+    # Only accept genuine live observations that have passed authentic external verification
+    if (
+        observation is not None
+        and observation.provenance
+        in (EvidenceProvenance.LIVE_AWS, EvidenceProvenance.RECORDED_LIVE)
+        and is_resolved_evidence_reference(observation.source_reference, observation=observation)
     ):
         return AWSBuilderEvidenceMap(
             architecture_title="StillDone Verifiable Outcome Engine on AWS",

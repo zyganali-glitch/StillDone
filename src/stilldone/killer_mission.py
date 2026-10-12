@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from stilldone.action_policy import (
     validate_action_contract,
@@ -765,6 +765,18 @@ def compute_action_parameter_fingerprint(
     """Compute deterministic SHA-256 fingerprint of action parameters."""
     normalized = json.dumps(dict(parameters), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+class AuthenticatedHumanApprovalChannel(Protocol):
+    """Protocol for an authenticated, trusted human approval decision channel.
+
+    Enforces that human authorization cannot be granted by raw callbacks,
+    self-declared authority strings, or self-constructed dataclasses.
+    """
+
+    def verify_decision(self, decision: AuthorizedPostPendingApprovalDecision) -> bool:
+        """Verify that the decision was authenticated through a trusted human channel."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -2287,8 +2299,14 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         git_runner: Callable[[list[str]], Any] | None = None,
         demo_date: str | None = None,
         calendar_decision: ApprovalDecision | str | None = None,
-        post_pending_decision_callback: Callable[[PendingApproval], ApprovalDecision | str | None]
-        | None = None,
+        post_pending_decision_callback: (
+            Callable[
+                [PendingApproval],
+                AuthorizedPostPendingApprovalDecision | ApprovalDecision | str | None,
+            ]
+            | None
+        ) = None,
+        approval_channel: AuthenticatedHumanApprovalChannel | None = None,
     ) -> None:
         if env.provenance == EvidenceProvenance.FIXTURE:
             raise InvalidEnvironmentConfigurationError(
@@ -2308,6 +2326,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.aws_credentials_available = aws_credentials_available
         self.git_runner = git_runner
         self.post_pending_decision_callback = post_pending_decision_callback
+        self.approval_channel = approval_channel
         self.preflight_report: LivePreflightReport | None = None
         self._consumed_approval_decision_ids: set[str] = set()
 
@@ -2409,8 +2428,10 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.validated_action_cal = validate_action_contract(self.action_cal)
 
     def step_p13_01_seed(self) -> KillerMissionStepResult:
-        """Seed initial pre-state; gated strictly by live preflight."""
+        """Seed initial pre-state; gated strictly by live preflight and validated candidate plan."""
         self._require_preflight()
+        if self.candidate_plan is None:
+            self._propose_and_validate_candidate_plan()
         res = super().step_p13_01_seed()
         if not self.seeded_event_id:
             raise KillerMissionVerificationError(
@@ -2448,7 +2469,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         """Execute calendar update step; gated strictly by live preflight.
 
         Direct live approval bypass is prohibited. Live mutation decisions must
-        come through the explicitly authorized post-PendingApproval decision boundary.
+        come through an authenticated, explicitly authorized post-PendingApproval
+        human decision channel.
         """
         self._require_preflight()
         if self.pending_approval is None:
@@ -2477,16 +2499,27 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 return super().step_p13_05_calendar_approve(decision=None)
             if cb_result == ApprovalDecision.REJECT or str(cb_result).upper() == "REJECT":
                 return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+            if cb_result == ApprovalDecision.APPROVE or str(cb_result).upper() == "APPROVE":
+                # Remove raw APPROVE -> authorized decision auto-promotion.
+                # A callback return value is not independently authenticated human consent.
+                res = KillerMissionStepResult(
+                    task_id="P-13.05",
+                    step_name="Approve, Execute & Verify Calendar Update",
+                    status="BLOCKED_APPROVAL_CHANNEL",
+                    provenance=self.env.provenance,
+                    details=(
+                        "Live calendar mutation blocked: callback returned raw APPROVE, but raw "
+                        "callback return values cannot grant human authorization. Live mutation "
+                        "requires an authenticated human decision channel. 0 writes performed."
+                    ),
+                    writes_performed=0,
+                    is_verified=False,
+                    extra_metadata={"unauthenticated_callback": True},
+                )
+                self.step_results["P-13.05"] = res
+                return res
             if isinstance(cb_result, AuthorizedPostPendingApprovalDecision):
                 eff_decision = cb_result
-            elif cb_result == ApprovalDecision.APPROVE or str(cb_result).upper() == "APPROVE":
-                eff_decision = create_authorized_post_pending_decision(
-                    self.pending_approval,
-                    target_event_id=self.seeded_event_id,
-                    action_parameters=self.action_cal.parameters.to_dict(),
-                    decision=ApprovalDecision.APPROVE,
-                    authority_source="POST_PENDING_CALLBACK",
-                )
             else:
                 raise KillerMissionAuthorityError(
                     "Unexpected post_pending_decision_callback return type: "
@@ -2544,6 +2577,27 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
         if eff_decision.decision == ApprovalDecision.REJECT:
             return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+
+        # Enforce trusted human channel authentication before ANY live mutation write
+        if self.approval_channel is None or not self.approval_channel.verify_decision(eff_decision):
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="BLOCKED_APPROVAL_CHANNEL",
+                provenance=self.env.provenance,
+                details=(
+                    "Live calendar mutation blocked: no authenticated, trusted human decision "
+                    "channel is available. A dataclass, model response, callback return value, "
+                    "or self-declared authority_source is not independently authenticated human "
+                    "consent. Stopping before Calendar write to preserve negative invariant "
+                    "(0 writes performed)."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={"blocked_approval_channel": True},
+            )
+            self.step_results["P-13.05"] = res
+            return res
 
         return super().step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
 
@@ -2610,80 +2664,74 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             )
 
         # 1. Bounded Bedrock proposal & exact canonical plan validation BEFORE ANY SEEDING
-        if "step_p13_02_plan" in self.__dict__:
-            # Unit test explicitly stubbed step_p13_02_plan on this instance
-            self.step_p13_01_seed()
-            step2 = self.step_p13_02_plan()
-            if step2.status in ("FAILED", "BLOCKED_LIVE"):
-                return KillerMissionSliceOutcome(
-                    mission_id=self.mission_id,
-                    intent=self.intent_text,
-                    steps=dict(self.step_results),
-                    ready_receipt_hash=None,
-                    drifted_receipt_hash=None,
-                    historical_receipt_immutable=False,
-                    final_state=MissionState.DRAFT,
-                    total_writes_performed=self.total_writes,
-                    provenance=self.env.provenance,
-                    is_live=True,
-                )
-        else:
-            try:
-                self._propose_and_validate_candidate_plan()
-            except Exception as exc:
-                step_defs = [
-                    ("P-13.01", "Seed Canonical Demo Resources"),
-                    ("P-13.02", "Natural Language Planning & Compilation"),
-                    ("P-13.03", "Execute & Verify Tasks Preparation Action"),
-                    ("P-13.04", "Pause at Calendar Approval Boundary"),
-                    ("P-13.05", "Approve, Execute & Verify Calendar Update"),
-                    ("P-13.06", "Produce Deterministic READY Mission Receipt"),
-                    ("P-13.07", "Mutate Calendar Externally & Reconcile Drift"),
-                ]
-                self.step_results["P-13.02"] = KillerMissionStepResult(
-                    task_id="P-13.02",
-                    step_name="Natural Language Planning & Compilation",
-                    status="FAILED",
-                    provenance=self.env.provenance,
-                    details=(
-                        f"Bedrock plan proposal failed canonical validation: "
-                        f"{type(exc).__name__}: {exc}"
-                    ),
-                    writes_performed=0,
-                    is_verified=False,
-                )
-                for task_id, step_name in step_defs:
-                    if task_id not in self.step_results:
-                        self.step_results[task_id] = KillerMissionStepResult(
-                            task_id=task_id,
-                            step_name=step_name,
-                            status="NOT_RUN",
-                            provenance=self.env.provenance,
-                            details=(
-                                "Execution halted before mutation due to plan validation failure."
-                            ),
-                            writes_performed=0,
-                            is_verified=False,
-                        )
-                return KillerMissionSliceOutcome(
-                    mission_id=self.mission_id,
-                    intent=self.intent_text,
-                    steps=dict(self.step_results),
-                    ready_receipt_hash=None,
-                    drifted_receipt_hash=None,
-                    historical_receipt_immutable=False,
-                    final_state=MissionState.FAILED,
-                    total_writes_performed=0,
-                    provenance=self.env.provenance,
-                    is_live=True,
-                )
+        try:
+            self._propose_and_validate_candidate_plan()
+        except Exception as exc:
+            step_defs = [
+                ("P-13.01", "Seed Canonical Demo Resources"),
+                ("P-13.02", "Natural Language Planning & Compilation"),
+                ("P-13.03", "Execute & Verify Tasks Preparation Action"),
+                ("P-13.04", "Pause at Calendar Approval Boundary"),
+                ("P-13.05", "Approve, Execute & Verify Calendar Update"),
+                ("P-13.06", "Produce Deterministic READY Mission Receipt"),
+                ("P-13.07", "Mutate Calendar Externally & Reconcile Drift"),
+            ]
+            self.step_results["P-13.02"] = KillerMissionStepResult(
+                task_id="P-13.02",
+                step_name="Natural Language Planning & Compilation",
+                status="FAILED",
+                provenance=self.env.provenance,
+                details=(
+                    f"Bedrock plan proposal failed canonical validation: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                writes_performed=0,
+                is_verified=False,
+            )
+            for task_id, step_name in step_defs:
+                if task_id not in self.step_results:
+                    self.step_results[task_id] = KillerMissionStepResult(
+                        task_id=task_id,
+                        step_name=step_name,
+                        status="NOT_RUN",
+                        provenance=self.env.provenance,
+                        details=(
+                            "Execution halted before mutation due to plan validation failure."
+                        ),
+                        writes_performed=0,
+                        is_verified=False,
+                    )
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.FAILED,
+                total_writes_performed=0,
+                provenance=self.env.provenance,
+                is_live=True,
+            )
 
-            # 2. Authorized disposable seeding AFTER candidate plan is validated
-            self.step_p13_01_seed()
+        # 2. Authorized disposable seeding AFTER candidate plan is validated
+        self.step_p13_01_seed()
 
-            # 3. Bind exact provider-generated event ID & compile validated actions
-            self._compile_validated_plan_with_seeded_id()
-            super().step_p13_02_plan()
+        # 3. Bind exact provider-generated event ID & compile validated actions
+        step2 = self.step_p13_02_plan()
+        if step2.status in ("FAILED", "BLOCKED_LIVE"):
+            return KillerMissionSliceOutcome(
+                mission_id=self.mission_id,
+                intent=self.intent_text,
+                steps=dict(self.step_results),
+                ready_receipt_hash=None,
+                drifted_receipt_hash=None,
+                historical_receipt_immutable=False,
+                final_state=MissionState.DRAFT,
+                total_writes_performed=self.total_writes,
+                provenance=self.env.provenance,
+                is_live=True,
+            )
 
         # 4. Tasks prep
         self.step_p13_03_tasks_prep()
@@ -2693,13 +2741,19 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
         # 6. Approve calendar update
         step5 = self.step_p13_05_calendar_approve()
-        if step5.status in ("AWAITING_APPROVAL", "REJECTED", "PAUSED", "BLOCKED_LIVE"):
+        if step5.status in (
+            "AWAITING_APPROVAL",
+            "REJECTED",
+            "PAUSED",
+            "BLOCKED_LIVE",
+            "BLOCKED_APPROVAL_CHANNEL",
+        ):
             final_st = (
                 MissionState.CANCELLED
                 if step5.status == "REJECTED"
                 else (
                     MissionState.NEEDS_APPROVAL
-                    if step5.status == "AWAITING_APPROVAL"
+                    if step5.status in ("AWAITING_APPROVAL", "BLOCKED_APPROVAL_CHANNEL")
                     else MissionState.DRAFT
                 )
             )
@@ -2749,6 +2803,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
 
 __all__ = [
+    "AuthenticatedHumanApprovalChannel",
     "AuthorizedPostPendingApprovalDecision",
     "CANONICAL_CONTRADICTORY_START_TIME",
     "CANONICAL_DEMO_CALENDAR_ID",
