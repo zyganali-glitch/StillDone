@@ -1324,19 +1324,21 @@ def test_defect_a_weather_observation_requirements() -> None:
 
 def _live_runner_for_boundary_tests(
     monkeypatch: pytest.MonkeyPatch,
+    live_env: KillerMissionEnvironment | None = None,
     **kwargs: object,
 ) -> LiveKillerMissionSliceRunner:
     """Live runner over production transport classes with injected (non-network) clients."""
     from stilldone.demo_isolation import DemoResourceScope
     from stilldone.killer_mission import LivePreflightReport
 
-    scope = DemoResourceScope("c_boundary_demo", "tl_boundary_demo")
-    live_env = KillerMissionEnvironment.create_live_environment(
-        scope=scope,
-        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
-        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
-        weather_transport=OpenMeteoHttpTransport(),
-    )
+    if live_env is None:
+        scope = DemoResourceScope("c_boundary_demo", "tl_boundary_demo")
+        live_env = KillerMissionEnvironment.create_live_environment(
+            scope=scope,
+            calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+            tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+            weather_transport=OpenMeteoHttpTransport(),
+        )
     if "bedrock_planner" not in kwargs:
         from stilldone.planning.bedrock import BedrockPlannerAdapter
         from stilldone.planning.contracts import (
@@ -1369,12 +1371,12 @@ def _live_runner_for_boundary_tests(
         fake_p.plan.return_value = MagicMock(plan=valid_p)
         kwargs["bedrock_planner"] = fake_p
 
+    kwargs.setdefault("operator_approved", True)
+    kwargs.setdefault("aws_credentials_available", True)
+    kwargs.setdefault("source_sha", "1111111111111111111111111111111111111111")
+    kwargs.setdefault("demo_date", "2026-10-04")
     runner = LiveKillerMissionSliceRunner(
         env=live_env,
-        operator_approved=True,
-        aws_credentials_available=True,
-        source_sha="1111111111111111111111111111111111111111",
-        demo_date="2026-10-04",
         **kwargs,  # type: ignore[arg-type]
     )
     report = LivePreflightReport(
@@ -2323,3 +2325,229 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
     tampered_target_dict["pending_approvals"][0]["target"]["resource_id"] = "tampered_evt_999"
     with pytest.raises(SnapshotIntegrityError, match="target was tampered"):
         MissionSnapshot.from_dict(tampered_target_dict)
+
+    # 6. Repair D1: Strict decision contract equality rejects unexpected or removed keys
+    tampered_extra_key_dict = copy.deepcopy(historical_dict)
+    tampered_extra_key_dict["pending_approvals"][0]["decision_contract"]["injected_evil_key"] = (
+        "malicious_value"
+    )
+    with pytest.raises(SnapshotIntegrityError, match="decision_contract was tampered"):
+        MissionSnapshot.from_dict(tampered_extra_key_dict)
+
+    tampered_missing_key_dict = copy.deepcopy(historical_dict)
+    del tampered_missing_key_dict["pending_approvals"][0]["decision_contract"]["status"]
+    with pytest.raises(SnapshotIntegrityError, match="decision_contract was tampered"):
+        MissionSnapshot.from_dict(tampered_missing_key_dict)
+
+    tampered_status_dict = copy.deepcopy(historical_dict)
+    tampered_status_dict["pending_approvals"][0]["decision_contract"]["status"] = "APPROVED"
+    with pytest.raises(SnapshotIntegrityError, match="decision_contract was tampered"):
+        MissionSnapshot.from_dict(tampered_status_dict)
+
+    # 7. Repair D2: Historical human summary privacy across public projections
+    # When public view is generated from a snapshot restored with historical summary,
+    # raw provider ID must be sanitized from human_summary and entire public dictionary.
+    recovered_pub_dict = recovered_historical.to_public_dict()
+    assert secret_evt_id not in json.dumps(recovered_pub_dict)
+    assert secret_cal_id not in json.dumps(recovered_pub_dict)
+    assert (
+        secret_evt_id
+        not in recovered_pub_dict["pending_approvals"][0]["decision_contract"]["human_summary"]
+    )
+    assert (
+        REDACTED_IDENTIFIER
+        in recovered_pub_dict["pending_approvals"][0]["decision_contract"]["human_summary"]
+    )
+
+    # PendingApproval direct presentation projections sanitize raw provider IDs
+    pa_direct = recovered_historical.pending_approvals[0]
+    pa_pub = pa_direct.to_public_dict()
+    assert secret_evt_id not in json.dumps(pa_pub)
+    assert REDACTED_IDENTIFIER in pa_pub["human_summary"]
+    assert REDACTED_IDENTIFIER in pa_pub["one_decision_contract"]["human_summary"]
+    assert pa_pub["target"]["resource_id"] == REDACTED_IDENTIFIER
+
+    # Authoritative private serialization retains raw identifiers for verification
+    pa_auth = pa_direct.to_dict(redact_identifiers=False)
+    assert secret_evt_id in pa_auth["human_summary"]
+    assert secret_evt_id in pa_auth["one_decision_contract"]["human_summary"]
+
+
+def test_repair_a1_shared_live_approval_boundary_inherited_bypass_prohibited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repair A1: Close inherited live approval bypass.
+
+    Direct parent-class invocation with live runner and APPROVE must not bypass
+    the live authorization requirement, even if operator_approved=True.
+    It must fail closed before any provider mutation or approval grant.
+    """
+    from stilldone.killer_mission import (
+        KillerMissionAuthorityError,
+        KillerMissionSliceRunner,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+
+    runner = _live_runner_for_boundary_tests(monkeypatch)
+    runner.seeded_event_id = "provider_evt_live_a1_bypass"
+    runner.operator_approved = True
+
+    # Advance to pending approval
+    runner.step_p13_04_calendar_pause()
+    assert runner.pending_approval is not None
+
+    # Direct parent-class invocation with live runner and APPROVE must fail closed
+    match_msg = "Direct live approval bypass prohibited"
+    with pytest.raises(KillerMissionAuthorityError, match=match_msg):
+        KillerMissionSliceRunner.step_p13_05_calendar_approve(
+            runner, decision=ApprovalDecision.APPROVE
+        )
+
+    # String "APPROVE" must also fail closed
+    with pytest.raises(KillerMissionAuthorityError, match=match_msg):
+        KillerMissionSliceRunner.step_p13_05_calendar_approve(runner, decision="APPROVE")
+
+    # Verify zero writes performed and no grant issued
+    assert runner.total_writes == 0
+    assert not hasattr(runner, "approved_cal_outcome")
+
+
+def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Repair A2 & A3: Fail-closed consumption persistence, concurrency, and stable storage."""
+    import builtins
+    import concurrent.futures
+    from typing import Any
+    from unittest.mock import MagicMock
+
+    from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
+    from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+    from stilldone.adapters.weather import OpenMeteoHttpTransport
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.killer_mission import (
+        KillerMissionAuthorityError,
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+
+    stable_dir = tmp_path / "stable_killer_mission"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    scope = DemoResourceScope("c_boundary_demo", "tl_boundary_demo")
+
+    live_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    assert live_env.has_explicit_base_dir is True
+    assert live_env.is_ephemeral_storage is False
+
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=live_env,
+        operator_approved=True,
+    )
+    runner.seeded_event_id = "provider_evt_live_a2"
+    runner.step_p13_04_calendar_pause()
+    pending = runner.pending_approval
+    assert pending is not None
+
+    # 1. Simulated filesystem write failure in _persist_consumed_decision_id
+    real_open = builtins.open
+
+    def failing_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        is_consumed = str(file).endswith("consumed_approval_decisions.jsonl")
+        is_append = "a" in args or kwargs.get("mode") == "a"
+        if is_consumed and is_append:
+            raise OSError("Simulated disk write failure")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", failing_open)
+    with pytest.raises(KillerMissionIntegrityError, match="Failed to durably commit"):
+        runner._persist_consumed_decision_id("failing_dec_1")
+
+    # Decision MUST NOT be added to in-memory set when persistence fails
+    assert "failing_dec_1" not in runner._consumed_approval_decision_ids
+    monkeypatch.undo()
+
+    # 2. Corrupt or truncated consumption record fails closed with KillerMissionIntegrityError
+    dec_file = runner._consumed_decisions_file
+    dec_file.write_text('{"decision_id": "valid_1"}\n{"corrupt_json":\n', encoding="utf-8")
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Corrupt or truncated"):
+        runner._load_consumed_decision_ids()
+
+    # 3. Invalid record structure (missing decision_id) fails closed
+    dec_file.write_text('{"some_key": 123}\n', encoding="utf-8")
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="missing valid 'decision_id'"):
+        runner._load_consumed_decision_ids()
+
+    # 4. Duplicate decision ID in persistent log fails closed
+    dec_file.write_text('{"decision_id": "dup_1"}\n{"decision_id": "dup_1"}\n', encoding="utf-8")
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(KillerMissionIntegrityError, match="Duplicate consumed decision ID"):
+        runner._load_consumed_decision_ids()
+
+    # 5. Duplicate decision ID via _persist_consumed_decision_id raises KillerMissionAuthorityError
+    dec_file.write_text("", encoding="utf-8")
+    runner._consumed_approval_decision_ids.clear()
+    runner._persist_consumed_decision_id("unique_dec_1")
+    assert "unique_dec_1" in runner._consumed_approval_decision_ids
+    with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+        runner._persist_consumed_decision_id("unique_dec_1")
+
+    # 6. Process-local thread concurrency: concurrent persistence is thread-safe
+    def _concurrent_persist(i: int) -> None:
+        runner._persist_consumed_decision_id(f"concurrent_dec_{i}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(_concurrent_persist, i) for i in range(10)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    for i in range(10):
+        assert f"concurrent_dec_{i}" in runner._consumed_approval_decision_ids
+
+    # 7. Same-directory reload recovers state durably
+    live_env_reloaded = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    from stilldone.domain.mission import MissionId
+
+    runner_reloaded = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=live_env_reloaded,
+        mission_id=MissionId("22222222-3333-4444-5555-666666666666"),
+        operator_approved=True,
+    )
+    assert "unique_dec_1" in runner_reloaded._consumed_approval_decision_ids
+    runner_reloaded.reload_consumed_decisions(require_durable=True)
+
+    # 8. Absent or ephemeral storage fails closed when durable reload is required
+    ephemeral_env = KillerMissionEnvironment.create_live_environment(
+        base_dir=None,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    assert ephemeral_env.has_explicit_base_dir is False
+    assert ephemeral_env.is_ephemeral_storage is True
+
+    runner_ephemeral = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=ephemeral_env,
+        operator_approved=True,
+    )
+    match_msg = "Stable durable storage boundary is required"
+    with pytest.raises(KillerMissionAuthorityError, match=match_msg):
+        runner_ephemeral.reload_consumed_decisions(require_durable=True)

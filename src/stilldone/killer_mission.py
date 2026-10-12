@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -906,9 +907,11 @@ class KillerMissionEnvironment:
 
         import tempfile
 
+        has_explicit = base_dir is not None
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_killer_mission_"))
         return cls(
             base_dir=target_dir,
+            has_explicit_base_dir=has_explicit,
             calendar_transport=calendar_transport,
             tasks_transport=tasks_transport,
             weather_transport=weather_transport,
@@ -1018,9 +1021,11 @@ class KillerMissionEnvironment:
 
         import tempfile
 
+        has_explicit = base_dir is not None
         target_dir = base_dir or Path(tempfile.mkdtemp(prefix="stilldone_live_killer_mission_"))
         return cls(
             base_dir=target_dir,
+            has_explicit_base_dir=has_explicit,
             scope=scope,
             calendar_transport=calendar_transport,
             tasks_transport=tasks_transport,
@@ -1034,6 +1039,7 @@ class KillerMissionEnvironment:
         self,
         base_dir: Path,
         *,
+        has_explicit_base_dir: bool = True,
         calendar_transport: CalendarTransport | None = None,
         tasks_transport: TaskTransport | None = None,
         weather_transport: WeatherTransport | None = None,
@@ -1043,6 +1049,8 @@ class KillerMissionEnvironment:
         provenance: EvidenceProvenance = EvidenceProvenance.FIXTURE,
     ) -> None:
         self.base_dir = Path(base_dir)
+        self.has_explicit_base_dir = has_explicit_base_dir
+        self.is_ephemeral_storage = not has_explicit_base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
         self.scope = scope or DemoResourceScope(
@@ -1758,6 +1766,20 @@ class KillerMissionSliceRunner:
                 else ApprovalDecision(dec_to_check)
             )
 
+        # Shared mutation boundary protection (Repair A1):
+        # Direct parent-method invocation or generic operator_approved=True must NEVER
+        # authorize a live Calendar update without independently authenticated human consent.
+        if self.live_mode and (
+            eff_decision == ApprovalDecision.APPROVE
+            or (isinstance(eff_decision, str) and str(eff_decision).upper() == "APPROVE")
+        ):
+            raise KillerMissionAuthorityError(
+                "Direct live approval bypass prohibited: raw APPROVE parameter or parent method "
+                "invocation cannot grant human authorization in live execution. Live mutation "
+                "requires an authenticated, explicitly authorized post-PendingApproval "
+                "human decision channel."
+            )
+
         now = datetime.now(UTC)
 
         # 1. If no explicit decision is given, pause awaiting human decision
@@ -1810,6 +1832,14 @@ class KillerMissionSliceRunner:
             return res
 
         # 3. Decision is APPROVE: resolve via canonical P-11.03 path
+        if self.live_mode:
+            raise KillerMissionAuthorityError(
+                "Direct live approval bypass prohibited: raw APPROVE parameter or parent method "
+                "invocation cannot grant human authorization in live execution. Live mutation "
+                "requires an authenticated, explicitly authorized post-PendingApproval "
+                "human decision channel."
+            )
+
         binding_result: ApprovalBindingResult = resolve_pending_approval(
             self.pending_approval,
             ApprovalDecision.APPROVE,
@@ -2338,6 +2368,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.approval_channel = approval_channel
         self.preflight_report: LivePreflightReport | None = None
         self._consumed_approval_decision_ids: set[str] = set()
+        self._consumed_decisions_lock = threading.RLock()
         # Resolve live demo target date: default to tomorrow in UTC if not provided
         resolved_demo_date = (
             demo_date
@@ -2360,40 +2391,105 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self._consumed_decisions_file = self.env.base_dir / "consumed_approval_decisions.jsonl"
         self._load_consumed_decision_ids()
 
-    def _load_consumed_decision_ids(self) -> None:
-        """Load durably persisted consumed approval decision IDs across process restart."""
+    def _load_consumed_decision_ids(self, *, require_durable: bool = False) -> None:
+        """Load durably persisted consumed approval decision IDs across process restart.
+
+        When require_durable=True or when historical recovery is demanded, fails closed
+        if stable durable storage is unavailable, absent, or unconfigured, preventing
+        silent restart with an empty authorization history.
+        """
+        if require_durable:
+            if not getattr(self.env, "has_explicit_base_dir", True) or getattr(
+                self.env, "is_ephemeral_storage", False
+            ):
+                raise KillerMissionAuthorityError(
+                    "Stable durable storage boundary is required for operations relying on "
+                    "historical approval consumption; ephemeral or unconfigured storage "
+                    "cannot guarantee restart replay protection."
+                )
+            if (
+                not hasattr(self, "_consumed_decisions_file")
+                or not self._consumed_decisions_file.exists()
+            ):
+                dec_path = getattr(self, "_consumed_decisions_file", None)
+                raise KillerMissionAuthorityError(
+                    f"Persistent approval consumption log not found at '{dec_path}'; "
+                    "cannot recover historical authorization state."
+                )
+
         if hasattr(self, "_consumed_decisions_file") and self._consumed_decisions_file.exists():
-            try:
-                with open(self._consumed_decisions_file, encoding="utf-8") as f:
-                    for line in f:
-                        line_str = line.strip()
-                        if line_str:
+            with self._consumed_decisions_lock:
+                loaded_ids: set[str] = set()
+                try:
+                    with open(self._consumed_decisions_file, encoding="utf-8") as f:
+                        for line_idx, line in enumerate(f, 1):
+                            line_str = line.strip()
+                            if not line_str:
+                                continue
                             try:
                                 d = json.loads(line_str)
-                                did = d.get("decision_id")
-                                if did and isinstance(did, str):
-                                    self._consumed_approval_decision_ids.add(did)
-                            except Exception:
-                                pass
-            except Exception:
-                pass
+                            except Exception as e:
+                                raise KillerMissionIntegrityError(
+                                    f"Corrupt or truncated consumed decision record on line "
+                                    f"{line_idx}: {e}"
+                                ) from e
+                            if not isinstance(d, dict):
+                                raise KillerMissionIntegrityError(
+                                    f"Invalid consumed decision record structure on line "
+                                    f"{line_idx}: expected dict"
+                                )
+                            did = d.get("decision_id")
+                            if not did or not isinstance(did, str) or not did.strip():
+                                raise KillerMissionIntegrityError(
+                                    f"Consumed decision record missing valid 'decision_id' "
+                                    f"on line {line_idx}"
+                                )
+                            if did in loaded_ids:
+                                raise KillerMissionIntegrityError(
+                                    f"Duplicate consumed decision ID '{did}' detected in "
+                                    "persistent log"
+                                )
+                            loaded_ids.add(did)
+                    self._consumed_approval_decision_ids.update(loaded_ids)
+                except OSError as e:
+                    raise KillerMissionIntegrityError(
+                        f"Failed to read durable consumed approval decisions: {e}"
+                    ) from e
 
     def _persist_consumed_decision_id(self, decision_id: str) -> None:
-        """Durably persist consumed decision ID with atomic append and fsync."""
-        self._consumed_approval_decision_ids.add(decision_id)
-        try:
-            self._consumed_decisions_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._consumed_decisions_file, "a", encoding="utf-8") as f:
-                f.write(
-                    json.dumps(
-                        {"decision_id": decision_id, "consumed_at": datetime.now(UTC).isoformat()}
-                    )
-                    + "\n"
+        """Durably persist consumed decision ID with append, fsync, and fail-closed persistence."""
+        with self._consumed_decisions_lock:
+            if decision_id in self._consumed_approval_decision_ids:
+                raise KillerMissionAuthorityError(
+                    f"Approval decision '{decision_id}' has already been consumed "
+                    "(duplicate/replay prohibited)"
                 )
-                f.flush()
-                os.fsync(f.fileno())
-        except Exception:
-            pass
+            try:
+                self._consumed_decisions_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self._consumed_decisions_file, "a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "decision_id": decision_id,
+                                "consumed_at": datetime.now(UTC).isoformat(),
+                            }
+                        )
+                        + "\n"
+                    )
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception as e:
+                # Do NOT add to in-memory set if write fails! Fail closed!
+                raise KillerMissionIntegrityError(
+                    f"Failed to durably commit consumed approval decision: {e}"
+                ) from e
+
+            # ONLY add to in-memory set AFTER fsync succeeds!
+            self._consumed_approval_decision_ids.add(decision_id)
+
+    def reload_consumed_decisions(self, *, require_durable: bool = True) -> None:
+        """Explicitly reload consumed decision IDs from durable storage."""
+        self._load_consumed_decision_ids(require_durable=require_durable)
 
     def evaluate_preflight(self) -> LivePreflightReport:
         """Evaluate canonical live preflight against all live gate prerequisites."""
@@ -2767,8 +2863,6 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         )
         self.step_results["P-13.05"] = res
         return res
-
-        return super().step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
 
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
         """Produce ready receipt; gated strictly by live preflight."""

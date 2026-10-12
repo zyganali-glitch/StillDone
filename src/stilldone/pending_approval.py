@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -47,7 +48,7 @@ from stilldone.domain.authority import (
     AuthorityClass,
 )
 from stilldone.domain.mission import MissionId
-from stilldone.redaction import redact_text
+from stilldone.redaction import REDACTED_IDENTIFIER, redact_text
 from stilldone.serialization import canonical_serialize, to_canonical_primitive
 
 PENDING_APPROVAL_DOMAIN_SEPARATOR: str = "stilldone:pending-approval:v1"
@@ -288,14 +289,28 @@ class OneDecisionContract:
             f"options={[o.value for o in self.decision_options]}, status={self.status.value})"
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        redact_identifiers: bool = False,
+        provider_ids: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
         """Convert presentation contract to a serializable dictionary.
 
         Boundary Note:
         This is the operator-facing privacy-safe presentation dictionary. It exposes
         only the bounded human decision surface (decision options, human summary, status,
         and lineage identifiers) and never exposes internal execution machinery or raw payloads.
+        When redact_identifiers=True, sanitizes any raw provider IDs from human_summary.
         """
+        summary = self.human_summary
+        if redact_identifiers:
+            if provider_ids:
+                for pid in provider_ids:
+                    if pid and pid in summary and not pid.startswith("sym_"):
+                        summary = summary.replace(pid, REDACTED_IDENTIFIER)
+            summary = redact_text(summary)
+
         return {
             "pending_approval_id": self.pending_approval_id.value,
             "mission_id": str(self.mission_id),
@@ -303,10 +318,14 @@ class OneDecisionContract:
             "action_type": self.action_type.value,
             "authority_class": self.authority_class.value,
             "decision_options": [d.value for d in self.decision_options],
-            "human_summary": self.human_summary,
+            "human_summary": summary,
             "status": self.status.value,
             "requested_at": self.requested_at.isoformat(),
         }
+
+    def to_public_dict(self, *, provider_ids: Iterable[str] | None = None) -> dict[str, Any]:
+        """Convert presentation contract to public presentation with identifiers redacted."""
+        return self.to_dict(redact_identifiers=True, provider_ids=provider_ids)
 
 
 # ===========================================================================
@@ -657,7 +676,7 @@ class PendingApproval:
             f"status={self.status.value})"
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, redact_identifiers: bool = False) -> dict[str, Any]:
         """Convert pending approval object to a serializable dictionary.
 
         Boundary Note:
@@ -665,27 +684,86 @@ class PendingApproval:
         target identity, normalized parameters, parameter digest, and nested presentation contract.
         It is used for domain state tracking and persistence, distinct from the operator-facing
         OneDecisionContract presentation boundary.
+        When redact_identifiers=True, sanitizes raw external provider identifiers
+        from target, human_summary, and the nested one_decision_contract presentation.
         """
+        raw_res_id = self.target.resource_id
+        raw_parent_id = self.target.parent_id
+        is_raw_res = bool(raw_res_id and not raw_res_id.startswith("sym_"))
+        is_raw_parent = bool(raw_parent_id and not raw_parent_id.startswith("sym_"))
+
+        target_dict: dict[str, Any] = {
+            "parent_id": (
+                REDACTED_IDENTIFIER if (redact_identifiers and is_raw_parent) else raw_parent_id
+            ),
+            "resource_id": (
+                REDACTED_IDENTIFIER if (redact_identifiers and is_raw_res) else raw_res_id
+            ),
+            "resource_kind": self.target.resource_kind.value,
+            "system": self.target.system,
+        }
+
+        sanitized_summary = self.human_summary
+        if redact_identifiers:
+            if is_raw_res and raw_res_id and raw_res_id in sanitized_summary:
+                sanitized_summary = sanitized_summary.replace(raw_res_id, REDACTED_IDENTIFIER)
+            if is_raw_parent and raw_parent_id and raw_parent_id in sanitized_summary:
+                sanitized_summary = sanitized_summary.replace(raw_parent_id, REDACTED_IDENTIFIER)
+            sanitized_summary = redact_text(sanitized_summary)
+
+        pids: list[str] = []
+        if is_raw_res and raw_res_id:
+            pids.append(raw_res_id)
+        if is_raw_parent and raw_parent_id:
+            pids.append(raw_parent_id)
+
+        dc_dict = (
+            self.decision_contract.to_dict(redact_identifiers=redact_identifiers, provider_ids=pids)
+            if hasattr(self.decision_contract, "to_dict")
+            else self.decision_contract
+        )
+        if redact_identifiers and isinstance(dc_dict, dict):
+            dc_dict = dict(dc_dict)
+            dc_dict["human_summary"] = sanitized_summary
+
+        params_dict = self.parameters.to_dict()
+        if redact_identifiers:
+
+            def _clean_val(v: Any) -> Any:
+                if isinstance(v, str):
+                    s = v
+                    if is_raw_res and raw_res_id and raw_res_id in s:
+                        s = s.replace(raw_res_id, REDACTED_IDENTIFIER)
+                    if is_raw_parent and raw_parent_id and raw_parent_id in s:
+                        s = s.replace(raw_parent_id, REDACTED_IDENTIFIER)
+                    return redact_text(s)
+                elif isinstance(v, dict):
+                    return {k: _clean_val(val) for k, val in v.items()}
+                elif isinstance(v, (list, tuple)):
+                    return [_clean_val(item) for item in v]
+                return v
+
+            params_dict = _clean_val(params_dict)
+
         return {
             "pending_approval_id": self.pending_approval_id.value,
             "mission_id": str(self.mission_id),
             "action_id": str(self.action_id),
             "action_type": self.action_type.value,
             "authority_class": self.authority_class.value,
-            "target": {
-                "parent_id": self.target.parent_id,
-                "resource_id": self.target.resource_id,
-                "resource_kind": self.target.resource_kind.value,
-                "system": self.target.system,
-            },
-            "parameters": self.parameters.to_dict(),
+            "target": target_dict,
+            "parameters": params_dict,
             "parameters_digest": self.parameters_digest,
             "requested_at": self.requested_at.isoformat(),
             "status": self.status.value,
             "decision_options": [d.value for d in self.decision_options],
-            "human_summary": self.human_summary,
-            "one_decision_contract": self.decision_contract.to_dict(),
+            "human_summary": sanitized_summary,
+            "one_decision_contract": dc_dict,
         }
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Convert pending approval to public / operator-facing presentation dictionary."""
+        return self.to_dict(redact_identifiers=True)
 
 
 # ===========================================================================

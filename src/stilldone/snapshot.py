@@ -28,7 +28,7 @@ import json
 import os
 import tempfile
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -626,17 +626,22 @@ class MissionSnapshot:
         contract_data: Any,
         resource_id: str | None = None,
         parent_id: str | None = None,
+        provider_ids: Iterable[str] | None = None,
     ) -> Any:
         if not isinstance(contract_data, dict):
             return contract_data
         res = dict(contract_data)
         if "human_summary" in res and isinstance(res["human_summary"], str):
             summary = res["human_summary"]
-            if resource_id and resource_id in summary:
+            if resource_id and resource_id in summary and not resource_id.startswith("sym_"):
                 summary = summary.replace(resource_id, REDACTED_IDENTIFIER)
-            if parent_id and parent_id in summary:
+            if parent_id and parent_id in summary and not parent_id.startswith("sym_"):
                 summary = summary.replace(parent_id, REDACTED_IDENTIFIER)
-            res["human_summary"] = summary
+            if provider_ids:
+                for pid in provider_ids:
+                    if pid and pid in summary and not pid.startswith("sym_"):
+                        summary = summary.replace(pid, REDACTED_IDENTIFIER)
+            res["human_summary"] = redact_text(summary)
         return res
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -759,10 +764,15 @@ class MissionSnapshot:
                     "parameters_digest": pa.parameters_digest,
                     "requested_at": pa.requested_at.isoformat(),
                     "decision_contract": (
-                        _sanitize_public_value(
-                            pa.decision_contract.to_dict()
-                            if hasattr(pa.decision_contract, "to_dict")
-                            else pa.decision_contract
+                        self._sanitize_decision_contract_dict(
+                            _sanitize_public_value(
+                                pa.decision_contract.to_dict()
+                                if hasattr(pa.decision_contract, "to_dict")
+                                else pa.decision_contract
+                            ),
+                            resource_id=pa.target.resource_id,
+                            parent_id=pa.target.parent_id,
+                            provider_ids=sorted_provider_ids,
                         )
                     ),
                     "status": pa.status.value,
@@ -1027,32 +1037,19 @@ class MissionSnapshot:
                 )
 
                 is_canonical_match = pad_dc == base_contract_dict
-                is_historical_match = False
                 historical_summary = compute_historical_human_summary(matched_act)
+                historical_contract = dataclasses.replace(
+                    base_pa.decision_contract, human_summary=historical_summary
+                )
+                historical_contract_dict = (
+                    historical_contract.to_dict()
+                    if hasattr(historical_contract, "to_dict")
+                    else historical_contract
+                )
+                is_historical_match = pad_dc == historical_contract_dict
 
-                if not is_canonical_match:
-                    # Enforce strict fail-closed checks on all immutable authority binding fields
-                    if (
-                        pad_dc.get("pending_approval_id") != str(base_pa.pending_approval_id)
-                        or pad_dc.get("mission_id") != str(base_pa.mission_id)
-                        or pad_dc.get("action_id") != str(base_pa.action_id)
-                        or pad_dc.get("action_type") != base_pa.action_type.value
-                        or pad_dc.get("authority_class") != base_pa.authority_class.value
-                        or pad_dc.get("decision_options")
-                        != [d.value for d in base_pa.decision_options]
-                        or pad_dc.get("status") != "PENDING"
-                        or pad_dc.get("requested_at") != base_pa.requested_at.isoformat()
-                    ):
-                        raise SnapshotIntegrityError(
-                            "PendingApproval decision_contract was tampered"
-                        )
-                    # Check if human_summary matches authentic historical summary format
-                    if pad_dc.get("human_summary") == historical_summary:
-                        is_historical_match = True
-                    else:
-                        raise SnapshotIntegrityError(
-                            "PendingApproval decision_contract was tampered"
-                        )
+                if not is_canonical_match and not is_historical_match:
+                    raise SnapshotIntegrityError("PendingApproval decision_contract was tampered")
 
                 ser_target = pad.get("target")
                 if not isinstance(ser_target, dict) or ser_target != {
