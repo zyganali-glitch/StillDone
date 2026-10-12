@@ -39,6 +39,7 @@ from stilldone.redaction import redact_text
 
 APPROVAL_CONSUMPTION_EVIDENCE_TYPE: str = "APPROVAL_CONSUMPTION"
 APPROVAL_REVOCATION_EVIDENCE_TYPE: str = "APPROVAL_REVOCATION"
+APPROVAL_REJECTION_EVIDENCE_TYPE: str = "APPROVAL_REJECTION"
 
 # ===========================================================================
 # Exception Hierarchy
@@ -91,30 +92,33 @@ class MalformedApprovalStateError(ApprovalConsumptionError, ValueError):
 
 
 class ApprovalUsageStatus(StrEnum):
-    """Closed-world lifecycle status for an ApprovalGrant."""
+    """Closed-world lifecycle status for an ApprovalGrant or Decision."""
 
     UNUSED = "UNUSED"
     CONSUMED = "CONSUMED"
     REVOKED = "REVOKED"
+    REJECTED = "REJECTED"
 
 
 @dataclass(frozen=True)
 class ApprovalConsumptionRecord:
-    """Immutable record of an approval consumption or revocation event."""
+    """Immutable record of an approval consumption, revocation, or rejection event."""
 
-    approval_id: ApprovalId
+    approval_id: ApprovalId | str
     mission_id: MissionId
     action_id: ActionId
-    binding_hash: BindingHash
+    binding_hash: BindingHash | None
     status: ApprovalUsageStatus
     consumed_at: datetime
     attempt_number: int = 1
     reason: str | None = None
+    decision_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.approval_id, ApprovalId):
+        if not isinstance(self.approval_id, (ApprovalId, str)) or not str(self.approval_id).strip():
             raise ApprovalConsumptionTypeError(
-                f"approval_id must be an ApprovalId instance, got {type(self.approval_id).__name__}"
+                "approval_id must be an ApprovalId or non-empty str, "
+                f"got {type(self.approval_id).__name__}"
             )
         if not isinstance(self.mission_id, MissionId):
             raise ApprovalConsumptionTypeError(
@@ -124,9 +128,15 @@ class ApprovalConsumptionRecord:
             raise ApprovalConsumptionTypeError(
                 f"action_id must be an ActionId instance, got {type(self.action_id).__name__}"
             )
-        if not isinstance(self.binding_hash, BindingHash):
+        if self.status in {ApprovalUsageStatus.CONSUMED, ApprovalUsageStatus.REVOKED}:
+            if not isinstance(self.binding_hash, BindingHash):
+                raise ApprovalConsumptionTypeError(
+                    "binding_hash must be a BindingHash instance for consumed/revoked status, "
+                    f"got {type(self.binding_hash).__name__}"
+                )
+        elif self.binding_hash is not None and not isinstance(self.binding_hash, BindingHash):
             raise ApprovalConsumptionTypeError(
-                "binding_hash must be a BindingHash instance, "
+                "binding_hash must be a BindingHash instance or None, "
                 f"got {type(self.binding_hash).__name__}"
             )
         if not isinstance(self.status, ApprovalUsageStatus):
@@ -147,18 +157,28 @@ class ApprovalConsumptionRecord:
         if self.attempt_number < 1:
             raise ApprovalConsumptionValueError("attempt_number must be >= 1")
 
+        if self.decision_id is not None and (
+            not isinstance(self.decision_id, str) or not self.decision_id.strip()
+        ):
+            raise ApprovalConsumptionValueError(
+                "decision_id must be a non-empty string if provided"
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert record to a serializable, privacy-safe dictionary."""
-        return {
+        d = {
             "approval_id": str(self.approval_id),
             "mission_id": str(self.mission_id),
             "action_id": str(self.action_id),
-            "binding_hash": self.binding_hash.value,
+            "binding_hash": self.binding_hash.value if self.binding_hash is not None else None,
             "status": self.status.value,
             "consumed_at": self.consumed_at.isoformat(),
             "attempt_number": self.attempt_number,
             "reason": redact_text(self.reason) if self.reason is not None else None,
         }
+        if self.decision_id is not None:
+            d["decision_id"] = self.decision_id
+        return d
 
 
 @dataclass(frozen=True)
@@ -224,21 +244,26 @@ class ApprovalConsumptionResult:
 
 
 class UsedApprovalRegistry:
-    """Thread-safe process-local registry tracking consumed and revoked approvals."""
+    """Thread-safe registry tracking consumed, revoked, and rejected approvals/decisions."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._records: dict[str, ApprovalConsumptionRecord] = {}
+        self._decision_records: dict[str, ApprovalConsumptionRecord] = {}
 
     def is_used(self, approval_id: ApprovalId | str) -> bool:
-        """Check if an approval ID has been consumed or revoked."""
+        """Check if an approval ID has been consumed, revoked, or rejected."""
         key = str(approval_id)
         with self._lock:
             rec = self._records.get(key)
-            return rec is not None and rec.status in {
+            if rec is not None and rec.status in {
                 ApprovalUsageStatus.CONSUMED,
                 ApprovalUsageStatus.REVOKED,
-            }
+                ApprovalUsageStatus.REJECTED,
+            }:
+                return True
+            d_rec = self._decision_records.get(key)
+            return d_rec is not None
 
     def is_consumed(self, approval_id: ApprovalId | str) -> bool:
         """Check if an approval ID has been consumed."""
@@ -254,11 +279,41 @@ class UsedApprovalRegistry:
             rec = self._records.get(key)
             return rec is not None and rec.status == ApprovalUsageStatus.REVOKED
 
+    def is_rejected(self, key: ApprovalId | str) -> bool:
+        """Check if an approval ID or decision ID has been rejected."""
+        k = str(key)
+        with self._lock:
+            rec = self._records.get(k)
+            if rec is not None and rec.status == ApprovalUsageStatus.REJECTED:
+                return True
+            d_rec = self._decision_records.get(k)
+            return d_rec is not None and d_rec.status == ApprovalUsageStatus.REJECTED
+
+    def is_decision_consumed(self, decision_id: str) -> bool:
+        """Check if a decision ID has been recorded (consumed/rejected)."""
+        k = str(decision_id).strip()
+        with self._lock:
+            return k in self._decision_records
+
+    def get_decision_record(self, decision_id: str) -> ApprovalConsumptionRecord | None:
+        """Retrieve the record for a specific decision ID if present."""
+        k = str(decision_id).strip()
+        with self._lock:
+            return self._decision_records.get(k)
+
+    def get_decision_records(self) -> tuple[ApprovalConsumptionRecord, ...]:
+        """Retrieve all recorded decision records."""
+        with self._lock:
+            return tuple(self._decision_records.values())
+
     def get_record(self, approval_id: ApprovalId | str) -> ApprovalConsumptionRecord | None:
         """Retrieve the consumption record for an approval ID if present."""
         key = str(approval_id)
         with self._lock:
-            return self._records.get(key)
+            rec = self._records.get(key)
+            if rec is not None:
+                return rec
+            return self._decision_records.get(key)
 
     def record_consumption(
         self,
@@ -266,6 +321,7 @@ class UsedApprovalRegistry:
         *,
         at: datetime,
         attempt_number: int = 1,
+        decision_id: str | None = None,
     ) -> ApprovalConsumptionRecord:
         """Record the consumption of an ApprovalGrant fail-closed against replays."""
         key = str(grant.approval_id)
@@ -282,6 +338,17 @@ class UsedApprovalRegistry:
                     raise ApprovalRevokedError(
                         f"Approval '{grant.approval_id}' was revoked and cannot be consumed"
                     )
+                if existing.status == ApprovalUsageStatus.REJECTED:
+                    raise ApprovalAlreadyUsedError(
+                        f"Approval '{grant.approval_id}' was rejected and cannot be consumed"
+                    )
+
+            if decision_id:
+                d_key = str(decision_id).strip()
+                if d_key in self._decision_records:
+                    raise ApprovalAlreadyUsedError(
+                        f"Decision '{d_key}' was already consumed/recorded"
+                    )
 
             record = ApprovalConsumptionRecord(
                 approval_id=grant.approval_id,
@@ -291,8 +358,60 @@ class UsedApprovalRegistry:
                 status=ApprovalUsageStatus.CONSUMED,
                 consumed_at=norm_at,
                 attempt_number=attempt_number,
+                decision_id=str(decision_id).strip() if decision_id else None,
             )
             self._records[key] = record
+            if decision_id:
+                self._decision_records[str(decision_id).strip()] = record
+            return record
+
+    def record_rejection(
+        self,
+        decision_id: str,
+        *,
+        mission_id: MissionId,
+        action_id: ActionId,
+        at: datetime,
+        pending_approval_id: str | None = None,
+        binding_hash: BindingHash | None = None,
+        reason: str | None = None,
+    ) -> ApprovalConsumptionRecord:
+        """Record the rejection of an approval decision fail-closed."""
+        if not decision_id or not isinstance(decision_id, str) or not decision_id.strip():
+            raise ApprovalConsumptionValueError("decision_id must be a non-empty string")
+        if not isinstance(mission_id, MissionId):
+            raise ApprovalConsumptionTypeError("mission_id must be a MissionId")
+        if not isinstance(action_id, ActionId):
+            raise ApprovalConsumptionTypeError("action_id must be an ActionId")
+        if not isinstance(at, datetime):
+            raise ApprovalConsumptionTypeError("at must be a datetime instance")
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ApprovalConsumptionValueError("at must be timezone-aware")
+        norm_at = at if at.tzinfo == UTC else at.astimezone(UTC)
+
+        key = str(decision_id).strip()
+        with self._lock:
+            if key in self._decision_records:
+                existing = self._decision_records[key]
+                raise ApprovalAlreadyUsedError(
+                    f"Decision '{key}' was already recorded at {existing.consumed_at.isoformat()}"
+                )
+
+            aid: str = str(pending_approval_id) if pending_approval_id else str(key)
+            record = ApprovalConsumptionRecord(
+                approval_id=aid,
+                mission_id=mission_id,
+                action_id=action_id,
+                binding_hash=binding_hash,
+                status=ApprovalUsageStatus.REJECTED,
+                consumed_at=norm_at,
+                attempt_number=1,
+                reason=reason,
+                decision_id=key,
+            )
+            self._decision_records[key] = record
+            if pending_approval_id:
+                self._records[str(pending_approval_id)] = record
             return record
 
     def revoke(
@@ -315,10 +434,12 @@ class UsedApprovalRegistry:
         else:
             aid = grant if isinstance(grant, ApprovalId) else ApprovalId(str(grant))
             existing_rec = self._records.get(str(aid))
-            if existing_rec is not None:
+            if existing_rec is not None and (binding_hash or existing_rec.binding_hash):
                 mid = mission_id or existing_rec.mission_id
                 act_id = action_id or existing_rec.action_id
-                b_hash = binding_hash or existing_rec.binding_hash
+                resolved_hash = binding_hash or existing_rec.binding_hash
+                assert resolved_hash is not None
+                b_hash = resolved_hash
             elif mission_id is not None and action_id is not None and binding_hash is not None:
                 mid = mission_id
                 act_id = action_id
@@ -361,6 +482,7 @@ class UsedApprovalRegistry:
         """Clear all records (intended for test suite isolation)."""
         with self._lock:
             self._records.clear()
+            self._decision_records.clear()
 
     def has_consumed_approval_for_action(self, action_id: ActionId | str) -> bool:
         """Check if any approval has been consumed for the given action ID."""
@@ -473,7 +595,10 @@ class ApprovalLedger:
 
         # Track history per approval_id during hydration to enforce closed-world transitions
         # and fail closed on contradictory lineage.
+        # Track history per approval_id during hydration to enforce closed-world transitions
+        # and fail closed on contradictory lineage.
         hydrated_records: dict[str, ApprovalConsumptionRecord] = {}
+        hydrated_decisions: dict[str, ApprovalConsumptionRecord] = {}
 
         for ev in evidence_records:
             payload = ev.payload.to_dict() if hasattr(ev.payload, "to_dict") else dict(ev.payload)
@@ -481,10 +606,92 @@ class ApprovalLedger:
             if ev_type not in {
                 APPROVAL_CONSUMPTION_EVIDENCE_TYPE,
                 APPROVAL_REVOCATION_EVIDENCE_TYPE,
+                APPROVAL_REJECTION_EVIDENCE_TYPE,
             }:
                 continue
 
             try:
+                if ev_type == APPROVAL_REJECTION_EVIDENCE_TYPE:
+                    raw_did = payload.get("decision_id")
+                    if not raw_did or not isinstance(raw_did, str) or not raw_did.strip():
+                        raise MalformedApprovalStateError(
+                            "Missing or invalid decision_id in approval rejection evidence"
+                        )
+                    did = raw_did.strip()
+
+                    raw_mid = payload.get("mission_id")
+                    if not raw_mid or not isinstance(raw_mid, str) or not raw_mid.strip():
+                        raise MalformedApprovalStateError(
+                            "Missing or invalid mission_id in approval rejection evidence"
+                        )
+                    mid = MissionId(raw_mid)
+
+                    raw_act_id = payload.get("action_id")
+                    if not raw_act_id or not isinstance(raw_act_id, str) or not raw_act_id.strip():
+                        raise MalformedApprovalStateError(
+                            "Missing or invalid action_id in approval rejection evidence"
+                        )
+                    act_id = ActionId(raw_act_id)
+
+                    # Header consistency: EvidenceRecord header must match payload
+                    if ev.action_id != act_id or ev.mission_id != mid:
+                        raise MalformedApprovalStateError(
+                            f"EvidenceRecord header (action={ev.action_id}, "
+                            f"mission={ev.mission_id}) contradicts payload "
+                            f"(action={act_id}, mission={mid})"
+                        )
+
+                    dec_val = payload.get("decision")
+                    if dec_val != "REJECT":
+                        raise MalformedApprovalStateError(
+                            f"Invalid decision value '{dec_val}' in rejection evidence; "
+                            "expected 'REJECT'"
+                        )
+
+                    consumed_at_str = payload.get("consumed_at")
+                    if not consumed_at_str or not isinstance(consumed_at_str, str):
+                        raise MalformedApprovalStateError(
+                            "Missing or invalid consumed_at in approval rejection evidence"
+                        )
+                    consumed_at = datetime.fromisoformat(consumed_at_str)
+                    if consumed_at.tzinfo is None:
+                        raise MalformedApprovalStateError("consumed_at must be timezone-aware")
+                    consumed_at_utc = (
+                        consumed_at if consumed_at.tzinfo == UTC else consumed_at.astimezone(UTC)
+                    )
+
+                    raw_hash = payload.get("binding_hash")
+                    b_hash = BindingHash(raw_hash) if raw_hash else None
+
+                    raw_paid = payload.get("pending_approval_id")
+                    rej_aid = str(raw_paid) if raw_paid else str(did)
+
+                    if did in hydrated_decisions:
+                        existing = hydrated_decisions[did]
+                        if existing.mission_id != mid or existing.action_id != act_id:
+                            raise MalformedApprovalStateError(
+                                f"Contradictory rejection lineage for decision '{did}'"
+                            )
+                        raise MalformedApprovalStateError(
+                            f"Duplicate rejection for decision '{did}' in durable history"
+                        )
+
+                    rec = ApprovalConsumptionRecord(
+                        approval_id=rej_aid,
+                        mission_id=mid,
+                        action_id=act_id,
+                        binding_hash=b_hash,
+                        status=ApprovalUsageStatus.REJECTED,
+                        consumed_at=consumed_at_utc,
+                        attempt_number=1,
+                        reason=payload.get("reason"),
+                        decision_id=did,
+                    )
+                    hydrated_decisions[did] = rec
+                    if raw_paid:
+                        hydrated_records[str(raw_paid)] = rec
+                    continue
+
                 raw_aid = payload.get("approval_id")
                 if not raw_aid or not isinstance(raw_aid, str):
                     raise MalformedApprovalStateError(
@@ -614,6 +821,8 @@ class ApprovalLedger:
         with self._registry._lock:
             for key, rec in hydrated_records.items():
                 self._registry._records[key] = rec
+            for did, rec in hydrated_decisions.items():
+                self._registry._decision_records[did] = rec
 
     def check_status(self, approval_id: ApprovalId | str) -> ApprovalUsageStatus:
         """Check the current usage status of an approval ID."""
@@ -638,6 +847,111 @@ class ApprovalLedger:
         """Check if an approval ID has been revoked."""
         with self._lock:
             return self._registry.is_revoked(approval_id)
+
+    def is_rejected(self, key: str | ApprovalId) -> bool:
+        """Check if an approval or decision has been rejected."""
+        with self._lock:
+            return self._registry.is_rejected(key)
+
+    def is_decision_consumed(self, decision_id: str) -> bool:
+        """Check if a decision ID has been recorded (consumed/rejected)."""
+        with self._lock:
+            return self._registry.is_decision_consumed(decision_id)
+
+    def get_consumed_decision_ids(self) -> set[str]:
+        """Retrieve all recorded decision IDs."""
+        with self._lock:
+            return set(
+                r.decision_id for r in self._registry.get_decision_records() if r.decision_id
+            )
+
+    def record_rejection(
+        self,
+        decision_id: str,
+        *,
+        action_id: ActionId,
+        mission_id: MissionId,
+        at: datetime,
+        pending_approval_id: str | None = None,
+        binding_hash: BindingHash | None = None,
+        reason: str | None = None,
+    ) -> ApprovalConsumptionRecord:
+        """Record the rejection of an approval decision fail-closed in ledger and registry."""
+        if not decision_id or not isinstance(decision_id, str) or not decision_id.strip():
+            raise ApprovalConsumptionValueError("decision_id must be a non-empty string")
+        if not isinstance(mission_id, MissionId):
+            raise ApprovalConsumptionTypeError("mission_id must be a MissionId")
+        if not isinstance(action_id, ActionId):
+            raise ApprovalConsumptionTypeError("action_id must be an ActionId")
+        if not isinstance(at, datetime):
+            raise ApprovalConsumptionTypeError("at must be a datetime instance")
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ApprovalConsumptionValueError("at must be timezone-aware")
+        norm_at = at if at.tzinfo == UTC else at.astimezone(UTC)
+        dec_id = str(decision_id).strip()
+
+        with self._lock:
+            if self._registry.is_decision_consumed(dec_id):
+                raise ApprovalAlreadyUsedError(
+                    f"Decision '{dec_id}' has already been consumed or recorded"
+                )
+
+            # Ensure action exists in ledger and belongs to mission using public methods
+            if self._ledger is not None:
+                try:
+                    act_rec = self._ledger.get_action(action_id)
+                except Exception as exc:
+                    raise MalformedApprovalStateError(
+                        f"Action '{action_id}' not found in ledger; cannot record rejection: {exc}"
+                    ) from exc
+                if act_rec.mission_id != mission_id:
+                    raise MalformedApprovalStateError(
+                        f"Action '{action_id}' mission_id ({act_rec.mission_id}) does not match "
+                        f"rejection mission_id ({mission_id})"
+                    )
+
+                payload = {
+                    "evidence_type": APPROVAL_REJECTION_EVIDENCE_TYPE,
+                    "decision_id": dec_id,
+                    "mission_id": str(mission_id),
+                    "action_id": str(action_id),
+                    "decision": "REJECT",
+                    "status": "REJECTED",
+                    "consumed_at": norm_at.isoformat(),
+                }
+                if pending_approval_id is not None:
+                    payload["pending_approval_id"] = str(pending_approval_id)
+                if binding_hash is not None:
+                    payload["binding_hash"] = binding_hash.value
+                if reason is not None:
+                    payload["reason"] = redact_text(reason)
+
+                ev_record = EvidenceRecord.create(
+                    action_id=action_id,
+                    mission_id=mission_id,
+                    origin=EvidenceOrigin(
+                        provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                        observed_at=norm_at,
+                    ),
+                    payload=payload,
+                    created_at=norm_at,
+                )
+                try:
+                    self._ledger.append_evidence(ev_record)
+                except Exception as exc:
+                    raise ApprovalRevocationPersistenceError(
+                        f"Failed to durably persist approval rejection: {exc}"
+                    ) from exc
+
+            return self._registry.record_rejection(
+                dec_id,
+                mission_id=mission_id,
+                action_id=action_id,
+                at=norm_at,
+                pending_approval_id=pending_approval_id,
+                binding_hash=binding_hash,
+                reason=reason,
+            )
 
     def has_consumed_approval_for_action(self, action_id: ActionId | str) -> bool:
         """Check if any approval has been consumed for the given action ID.
@@ -825,7 +1139,7 @@ class ApprovalLedger:
             elif isinstance(grant, ApprovalId):
                 aid = grant
                 existing_rec = self._registry.get_record(str(aid))
-                if existing_rec is not None:
+                if existing_rec is not None and existing_rec.binding_hash is not None:
                     mid = existing_rec.mission_id
                     act_id = existing_rec.action_id
                     b_hash = existing_rec.binding_hash
@@ -960,6 +1274,7 @@ def revoke_approval(
 
 __all__ = [
     "APPROVAL_CONSUMPTION_EVIDENCE_TYPE",
+    "APPROVAL_REJECTION_EVIDENCE_TYPE",
     "APPROVAL_REVOCATION_EVIDENCE_TYPE",
     "ApprovalAlreadyUsedError",
     "ApprovalConsumptionError",

@@ -934,6 +934,10 @@ class MissionLedgerPort(ABC):
     def get_mission(self, mission_id: MissionId) -> MissionRecord:
         """Retrieve a mission record by ID. Raises RecordNotFoundError if missing."""
 
+    def get_all_missions(self) -> list[MissionRecord]:
+        """List all mission records in the ledger in append order."""
+        return []
+
     @abstractmethod
     def append_action(self, record: ActionRecord) -> None:
         """Append an action record bound to a mission. Fails closed on duplicates or conflicts."""
@@ -1180,6 +1184,10 @@ class InMemoryNonDurableLedger(MissionLedgerPort):
         if key not in self._missions:
             raise RecordNotFoundError(f"Mission {key} not found in ledger")
         return self._missions[key]
+
+    def get_all_missions(self) -> list[MissionRecord]:
+        """List all mission records in the ledger in append order."""
+        return list(self._missions.values())
 
     def append_action(self, record: ActionRecord) -> None:
         m_key = str(record.mission_id)
@@ -1745,6 +1753,10 @@ class DurableFileLedger(MissionLedgerPort):
         if key not in self._missions:
             raise RecordNotFoundError(f"Mission {key} not found in ledger")
         return self._missions[key]
+
+    def get_all_missions(self) -> list[MissionRecord]:
+        """List all mission records in the ledger in append order."""
+        return list(self._missions.values())
 
     def append_action(self, record: ActionRecord) -> None:
         m_key = str(record.mission_id)

@@ -96,7 +96,7 @@ from stilldone.domain.desired_state import (
 )
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionContract, MissionId
-from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
+from stilldone.domain.provenance import EvidenceProvenance
 from stilldone.evidence import EvidenceId
 from stilldone.execution.compiler import compile_candidate_plan
 from stilldone.execution.contracts import (
@@ -123,8 +123,8 @@ from stilldone.execution.state import (
 from stilldone.ledger import (
     ActionRecord,
     DurableFileLedger,
-    EvidenceRecord,
     MissionRecord,
+    RecordNotFoundError,
 )
 from stilldone.pending_approval import (
     ApprovalDecision,
@@ -1134,7 +1134,12 @@ class KillerMissionEnvironment:
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
 
         # Durable infrastructure
-        self.mission_ledger = DurableFileLedger(self.ledger_file)
+        try:
+            self.mission_ledger = DurableFileLedger(self.ledger_file)
+        except Exception as exc:
+            raise KillerMissionIntegrityError(
+                f"Failed to initialize durable ledger from '{self.ledger_file}': {exc}"
+            ) from exc
         self.approval_ledger = ApprovalLedger(ledger=self.mission_ledger)
         self.snapshot_repo = DurableSnapshotRepository(self.snapshots_dir)
 
@@ -1267,20 +1272,69 @@ class KillerMissionSliceRunner:
         )
         self.canonical_predicates = [self.pred_weather, self.pred_task, self.pred_calendar]
 
-        # Initialize mission in durable ledger if not already initialized
-        try:
-            self.env.mission_ledger.get_mission(self.mission_id)
-        except Exception:
-            now = datetime.now(UTC)
-            self.env.mission_ledger.append_mission(
-                MissionRecord(
-                    mission_id=self.mission_id,
-                    contract=self.contract,
-                    state=MissionState.DRAFT,
-                    created_at=now,
-                    updated_at=now,
+        # Initialize mission in durable ledger or restore existing session (Repair A3)
+        self._is_resumed_mission: bool = False
+        self._existing_mission_record: MissionRecord | None = None
+
+        all_existing_missions: list[MissionRecord] = []
+        if hasattr(self.env.mission_ledger, "get_all_missions"):
+            try:
+                all_existing_missions = self.env.mission_ledger.get_all_missions()
+            except Exception as exc:
+                raise KillerMissionIntegrityError(
+                    f"Failed to inspect existing missions in ledger: {exc}"
+                ) from exc
+
+        if all_existing_missions:
+            matching = [m for m in all_existing_missions if m.mission_id == self.mission_id]
+            if not matching:
+                stored_ids = [str(m.mission_id) for m in all_existing_missions]
+                raise KillerMissionIntegrityError(
+                    f"Persistent storage contains existing mission(s) {stored_ids}, "
+                    f"which does not match active mission '{self.mission_id}'. "
+                    "Mismatched mission identity in persistent storage."
                 )
-            )
+            self._existing_mission_record = matching[0]
+            self._is_resumed_mission = True
+            if self._existing_mission_record.contract.intent.text != self.contract.intent.text:
+                raise KillerMissionIntegrityError(
+                    f"Existing mission '{self.mission_id}' has contradictory intent: "
+                    f"'{self._existing_mission_record.contract.intent.text}' != "
+                    f"'{self.contract.intent.text}'"
+                )
+        else:
+            try:
+                self._existing_mission_record = self.env.mission_ledger.get_mission(self.mission_id)
+                self._is_resumed_mission = True
+                if self._existing_mission_record.contract.intent.text != self.contract.intent.text:
+                    raise KillerMissionIntegrityError(
+                        f"Existing mission '{self.mission_id}' has contradictory intent: "
+                        f"'{self._existing_mission_record.contract.intent.text}' != "
+                        f"'{self.contract.intent.text}'"
+                    )
+            except RecordNotFoundError:
+                self._is_resumed_mission = False
+                now = datetime.now(UTC)
+                try:
+                    self.env.mission_ledger.append_mission(
+                        MissionRecord(
+                            mission_id=self.mission_id,
+                            contract=self.contract,
+                            state=MissionState.DRAFT,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                except Exception as exc:
+                    raise KillerMissionIntegrityError(
+                        f"Failed to append initial mission record to ledger: {exc}"
+                    ) from exc
+            except (KillerMissionIntegrityError, KillerMissionAuthorityError):
+                raise
+            except Exception as exc:
+                raise KillerMissionIntegrityError(
+                    f"Failed to query existing mission '{self.mission_id}' in ledger: {exc}"
+                ) from exc
 
         # Compile canonical plan & execution state tracker
         self._setup_canonical_plan()
@@ -2400,8 +2454,15 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.validated_candidate_plan: CandidatePlanProposal | None = None
         self._consumed_decisions_file = self.env.base_dir / "consumed_approval_decisions.jsonl"
         self._persistence_failed: bool = False
-        self.is_first_time_storage: bool = not self._consumed_decisions_file.exists()
-        self.is_restored_session: bool = self._consumed_decisions_file.exists()
+        # Distinguish first-time storage from restoration of existing state (Repair A3)
+        if not getattr(self.env, "has_explicit_base_dir", True) or getattr(
+            self.env, "is_ephemeral_storage", False
+        ):
+            self.is_first_time_storage = False
+            self.is_restored_session = False
+        else:
+            self.is_first_time_storage = not self._is_resumed_mission
+            self.is_restored_session = self._is_resumed_mission
         self._load_consumed_decision_ids()
 
     def _load_consumed_decision_ids(self, *, require_durable: bool = False) -> None:
@@ -2430,8 +2491,15 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     "cannot recover historical authorization state."
                 )
 
-        if hasattr(self, "_consumed_decisions_file") and self._consumed_decisions_file.exists():
-            with self._consumed_decisions_lock:
+        with self._consumed_decisions_lock:
+            # 1. Hydrate from canonical ApprovalLedger
+            ledger_dec_ids: set[str] = set()
+            if hasattr(self.env, "approval_ledger") and self.env.approval_ledger is not None:
+                ledger_dec_ids = self.env.approval_ledger.get_consumed_decision_ids()
+                self._consumed_approval_decision_ids.update(ledger_dec_ids)
+
+            # 2. If decision log file exists, validate strictly
+            if hasattr(self, "_consumed_decisions_file") and self._consumed_decisions_file.exists():
                 loaded_ids: set[str] = set()
                 try:
                     with open(self._consumed_decisions_file, encoding="utf-8") as f:
@@ -2514,6 +2582,13 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                                     "persistent log"
                                 )
                             loaded_ids.add(did)
+
+                    # 3. Discrepancy detection between decision log and canonical ledger (Repair A2)
+                    if loaded_ids and ledger_dec_ids and loaded_ids != ledger_dec_ids:
+                        raise KillerMissionIntegrityError(
+                            "Discrepancy detected between decision log and canonical approval "
+                            "ledger; reconciliation required"
+                        )
                     self._consumed_approval_decision_ids.update(loaded_ids)
                 except OSError as e:
                     raise KillerMissionIntegrityError(
@@ -2542,7 +2617,11 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     "cannot continue authorization-sensitive operations"
                 )
 
-            if decision_id in self._consumed_approval_decision_ids:
+            if decision_id in self._consumed_approval_decision_ids or (
+                hasattr(self.env, "approval_ledger")
+                and self.env.approval_ledger is not None
+                and self.env.approval_ledger.is_decision_consumed(decision_id)
+            ):
                 raise KillerMissionAuthorityError(
                     f"Approval decision '{decision_id}' has already been consumed "
                     "(duplicate/replay prohibited)"
@@ -2561,6 +2640,40 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             now_utc = datetime.now(UTC)
             dec_str = decision.value if isinstance(decision, ApprovalDecision) else str(decision)
             mid_str = str(mission_id) if mission_id else str(self.mission_id)
+            act_str = (
+                str(action_id)
+                if action_id
+                else (str(self.action_cal.action_id) if getattr(self, "action_cal", None) else None)
+            )
+            if not act_str:
+                self._persistence_failed = True
+                raise KillerMissionIntegrityError(
+                    "Cannot persist approval decision without action_id binding"
+                )
+
+            # Ensure action exists in mission ledger using public method get_action
+            if hasattr(self.env, "mission_ledger") and self.env.mission_ledger is not None:
+                try:
+                    self.env.mission_ledger.get_action(ActionId(act_str))
+                except RecordNotFoundError as exc:
+                    if getattr(self, "action_cal", None) and act_str == str(
+                        self.action_cal.action_id
+                    ):
+                        self.env.mission_ledger.append_action(
+                            ActionRecord(
+                                action_id=self.action_cal.action_id,
+                                mission_id=self.mission_id,
+                                action=self.action_cal,
+                                approval_id=None,
+                                created_at=now_utc,
+                            )
+                        )
+                    else:
+                        self._persistence_failed = True
+                        raise KillerMissionIntegrityError(
+                            f"Action '{act_str}' not found in ledger; cannot record decision"
+                        ) from exc
+
             rec = {
                 "decision_id": decision_id,
                 "consumed_at": now_utc.isoformat(),
@@ -2575,6 +2688,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 else 0
             )
 
+            # 1. Append to JSONL file
             try:
                 self._consumed_decisions_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(self._consumed_decisions_file, "a", encoding="utf-8") as f:
@@ -2596,55 +2710,30 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     f"Failed to durably commit consumed approval decision: {e}"
                 ) from e
 
-            # Also persist evidence to canonical mission ledger if present and action exists
-            if hasattr(self.env, "mission_ledger") and self.env.mission_ledger is not None:
-                act_val = (
-                    str(action_id)
-                    if action_id
-                    else (
-                        str(self.action_cal.action_id)
-                        if getattr(self, "action_cal", None)
-                        else None
+            # 2. Persist to canonical ApprovalLedger
+            if hasattr(self.env, "approval_ledger") and self.env.approval_ledger is not None:
+                try:
+                    self.env.approval_ledger.record_rejection(
+                        decision_id,
+                        action_id=ActionId(act_str),
+                        mission_id=MissionId(mid_str),
+                        at=now_utc,
                     )
-                )
-                ledger_actions = getattr(self.env.mission_ledger, "_actions", None)
-                if act_val and (ledger_actions is None or act_val in ledger_actions):
+                except Exception as exc:
+                    # Rollback the JSONL append if ledger append fails
                     try:
-                        ev_payload = {
-                            "evidence_type": "consumed_approval_decision",
-                            "decision_id": decision_id,
-                            "mission_id": mid_str,
-                            "action_id": act_val,
-                            "decision": dec_str,
-                            "consumed_at": now_utc.isoformat(),
-                        }
-                        ev_record = EvidenceRecord.create(
-                            action_id=ActionId(act_val),
-                            mission_id=MissionId(mid_str),
-                            origin=EvidenceOrigin(
-                                provenance=EvidenceProvenance.LOCAL_EXECUTION,
-                                observed_at=now_utc,
-                            ),
-                            payload=ev_payload,
-                            created_at=now_utc,
-                        )
-                        self.env.mission_ledger.append_evidence(ev_record)
-                    except Exception as exc:
-                        # Rollback the JSONL append if ledger append fails
-                        try:
-                            if self._consumed_decisions_file.exists():
-                                with open(
-                                    self._consumed_decisions_file, "r+", encoding="utf-8"
-                                ) as rf:
-                                    rf.truncate(orig_size)
-                                    rf.flush()
-                                    os.fsync(rf.fileno())
-                        except Exception:
-                            pass
-                        self._persistence_failed = True
-                        raise KillerMissionIntegrityError(
-                            f"Failed to commit consumed approval decision to mission ledger: {exc}"
-                        ) from exc
+                        if self._consumed_decisions_file.exists():
+                            with open(self._consumed_decisions_file, "r+", encoding="utf-8") as rf:
+                                rf.truncate(orig_size)
+                                rf.flush()
+                                os.fsync(rf.fileno())
+                    except Exception:
+                        pass
+                    self._persistence_failed = True
+                    raise KillerMissionIntegrityError(
+                        "Failed to commit consumed approval decision to canonical approval "
+                        f"ledger: {exc}"
+                    ) from exc
 
             # ONLY add to in-memory set AFTER all persistence steps succeed!
             self._consumed_approval_decision_ids.add(decision_id)
@@ -3013,6 +3102,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             self._persist_consumed_decision_id(
                 eff_decision.decision_id,
                 decision=eff_decision.decision,
+                action_id=str(self.action_cal.action_id),
+                mission_id=str(self.mission_id),
             )
             return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
 

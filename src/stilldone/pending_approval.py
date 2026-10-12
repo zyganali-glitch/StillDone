@@ -308,52 +308,41 @@ class OneDecisionContract:
             "requested_at": self.requested_at.isoformat(),
         }
 
-    def _sanitize_standalone_summary(self, summary: str) -> str:
-        """Sanitize standalone summary without known provider_ids context.
+    def _sanitize_standalone_summary(
+        self,
+        summary: str,
+        *,
+        provider_ids: Iterable[str] | None = None,
+    ) -> str:
+        """Sanitize standalone summary without leaking provider IDs or parameters.
 
-        Fails closed or suppresses unsafe free-form historical summaries containing
-        unredacted provider target identifiers, while keeping canonical summaries usable.
+        Enforces Finding D2:
+        - Standalone public serialization must never pass uncontrolled/free-form summary
+          parameters through merely because the outer string matches a recognized template.
+        - Preserves useful deterministic action labels and decision options.
+        - Suppresses unsafe free-form parameter sections when provider identity context
+          cannot prove absence of raw provider resource IDs.
+        - Built from trusted structured fields and sanitized template prefixes.
         """
-        if REDACTED_IDENTIFIER in summary:
-            return redact_text(summary)
+        # 1. Calendar update formats:
+        # e.g. "Update Google Calendar event on '<system>'..."
+        cal_match = re.match(r"^Update Google Calendar event on '([^']*)'", summary)
+        if cal_match:
+            sys_name = cal_match.group(1) or "google_calendar"
+            return f"Update Google Calendar event on '{sys_name}' ({REDACTED_IDENTIFIER})"
 
-        # 1. Canonical calendar update format:
-        # "Update Google Calendar event on '<system>': <param_desc>"
-        # Notice: after '<system>', there is directly ': ' without target identifiers
-        cal_canon_match = re.match(r"^Update Google Calendar event on '([^']+)':\s*(.*)$", summary)
-        if cal_canon_match:
-            return redact_text(summary)
+        # 2. Generic action format with target system:
+        # e.g. "Execute action '<action_type>' on '<system>'..."
+        act_match = re.match(r"^Execute action '([^']*)' on '([^']*)'", summary)
+        if act_match:
+            act_name = act_match.group(1) or self.action_type.value
+            sys_name = act_match.group(2)
+            if sys_name:
+                return f"Execute action '{act_name}' on '{sys_name}' ({REDACTED_IDENTIFIER})"
+            return f"Execute action '{act_name}' ({REDACTED_IDENTIFIER})"
 
-        # 2. Canonical generic action format:
-        # "Execute action '<action_type>' on '<system>'"
-        other_canon_match = re.match(r"^Execute action '([^']+)' on '([^']*)'$", summary)
-        if other_canon_match:
-            return redact_text(summary)
-
-        # 3. Known historical calendar update format embedding resource_id:
-        # "Update Google Calendar event on '<system>' (<resource_id>): <param_desc>"
-        hist_cal_match = re.match(
-            r"^(Update Google Calendar event on '[^']+')\s*\([^)]+\):\s*(.*)$",
-            summary,
-        )
-        if hist_cal_match:
-            prefix = hist_cal_match.group(1)
-            params = hist_cal_match.group(2)
-            return redact_text(f"{prefix} ({REDACTED_IDENTIFIER}): {params}")
-
-        # 4. Known historical generic action format:
-        # "Execute action '<action_type>' on '<system>' target '<resource_id>'"
-        hist_other_match = re.match(
-            r"^(Execute action '[^']+' on '[^']+')\s+target\s+'[^']*'$",
-            summary,
-        )
-        if hist_other_match:
-            prefix = hist_other_match.group(1)
-            return redact_text(f"{prefix} target '{REDACTED_IDENTIFIER}'")
-
-        # 5. Any other non-canonical or free-form historical summary:
-        # Suppress the unsafe free-form summary fail-closed
-        return redact_text(f"Execute action '{self.action_type.value}' ({REDACTED_IDENTIFIER})")
+        # 3. Safe bounded summary built strictly from trusted structured fields
+        return f"Execute action '{self.action_type.value}' ({REDACTED_IDENTIFIER})"
 
     def to_dict(
         self,
@@ -374,14 +363,9 @@ class OneDecisionContract:
         if not redact_identifiers:
             return self.to_authoritative_dict()
 
-        summary = self.human_summary
-        if provider_ids:
-            for pid in provider_ids:
-                if pid and pid in summary and not pid.startswith("sym_"):
-                    summary = summary.replace(pid, REDACTED_IDENTIFIER)
-            summary = redact_text(summary)
-        else:
-            summary = self._sanitize_standalone_summary(summary)
+        sanitized_summary = self._sanitize_standalone_summary(
+            self.human_summary, provider_ids=provider_ids
+        )
 
         return {
             "pending_approval_id": self.pending_approval_id.value,
@@ -390,7 +374,7 @@ class OneDecisionContract:
             "action_type": self.action_type.value,
             "authority_class": self.authority_class.value,
             "decision_options": [d.value for d in self.decision_options],
-            "human_summary": summary,
+            "human_summary": sanitized_summary,
             "status": self.status.value,
             "requested_at": self.requested_at.isoformat(),
         }

@@ -2543,12 +2543,11 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
         tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
         weather_transport=OpenMeteoHttpTransport(),
     )
-    from stilldone.domain.mission import MissionId
 
     runner_reloaded = _live_runner_for_boundary_tests(
         monkeypatch,
         live_env=live_env_reloaded,
-        mission_id=MissionId("22222222-3333-4444-5555-666666666666"),
+        mission_id=runner.mission_id,
         operator_approved=True,
     )
     assert "unique_dec_1" in runner_reloaded._consumed_approval_decision_ids
@@ -2734,18 +2733,29 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     with pytest.raises(KillerMissionIntegrityError, match="Invalid decision value"):
         runner._load_consumed_decision_ids()
 
-    # 6. Rejection durability and restart recovery
-    dec_file.write_text("", encoding="utf-8")
+    # 6. Rejection durability and restart recovery (both stores synchronized)
+    init_line = json.dumps(
+        {
+            "decision_id": "init_dec_1",
+            "consumed_at": "2026-10-04T12:00:00+00:00",
+            "decision": "REJECT",
+            "mission_id": str(runner.mission_id),
+        }
+    )
+    dec_file.write_text(f"{init_line}\n", encoding="utf-8")
     runner._persistence_failed = False
     runner._consumed_approval_decision_ids.clear()
+    runner._load_consumed_decision_ids()
+    assert "init_dec_1" in runner._consumed_approval_decision_ids
+
     runner._persist_consumed_decision_id("durable_reject_1", decision=ApprovalDecision.REJECT)
     assert "durable_reject_1" in runner._consumed_approval_decision_ids
 
     # Read back raw jsonl
     lines = [json.loads(line) for line in dec_file.read_text(encoding="utf-8").strip().splitlines()]
-    assert len(lines) == 1
-    assert lines[0]["decision_id"] == "durable_reject_1"
-    assert lines[0]["decision"] == "REJECT"
+    assert len(lines) == 2
+    assert lines[1]["decision_id"] == "durable_reject_1"
+    assert lines[1]["decision"] == "REJECT"
 
     # Restart runner on same directory
     live_env_restart = KillerMissionEnvironment.create_live_environment(
@@ -2758,12 +2768,13 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     runner_restarted = _live_runner_for_boundary_tests(
         monkeypatch,
         live_env=live_env_restart,
-        mission_id=MissionId("99999999-8888-7777-6666-555555555555"),
+        mission_id=runner.mission_id,
         operator_approved=True,
     )
     assert runner_restarted.is_restored_session is True
     assert runner_restarted.is_first_time_storage is False
     assert "durable_reject_1" in runner_restarted._consumed_approval_decision_ids
+    assert "init_dec_1" in runner_restarted._consumed_approval_decision_ids
 
     # Replay must be rejected
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
@@ -2943,15 +2954,18 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
     # Provider ID must be completely absent from public output
     assert secret_event_id not in pub_json
     assert REDACTED_IDENTIFIER in pub_dict["human_summary"]
+    # Parameters containing arbitrary provider IDs must be suppressed fail-closed
     assert pub_dict["human_summary"] == (
-        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER}): "
-        "start_time='2026-10-04T07:30:00+00:00'"
+        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
     )
 
     # 2. Default to_dict() defaults to redact_identifiers=True
     def_dict = contract.to_dict()
     assert secret_event_id not in json.dumps(def_dict)
     assert REDACTED_IDENTIFIER in def_dict["human_summary"]
+    assert def_dict["human_summary"] == (
+        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
+    )
 
     # 3. Explicit authoritative dictionary retains raw unredacted historical summary
     auth_dict = contract.to_authoritative_dict()
@@ -2961,7 +2975,7 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
     # Calling to_dict(redact_identifiers=False) delegates to to_authoritative_dict()
     assert contract.to_dict(redact_identifiers=False) == auth_dict
 
-    # 4. Canonical summaries without raw provider ID remain usable
+    # 4. Canonical summaries without known provider ID suppress parameters in public projection
     canonical_summary = (
         "Update Google Calendar event on 'google_calendar': start_time='2026-10-04T07:30:00+00:00'"
     )
@@ -2977,7 +2991,9 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
         requested_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
     )
     canon_pub = canon_contract.to_public_dict()
-    assert canon_pub["human_summary"] == canonical_summary
+    assert canon_pub["human_summary"] == (
+        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
+    )
 
     # 5. Free-form arbitrary summary without known structure is suppressed fail-closed
     adversarial_free_form = f"Custom operator note regarding secret event {secret_event_id} at 10am"
@@ -2995,3 +3011,268 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
     ff_pub = free_form_contract.to_public_dict()
     assert secret_event_id not in json.dumps(ff_pub)
     assert ff_pub["human_summary"] == f"Execute action 'calendar.update' ({REDACTED_IDENTIFIER})"
+
+
+def test_adversarial_storage_mismatched_mission_id_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A3 adversarial: Runner with mismatched mission ID over storage fails closed."""
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.domain.mission import MissionId
+    from stilldone.killer_mission import (
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+
+    stable_dir = tmp_path / "storage_mismatch_test"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    scope = DemoResourceScope("c_demo", "tl_demo")
+
+    env1 = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner1 = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=env1,
+        mission_id=MissionId("11111111-1111-1111-1111-111111111111"),
+        operator_approved=True,
+    )
+    assert runner1.mission_id == MissionId("11111111-1111-1111-1111-111111111111")
+
+    # Now attempt to construct a new runner with a different mission ID on the same directory
+    env2 = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=scope,
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    with pytest.raises(
+        KillerMissionIntegrityError,
+        match="Mismatched mission identity in persistent storage",
+    ):
+        _live_runner_for_boundary_tests(
+            monkeypatch,
+            live_env=env2,
+            mission_id=MissionId("22222222-2222-2222-2222-222222222222"),
+            operator_approved=True,
+        )
+
+
+def test_adversarial_corrupt_ledger_fails_closed_without_creating_draft(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A3 adversarial: Corrupt ledger raises KillerMissionIntegrityError and avoids DRAFT."""
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.killer_mission import (
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+
+    stable_dir = tmp_path / "corrupt_ledger_test"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    # Write garbage into ledger.jsonl
+    ledger_file = stable_dir / "ledger.jsonl"
+    ledger_file.write_text("{corrupted: json: not_valid}\n", encoding="utf-8")
+
+    with pytest.raises(KillerMissionIntegrityError, match="Failed to initialize durable ledger"):
+        KillerMissionEnvironment.create_live_environment(
+            base_dir=stable_dir,
+            scope=DemoResourceScope("c_demo", "tl_demo"),
+            calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+            tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+            weather_transport=OpenMeteoHttpTransport(),
+        )
+
+
+def test_adversarial_jsonl_write_succeeds_but_ledger_fails_triggers_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A2 adversarial: JSONL write succeeds but ledger fails -> rollback & latch failure."""
+    from typing import Any
+
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.domain.mission import MissionId
+    from stilldone.killer_mission import (
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+
+    stable_dir = tmp_path / "rollback_test"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    env = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=DemoResourceScope("c_demo", "tl_demo"),
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=env,
+        mission_id=MissionId("11111111-1111-1111-1111-111111111111"),
+        operator_approved=True,
+    )
+
+    # First write a valid decision
+    runner._persist_consumed_decision_id("init_dec_ok", decision=ApprovalDecision.REJECT)
+    assert "init_dec_ok" in runner._consumed_approval_decision_ids
+    orig_size = runner._consumed_decisions_file.stat().st_size
+
+    # Monkeypatch approval_ledger.record_rejection to fail
+    def failing_record_rejection(*args: Any, **kwargs: Any) -> None:
+        raise OSError("Simulated canonical ledger storage failure")
+
+    monkeypatch.setattr(env.approval_ledger, "record_rejection", failing_record_rejection)
+
+    with pytest.raises(
+        KillerMissionIntegrityError,
+        match="Failed to commit consumed approval decision to canonical approval ledger",
+    ):
+        runner._persist_consumed_decision_id("orphan_attempt", decision=ApprovalDecision.REJECT)
+
+    # Verify rollback: JSONL size must be restored to orig_size (no orphaned record)
+    assert runner._consumed_decisions_file.stat().st_size == orig_size
+    assert "orphan_attempt" not in runner._consumed_approval_decision_ids
+    assert runner._persistence_failed is True
+
+    # Subsequent mutation attempts must fail closed
+    with pytest.raises(
+        KillerMissionIntegrityError, match="Persistence failure previously occurred"
+    ):
+        runner._persist_consumed_decision_id("another_id")
+
+
+def test_adversarial_dual_store_discrepancy_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A2 adversarial: Inconsistent records between JSONL and ledger fail closed on reload."""
+    from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.domain.mission import MissionId
+    from stilldone.killer_mission import (
+        KillerMissionEnvironment,
+        KillerMissionIntegrityError,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+
+    stable_dir = tmp_path / "discrepancy_test"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    env = KillerMissionEnvironment.create_live_environment(
+        base_dir=stable_dir,
+        scope=DemoResourceScope("c_demo", "tl_demo"),
+        calendar_transport=GoogleApiClientCalendarTransport(service=MagicMock()),
+        tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
+        weather_transport=OpenMeteoHttpTransport(),
+    )
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        live_env=env,
+        mission_id=MissionId("11111111-1111-1111-1111-111111111111"),
+        operator_approved=True,
+    )
+    runner._persist_consumed_decision_id("dec_both", decision=ApprovalDecision.REJECT)
+
+    # Inject an extra record directly into JSONL that was never recorded in ApprovalLedger
+    extra_record = json.dumps(
+        {
+            "decision_id": "dec_in_jsonl_only",
+            "consumed_at": "2026-10-04T12:00:00+00:00",
+            "decision": "REJECT",
+            "mission_id": str(runner.mission_id),
+        }
+    )
+    with open(runner._consumed_decisions_file, "a", encoding="utf-8") as f:
+        f.write(f"{extra_record}\n")
+
+    # Reloading consumed decisions must detect the discrepancy and fail closed
+    runner._consumed_approval_decision_ids.clear()
+    with pytest.raises(
+        KillerMissionIntegrityError,
+        match="Discrepancy detected between decision log and canonical approval ledger",
+    ):
+        runner._load_consumed_decision_ids()
+
+
+def test_adversarial_unsupported_evidence_type_ignored_by_p11_hydration(
+    tmp_path: Path,
+) -> None:
+    """A2 adversarial: Unsupported evidence types in ledger are safely ignored."""
+    from stilldone.approval_consumption import ApprovalLedger
+    from stilldone.domain.action import (
+        ActionContract,
+        ActionId,
+        ActionType,
+        NormalizedParameters,
+        ResourceKind,
+        TargetIdentity,
+    )
+    from stilldone.domain.lifecycle import MissionState
+    from stilldone.domain.mission import MissionContract, MissionId, UserIntentSnapshot
+    from stilldone.domain.provenance import EvidenceOrigin
+    from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord, MissionRecord
+
+    ledger_path = tmp_path / "ledger_unsupported_test.jsonl"
+    file_ledger = DurableFileLedger(ledger_path)
+
+    mid = MissionId("11111111-1111-1111-1111-111111111111")
+    aid = ActionId("11111111-2222-3333-4444-555555555555")
+    now = datetime.now(UTC)
+
+    file_ledger.append_mission(
+        MissionRecord(
+            mission_id=mid,
+            contract=MissionContract(
+                mission_id=mid,
+                intent=UserIntentSnapshot(text="Test", captured_at=now, mission_id=mid),
+                created_at=now,
+            ),
+            state=MissionState.DRAFT,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    file_ledger.append_action(
+        ActionRecord(
+            action_id=aid,
+            mission_id=mid,
+            action=ActionContract(
+                mission_id=mid,
+                action_id=aid,
+                action_type=ActionType.WEATHER_READ,
+                target=TargetIdentity(
+                    system="weather",
+                    resource_kind=ResourceKind.WEATHER_LOCATION,
+                    resource_id="loc",
+                ),
+                parameters=NormalizedParameters.from_dict({}),
+            ),
+            approval_id=None,
+            created_at=now,
+        )
+    )
+
+    # Append an evidence record with an arbitrary unsupported evidence_type in its payload
+    unsupported_record = EvidenceRecord.create(
+        action_id=aid,
+        mission_id=mid,
+        origin=EvidenceOrigin.local_execution(),
+        payload={"evidence_type": "CUSTOM_UNSUPPORTED_TYPE", "some_key": "some_value"},
+        created_at=now,
+    )
+    file_ledger.append_evidence(unsupported_record)
+
+    # Hydrate ApprovalLedger from file_ledger
+    approval_ledger = ApprovalLedger(ledger=file_ledger)
+    # The unsupported record must not grant approval, mark anything consumed, or crash
+    assert len(approval_ledger.get_consumed_decision_ids()) == 0
+    assert approval_ledger.is_rejected("any_id") is False
+    assert approval_ledger.is_decision_consumed("any_id") is False
