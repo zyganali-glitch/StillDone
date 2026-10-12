@@ -373,6 +373,37 @@ def compute_human_summary(action: ActionContract | ValidatedActionContract) -> s
     return redact_text(raw_text)
 
 
+def compute_historical_human_summary(action: ActionContract | ValidatedActionContract) -> str:
+    """Build historical human-readable summary for backward compatibility."""
+    actual_action = action.action if isinstance(action, ValidatedActionContract) else action
+    if not isinstance(actual_action, ActionContract):
+        raise PendingApprovalTypeError(
+            "action must be an ActionContract or ValidatedActionContract instance, "
+            f"got {type(action).__name__}"
+        )
+    params = actual_action.parameters
+    if actual_action.action_type == ActionType.CALENDAR_UPDATE:
+        parts: list[str] = []
+        if "summary" in params:
+            parts.append(f"summary={str(params['summary'])!r}")
+        if "start_time" in params:
+            parts.append(f"start_time={str(params['start_time'])!r}")
+        if "all_day" in params:
+            parts.append(f"all_day={params['all_day']}")
+        param_desc = ", ".join(parts) if parts else "parameters updated"
+        raw_text = (
+            f"Update Google Calendar event on '{actual_action.target.system}' "
+            f"({actual_action.target.resource_id}): {param_desc}"
+        )
+    else:
+        raw_text = (
+            f"Execute action '{actual_action.action_type.value}' on "
+            f"'{actual_action.target.system}' target '{actual_action.target.resource_id}'"
+        )
+
+    return redact_text(raw_text)
+
+
 _build_human_summary = compute_human_summary
 
 
@@ -552,13 +583,16 @@ class PendingApproval:
                 f"({self.requested_at.isoformat()})"
             )
 
-        # Invariant: Human summary consistency
+        # Invariant: Human summary consistency (supports canonical and authentic historical formats)
         expected_human_summary = compute_human_summary(self.action)
         if self.decision_contract.human_summary != expected_human_summary:
-            raise PendingApprovalValueError(
-                "decision_contract.human_summary mismatch: "
-                f"{self.decision_contract.human_summary!r} != expected {expected_human_summary!r}"
-            )
+            historical_human_summary = compute_historical_human_summary(self.action)
+            if self.decision_contract.human_summary != historical_human_summary:
+                raise PendingApprovalValueError(
+                    f"decision_contract.human_summary mismatch: "
+                    f"{self.decision_contract.human_summary!r} != "
+                    f"expected {expected_human_summary!r}"
+                )
 
         # Invariant: Parameters digest cryptographic self-validation
         expected_parameters_digest = compute_parameters_digest(self.parameters)
@@ -779,6 +813,7 @@ __all__ = [
     "PendingApprovalTypeError",
     "PendingApprovalValueError",
     "SmuggledGrantError",
+    "compute_historical_human_summary",
     "compute_human_summary",
     "compute_parameters_digest",
     "compute_pending_approval_id",

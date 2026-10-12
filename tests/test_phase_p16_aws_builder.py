@@ -394,7 +394,8 @@ def test_cloudwatch_live_proof_harness_positive_and_negative_verification() -> N
         environment="test",
     )
 
-    # 1. Positive case: valid execution
+    # 1. Partial result case: log ingestion and shared metric observed,
+    # but unresolved causal correlation
     res_pass = harness.execute_live_proof(
         source_sha=valid_sha,
         operator_approved=True,
@@ -402,11 +403,12 @@ def test_cloudwatch_live_proof_harness_positive_and_negative_verification() -> N
         timeout_seconds=2.0,
         poll_interval_seconds=0.1,
     )
-    assert res_pass.is_verified is True
-    assert res_pass.status == "PASS"
+    assert res_pass.is_verified is False
+    assert res_pass.status == "LOG_INGESTION_AND_SHARED_METRIC_OBSERVED"
     assert res_pass.is_billable is True
     assert res_pass.cost_exposure == CostExposure.MAY_HAVE_INCURRED_USAGE
     assert res_pass.observed_metric_value == 42.0
+    assert "Unresolved causal correlation" in res_pass.details
 
     # 2. Wrong namespace: fails closed
     emitted_records.clear()
@@ -1288,3 +1290,78 @@ def test_defect_4_cloudwatch_proof_adversarial_pagination_repeated_values_and_wi
     assert outcome_c.is_verified is False
     assert outcome_c.status == "LOG_INGESTION_OBSERVED"
     assert "Repeated metric values observed in emission window" in outcome_c.details
+
+
+def test_shared_metric_series_cannot_prove_exact_attribution_downgrades_to_partial_result() -> None:
+    """Repair C: An observed metric point in a shared metric series cannot independently
+
+    prove exact attribution to a specific emitted log record.
+    The harness must return a defensible partial result:
+    - status="LOG_INGESTION_AND_SHARED_METRIC_OBSERVED"
+    - is_verified=False
+    - observed facts clearly separated: log ingestion, matching token,
+      shared metric point, unresolved causal correlation.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.aws_builder import CloudWatchLiveProofHarness, CostExposure
+
+    def git_ok(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        return 0, "", ""
+
+    valid_sha = "1111111111111111111111111111111111111111"
+
+    mock_logs = MagicMock()
+    mock_cw = MagicMock()
+
+    emitted_records: list[str] = []
+
+    def mock_put_log_events(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs.put_log_events.side_effect = mock_put_log_events
+    mock_logs.get_log_events.side_effect = lambda **kwargs: {
+        "events": [{"message": rec} for rec in emitted_records]
+    }
+    # Exactly one matching data point returned from shared metric series
+    mock_cw.get_metric_data.side_effect = lambda **kwargs: {
+        "MetricDataResults": [
+            {
+                "StatusCode": "Complete",
+                "Id": "m1",
+                "Timestamps": [datetime.now(UTC)],
+                "Values": [42.0],
+            }
+        ]
+    }
+
+    harness = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw,
+        environment="test",
+    )
+
+    res = harness.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=2.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Must never claim is_verified=True or status="PASS"
+    assert res.is_verified is False
+    assert res.status == "LOG_INGESTION_AND_SHARED_METRIC_OBSERVED"
+    assert res.observed_metric_value == 42.0
+    assert "Unresolved causal correlation" in res.details
+    assert "not VERIFIED_METRIC_EXTRACTION or PASS" in res.details
+    assert res.is_billable is True
+    assert res.cost_exposure == CostExposure.MAY_HAVE_INCURRED_USAGE

@@ -1483,19 +1483,25 @@ class CloudWatchLiveProofHarness:
                 )
 
             return CloudWatchLiveProofResult(
-                status="PASS",
+                status="LOG_INGESTION_AND_SHARED_METRIC_OBSERVED",
                 namespace=namespace,
                 metric_name=metric_name,
                 region=self.region,
                 source_sha=source_sha,
                 timestamp_utc=datetime.now(UTC).isoformat(),
                 details=(
-                    f"EMF record emitted, verified in log stream '{self.log_stream_name}', "
-                    f"and confirmed via CloudWatch Metric API ({observed_metric_value}). "
-                    f"Proof token '{proof_token}' verified."
+                    f"EMF log record ingested and verified in stream '{self.log_stream_name}' "
+                    f"with proof token '{proof_token}'. Shared metric-series visibility "
+                    f"confirmed via CloudWatch Metric API ({observed_metric_value}). "
+                    "Unresolved causal correlation: shared metric namespace and dimensions "
+                    "cannot independently establish that the particular emitted log record "
+                    "caused that metric point without unmetered high-cardinality dimensions. "
+                    "Bounded cost prevents billable dimension creation. Classifying outcome as "
+                    "defensible partial result LOG_INGESTION_AND_SHARED_METRIC_OBSERVED, "
+                    "not VERIFIED_METRIC_EXTRACTION or PASS."
                 ),
                 observed_metric_value=observed_metric_value,
-                is_verified=True,
+                is_verified=False,
                 is_billable=True,
                 cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
             )

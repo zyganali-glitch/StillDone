@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from collections.abc import Callable, Mapping
@@ -126,6 +127,7 @@ from stilldone.ledger import (
 from stilldone.pending_approval import (
     ApprovalDecision,
     PendingApproval,
+    PendingApprovalStatus,
     create_pending_approval,
 )
 from stilldone.planning.bedrock import BedrockPlannerAdapter
@@ -774,8 +776,15 @@ class AuthenticatedHumanApprovalChannel(Protocol):
     self-declared authority strings, or self-constructed dataclasses.
     """
 
-    def verify_decision(self, decision: AuthorizedPostPendingApprovalDecision) -> bool:
-        """Verify that the decision was authenticated through a trusted human channel."""
+    def verify_decision(
+        self,
+        pending: PendingApproval,
+        decision: AuthorizedPostPendingApprovalDecision,
+    ) -> bool:
+        """Verify that decision was authenticated through a trusted human channel
+
+        against exact PendingApproval.
+        """
         ...
 
 
@@ -2329,7 +2338,6 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.approval_channel = approval_channel
         self.preflight_report: LivePreflightReport | None = None
         self._consumed_approval_decision_ids: set[str] = set()
-
         # Resolve live demo target date: default to tomorrow in UTC if not provided
         resolved_demo_date = (
             demo_date
@@ -2346,7 +2354,46 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             demo_date=resolved_demo_date,
             calendar_decision=calendar_decision,
         )
+        self.raw_candidate_plan: CandidatePlanProposal | None = None
         self.candidate_plan = None
+        self.validated_candidate_plan: CandidatePlanProposal | None = None
+        self._consumed_decisions_file = self.env.base_dir / "consumed_approval_decisions.jsonl"
+        self._load_consumed_decision_ids()
+
+    def _load_consumed_decision_ids(self) -> None:
+        """Load durably persisted consumed approval decision IDs across process restart."""
+        if hasattr(self, "_consumed_decisions_file") and self._consumed_decisions_file.exists():
+            try:
+                with open(self._consumed_decisions_file, encoding="utf-8") as f:
+                    for line in f:
+                        line_str = line.strip()
+                        if line_str:
+                            try:
+                                d = json.loads(line_str)
+                                did = d.get("decision_id")
+                                if did and isinstance(did, str):
+                                    self._consumed_approval_decision_ids.add(did)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+    def _persist_consumed_decision_id(self, decision_id: str) -> None:
+        """Durably persist consumed decision ID with atomic append and fsync."""
+        self._consumed_approval_decision_ids.add(decision_id)
+        try:
+            self._consumed_decisions_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._consumed_decisions_file, "a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps(
+                        {"decision_id": decision_id, "consumed_at": datetime.now(UTC).isoformat()}
+                    )
+                    + "\n"
+                )
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
 
     def evaluate_preflight(self) -> LivePreflightReport:
         """Evaluate canonical live preflight against all live gate prerequisites."""
@@ -2376,8 +2423,10 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             )
 
     def _propose_and_validate_candidate_plan(self) -> None:
-        """Propose candidate plan from Bedrock and validate before any external mutation."""
+        """Propose candidate plan from Bedrock and validate before publishing or mutating."""
         self._require_preflight()
+        self.candidate_plan = None
+        self.validated_candidate_plan = None
         if self.bedrock_planner is None or not isinstance(
             self.bedrock_planner, BedrockPlannerAdapter
         ):
@@ -2390,20 +2439,33 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             intent=self.intent_text,
         )
         plan_result = self.bedrock_planner.plan(planner_input)
-        self.candidate_plan = plan_result.plan
+        raw_plan = plan_result.plan
+        self.raw_candidate_plan = raw_plan
 
-        # Validate exact 3-step killer mission plan before ANY seeding, resolution, or execution
+        # Validate exact 3-step killer mission plan before ANY assignment or mutation
+        validate_canonical_killer_mission_plan(
+            raw_plan,
+            target_date=self.demo_date,
+            desired_start_time=self.desired_start_time,
+            scope=self.env.scope,
+        )
+        self.candidate_plan = raw_plan
+        self.validated_candidate_plan = raw_plan
+
+    def _compile_validated_plan_with_seeded_id(self) -> None:
+        """Compile validated candidate plan with the exact provider event ID from seeding."""
+        if (
+            not self.candidate_plan
+            or not self.validated_candidate_plan
+            or self.candidate_plan is not self.validated_candidate_plan
+        ):
+            raise KillerMissionSequenceError("No validated candidate plan available to compile")
         validate_canonical_killer_mission_plan(
             self.candidate_plan,
             target_date=self.demo_date,
             desired_start_time=self.desired_start_time,
             scope=self.env.scope,
         )
-
-    def _compile_validated_plan_with_seeded_id(self) -> None:
-        """Compile validated candidate plan with the exact provider event ID from seeding."""
-        if not self.candidate_plan:
-            raise KillerMissionSequenceError("No candidate plan available to compile")
         if not self.seeded_event_id:
             raise KillerMissionSequenceError(
                 "Cannot compile candidate plan without seeded provider event_id. "
@@ -2430,8 +2492,29 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
     def step_p13_01_seed(self) -> KillerMissionStepResult:
         """Seed initial pre-state; gated strictly by live preflight and validated candidate plan."""
         self._require_preflight()
-        if self.candidate_plan is None:
+        if self.candidate_plan is not None:
+            validate_canonical_killer_mission_plan(
+                self.candidate_plan,
+                target_date=self.demo_date,
+                desired_start_time=self.desired_start_time,
+                scope=self.env.scope,
+            )
+            if self.validated_candidate_plan is not self.candidate_plan:
+                raise CanonicalKillerPlanValidationError(
+                    "Candidate plan was modified or injected without canonical proposal validation"
+                )
+        else:
             self._propose_and_validate_candidate_plan()
+
+        if self.candidate_plan is None:
+            raise KillerMissionExecutionError("Candidate plan is None")
+        # Fail-closed revalidation on the exact candidate_plan before any external seeding mutation
+        validate_canonical_killer_mission_plan(
+            self.candidate_plan,
+            target_date=self.demo_date,
+            desired_start_time=self.desired_start_time,
+            scope=self.env.scope,
+        )
         res = super().step_p13_01_seed()
         if not self.seeded_event_id:
             raise KillerMissionVerificationError(
@@ -2442,8 +2525,28 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Execute plan step; gated strictly by live preflight."""
         self._require_preflight()
-        if self.candidate_plan is None:
+        if self.candidate_plan is not None:
+            validate_canonical_killer_mission_plan(
+                self.candidate_plan,
+                target_date=self.demo_date,
+                desired_start_time=self.desired_start_time,
+                scope=self.env.scope,
+            )
+            if self.validated_candidate_plan is not self.candidate_plan:
+                raise CanonicalKillerPlanValidationError(
+                    "Candidate plan was modified or injected without canonical proposal validation"
+                )
+        else:
             self._propose_and_validate_candidate_plan()
+
+        if self.candidate_plan is None:
+            raise KillerMissionExecutionError("Candidate plan is None")
+        validate_canonical_killer_mission_plan(
+            self.candidate_plan,
+            target_date=self.demo_date,
+            desired_start_time=self.desired_start_time,
+            scope=self.env.scope,
+        )
         if not self.seeded_event_id:
             raise KillerMissionSequenceError(
                 "Cannot compile candidate plan without seeded provider event_id. "
@@ -2537,6 +2640,13 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 f"got {type(eff_decision).__name__}"
             )
 
+        # Check pending approval status: must be strictly PENDING
+        if self.pending_approval.status != PendingApprovalStatus.PENDING:
+            raise KillerMissionAuthorityError(
+                "Pending approval is not in PENDING status; "
+                f"got status={self.pending_approval.status.value}"
+            )
+
         # Replay prevention
         if eff_decision.decision_id in self._consumed_approval_decision_ids:
             raise KillerMissionAuthorityError(
@@ -2544,22 +2654,32 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 "consumed (replay prohibited)"
             )
 
-        # Binding checks
+        # Binding checks against exact PendingApproval
         if eff_decision.pending_approval_id != str(self.pending_approval.pending_approval_id):
             raise KillerMissionAuthorityError(
                 "Authorized decision pending_approval_id mismatch: expected "
                 f"'{self.pending_approval.pending_approval_id}', "
                 f"got '{eff_decision.pending_approval_id}'"
             )
-        if eff_decision.mission_id != str(self.mission_id):
+        if eff_decision.mission_id != str(self.mission_id) or eff_decision.mission_id != str(
+            self.pending_approval.mission_id
+        ):
             raise KillerMissionAuthorityError("Authorized decision mission_id mismatch")
-        if eff_decision.action_id != str(self.action_cal.action_id):
+        if eff_decision.action_id != str(
+            self.action_cal.action_id
+        ) or eff_decision.action_id != str(self.pending_approval.action_id):
             raise KillerMissionAuthorityError("Authorized decision action_id mismatch")
         if eff_decision.target_event_id != self.seeded_event_id:
             raise KillerMissionAuthorityError("Authorized decision target_event_id mismatch")
 
         expected_fp = compute_action_parameter_fingerprint(self.action_cal.parameters.to_dict())
-        if eff_decision.action_parameter_fingerprint != expected_fp:
+        pending_fp = compute_action_parameter_fingerprint(
+            self.pending_approval.parameters.to_dict()
+        )
+        if (
+            eff_decision.action_parameter_fingerprint != expected_fp
+            or eff_decision.action_parameter_fingerprint != pending_fp
+        ):
             raise KillerMissionAuthorityError(
                 "Authorized decision action_parameter_fingerprint mismatch"
             )
@@ -2572,14 +2692,14 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 f"Authorized decision is stale / expired (age: {age.total_seconds():.1f}s)"
             )
 
-        # Mark decision as consumed (one-time consumption)
-        self._consumed_approval_decision_ids.add(eff_decision.decision_id)
-
         if eff_decision.decision == ApprovalDecision.REJECT:
+            self._persist_consumed_decision_id(eff_decision.decision_id)
             return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
 
         # Enforce trusted human channel authentication before ANY live mutation write
-        if self.approval_channel is None or not self.approval_channel.verify_decision(eff_decision):
+        # Do NOT consume decision yet! If channel verification fails or is untrusted,
+        # decision remains UNCONSUMED.
+        if self.approval_channel is None:
             res = KillerMissionStepResult(
                 task_id="P-13.05",
                 step_name="Approve, Execute & Verify Calendar Update",
@@ -2598,6 +2718,55 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             )
             self.step_results["P-13.05"] = res
             return res
+
+        auth_success = False
+        try:
+            auth_success = bool(
+                self.approval_channel.verify_decision(self.pending_approval, eff_decision)
+            )
+        except Exception:
+            auth_success = False
+
+        if not auth_success:
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="BLOCKED_APPROVAL_CHANNEL",
+                provenance=self.env.provenance,
+                details=(
+                    "Live calendar mutation blocked: human approval channel authentication failed. "
+                    "0 writes performed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={"blocked_approval_channel": True, "authentication_failed": True},
+            )
+            self.step_results["P-13.05"] = res
+            return res
+
+        # Enforce genuine production channel trust boundary:
+        # A mock channel, fake verifier, arbitrary object, or unestablished trust source
+        # returning True cannot establish production human authority. Because no genuine
+        # authenticated production channel is available in current deployment, production
+        # live approval fails closed with BLOCKED_APPROVAL_CHANNEL.
+        res = KillerMissionStepResult(
+            task_id="P-13.05",
+            step_name="Approve, Execute & Verify Calendar Update",
+            status="BLOCKED_APPROVAL_CHANNEL",
+            provenance=self.env.provenance,
+            details=(
+                "Live calendar mutation blocked: no genuine authenticated human decision "
+                "implementation is available in production. A fake verifier or test mock returning "
+                "True cannot establish production human authority merely by implementing the "
+                "Protocol. Stopping before Calendar write to preserve zero personal spend and "
+                "negative invariant (0 writes performed)."
+            ),
+            writes_performed=0,
+            is_verified=False,
+            extra_metadata={"blocked_approval_channel": True, "unestablished_trust_source": True},
+        )
+        self.step_results["P-13.05"] = res
+        return res
 
         return super().step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
 

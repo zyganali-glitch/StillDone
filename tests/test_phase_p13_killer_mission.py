@@ -1957,6 +1957,7 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
 
     from stilldone.killer_mission import (
         AuthenticatedHumanApprovalChannel,
+        KillerMissionAuthorityError,
         KillerMissionSliceRunner,
         KillerMissionStepResult,
         create_authorized_post_pending_decision,
@@ -1971,6 +1972,7 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     assert runner.pending_approval is not None
     pending = runner.pending_approval
 
+    real_super_approve = KillerMissionSliceRunner.step_p13_05_calendar_approve
     super_approve_spy = MagicMock(
         return_value=KillerMissionStepResult(
             task_id="P-13.05",
@@ -2019,8 +2021,9 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     assert res_direct.status == "BLOCKED_APPROVAL_CHANNEL"
     assert res_direct.writes_performed == 0
     super_approve_spy.assert_not_called()
+    assert auth_dec_direct.decision_id not in runner._consumed_approval_decision_ids
 
-    # Case 2D: Approval channel rejects/untrusted -> blocked, 0 writes
+    # Case 2D: Approval channel rejects/untrusted (returns False) -> blocked, 0 writes, NOT consumed
     mock_untrusted_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
     mock_untrusted_channel.verify_decision.return_value = False
     runner.approval_channel = mock_untrusted_channel
@@ -2033,22 +2036,50 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     res_untrusted = runner.step_p13_05_calendar_approve(decision=auth_dec_untrusted)
     assert res_untrusted.status == "BLOCKED_APPROVAL_CHANNEL"
     assert res_untrusted.writes_performed == 0
+    assert auth_dec_untrusted.decision_id not in runner._consumed_approval_decision_ids
     super_approve_spy.assert_not_called()
 
-    # Case 2E: Authenticated trusted channel (verify_decision returns True) -> succeeds
-    mock_trusted_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
-    mock_trusted_channel.verify_decision.return_value = True
-    runner.approval_channel = mock_trusted_channel
-    auth_dec_trusted = create_authorized_post_pending_decision(
+    # Case 2E: Fake verifier returning True cannot establish production authority
+    # merely by implementing the Protocol
+    mock_fake_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
+    mock_fake_channel.verify_decision.return_value = True
+    runner.approval_channel = mock_fake_channel
+    auth_dec_fake = create_authorized_post_pending_decision(
         pending,
         target_event_id=runner.seeded_event_id,
         action_parameters=runner.action_cal.parameters.to_dict(),
         decision=ApprovalDecision.APPROVE,
     )
-    res_trusted = runner.step_p13_05_calendar_approve(decision=auth_dec_trusted)
-    assert res_trusted.status == "PASS"
-    assert res_trusted.writes_performed == 1
-    super_approve_spy.assert_called_once_with(decision=ApprovalDecision.APPROVE)
+    res_fake = runner.step_p13_05_calendar_approve(decision=auth_dec_fake)
+    assert res_fake.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_fake.writes_performed == 0
+    assert auth_dec_fake.decision_id not in runner._consumed_approval_decision_ids
+    assert "no genuine authenticated human decision implementation is available" in res_fake.details
+    super_approve_spy.assert_not_called()
+
+    # Case 2F: Ordinary rejection remains safe and consumes the decision durably
+    monkeypatch.setattr(
+        KillerMissionSliceRunner, "step_p13_05_calendar_approve", real_super_approve
+    )
+    auth_dec_reject = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.REJECT,
+    )
+    res_reject = runner.step_p13_05_calendar_approve(decision=auth_dec_reject)
+    assert res_reject.status == "REJECTED"
+    assert res_reject.writes_performed == 0
+    assert auth_dec_reject.decision_id in runner._consumed_approval_decision_ids
+
+    # Case 2G: Restart / reload does not permit approval resurrection (replay prohibited)
+    runner_reloaded = _live_runner_for_boundary_tests(monkeypatch)
+    runner_reloaded.pending_approval = pending
+    runner_reloaded.seeded_event_id = runner.seeded_event_id
+    runner_reloaded._consumed_decisions_file = runner._consumed_decisions_file
+    runner_reloaded._load_consumed_decision_ids()
+    with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+        runner_reloaded.step_p13_05_calendar_approve(decision=auth_dec_reject)
 
 
 def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
@@ -2124,12 +2155,36 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     cal_seed_spy2.assert_not_called()
     assert runner_direct.total_writes == 0
 
+    # 3. Manually injected non-null invalid candidate into runner state: zero writes
+    runner_injected = _live_runner_for_boundary_tests(monkeypatch)
+    cal_seed_spy3 = MagicMock()
+    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3  # type: ignore[attr-defined]
+    runner_injected.candidate_plan = bad_plan  # manually injected invalid plan
+    with pytest.raises(CanonicalKillerPlanValidationError):
+        runner_injected.step_p13_01_seed()
+    cal_seed_spy3.assert_not_called()
+    assert runner_injected.total_writes == 0
+
+    # 4. Plan mutation / replacement after validation: zero writes unless revalidated
+    runner_tampered = _live_runner_for_boundary_tests(monkeypatch)
+    cal_seed_spy4 = MagicMock()
+    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4  # type: ignore[attr-defined]
+    # Set validated_candidate_plan to valid, but mutate candidate_plan to bad_plan
+    runner_tampered.validated_candidate_plan = MagicMock()
+    runner_tampered.candidate_plan = bad_plan
+    with pytest.raises(CanonicalKillerPlanValidationError):
+        runner_tampered.step_p13_01_seed()
+    cal_seed_spy4.assert_not_called()
+    assert runner_tampered.total_writes == 0
+
 
 def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload() -> None:
     """Defect 5: Public snapshot must not leak raw external provider identifiers,
 
     while private durable snapshot preserves exact identifiers for authoritative recovery.
     """
+    import copy
+
     from stilldone.action_policy import validate_action_contract
     from stilldone.domain.action import (
         ActionContract,
@@ -2144,7 +2199,10 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
         PredicateOperator,
     )
     from stilldone.domain.mission import MissionContract, MissionId
-    from stilldone.pending_approval import create_pending_approval
+    from stilldone.pending_approval import (
+        compute_historical_human_summary,
+        create_pending_approval,
+    )
     from stilldone.redaction import REDACTED_IDENTIFIER
     from stilldone.snapshot import (
         MissionSnapshot,
@@ -2153,24 +2211,34 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
     )
 
     mid = MissionId("11111111-2222-3333-4444-555555555555")
-    contract = MissionContract.create("demo intent", mission_id=mid)
+    secret_evt_id = "provider_evt_secret_calendar_99999"
+    secret_cal_id = "provider_cal_secret_11111"
+
+    # Intent explicitly containing provider identifier
+    contract = MissionContract.create(
+        f"demo intent with {secret_evt_id} inside text", mission_id=mid
+    )
     act = ActionContract.create(
         mission_id=mid,
         action_type=ActionType.CALENDAR_UPDATE,
         target=TargetIdentity(
             system="google_calendar",
             resource_kind=ResourceKind.CALENDAR_EVENT,
-            resource_id="provider_evt_secret_calendar_99999",
-            parent_id="provider_cal_secret_11111",
+            resource_id=secret_evt_id,
+            parent_id=secret_cal_id,
         ),
-        parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+        parameters={
+            "start_time": "2026-10-04T07:30:00+00:00",
+            "summary": f"Meeting with {secret_evt_id}",
+        },
     )
+    # Expected value explicitly containing provider identifier
     pred = DesiredStatePredicate(
         predicate_id=PredicateId("22222222-2222-2222-2222-222222222222"),
         mission_id=mid,
         subject="start_time",
         operator=PredicateOperator.EQUALS,
-        expected_value="2026-10-04T07:30:00+00:00",
+        expected_value=secret_evt_id,
         required=True,
         freshness=FreshnessContract.current(),
     )
@@ -2187,32 +2255,38 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
         created_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
     )
 
-    # 1. Authoritative durable serialization
+    # 1. Authoritative durable serialization preserves exact identifiers
     auth_dict = snapshot.to_authoritative_dict()
     assert auth_dict["serialization_boundary"] == "AUTHORITATIVE_DURABLE"
     auth_json = json.dumps(auth_dict)
-    assert "provider_evt_secret_calendar_99999" in auth_json
-    assert "provider_cal_secret_11111" in auth_json
+    assert secret_evt_id in auth_json
+    assert secret_cal_id in auth_json
 
     # Round-trip recovery from authoritative durable serialization
     recovered = MissionSnapshot.from_dict(auth_dict)
     assert recovered.mission_id == snapshot.mission_id
     assert recovered.state == snapshot.state
     assert len(recovered.actions) == len(snapshot.actions)
-    assert recovered.actions[0].target.resource_id == "provider_evt_secret_calendar_99999"
-    assert recovered.actions[0].target.parent_id == "provider_cal_secret_11111"
-    assert recovered.pending_approvals[0].target.resource_id == "provider_evt_secret_calendar_99999"
+    assert recovered.actions[0].target.resource_id == secret_evt_id
+    assert recovered.actions[0].target.parent_id == secret_cal_id
+    assert recovered.pending_approvals[0].target.resource_id == secret_evt_id
 
-    # 2. Public judge serialization
+    # 2. Public judge serialization: complete structural sanitization
     pub_dict = snapshot.to_public_dict()
     assert pub_dict["serialization_boundary"] == "PUBLIC_JUDGE_VIEW"
     pub_json = json.dumps(pub_dict)
 
-    # Zero raw external provider identifiers leak into public serialization
-    assert "provider_evt_secret_calendar_99999" not in pub_json
-    assert "provider_cal_secret_11111" not in pub_json
+    # Zero raw external provider identifiers leak into public serialization anywhere
+    assert secret_evt_id not in pub_json
+    assert secret_cal_id not in pub_json
 
-    # Actions and pending approvals have their target resource_id and parent_id redacted
+    # Intent text, expected values, parameters, and targets are all redacted
+    assert secret_evt_id not in pub_dict["contract"]["intent"]["text"]
+    assert REDACTED_IDENTIFIER in pub_dict["contract"]["intent"]["text"]
+    assert pub_dict["desired_state"][0]["expected_value"] == REDACTED_IDENTIFIER
+    assert secret_evt_id not in pub_dict["actions"][0]["parameters"]["summary"]
+    assert REDACTED_IDENTIFIER in pub_dict["actions"][0]["parameters"]["summary"]
+
     for a_pub in pub_dict.get("actions", []):
         assert a_pub["target"]["resource_id"] == REDACTED_IDENTIFIER
         if a_pub["target"].get("parent_id"):
@@ -2222,6 +2296,7 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
         assert pa_pub["target"]["resource_id"] == REDACTED_IDENTIFIER
         if pa_pub["target"].get("parent_id"):
             assert pa_pub["target"]["parent_id"] == REDACTED_IDENTIFIER
+        assert secret_evt_id not in json.dumps(pa_pub["decision_contract"])
 
     # 3. Fail-closed recovery: Deserializing public redacted view must raise SnapshotIntegrityError
     with pytest.raises(
@@ -2229,3 +2304,22 @@ def test_defect_5_privacy_safe_public_snapshot_vs_authoritative_durable_reload()
         match="Cannot deserialize authoritative snapshot from public redacted serialization",
     ):
         MissionSnapshot.from_dict(pub_dict)
+
+    # 4. Historical snapshot compatibility: authentic pre-repair format reloads cleanly
+    historical_dict = copy.deepcopy(auth_dict)
+    hist_summary = compute_historical_human_summary(val_act)
+    historical_dict["pending_approvals"][0]["decision_contract"]["human_summary"] = hist_summary
+    recovered_historical = MissionSnapshot.from_dict(historical_dict)
+    assert recovered_historical.mission_id == snapshot.mission_id
+    assert recovered_historical.pending_approvals[0].human_summary == hist_summary
+
+    # 5. Tampered historical snapshot (e.g. modified parameters digest or target) fails closed
+    tampered_digest_dict = copy.deepcopy(historical_dict)
+    tampered_digest_dict["pending_approvals"][0]["parameters_digest"] = "f" * 64
+    with pytest.raises(SnapshotIntegrityError, match="parameters_digest was tampered"):
+        MissionSnapshot.from_dict(tampered_digest_dict)
+
+    tampered_target_dict = copy.deepcopy(historical_dict)
+    tampered_target_dict["pending_approvals"][0]["target"]["resource_id"] = "tampered_evt_999"
+    with pytest.raises(SnapshotIntegrityError, match="target was tampered"):
+        MissionSnapshot.from_dict(tampered_target_dict)

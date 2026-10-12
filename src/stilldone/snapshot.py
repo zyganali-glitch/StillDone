@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from stilldone.approval_consumption import (
     ApprovalConsumptionRecord,
@@ -76,7 +76,7 @@ from stilldone.pending_approval import (
     PendingApproval,
     PendingApprovalStatus,
 )
-from stilldone.redaction import REDACTED_IDENTIFIER, redact
+from stilldone.redaction import REDACTED_IDENTIFIER, redact, redact_text
 from stilldone.serialization import (
     canonical_json,
 )
@@ -644,10 +644,51 @@ class MissionSnapshot:
 
         Redacts all raw external provider identifiers (Google Calendar event IDs,
         Google Tasks IDs, task list IDs, calendar IDs, private resource identifiers,
-        tokens, and secrets) across actions, targets, parameters, pending approvals,
-        step records, and predicate bindings.
+        tokens, and secrets) across intent text, expected values, actions, targets,
+        parameters, pending approvals, step records, and predicate bindings.
         """
-        return {
+        # 1. Structural target-identity discovery: collect all known provider identifiers
+        known_provider_ids: set[str] = set()
+        for a in self.actions:
+            if a.target.resource_id and not a.target.resource_id.startswith("sym_"):
+                known_provider_ids.add(a.target.resource_id)
+            if a.target.parent_id and not a.target.parent_id.startswith("sym_"):
+                known_provider_ids.add(a.target.parent_id)
+        for pa in self.pending_approvals:
+            if pa.target.resource_id and not pa.target.resource_id.startswith("sym_"):
+                known_provider_ids.add(pa.target.resource_id)
+            if pa.target.parent_id and not pa.target.parent_id.startswith("sym_"):
+                known_provider_ids.add(pa.target.parent_id)
+        for b in self.predicate_bindings:
+            if b.target.resource_id and not b.target.resource_id.startswith("sym_"):
+                known_provider_ids.add(b.target.resource_id)
+            if b.target.parent_id and not b.target.parent_id.startswith("sym_"):
+                known_provider_ids.add(b.target.parent_id)
+        for sr in self.step_records.values():
+            if sr.provider_result and sr.provider_result.details:
+                for k in ("task_id", "event_id", "provider_task_id", "provider_event_id"):
+                    v = sr.provider_result.details.get(k)
+                    if isinstance(v, str) and v.strip() and not v.startswith("sym_"):
+                        known_provider_ids.add(v.strip())
+
+        sorted_provider_ids = sorted(known_provider_ids, key=len, reverse=True)
+
+        def _sanitize_public_value(val: Any) -> Any:
+            if isinstance(val, str):
+                s = val
+                for pid in sorted_provider_ids:
+                    if s == pid:
+                        s = REDACTED_IDENTIFIER
+                    elif pid in s:
+                        s = s.replace(pid, REDACTED_IDENTIFIER)
+                return redact_text(s)
+            elif isinstance(val, dict):
+                return {k: _sanitize_public_value(v) for k, v in redact(val).items()}
+            elif isinstance(val, (list, tuple)):
+                return [_sanitize_public_value(item) for item in val]
+            return val
+
+        raw_public: dict[str, Any] = {
             "serialization_boundary": "PUBLIC_JUDGE_VIEW",
             "snapshot_id": self.snapshot_id,
             "snapshot_version": self.snapshot_version,
@@ -659,7 +700,7 @@ class MissionSnapshot:
                 "created_at": self.contract.created_at.isoformat(),
                 "schema_version": self.contract.schema_version,
                 "intent": {
-                    "text": self.contract.intent.text,
+                    "text": _sanitize_public_value(self.contract.intent.text),
                     "captured_at": self.contract.intent.captured_at.isoformat(),
                     "mission_id": str(self.contract.intent.mission_id),
                 },
@@ -670,7 +711,7 @@ class MissionSnapshot:
                     "mission_id": str(p.mission_id),
                     "subject": p.subject,
                     "operator": p.operator.value,
-                    "expected_value": p.expected_value,
+                    "expected_value": _sanitize_public_value(p.expected_value),
                     "required": p.required,
                     "freshness": {
                         "mode": p.freshness.mode.value,
@@ -690,7 +731,7 @@ class MissionSnapshot:
                         "resource_id": REDACTED_IDENTIFIER,
                         "parent_id": REDACTED_IDENTIFIER if a.target.parent_id else None,
                     },
-                    "parameters": redact(a.parameters.to_dict()),
+                    "parameters": _sanitize_public_value(a.parameters.to_dict()),
                 }
                 for a in self.actions
             ],
@@ -698,7 +739,7 @@ class MissionSnapshot:
                 str(aid): [str(d) for d in deps] for aid, deps in self.action_dependencies.items()
             },
             "step_records": {
-                str(aid): redact(sr.to_dict(redact_identifiers=True))
+                str(aid): _sanitize_public_value(sr.to_dict(redact_identifiers=True))
                 for aid, sr in self.step_records.items()
             },
             "pending_approvals": [
@@ -714,16 +755,14 @@ class MissionSnapshot:
                         "resource_id": REDACTED_IDENTIFIER,
                         "parent_id": REDACTED_IDENTIFIER if pa.target.parent_id else None,
                     },
-                    "parameters": redact(pa.parameters.to_dict()),
+                    "parameters": _sanitize_public_value(pa.parameters.to_dict()),
                     "parameters_digest": pa.parameters_digest,
                     "requested_at": pa.requested_at.isoformat(),
                     "decision_contract": (
-                        self._sanitize_decision_contract_dict(
+                        _sanitize_public_value(
                             pa.decision_contract.to_dict()
                             if hasattr(pa.decision_contract, "to_dict")
-                            else pa.decision_contract,
-                            pa.target.resource_id,
-                            pa.target.parent_id,
+                            else pa.decision_contract
                         )
                     ),
                     "status": pa.status.value,
@@ -769,6 +808,7 @@ class MissionSnapshot:
                 for b in self.predicate_bindings
             ],
         }
+        return cast(dict[str, Any], _sanitize_public_value(raw_public))
 
     def to_dict(self, *, for_public: bool = False) -> dict[str, Any]:
         """Convert snapshot to dictionary.
@@ -934,7 +974,10 @@ class MissionSnapshot:
             import dataclasses
 
             from stilldone.action_policy import validate_action_contract
-            from stilldone.pending_approval import create_pending_approval
+            from stilldone.pending_approval import (
+                compute_historical_human_summary,
+                create_pending_approval,
+            )
 
             pas: list[PendingApproval] = []
             for pad in data["pending_approvals"]:
@@ -972,13 +1015,44 @@ class MissionSnapshot:
                     )
                 if pad.get("parameters_digest") != base_pa.parameters_digest:
                     raise SnapshotIntegrityError("PendingApproval parameters_digest was tampered")
+
+                pad_dc = pad.get("decision_contract")
+                if not isinstance(pad_dc, dict):
+                    raise SnapshotIntegrityError("PendingApproval decision_contract was tampered")
+
                 base_contract_dict = (
                     base_pa.decision_contract.to_dict()
                     if hasattr(base_pa.decision_contract, "to_dict")
                     else base_pa.decision_contract
                 )
-                if pad.get("decision_contract") != base_contract_dict:
-                    raise SnapshotIntegrityError("PendingApproval decision_contract was tampered")
+
+                is_canonical_match = pad_dc == base_contract_dict
+                is_historical_match = False
+                historical_summary = compute_historical_human_summary(matched_act)
+
+                if not is_canonical_match:
+                    # Enforce strict fail-closed checks on all immutable authority binding fields
+                    if (
+                        pad_dc.get("pending_approval_id") != str(base_pa.pending_approval_id)
+                        or pad_dc.get("mission_id") != str(base_pa.mission_id)
+                        or pad_dc.get("action_id") != str(base_pa.action_id)
+                        or pad_dc.get("action_type") != base_pa.action_type.value
+                        or pad_dc.get("authority_class") != base_pa.authority_class.value
+                        or pad_dc.get("decision_options")
+                        != [d.value for d in base_pa.decision_options]
+                        or pad_dc.get("status") != "PENDING"
+                        or pad_dc.get("requested_at") != base_pa.requested_at.isoformat()
+                    ):
+                        raise SnapshotIntegrityError(
+                            "PendingApproval decision_contract was tampered"
+                        )
+                    # Check if human_summary matches authentic historical summary format
+                    if pad_dc.get("human_summary") == historical_summary:
+                        is_historical_match = True
+                    else:
+                        raise SnapshotIntegrityError(
+                            "PendingApproval decision_contract was tampered"
+                        )
 
                 ser_target = pad.get("target")
                 if not isinstance(ser_target, dict) or ser_target != {
@@ -993,7 +1067,14 @@ class MissionSnapshot:
                     raise SnapshotIntegrityError("PendingApproval parameters was tampered")
 
                 status_val = PendingApprovalStatus(pad.get("status", "PENDING"))
-                if base_pa.status != status_val:
+                if is_historical_match:
+                    hist_dc = dataclasses.replace(
+                        base_pa.decision_contract, human_summary=historical_summary
+                    )
+                    reconstructed_pa = dataclasses.replace(
+                        base_pa, decision_contract=hist_dc, status=status_val
+                    )
+                elif base_pa.status != status_val:
                     reconstructed_pa = dataclasses.replace(base_pa, status=status_val)
                 else:
                     reconstructed_pa = base_pa
