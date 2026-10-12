@@ -2454,15 +2454,33 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.validated_candidate_plan: CandidatePlanProposal | None = None
         self._consumed_decisions_file = self.env.base_dir / "consumed_approval_decisions.jsonl"
         self._persistence_failed: bool = False
-        # Distinguish first-time storage from restoration of existing state (Repair A3)
+        # A3 REPAIR: Strictly separate "existing durable mission was detected" from
+        # "execution state was safely restored". Detection means the mission ID and
+        # intent match a persisted record. Restoration means the exact previous
+        # action progression, snapshot, provider identity, and lifecycle state were
+        # safely reconstructed. Full safe rehydration is NOT currently supported,
+        # so _execution_state_restored is always False.
         if not getattr(self.env, "has_explicit_base_dir", True) or getattr(
             self.env, "is_ephemeral_storage", False
         ):
             self.is_first_time_storage = False
+            self._existing_mission_detected = False
+            self._execution_state_restored = False
             self.is_restored_session = False
         else:
             self.is_first_time_storage = not self._is_resumed_mission
-            self.is_restored_session = self._is_resumed_mission
+            self._existing_mission_detected = self._is_resumed_mission
+            # Full safe rehydration is NOT currently supported: the runner creates
+            # fresh execution state (candidate_plan, tracker, schedule) and does NOT
+            # reconstruct previous action progression, snapshot revision, or provider
+            # identity. Setting this to True would falsely claim recovery.
+            self._execution_state_restored = False
+            # is_restored_session requires BOTH detection AND successful state
+            # rehydration. Since rehydration is not supported, this is always False.
+            self.is_restored_session = False
+        self.existing_mission_detected = self._existing_mission_detected
+        self.is_existing_mission_detected = self._existing_mission_detected
+        self.is_execution_state_restored = self._execution_state_restored
         self._load_consumed_decision_ids()
 
     def _load_consumed_decision_ids(self, *, require_durable: bool = False) -> None:
@@ -2584,11 +2602,35 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                             loaded_ids.add(did)
 
                     # 3. Discrepancy detection between decision log and canonical ledger (Repair A2)
-                    if loaded_ids and ledger_dec_ids and loaded_ids != ledger_dec_ids:
+                    # The canonical ApprovalLedger is the single authoritative source of
+                    # current approval/decision authority. The JSONL is auxiliary historical
+                    # input only — it must never independently authorize execution.
+                    # Missing, contradictory or incomplete evidence must fail closed.
+                    if loaded_ids and ledger_dec_ids:
+                        # Both nonempty: must match exactly
+                        if loaded_ids != ledger_dec_ids:
+                            raise KillerMissionIntegrityError(
+                                "Discrepancy detected between decision log and canonical approval "
+                                "ledger: JSONL has decisions "
+                                f"{loaded_ids - ledger_dec_ids or 'matching'}, "
+                                f"ledger has decisions "
+                                f"{ledger_dec_ids - loaded_ids or 'matching'}; "
+                                "reconciliation required"
+                            )
+                    elif loaded_ids and not ledger_dec_ids:
+                        # JSONL has decisions but canonical ledger is empty — the JSONL
+                        # cannot independently authorize; fail closed.
                         raise KillerMissionIntegrityError(
-                            "Discrepancy detected between decision log and canonical approval "
-                            "ledger; reconciliation required"
+                            "Auxiliary JSONL decision log contains decision IDs "
+                            f"{loaded_ids} but the canonical ApprovalLedger is empty; "
+                            "JSONL cannot be an independent authorization source. "
+                            "Missing canonical ledger evidence must fail closed."
                         )
+                    elif ledger_dec_ids and not loaded_ids:
+                        # Canonical ledger has decisions but JSONL is empty/absent.
+                        # The ledger is authoritative; this is acceptable but log it
+                        # as the auxiliary history is incomplete.
+                        pass  # Ledger is authoritative; JSONL absence is not fatal.
                     self._consumed_approval_decision_ids.update(loaded_ids)
                 except OSError as e:
                     raise KillerMissionIntegrityError(
@@ -2876,6 +2918,12 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
     def step_p13_01_seed(self) -> KillerMissionStepResult:
         """Seed initial pre-state; gated strictly by live preflight and validated candidate plan."""
+        # A3 RECOVERY GATE: Block direct step entry on detected-but-unrestored missions.
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute seeding for existing mission: full safe rehydration "
+                "is not supported. Use a new mission ID with fresh stable storage."
+            )
         self._require_preflight()
         if self.candidate_plan is not None:
             validate_canonical_killer_mission_plan(
@@ -2909,6 +2957,12 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Execute plan step; gated strictly by live preflight."""
+        # A3 RECOVERY GATE
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute planning for existing mission: full safe rehydration "
+                "is not supported. Use a new mission ID with fresh stable storage."
+            )
         self._require_preflight()
         if self.candidate_plan is not None:
             validate_canonical_killer_mission_plan(
@@ -2942,11 +2996,23 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
     def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
         """Execute tasks prep step; gated strictly by live preflight."""
+        # A3 RECOVERY GATE
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute tasks prep for existing mission: full safe rehydration "
+                "is not supported. Use a new mission ID with fresh stable storage."
+            )
         self._require_preflight()
         return super().step_p13_03_tasks_prep()
 
     def step_p13_04_calendar_pause(self) -> KillerMissionStepResult:
         """Execute approval pause step; gated strictly by live preflight."""
+        # A3 RECOVERY GATE
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute calendar pause for existing mission: full safe rehydration "
+                "is not supported. Use a new mission ID with fresh stable storage."
+            )
         if getattr(self.env, "is_ephemeral_storage", False) or not getattr(
             self.env, "has_explicit_base_dir", True
         ):
@@ -3107,6 +3173,13 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             )
             return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
 
+        # A3 RECOVERY GATE: Block mutation approval on unrestored runner
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute calendar mutation approval for existing mission: full safe "
+                "rehydration is not supported. Use a new mission ID with fresh stable storage."
+            )
+
         # Enforce trusted human channel authentication before ANY live mutation write
         # Do NOT consume decision yet! If channel verification fails or is untrusted,
         # decision remains UNCONSUMED.
@@ -3204,7 +3277,26 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         return res
 
     def run_full_slice(self) -> KillerMissionSliceOutcome:
-        """Execute full slice, gated strictly by live preflight; stops at READY."""
+        """Execute full slice, gated strictly by live preflight; stops at READY.
+
+        A3 REPAIR: If an existing mission was detected in persistent storage but
+        full safe rehydration is not supported, resumed live execution is blocked
+        explicitly. This prevents duplicate seeding, duplicate task creation, and
+        regenerated PendingApproval/authorization from a fresh execution tracker
+        operating over partially-progressed persistent state.
+        """
+        # A3 RECOVERY GATE: Block resumed live execution when rehydration is unavailable.
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                f"Cannot resume live execution for existing mission '{self.mission_id}': "
+                "an existing durable mission record was detected in persistent storage, but "
+                "full safe rehydration of the previous action progression, snapshot revision, "
+                "provider identity, and lifecycle state is not currently supported. "
+                "Restarting with a fresh execution tracker over partially-progressed state "
+                "would risk duplicate seeding, duplicate task creation, and unauthorized "
+                "re-execution. Use a new mission ID with fresh stable storage for legitimate "
+                "new missions."
+            )
         report = self.evaluate_preflight()
         if not report.is_ready:
             blocker_text = "; ".join(report.blocker_reasons)

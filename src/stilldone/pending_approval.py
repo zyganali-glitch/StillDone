@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
@@ -314,35 +313,43 @@ class OneDecisionContract:
         *,
         provider_ids: Iterable[str] | None = None,
     ) -> str:
-        """Sanitize standalone summary without leaking provider IDs or parameters.
+        """Construct a privacy-safe public summary from trusted structured fields only.
 
-        Enforces Finding D2:
-        - Standalone public serialization must never pass uncontrolled/free-form summary
-          parameters through merely because the outer string matches a recognized template.
-        - Preserves useful deterministic action labels and decision options.
-        - Suppresses unsafe free-form parameter sections when provider identity context
-          cannot prove absence of raw provider resource IDs.
-        - Built from trusted structured fields and sanitized template prefixes.
+        D2 REPAIR: Do NOT copy any substring from historical free-form summary text
+        into this public projection. The original summary may contain arbitrary provider
+        identifiers, private strings, or injected content in any position (including
+        system-name and action-type segments that regex would capture).
+
+        Instead, construct the public summary entirely from:
+        - self.action_type: a validated, trusted ActionType enum value
+        - Fixed safe presentation templates
+
+        Where trusted system identity is unavailable (i.e., we only have the
+        action_type, not a validated system name), omit it rather than guessing
+        or extracting from untrusted text.
+
+        The complete original summary is preserved only through explicit
+        authoritative/private serialization (to_authoritative_dict).
         """
-        # 1. Calendar update formats:
-        # e.g. "Update Google Calendar event on '<system>'..."
-        cal_match = re.match(r"^Update Google Calendar event on '([^']*)'", summary)
-        if cal_match:
-            sys_name = cal_match.group(1) or "google_calendar"
-            return f"Update Google Calendar event on '{sys_name}' ({REDACTED_IDENTIFIER})"
+        # Map action types to safe, fixed presentation labels.
+        # These labels are derived from the trusted ActionType enum, not from
+        # any user/provider input.
+        _SAFE_ACTION_LABELS: dict[str, str] = {
+            "calendar.update": "Update Google Calendar event",
+            "calendar.read": "Read Google Calendar event",
+            "task.create": "Create Google Tasks item",
+            "task.read": "Read Google Tasks item",
+            "weather.read": "Read weather data",
+        }
 
-        # 2. Generic action format with target system:
-        # e.g. "Execute action '<action_type>' on '<system>'..."
-        act_match = re.match(r"^Execute action '([^']*)' on '([^']*)'", summary)
-        if act_match:
-            act_name = act_match.group(1) or self.action_type.value
-            sys_name = act_match.group(2)
-            if sys_name:
-                return f"Execute action '{act_name}' on '{sys_name}' ({REDACTED_IDENTIFIER})"
-            return f"Execute action '{act_name}' ({REDACTED_IDENTIFIER})"
+        action_type_value = self.action_type.value
+        safe_label = _SAFE_ACTION_LABELS.get(action_type_value)
 
-        # 3. Safe bounded summary built strictly from trusted structured fields
-        return f"Execute action '{self.action_type.value}' ({REDACTED_IDENTIFIER})"
+        if safe_label:
+            return f"{safe_label} ({REDACTED_IDENTIFIER})"
+
+        # Fallback for unknown/future action types: use trusted action_type.value only
+        return f"Execute action '{action_type_value}' ({REDACTED_IDENTIFIER})"
 
     def to_dict(
         self,
@@ -759,14 +766,6 @@ class PendingApproval:
             "system": self.target.system,
         }
 
-        sanitized_summary = self.human_summary
-        if redact_identifiers:
-            if is_raw_res and raw_res_id and raw_res_id in sanitized_summary:
-                sanitized_summary = sanitized_summary.replace(raw_res_id, REDACTED_IDENTIFIER)
-            if is_raw_parent and raw_parent_id and raw_parent_id in sanitized_summary:
-                sanitized_summary = sanitized_summary.replace(raw_parent_id, REDACTED_IDENTIFIER)
-            sanitized_summary = redact_text(sanitized_summary)
-
         pids: list[str] = []
         if is_raw_res and raw_res_id:
             pids.append(raw_res_id)
@@ -778,9 +777,19 @@ class PendingApproval:
             if hasattr(self.decision_contract, "to_dict")
             else self.decision_contract
         )
-        if redact_identifiers and isinstance(dc_dict, dict):
-            dc_dict = dict(dc_dict)
-            dc_dict["human_summary"] = sanitized_summary
+
+        if redact_identifiers:
+            # D2 REPAIR: Use trusted structured public summary for both nested and
+            # top-level public projection
+            if isinstance(dc_dict, dict) and "human_summary" in dc_dict:
+                sanitized_summary = dc_dict["human_summary"]
+            else:
+                sanitized_summary = (
+                    f"Execute action '{self.action_type.value}' ({REDACTED_IDENTIFIER})"
+                )
+        else:
+            # Authoritative serialization retains exact original historical summary
+            sanitized_summary = self.human_summary
 
         params_dict = self.parameters.to_dict()
         if redact_identifiers:

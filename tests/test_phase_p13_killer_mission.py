@@ -2079,10 +2079,9 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     assert auth_dec_reject.decision_id in runner._consumed_approval_decision_ids
 
     # Case 2G: Restart / reload does not permit approval resurrection (replay prohibited)
-    runner_reloaded = _live_runner_for_boundary_tests(monkeypatch)
+    runner_reloaded = _live_runner_for_boundary_tests(monkeypatch, live_env=runner.env)
     runner_reloaded.pending_approval = pending
     runner_reloaded.seeded_event_id = runner.seeded_event_id
-    runner_reloaded._consumed_decisions_file = runner._consumed_decisions_file
     runner_reloaded._load_consumed_decision_ids()
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
         runner_reloaded.step_p13_05_calendar_approve(decision=auth_dec_reject)
@@ -2771,7 +2770,10 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
         mission_id=runner.mission_id,
         operator_approved=True,
     )
-    assert runner_restarted.is_restored_session is True
+    assert runner_restarted.existing_mission_detected is True
+    # A3: do not call unrestored runner recovered
+    assert runner_restarted.is_restored_session is False
+    assert runner_restarted.is_execution_state_restored is False
     assert runner_restarted.is_first_time_storage is False
     assert "durable_reject_1" in runner_restarted._consumed_approval_decision_ids
     assert "init_dec_1" in runner_restarted._consumed_approval_decision_ids
@@ -2901,7 +2903,10 @@ def test_repair_a3_enforce_storage_gate_in_actual_live_execution(
         source_sha="1111111111111111111111111111111111111111",
     )
     assert restored_runner.is_first_time_storage is False
-    assert restored_runner.is_restored_session is True
+    assert restored_runner.existing_mission_detected is True
+    # A3: do not call unrestored runner recovered
+    assert restored_runner.is_restored_session is False
+    assert restored_runner.is_execution_state_restored is False
 
     # 5. Inaccessible or corrupt existing state is NEVER silently treated as fresh
     corrupt_log = fresh_storage / "consumed_approval_decisions.jsonl"
@@ -2955,17 +2960,13 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
     assert secret_event_id not in pub_json
     assert REDACTED_IDENTIFIER in pub_dict["human_summary"]
     # Parameters containing arbitrary provider IDs must be suppressed fail-closed
-    assert pub_dict["human_summary"] == (
-        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
-    )
+    assert pub_dict["human_summary"] == (f"Update Google Calendar event ({REDACTED_IDENTIFIER})")
 
     # 2. Default to_dict() defaults to redact_identifiers=True
     def_dict = contract.to_dict()
     assert secret_event_id not in json.dumps(def_dict)
     assert REDACTED_IDENTIFIER in def_dict["human_summary"]
-    assert def_dict["human_summary"] == (
-        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
-    )
+    assert def_dict["human_summary"] == (f"Update Google Calendar event ({REDACTED_IDENTIFIER})")
 
     # 3. Explicit authoritative dictionary retains raw unredacted historical summary
     auth_dict = contract.to_authoritative_dict()
@@ -2991,11 +2992,10 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
         requested_at=datetime(2026, 10, 4, 7, 0, 0, tzinfo=UTC),
     )
     canon_pub = canon_contract.to_public_dict()
-    assert canon_pub["human_summary"] == (
-        f"Update Google Calendar event on 'google_calendar' ({REDACTED_IDENTIFIER})"
-    )
+    assert canon_pub["human_summary"] == (f"Update Google Calendar event ({REDACTED_IDENTIFIER})")
 
     # 5. Free-form arbitrary summary without known structure is suppressed fail-closed
+    # and public summary is built strictly from trusted structured action_type data
     adversarial_free_form = f"Custom operator note regarding secret event {secret_event_id} at 10am"
     free_form_contract = OneDecisionContract(
         pending_approval_id=PendingApprovalId("c" * 64),
@@ -3010,7 +3010,7 @@ def test_repair_d2_standalone_public_decision_contract_privacy(tmp_path: Path) -
     )
     ff_pub = free_form_contract.to_public_dict()
     assert secret_event_id not in json.dumps(ff_pub)
-    assert ff_pub["human_summary"] == f"Execute action 'calendar.update' ({REDACTED_IDENTIFIER})"
+    assert ff_pub["human_summary"] == f"Update Google Calendar event ({REDACTED_IDENTIFIER})"
 
 
 def test_adversarial_storage_mismatched_mission_id_fails_closed(

@@ -398,6 +398,28 @@ class UsedApprovalRegistry:
                 )
 
             aid: str = str(pending_approval_id) if pending_approval_id else str(key)
+
+            # A2 SECURITY: Before writing rejection to _records, verify no prior
+            # CONSUMED or REVOKED record exists at this key. A previously consumed
+            # or revoked approval MUST NOT have its evidence overwritten by a
+            # rejection record — this would destroy grant-consumption authority
+            # and enable replay attacks.
+            if pending_approval_id:
+                pa_key = str(pending_approval_id)
+                existing_at_pa_key = self._records.get(pa_key)
+                if existing_at_pa_key is not None:
+                    if existing_at_pa_key.status == ApprovalUsageStatus.CONSUMED:
+                        raise ApprovalAlreadyUsedError(
+                            f"Cannot record rejection at key '{pa_key}': approval was already "
+                            f"consumed at {existing_at_pa_key.consumed_at.isoformat()} and "
+                            "rejection cannot overwrite consumed authority evidence"
+                        )
+                    if existing_at_pa_key.status == ApprovalUsageStatus.REVOKED:
+                        raise ApprovalAlreadyUsedError(
+                            f"Cannot record rejection at key '{pa_key}': approval was already "
+                            "revoked and rejection cannot overwrite revoked authority evidence"
+                        )
+
             record = ApprovalConsumptionRecord(
                 approval_id=aid,
                 mission_id=mission_id,
