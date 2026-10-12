@@ -83,7 +83,7 @@ from stilldone.pending_approval import (
     compute_parameters_digest,
     compute_pending_approval_id,
 )
-from stilldone.redaction import redact_text
+from stilldone.redaction import REDACTED_IDENTIFIER, redact_text
 from stilldone.serialization import to_canonical_primitive
 
 if TYPE_CHECKING:
@@ -806,7 +806,14 @@ class UnapprovedActionReceipt:
             "action_id": str(self.action_id),
             "action_type": self.action_type.value,
             "authority_class": self.authority_class.value,
-            "target_event_id": redact_text(self.target_event_id),
+            "target_event_id": (
+                REDACTED_IDENTIFIER
+                if (
+                    isinstance(self.target_event_id, str)
+                    and not self.target_event_id.startswith("sym_")
+                )
+                else redact_text(self.target_event_id)
+            ),
             "pending_approval_id": self.pending_approval_id.value,
             "approval_status": self.approval_status.value,
             "grant_present": self.grant_present,
@@ -1852,7 +1859,14 @@ class ApprovedActionReceipt:
             "action_id": str(self.action_id),
             "action_type": self.action_type.value,
             "authority_class": self.authority_class.value,
-            "target_event_id": redact_text(self.target_event_id),
+            "target_event_id": (
+                REDACTED_IDENTIFIER
+                if (
+                    isinstance(self.target_event_id, str)
+                    and not self.target_event_id.startswith("sym_")
+                )
+                else redact_text(self.target_event_id)
+            ),
             "approval_id": str(self.approval_id),
             "binding_hash": self.binding_hash.value,
             "consumed_at": self.consumed_at.isoformat(),

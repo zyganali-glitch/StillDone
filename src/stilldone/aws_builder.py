@@ -34,27 +34,153 @@ from stilldone.killer_mission import (
 )
 
 
-def is_resolved_evidence_reference(source_reference: str | None) -> bool:
-    """Validate whether a source reference resolves to a durable evidence artifact in the repo."""
+@dataclass(frozen=True)
+class AWSAccountEvidenceRecord:
+    """Typed durable AWS account evidence record.
+
+    Binds source identity, observation timestamp, observation type, and integrity reference.
+    """
+
+    source_identity: str
+    observed_at: datetime
+    observation_type: str
+    integrity_reference: str
+    observed_billing_status: str
+    observed_net_personal_spend_usd: Decimal
+    promotional_credit_budget_sufficient: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_identity, str) or not self.source_identity.strip():
+            raise ValueError("source_identity must be a non-empty string")
+        if not isinstance(self.observed_at, datetime):
+            raise TypeError("observed_at must be a datetime instance")
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+            raise ValueError("observed_at must be timezone-aware (UTC)")
+        if not isinstance(self.observation_type, str) or not self.observation_type.strip():
+            raise ValueError("observation_type must be a non-empty string")
+        if not isinstance(self.integrity_reference, str) or not self.integrity_reference.strip():
+            raise ValueError("integrity_reference must be a non-empty string")
+        if (
+            not isinstance(self.observed_billing_status, str)
+            or not self.observed_billing_status.strip()
+        ):
+            raise ValueError("observed_billing_status must be a non-empty string")
+        if not isinstance(self.observed_net_personal_spend_usd, Decimal):
+            raise TypeError("observed_net_personal_spend_usd must be a Decimal")
+        if not isinstance(self.promotional_credit_budget_sufficient, bool):
+            raise TypeError("promotional_credit_budget_sufficient must be a bool")
+
+
+def validate_account_evidence_record(
+    source_reference: str | None,
+    observation: AWSAccountObservation | None = None,
+) -> tuple[bool, AWSAccountEvidenceRecord | None]:
+    """Validate whether a source reference resolves to a typed durable AWS account evidence record.
+
+    Enforces:
+    - Rejection of web URLs, empty content, directory traversal, and untrusted absolute paths.
+    - Rejection of arbitrary files and markdown documentation (e.g. docs/AWS_BUILDER_MAP.md).
+    - Parsing and verification of typed durable evidence record binding:
+      source_identity, observation timestamp, observation type, and integrity reference.
+    - Strict verification that caller-provided monetary facts match the durable record.
+    """
     if not source_reference or not isinstance(source_reference, str):
-        return False
+        return False, None
     ref = source_reference.strip()
     if not ref:
-        return False
-    # Reject web URLs or random external strings
+        return False, None
     if ref.startswith("http://") or ref.startswith("https://"):
-        return False
+        return False, None
+
     try:
-        p = Path(ref)
-        if p.is_file() and p.exists():
-            return True
         repo_root = Path(__file__).resolve().parent.parent.parent
-        resolved = (repo_root / p).resolve()
-        if resolved.is_file() and resolved.exists():
-            return True
+        p = Path(ref)
+        if p.is_absolute():
+            resolved = p.resolve()
+            try:
+                resolved.relative_to(repo_root)
+            except ValueError:
+                return False, None
+        else:
+            resolved = (repo_root / p).resolve()
+            try:
+                resolved.relative_to(repo_root)
+            except ValueError:
+                return False, None
+
+        if not resolved.is_file() or not resolved.exists():
+            return False, None
+        if resolved.stat().st_size == 0:
+            return False, None
+
+        # Reject arbitrary files and architecture/general documentation
+        if resolved.suffix.lower() != ".json":
+            return False, None
+
+        content = json.loads(resolved.read_text(encoding="utf-8"))
+        if not isinstance(content, dict):
+            return False, None
+
+        src_id = content.get("source_identity")
+        obs_at_raw = content.get("observed_at") or content.get("observation_timestamp")
+        obs_type = content.get("observation_type") or content.get("account_observation_type")
+        integrity_ref = content.get("integrity_reference") or content.get("integrity_hash")
+        bill_status = content.get("observed_billing_status")
+        spend_raw = content.get("observed_net_personal_spend_usd")
+        credit_suff = content.get("promotional_credit_budget_sufficient")
+
+        if not src_id or not isinstance(src_id, str) or not src_id.strip():
+            return False, None
+        if not obs_at_raw or not isinstance(obs_at_raw, str):
+            return False, None
+        obs_at = datetime.fromisoformat(obs_at_raw)
+        if obs_at.tzinfo is None:
+            return False, None
+        if not obs_type or not isinstance(obs_type, str) or not obs_type.strip():
+            return False, None
+        if not integrity_ref or not isinstance(integrity_ref, str) or not integrity_ref.strip():
+            return False, None
+        if not bill_status or not isinstance(bill_status, str):
+            return False, None
+        if spend_raw is None:
+            return False, None
+        spend_dec = Decimal(str(spend_raw))
+        if credit_suff is None or not isinstance(credit_suff, bool):
+            return False, None
+
+        rec = AWSAccountEvidenceRecord(
+            source_identity=src_id.strip(),
+            observed_at=obs_at if obs_at.tzinfo == UTC else obs_at.astimezone(UTC),
+            observation_type=obs_type.strip(),
+            integrity_reference=integrity_ref.strip(),
+            observed_billing_status=bill_status.strip(),
+            observed_net_personal_spend_usd=spend_dec,
+            promotional_credit_budget_sufficient=credit_suff,
+        )
+
+        if observation is not None:
+            if observation.observed_net_personal_spend_usd != rec.observed_net_personal_spend_usd:
+                return False, None
+            if observation.observed_billing_status != rec.observed_billing_status:
+                return False, None
+            if (
+                observation.promotional_credit_budget_sufficient
+                != rec.promotional_credit_budget_sufficient
+            ):
+                return False, None
+
+        return True, rec
     except Exception:
-        return False
-    return False
+        return False, None
+
+
+def is_resolved_evidence_reference(
+    source_reference: str | None,
+    observation: AWSAccountObservation | None = None,
+) -> bool:
+    """Validate whether a source reference resolves to a valid durable AWS account record."""
+    valid, _ = validate_account_evidence_record(source_reference, observation=observation)
+    return valid
 
 
 # ===========================================================================
@@ -860,6 +986,42 @@ class CloudWatchLiveProofHarness:
                     cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
                 )
 
+            # Correlation check: detect if another emission in the interval carries identical value
+            conflicting_emissions: list[dict[str, Any]] = []
+            for ev in events:
+                msg = ev.get("message", "")
+                try:
+                    parsed_ev = json.loads(msg)
+                    if isinstance(parsed_ev, dict):
+                        ev_val = parsed_ev.get(metric_name)
+                        if ev_val is not None and abs(float(ev_val) - expected_metric_value) < 1e-4:
+                            if parsed_ev.get("ProofToken") != proof_token:
+                                conflicting_emissions.append(parsed_ev)
+                except Exception:
+                    pass
+
+            if conflicting_emissions:
+                return CloudWatchLiveProofResult(
+                    status="LOG_INGESTION_OBSERVED",
+                    namespace=namespace,
+                    metric_name=metric_name,
+                    region=self.region,
+                    source_sha=source_sha,
+                    timestamp_utc=datetime.now(UTC).isoformat(),
+                    details=(
+                        f"Different emission carrying identical metric value "
+                        f"({expected_metric_value}) observed in the same 60-second interval; "
+                        f"exact metric correlation is ambiguous without high-cardinality "
+                        f"dimensions. Bounded cost prevents creating unmetered dimensions. "
+                        f"Classifying result as LOG_INGESTION_OBSERVED, not "
+                        f"VERIFIED_METRIC_EXTRACTION."
+                    ),
+                    observed_metric_value=None,
+                    is_verified=False,
+                    is_billable=True,
+                    cost_exposure=CostExposure.MAY_HAVE_INCURRED_USAGE,
+                )
+
             # 6. Authoritative verification of all contract fields
             if observed_payload.get("ProofToken") != proof_token:
                 return CloudWatchLiveProofResult(
@@ -1276,7 +1438,7 @@ class AWSAccountObservation:
         if self.provenance == EvidenceProvenance.RECORDED_LIVE:
             if not self.source_reference or not self.source_reference.strip():
                 raise ValueError("source_reference is required when provenance is RECORDED_LIVE")
-            if not is_resolved_evidence_reference(self.source_reference):
+            if not is_resolved_evidence_reference(self.source_reference, observation=self):
                 raise ValueError(
                     "source_reference for RECORDED_LIVE must resolve to an existing durable "
                     f"evidence artifact in the repository; got {self.source_reference!r}"
@@ -1344,7 +1506,9 @@ def generate_aws_builder_evidence_map(
     gross_spend = sum((s.estimated_cost_usd for s in services), Decimal("0.00000000"))
 
     # Only accept source references that can be resolved against canonical evidence boundary
-    if observation is not None and is_resolved_evidence_reference(observation.source_reference):
+    if observation is not None and is_resolved_evidence_reference(
+        observation.source_reference, observation=observation
+    ):
         return AWSBuilderEvidenceMap(
             architecture_title="StillDone Verifiable Outcome Engine on AWS",
             aws_services=services,
@@ -1372,6 +1536,7 @@ def generate_aws_builder_evidence_map(
 
 
 __all__ = [
+    "AWSAccountEvidenceRecord",
     "AWSAccountObservation",
     "AWSBuilderEvidenceMap",
     "AWSServiceAuditEntry",
@@ -1387,4 +1552,5 @@ __all__ = [
     "generate_aws_builder_evidence_map",
     "is_resolved_evidence_reference",
     "record_killer_mission_telemetry",
+    "validate_account_evidence_record",
 ]

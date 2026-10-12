@@ -160,5 +160,6 @@ Status: **`BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`** (Gross architecture estimate
 - **External Account Billing Observation & Net Spend (`NOT_OBSERVED`)**:
   - Promotional credit status and actual billed account balances are external account observations performed out-of-band by the operator, NOT fabricated by deterministic product code.
   - Promotional credit coverage cannot be asserted to definitively cover all usage without independent account evidence.
+  - Durable evidence must resolve to a valid typed `AWSAccountEvidenceRecord` JSON payload binding source identity, observation timestamp, observation type, and integrity reference; arbitrary files (including this architecture document), empty files, path traversal, untrusted absolute paths, and caller claim mismatches are rejected fail-closed.
   - Without an explicit, verified `AWSAccountObservation` resolved against durable repo evidence, `total_net_personal_spend_usd`, `promotional_credit_budget_sufficient`, and `zero_personal_spend_maintained` strictly evaluate to `NOT_OBSERVED` (None).
   - When an authoritative `AWSAccountObservation` with resolved repo evidence is present, promotional credits offset gross charges, verifying net spend.

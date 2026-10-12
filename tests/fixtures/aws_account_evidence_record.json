@@ -1,0 +1,9 @@
+{
+  "source_identity": "aws-cost-explorer-cli",
+  "observed_at": "2026-10-12T00:00:00+00:00",
+  "observation_type": "AWS_ACCOUNT_BILLING_SNAPSHOT",
+  "integrity_reference": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "observed_billing_status": "FREE_TIER_COMPLIANT",
+  "observed_net_personal_spend_usd": "0.00",
+  "promotional_credit_budget_sufficient": true
+}

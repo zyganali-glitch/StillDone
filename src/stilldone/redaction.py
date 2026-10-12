@@ -97,6 +97,17 @@ SENSITIVE_IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "external_id",
         "access_key_id",
         "aws_access_key_id",
+        "task_id",
+        "event_id",
+        "provider_task_id",
+        "provider_event_id",
+        "google_task_id",
+        "google_event_id",
+        "external_task_id",
+        "external_event_id",
+        "calendar_event_id",
+        "target_event_id",
+        "target_task_id",
     }
 )
 
@@ -529,8 +540,12 @@ def _redact_mapping(
             counts["secret"] += 1
             result[k] = REDACTED_SECRET
         elif key_norm in SENSITIVE_IDENTIFIER_KEYS:
-            counts["identifier"] += 1
-            result[k] = REDACTED_IDENTIFIER
+            if key_norm == "task_id" and isinstance(v, str) and re.match(r"^P-\d+", v):
+                # StillDone plan task identifier (e.g. P-13.01) is preserved domain metadata
+                result[k] = v
+            else:
+                counts["identifier"] += 1
+                result[k] = REDACTED_IDENTIFIER
         else:
             result[k] = _redact_node(v, path=item_path, counts=counts)
 

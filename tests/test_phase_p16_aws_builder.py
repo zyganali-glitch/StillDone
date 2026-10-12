@@ -82,7 +82,7 @@ def test_p16_01_audit_actual_aws_services_on_critical_path() -> None:
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="docs/AWS_BUILDER_MAP.md",
+        source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
     observed_services = audit_critical_path_aws_services(observation=obs)
     for s in observed_services:
@@ -205,7 +205,7 @@ def test_p16_04_aws_builder_architecture_and_evidence_map() -> None:
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="docs/AWS_BUILDER_MAP.md",
+        source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     dict_obs = ev_map_obs.to_dict()
@@ -253,7 +253,7 @@ def test_p16_05_cost_impact_validation_against_zero_personal_spend() -> None:
         observed_net_personal_spend_usd=Decimal("0.00"),
         promotional_credit_budget_sufficient=True,
         provenance=EvidenceProvenance.RECORDED_LIVE,
-        source_reference="docs/AWS_BUILDER_MAP.md",
+        source_reference="tests/fixtures/aws_account_evidence_record.json",
     )
     ev_map_obs = generate_aws_builder_evidence_map(observation=obs)
     assert ev_map_obs.zero_personal_spend_maintained is True
@@ -759,3 +759,186 @@ def test_cloudwatch_live_proof_harness_metric_verification_failures() -> None:
     assert res_cw_err.is_verified is False
     assert res_cw_err.status == "FAILED"
     assert "query failed" in res_cw_err.details.lower()
+
+
+def test_existing_documentation_file_falsely_claiming_zero_spend_rejected() -> None:
+    """An existing documentation file (e.g. docs/AWS_BUILDER_MAP.md) claiming $0.00 balance
+
+    must be rejected fail-closed as invalid account evidence:
+    - is_resolved_evidence_reference returns False;
+    - AWSAccountObservation with RECORDED_LIVE raises ValueError;
+    - generate_aws_builder_evidence_map returns NOT_OBSERVED for all billing facts;
+    - audit_critical_path_aws_services returns NOT_OBSERVED coverage.
+    """
+    from stilldone.aws_builder import is_resolved_evidence_reference
+
+    # 1. docs/AWS_BUILDER_MAP.md exists in repository but is documentation, not typed evidence
+    doc_path = "docs/AWS_BUILDER_MAP.md"
+    assert is_resolved_evidence_reference(doc_path) is False
+
+    # 2. RECORDED_LIVE cannot bind to an existing doc file
+    with pytest.raises(ValueError, match="must resolve to an existing durable evidence"):
+        AWSAccountObservation(
+            observed_at=datetime.now(UTC),
+            observed_billing_status="FREE_TIER_COMPLIANT",
+            observed_net_personal_spend_usd=Decimal("0.00"),
+            promotional_credit_budget_sufficient=True,
+            provenance=EvidenceProvenance.RECORDED_LIVE,
+            source_reference=doc_path,
+        )
+
+    # 3. FIXTURE referencing doc file cannot promote billing facts to verified
+    obs_fixture = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference=doc_path,
+    )
+    ev_map = generate_aws_builder_evidence_map(observation=obs_fixture)
+    assert ev_map.observed_account_billing_status == "NOT_OBSERVED"
+    assert ev_map.total_net_personal_spend_usd is None
+    assert ev_map.zero_personal_spend_maintained is None
+    assert ev_map.promotional_credit_budget_sufficient is None
+    assert ev_map.to_dict()["observed_account_billing_status"] == "NOT_OBSERVED"
+    assert ev_map.to_dict()["total_net_personal_spend_usd"] == "NOT_OBSERVED"
+
+    # 4. Critical path audit coverage remains NOT_OBSERVED
+    services = audit_critical_path_aws_services(observation=obs_fixture)
+    for s in services:
+        assert s.covered_by_free_tier_or_credit is None
+        assert s.to_dict()["covered_by_free_tier_or_credit"] == "NOT_OBSERVED"
+
+
+def test_aws_account_evidence_provenance_validation_controls() -> None:
+    """Verify validation rejects traversal, empty files, non-JSON, and mismatched caller facts."""
+    from stilldone.aws_builder import (
+        AWSAccountEvidenceRecord,
+        is_resolved_evidence_reference,
+        validate_account_evidence_record,
+    )
+
+    valid_ref = "tests/fixtures/aws_account_evidence_record.json"
+
+    # 1. Directory traversal rejected
+    assert is_resolved_evidence_reference("../../etc/passwd") is False
+    assert is_resolved_evidence_reference("..\\..\\Windows\\System32\\cmd.exe") is False
+
+    # 2. Untrusted URLs rejected
+    assert is_resolved_evidence_reference("https://aws.amazon.com") is False
+    assert is_resolved_evidence_reference("http://localhost:8000/evidence.json") is False
+
+    # 3. Non-existent file rejected
+    assert is_resolved_evidence_reference("nonexistent.json") is False
+
+    # 4. Valid durable record parses cleanly
+    valid, record = validate_account_evidence_record(valid_ref)
+    assert valid is True
+    assert isinstance(record, AWSAccountEvidenceRecord)
+    assert record.source_identity == "aws-cost-explorer-cli"
+    assert record.observed_net_personal_spend_usd == Decimal("0.00")
+    assert record.promotional_credit_budget_sufficient is True
+
+    # 5. Caller-provided observation with mismatched spend rejected
+    obs_mismatch = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("15.50"),  # mismatch with record ($0.00)!
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.FIXTURE,
+        source_reference=valid_ref,
+    )
+    assert is_resolved_evidence_reference(valid_ref, observation=obs_mismatch) is False
+
+    # 6. Caller-provided observation with matching spend accepted
+    obs_match = AWSAccountObservation(
+        observed_at=datetime.now(UTC),
+        observed_billing_status="FREE_TIER_COMPLIANT",
+        observed_net_personal_spend_usd=Decimal("0.00"),
+        promotional_credit_budget_sufficient=True,
+        provenance=EvidenceProvenance.RECORDED_LIVE,
+        source_reference=valid_ref,
+    )
+    assert is_resolved_evidence_reference(valid_ref, observation=obs_match) is True
+
+
+def test_cloudwatch_live_proof_conflicting_emission_same_interval_fails_closed() -> None:
+    """Negative control: If another emission carries identical metric value in same interval,
+
+    exact metric correlation cannot be verified at bounded cost.
+    The harness must fail closed and classify the outcome as LOG_INGESTION_OBSERVED,
+    NOT VERIFIED_METRIC_EXTRACTION.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.aws_builder import CloudWatchLiveProofHarness, CostExposure
+
+    def git_ok(cmd: list[str]) -> tuple[int, str, str]:
+        if "HEAD" in cmd or "origin/main" in cmd:
+            return 0, "1111111111111111111111111111111111111111", ""
+        return 0, "", ""
+
+    valid_sha = "1111111111111111111111111111111111111111"
+
+    mock_logs = MagicMock()
+    mock_cw = MagicMock()
+
+    emitted_records: list[str] = []
+
+    def mock_put_log_events(
+        logGroupName: str, logStreamName: str, logEvents: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        for ev in logEvents:
+            emitted_records.append(ev["message"])
+        return {"nextSequenceToken": "seq_123"}
+
+    mock_logs.put_log_events.side_effect = mock_put_log_events
+
+    # Injected conflict: a different emission with the identical metric value (42.0)
+    conflicting_record = json.dumps(
+        {
+            "_aws": {
+                "Timestamp": int(datetime.now(UTC).timestamp() * 1000),
+                "CloudWatchMetrics": [
+                    {
+                        "Namespace": "StillDone/VerificationEngine",
+                        "Dimensions": [["Environment"]],
+                        "Metrics": [{"Name": "VerificationLatencyMs", "Unit": "Milliseconds"}],
+                    }
+                ],
+            },
+            "Environment": "test",
+            "ProofToken": "other-unrelated-proof-token-888",
+            "VerificationLatencyMs": 42.0,  # IDENTICAL value in same window!
+        }
+    )
+
+    mock_logs.get_log_events.side_effect = lambda **kwargs: {
+        "events": [{"message": rec} for rec in emitted_records] + [{"message": conflicting_record}]
+    }
+
+    harness = CloudWatchLiveProofHarness(
+        log_group_name="/aws/stilldone/demo",
+        log_stream_name="test_stream",
+        logs_client=mock_logs,
+        cw_client=mock_cw,
+        environment="test",
+    )
+
+    outcome = harness.execute_live_proof(
+        source_sha=valid_sha,
+        operator_approved=True,
+        git_runner=git_ok,
+        timeout_seconds=1.0,
+        poll_interval_seconds=0.05,
+    )
+
+    # Must classify as LOG_INGESTION_OBSERVED, NOT verified metric extraction
+    assert outcome.is_verified is False
+    assert outcome.status == "LOG_INGESTION_OBSERVED"
+    assert "LOG_INGESTION_OBSERVED" in outcome.details
+    assert "VERIFIED_METRIC_EXTRACTION" in outcome.details
+    assert outcome.is_billable is True
+    assert outcome.cost_exposure == CostExposure.MAY_HAVE_INCURRED_USAGE
+    assert outcome.observed_metric_value is None

@@ -36,7 +36,7 @@ from stilldone.execution.contracts import (
     UnknownActionIdError,
 )
 from stilldone.execution.scheduler import ExecutionSchedule
-from stilldone.redaction import redact_text
+from stilldone.redaction import redact, redact_text
 
 # ===========================================================================
 # Deterministic Execution State Vocabulary
@@ -112,6 +112,29 @@ class ProviderExecutionResult:
         if not isinstance(self.details, Mapping):
             raise ExecutionContractTypeError("details must be a Mapping")
         object.__setattr__(self, "details", types.MappingProxyType(dict(self.details)))
+
+    def to_dict(self, *, redact_identifiers: bool = True) -> dict[str, Any]:
+        """Convert ProviderExecutionResult to a serializable dictionary.
+
+        When redact_identifiers is True (default), raw provider identifiers
+        in details are redacted using canonical redaction.
+        """
+        d = dict(self.details)
+        if redact_identifiers:
+            d = redact(d)
+        return {
+            "action_type": self.action_type.value,
+            "success": self.success,
+            "status_name": self.status_name,
+            "writes_performed": self.writes_performed,
+            "captured_at": self.captured_at.isoformat(),
+            "details": d,
+            "error_message": self.error_message,
+        }
+
+    def to_canonical(self) -> dict[str, Any]:
+        """Project to canonical dictionary with sensitive identifiers redacted."""
+        return self.to_dict(redact_identifiers=True)
 
 
 # ===========================================================================
@@ -213,6 +236,35 @@ class StepExecutionRecord:
             if not isinstance(self.error_message, str):
                 raise ExecutionContractTypeError("error_message must be a string or None")
             object.__setattr__(self, "error_message", redact_text(self.error_message))
+
+    def to_dict(self, *, redact_identifiers: bool = True) -> dict[str, Any]:
+        """Convert StepExecutionRecord to a serializable dictionary."""
+        return {
+            "action_id": str(self.action_id),
+            "status": self.status.value,
+            "attempt": (
+                {
+                    "action_id": str(self.attempt.action_id),
+                    "idempotency_key": str(self.attempt.idempotency_key),
+                    "attempt_number": self.attempt.attempt_number,
+                    "started_at": self.attempt.started_at.isoformat(),
+                    "attempt_id": str(self.attempt.attempt_id),
+                }
+                if self.attempt is not None
+                else None
+            ),
+            "provider_result": (
+                self.provider_result.to_dict(redact_identifiers=redact_identifiers)
+                if self.provider_result is not None
+                else None
+            ),
+            "error_message": self.error_message,
+            "blocked_by": str(self.blocked_by) if self.blocked_by is not None else None,
+        }
+
+    def to_canonical(self) -> dict[str, Any]:
+        """Project to canonical dictionary with sensitive identifiers redacted."""
+        return self.to_dict(redact_identifiers=True)
 
 
 # ===========================================================================

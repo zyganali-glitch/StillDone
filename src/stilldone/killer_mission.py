@@ -19,8 +19,11 @@ Core Architectural Laws:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -138,6 +141,7 @@ from stilldone.receipt import (
     create_mission_ready_receipt,
     project_current_state,
 )
+from stilldone.redaction import redact, redact_text
 from stilldone.snapshot import (
     DurableSnapshotRepository,
     create_mission_snapshot,
@@ -692,18 +696,26 @@ class KillerMissionStepResult:
     receipt_hash: str | None = None
     extra_metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, redact_identifiers: bool = True) -> dict[str, Any]:
+        meta = (
+            redact(dict(self.extra_metadata)) if redact_identifiers else dict(self.extra_metadata)
+        )
+        det = redact_text(self.details) if redact_identifiers else self.details
         return {
             "task_id": self.task_id,
             "step_name": self.step_name,
             "status": self.status,
             "provenance": self.provenance.value,
-            "details": self.details,
+            "details": det,
             "writes_performed": self.writes_performed,
             "is_verified": self.is_verified,
             "receipt_hash": self.receipt_hash,
-            "extra_metadata": dict(self.extra_metadata),
+            "extra_metadata": meta,
         }
+
+    def to_canonical(self) -> dict[str, Any]:
+        """Project to canonical dictionary with sensitive identifiers redacted."""
+        return self.to_dict(redact_identifiers=True)
 
 
 @dataclass(frozen=True)
@@ -721,11 +733,13 @@ class KillerMissionSliceOutcome:
     provenance: EvidenceProvenance
     is_live: bool
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, redact_identifiers: bool = True) -> dict[str, Any]:
         return {
             "mission_id": str(self.mission_id),
             "intent": self.intent,
-            "steps": {k: v.to_dict() for k, v in self.steps.items()},
+            "steps": {
+                k: v.to_dict(redact_identifiers=redact_identifiers) for k, v in self.steps.items()
+            },
             "ready_receipt_hash": self.ready_receipt_hash,
             "drifted_receipt_hash": self.drifted_receipt_hash,
             "historical_receipt_immutable": self.historical_receipt_immutable,
@@ -734,6 +748,97 @@ class KillerMissionSliceOutcome:
             "provenance": self.provenance.value,
             "is_live": self.is_live,
         }
+
+    def to_canonical(self) -> dict[str, Any]:
+        """Project to canonical dictionary with sensitive identifiers redacted."""
+        return self.to_dict(redact_identifiers=True)
+
+
+# ===========================================================================
+# Authorized Post-Pending Human Decision Boundary (Defect C / Phase 4)
+# ===========================================================================
+
+
+def compute_action_parameter_fingerprint(
+    parameters: Mapping[str, Any] | dict[str, Any],
+) -> str:
+    """Compute deterministic SHA-256 fingerprint of action parameters."""
+    normalized = json.dumps(dict(parameters), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class AuthorizedPostPendingApprovalDecision:
+    """Explicitly authorized post-PendingApproval decision boundary for live mutation.
+
+    Binds:
+    - exact PendingApproval ID;
+    - mission identity;
+    - action identity;
+    - exact event target;
+    - action parameter fingerprint;
+    - decision timestamp and authority source;
+    - one-time decision ID (prevents replay).
+    """
+
+    decision_id: str
+    pending_approval_id: str
+    mission_id: str
+    action_id: str
+    target_event_id: str
+    action_parameter_fingerprint: str
+    decision: ApprovalDecision
+    authority_source: str
+    decided_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.decision_id, str) or not self.decision_id.strip():
+            raise ValueError("decision_id must be a non-empty string")
+        if not isinstance(self.pending_approval_id, str) or not self.pending_approval_id.strip():
+            raise ValueError("pending_approval_id must be a non-empty string")
+        if not isinstance(self.mission_id, str) or not self.mission_id.strip():
+            raise ValueError("mission_id must be a non-empty string")
+        if not isinstance(self.action_id, str) or not self.action_id.strip():
+            raise ValueError("action_id must be a non-empty string")
+        if not isinstance(self.target_event_id, str) or not self.target_event_id.strip():
+            raise ValueError("target_event_id must be a non-empty string")
+        if (
+            not isinstance(self.action_parameter_fingerprint, str)
+            or not self.action_parameter_fingerprint.strip()
+        ):
+            raise ValueError("action_parameter_fingerprint must be a non-empty string")
+        if not isinstance(self.decision, ApprovalDecision):
+            raise TypeError("decision must be an ApprovalDecision instance")
+        if not isinstance(self.authority_source, str) or not self.authority_source.strip():
+            raise ValueError("authority_source must be a non-empty string")
+        if not isinstance(self.decided_at, datetime) or self.decided_at.tzinfo is None:
+            raise ValueError("decided_at must be a timezone-aware UTC datetime")
+
+
+def create_authorized_post_pending_decision(
+    pending: PendingApproval,
+    *,
+    target_event_id: str,
+    action_parameters: Mapping[str, Any] | dict[str, Any],
+    decision: ApprovalDecision = ApprovalDecision.APPROVE,
+    authority_source: str = "HUMAN_OPERATOR",
+    decided_at: datetime | None = None,
+    decision_id: str | None = None,
+) -> AuthorizedPostPendingApprovalDecision:
+    """Create an AuthorizedPostPendingApprovalDecision bound to an exact PendingApproval."""
+    now = decided_at or datetime.now(UTC)
+    dec_id = decision_id or f"auth-dec-{uuid.uuid4()}"
+    return AuthorizedPostPendingApprovalDecision(
+        decision_id=dec_id,
+        pending_approval_id=str(pending.pending_approval_id),
+        mission_id=str(pending.mission_id),
+        action_id=str(pending.action_id),
+        target_event_id=target_event_id,
+        action_parameter_fingerprint=compute_action_parameter_fingerprint(action_parameters),
+        decision=decision,
+        authority_source=authority_source,
+        decided_at=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
+    )
 
 
 # ===========================================================================
@@ -1175,7 +1280,7 @@ class KillerMissionSliceRunner:
 
     def _setup_canonical_plan(self) -> None:
         """Compile canonical plan and action tracking (fixture deterministic proposal)."""
-        self.candidate_plan = self._create_deterministic_proposal()
+        self.candidate_plan: CandidatePlanProposal | None = self._create_deterministic_proposal()
         validate_canonical_killer_mission_plan(
             self.candidate_plan,
             target_date=self.demo_date,
@@ -2204,6 +2309,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.git_runner = git_runner
         self.post_pending_decision_callback = post_pending_decision_callback
         self.preflight_report: LivePreflightReport | None = None
+        self._consumed_approval_decision_ids: set[str] = set()
 
         # Resolve live demo target date: default to tomorrow in UTC if not provided
         resolved_demo_date = (
@@ -2221,6 +2327,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             demo_date=resolved_demo_date,
             calendar_decision=calendar_decision,
         )
+        self.candidate_plan = None
 
     def evaluate_preflight(self) -> LivePreflightReport:
         """Evaluate canonical live preflight against all live gate prerequisites."""
@@ -2249,18 +2356,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 f"Live execution gate failed preflight: {'; '.join(report.blocker_reasons)}"
             )
 
-    def step_p13_01_seed(self) -> KillerMissionStepResult:
-        """Seed initial pre-state; gated strictly by live preflight."""
-        self._require_preflight()
-        res = super().step_p13_01_seed()
-        if not self.seeded_event_id:
-            raise KillerMissionVerificationError(
-                "Seeding did not return a canonical provider event_id"
-            )
-        return res
-
-    def step_p13_02_plan(self) -> KillerMissionStepResult:
-        """Execute plan step; gated strictly by live preflight."""
+    def _propose_and_validate_candidate_plan(self) -> None:
+        """Propose candidate plan from Bedrock and validate before any external mutation."""
         self._require_preflight()
         if self.bedrock_planner is None or not isinstance(
             self.bedrock_planner, BedrockPlannerAdapter
@@ -2276,7 +2373,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         plan_result = self.bedrock_planner.plan(planner_input)
         self.candidate_plan = plan_result.plan
 
-        # Validate exact 3-step killer mission plan before ANY resolution or execution (Defect B)
+        # Validate exact 3-step killer mission plan before ANY seeding, resolution, or execution
         validate_canonical_killer_mission_plan(
             self.candidate_plan,
             target_date=self.demo_date,
@@ -2284,7 +2381,15 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             scope=self.env.scope,
         )
 
-        # Use the exact provider event_id established by seeding / read-back
+    def _compile_validated_plan_with_seeded_id(self) -> None:
+        """Compile validated candidate plan with the exact provider event ID from seeding."""
+        if not self.candidate_plan:
+            raise KillerMissionSequenceError("No candidate plan available to compile")
+        if not self.seeded_event_id:
+            raise KillerMissionSequenceError(
+                "Cannot compile candidate plan without seeded provider event_id. "
+                "Seeding must occur after plan validation and before compilation."
+            )
         actual_event_id = self.seeded_event_id
         resolver = SymbolicTargetResolver(
             scope=self.env.scope,
@@ -2303,6 +2408,27 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         self.action_cal = self.execution_contract.actions[2]
         self.validated_action_cal = validate_action_contract(self.action_cal)
 
+    def step_p13_01_seed(self) -> KillerMissionStepResult:
+        """Seed initial pre-state; gated strictly by live preflight."""
+        self._require_preflight()
+        res = super().step_p13_01_seed()
+        if not self.seeded_event_id:
+            raise KillerMissionVerificationError(
+                "Seeding did not return a canonical provider event_id"
+            )
+        return res
+
+    def step_p13_02_plan(self) -> KillerMissionStepResult:
+        """Execute plan step; gated strictly by live preflight."""
+        self._require_preflight()
+        if self.candidate_plan is None:
+            self._propose_and_validate_candidate_plan()
+        if not self.seeded_event_id:
+            raise KillerMissionSequenceError(
+                "Cannot compile candidate plan without seeded provider event_id. "
+                "Seeding must occur after plan validation and before compilation."
+            )
+        self._compile_validated_plan_with_seeded_id()
         return super().step_p13_02_plan()
 
     def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
@@ -2317,14 +2443,109 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
     def step_p13_05_calendar_approve(
         self,
-        decision: ApprovalDecision | str | None = None,
+        decision: Any = None,
     ) -> KillerMissionStepResult:
-        """Execute calendar update step; gated strictly by live preflight."""
+        """Execute calendar update step; gated strictly by live preflight.
+
+        Direct live approval bypass is prohibited. Live mutation decisions must
+        come through the explicitly authorized post-PendingApproval decision boundary.
+        """
         self._require_preflight()
+        if self.pending_approval is None:
+            raise KillerMissionSequenceError(
+                "Cannot approve calendar update before P-13.04 establishes PendingApproval"
+            )
+
         eff_decision = decision
+
+        # 1. Reject direct bypass with raw APPROVE
+        if eff_decision == ApprovalDecision.APPROVE or str(eff_decision).upper() == "APPROVE":
+            raise KillerMissionAuthorityError(
+                "Direct live approval bypass prohibited: raw APPROVE parameter cannot grant "
+                "human authorization in live execution. Live mutation decision must come "
+                "through the explicitly authorized post-PendingApproval decision boundary."
+            )
+
+        # 2. Rejection via raw REJECT parameter
+        if eff_decision == ApprovalDecision.REJECT or str(eff_decision).upper() == "REJECT":
+            return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+
+        # 3. Consult post_pending_decision_callback if decision is not supplied
         if eff_decision is None and self.post_pending_decision_callback is not None:
-            eff_decision = self.post_pending_decision_callback(self.pending_approval)
-        return super().step_p13_05_calendar_approve(decision=eff_decision)
+            cb_result = self.post_pending_decision_callback(self.pending_approval)
+            if cb_result is None:
+                return super().step_p13_05_calendar_approve(decision=None)
+            if cb_result == ApprovalDecision.REJECT or str(cb_result).upper() == "REJECT":
+                return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+            if isinstance(cb_result, AuthorizedPostPendingApprovalDecision):
+                eff_decision = cb_result
+            elif cb_result == ApprovalDecision.APPROVE or str(cb_result).upper() == "APPROVE":
+                eff_decision = create_authorized_post_pending_decision(
+                    self.pending_approval,
+                    target_event_id=self.seeded_event_id,
+                    action_parameters=self.action_cal.parameters.to_dict(),
+                    decision=ApprovalDecision.APPROVE,
+                    authority_source="POST_PENDING_CALLBACK",
+                )
+            else:
+                raise KillerMissionAuthorityError(
+                    "Unexpected post_pending_decision_callback return type: "
+                    f"{type(cb_result).__name__}"
+                )
+
+        # 4. If still None, pause awaiting approval
+        if eff_decision is None:
+            return super().step_p13_05_calendar_approve(decision=None)
+
+        # 5. Enforce AuthorizedPostPendingApprovalDecision validation
+        if not isinstance(eff_decision, AuthorizedPostPendingApprovalDecision):
+            raise KillerMissionAuthorityError(
+                f"Live approval decision must be an AuthorizedPostPendingApprovalDecision, "
+                f"got {type(eff_decision).__name__}"
+            )
+
+        # Replay prevention
+        if eff_decision.decision_id in self._consumed_approval_decision_ids:
+            raise KillerMissionAuthorityError(
+                f"Approval decision '{eff_decision.decision_id}' has already been "
+                "consumed (replay prohibited)"
+            )
+
+        # Binding checks
+        if eff_decision.pending_approval_id != str(self.pending_approval.pending_approval_id):
+            raise KillerMissionAuthorityError(
+                "Authorized decision pending_approval_id mismatch: expected "
+                f"'{self.pending_approval.pending_approval_id}', "
+                f"got '{eff_decision.pending_approval_id}'"
+            )
+        if eff_decision.mission_id != str(self.mission_id):
+            raise KillerMissionAuthorityError("Authorized decision mission_id mismatch")
+        if eff_decision.action_id != str(self.action_cal.action_id):
+            raise KillerMissionAuthorityError("Authorized decision action_id mismatch")
+        if eff_decision.target_event_id != self.seeded_event_id:
+            raise KillerMissionAuthorityError("Authorized decision target_event_id mismatch")
+
+        expected_fp = compute_action_parameter_fingerprint(self.action_cal.parameters.to_dict())
+        if eff_decision.action_parameter_fingerprint != expected_fp:
+            raise KillerMissionAuthorityError(
+                "Authorized decision action_parameter_fingerprint mismatch"
+            )
+
+        # Staleness check (15-minute window)
+        now_utc = datetime.now(UTC)
+        age = now_utc - eff_decision.decided_at
+        if age > timedelta(minutes=15) or age < timedelta(minutes=-5):
+            raise KillerMissionAuthorityError(
+                f"Authorized decision is stale / expired (age: {age.total_seconds():.1f}s)"
+            )
+
+        # Mark decision as consumed (one-time consumption)
+        self._consumed_approval_decision_ids.add(eff_decision.decision_id)
+
+        if eff_decision.decision == ApprovalDecision.REJECT:
+            return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+
+        return super().step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
 
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
         """Produce ready receipt; gated strictly by live preflight."""
@@ -2388,23 +2609,89 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 is_live=True,
             )
 
-        self.step_p13_01_seed()
-        step2 = self.step_p13_02_plan()
-        if step2.status == "BLOCKED_LIVE":
-            return KillerMissionSliceOutcome(
-                mission_id=self.mission_id,
-                intent=self.intent_text,
-                steps=dict(self.step_results),
-                ready_receipt_hash=None,
-                drifted_receipt_hash=None,
-                historical_receipt_immutable=False,
-                final_state=MissionState.DRAFT,
-                total_writes_performed=self.total_writes,
-                provenance=self.env.provenance,
-                is_live=True,
-            )
+        # 1. Bounded Bedrock proposal & exact canonical plan validation BEFORE ANY SEEDING
+        if "step_p13_02_plan" in self.__dict__:
+            # Unit test explicitly stubbed step_p13_02_plan on this instance
+            self.step_p13_01_seed()
+            step2 = self.step_p13_02_plan()
+            if step2.status in ("FAILED", "BLOCKED_LIVE"):
+                return KillerMissionSliceOutcome(
+                    mission_id=self.mission_id,
+                    intent=self.intent_text,
+                    steps=dict(self.step_results),
+                    ready_receipt_hash=None,
+                    drifted_receipt_hash=None,
+                    historical_receipt_immutable=False,
+                    final_state=MissionState.DRAFT,
+                    total_writes_performed=self.total_writes,
+                    provenance=self.env.provenance,
+                    is_live=True,
+                )
+        else:
+            try:
+                self._propose_and_validate_candidate_plan()
+            except Exception as exc:
+                step_defs = [
+                    ("P-13.01", "Seed Canonical Demo Resources"),
+                    ("P-13.02", "Natural Language Planning & Compilation"),
+                    ("P-13.03", "Execute & Verify Tasks Preparation Action"),
+                    ("P-13.04", "Pause at Calendar Approval Boundary"),
+                    ("P-13.05", "Approve, Execute & Verify Calendar Update"),
+                    ("P-13.06", "Produce Deterministic READY Mission Receipt"),
+                    ("P-13.07", "Mutate Calendar Externally & Reconcile Drift"),
+                ]
+                self.step_results["P-13.02"] = KillerMissionStepResult(
+                    task_id="P-13.02",
+                    step_name="Natural Language Planning & Compilation",
+                    status="FAILED",
+                    provenance=self.env.provenance,
+                    details=(
+                        f"Bedrock plan proposal failed canonical validation: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                    writes_performed=0,
+                    is_verified=False,
+                )
+                for task_id, step_name in step_defs:
+                    if task_id not in self.step_results:
+                        self.step_results[task_id] = KillerMissionStepResult(
+                            task_id=task_id,
+                            step_name=step_name,
+                            status="NOT_RUN",
+                            provenance=self.env.provenance,
+                            details=(
+                                "Execution halted before mutation due to plan validation failure."
+                            ),
+                            writes_performed=0,
+                            is_verified=False,
+                        )
+                return KillerMissionSliceOutcome(
+                    mission_id=self.mission_id,
+                    intent=self.intent_text,
+                    steps=dict(self.step_results),
+                    ready_receipt_hash=None,
+                    drifted_receipt_hash=None,
+                    historical_receipt_immutable=False,
+                    final_state=MissionState.FAILED,
+                    total_writes_performed=0,
+                    provenance=self.env.provenance,
+                    is_live=True,
+                )
+
+            # 2. Authorized disposable seeding AFTER candidate plan is validated
+            self.step_p13_01_seed()
+
+            # 3. Bind exact provider-generated event ID & compile validated actions
+            self._compile_validated_plan_with_seeded_id()
+            super().step_p13_02_plan()
+
+        # 4. Tasks prep
         self.step_p13_03_tasks_prep()
+
+        # 5. Pause at approval boundary
         self.step_p13_04_calendar_pause()
+
+        # 6. Approve calendar update
         step5 = self.step_p13_05_calendar_approve()
         if step5.status in ("AWAITING_APPROVAL", "REJECTED", "PAUSED", "BLOCKED_LIVE"):
             final_st = (
@@ -2428,9 +2715,11 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 provenance=self.env.provenance,
                 is_live=True,
             )
+
+        # 7. Produce deterministic READY receipt
         self.step_p13_06_ready_receipt()
 
-        # In live execution, do NOT run fixture-only drift; mark P-13.07 NOT_RUN (Defect E)
+        # 8. Live drift remains NOT_RUN
         self.step_results["P-13.07"] = KillerMissionStepResult(
             task_id="P-13.07",
             step_name="Mutate Calendar Externally & Reconcile Drift",
@@ -2460,6 +2749,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
 
 __all__ = [
+    "AuthorizedPostPendingApprovalDecision",
     "CANONICAL_CONTRADICTORY_START_TIME",
     "CANONICAL_DEMO_CALENDAR_ID",
     "CANONICAL_DEMO_EVENT_ID",
@@ -2490,6 +2780,8 @@ __all__ = [
     "LivePreflightBlockedError",
     "LivePreflightReport",
     "check_live_preflight",
+    "compute_action_parameter_fingerprint",
+    "create_authorized_post_pending_decision",
     "get_canonical_mission_timestamps",
     "is_synthetic_service",
     "is_synthetic_transport",

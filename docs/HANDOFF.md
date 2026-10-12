@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Final Execution-Integrity Repair Batch Applied (Defects A through H repaired; all offline & dual-runtime tests PASS; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote SHA: `714f28dc6b4fd252012532007e507ce4e3b525d4` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Consolidated Closure Repair Applied (all offline & dual-runtime tests PASS; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,26 +74,26 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: Final Execution-Integrity Repair Batch — P-13 + P-16 Only
+Active task: Consolidated Closure Repair — P-13 + P-16 Integrity Defects
+
+Starting Remote SHA: `714f28dc6b4fd252012532007e507ce4e3b525d4`
+Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 + P-16: Final Execution-Integrity Repair applied (PASS Candidate, awaiting independent QA review)
-  - Defect A: Weather observation strictly required from genuine provider observation (`OpenMeteoReadAdapter`, `WeatherReadStatus.MATCH`, non-null observation, location binding, freshness evaluated at `eval_now`, zero synthetic timestamps).
-  - Defect B: Exact canonical 3-step killer mission plan (`weather.read` -> `task.create` -> `calendar.update`) validated fail-closed prior to executing any action (typed validation errors: count, order, type, symbolic target, parameters, duplication).
-  - Defect C: Post-pending human approval strictly required for Calendar update (`PendingApproval` must exist first); pre-authorized CLI `--calendar-decision APPROVE` rejected at initialization with exit code 2 / `KillerMissionAuthorityError`; decision bound to exact pending approval identity.
-  - Defect D: Exact provider task ID required from task creation details; read-back performs exact ID lookup without title-based discovery; live calendar seed requires authoritative provider event ID without static constant fallback; raw external IDs sanitized from public step details/JSON.
-  - Defect E: Live killer mission runner truthfully halts at `MissionState.READY` with `drifted_receipt_hash=None`, keeping P-13.07 as `NOT_RUN` without fixture-only drift induction or forged receipts.
-  - Defect F: CloudWatch live proof harness enforces bounded polling for asynchronous EMF extraction, emission-correlated time window, query ID check, status code complete, and comprehensive negative controls.
-  - Defect G: `AWSAccountObservation` requires a resolved durable repository evidence reference; unverified or unresolved references leave account facts `NOT_OBSERVED`; promotional credit coverage is not assumed without verified account evidence.
-  - Defect H: Impossible dates (e.g., `2026-02-31`) rejected fail-closed; cost truth distinguishes `ESTIMATED_GROSS_COST` vs `RECORDED_HISTORICAL_USAGE`.
+- P-13 + P-16: Consolidated Closure Repair Applied (PASS Candidate, awaiting independent QA review)
+  - Item 1 (CI Typing): Dynamic typed import boundary in `scripts/p13_killer_mission.py` resolving `google.oauth2.credentials` and unused `type: ignore` without adding Google SDK to core dependencies or weakening mypy.
+  - Item 2 (AWS Account Evidence Authority): Typed `AWSAccountEvidenceRecord` JSON fixture required; arbitrary files (`docs/AWS_BUILDER_MAP.md`), empty files, traversal, untrusted paths, and caller claim mismatches rejected fail-closed; unverified evidence leaves account facts `NOT_OBSERVED`; P-16.05 remains `BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`.
+  - Item 3 (Live Plan Validation Order): Bedrock proposal + canonical 3-step contract validation strictly precede disposable seeding; invalid candidate plan produces zero Google Calendar/Tasks mutations (`total_writes_performed == 0`, `writes_performed == 0`), zero approval consumption, and `MissionState.FAILED`.
+  - Item 4 (Live Approval Alternate Entry Closed): Direct `decision="APPROVE"` bypass rejected with `KillerMissionAuthorityError`; requires `AuthorizedPostPendingApprovalDecision` binding pending ID, target event ID, parameter fingerprint, decided_at freshness, and one-time consumption to prevent replay.
+  - Item 5 (CloudWatch Single-Emission Correlation): Conflicting emission with identical value within 60-second window without matching proof token fails closed as `LOG_INGESTION_OBSERVED` with `is_verified=False` (not `VERIFIED_METRIC_EXTRACTION`). P-16.03 remains `BLOCKED_LIVE / NOT_RUN`.
+  - Item 6 (Raw Provider ID Redaction): External Calendar/Tasks IDs redacted across public serializers (`snapshot.to_dict()`, `outcome.to_dict()`, `receipt.to_dict()`, `step_record.to_dict()`, `step_result.to_dict()`), while preserved internally in `ProviderExecutionResult.details` for read-back verification.
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
 - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18)
 
-Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main` (eliminates stale self-referential tracking)
 Next exact task: Independent QA Review of Consolidated Repair Batch (P-18 remains strictly PENDING / NOT_RUN)
 

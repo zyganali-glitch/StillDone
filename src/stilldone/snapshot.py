@@ -559,36 +559,7 @@ class MissionSnapshot:
                 str(aid): [str(d) for d in deps] for aid, deps in self.action_dependencies.items()
             },
             "step_records": {
-                str(aid): {
-                    "action_id": str(sr.action_id),
-                    "status": sr.status.value,
-                    "attempt": (
-                        {
-                            "action_id": str(sr.attempt.action_id),
-                            "idempotency_key": str(sr.attempt.idempotency_key),
-                            "attempt_number": sr.attempt.attempt_number,
-                            "started_at": sr.attempt.started_at.isoformat(),
-                            "attempt_id": str(sr.attempt.attempt_id),
-                        }
-                        if sr.attempt is not None
-                        else None
-                    ),
-                    "provider_result": (
-                        {
-                            "action_type": sr.provider_result.action_type.value,
-                            "success": sr.provider_result.success,
-                            "status_name": sr.provider_result.status_name,
-                            "writes_performed": sr.provider_result.writes_performed,
-                            "captured_at": sr.provider_result.captured_at.isoformat(),
-                            "details": dict(sr.provider_result.details),
-                            "error_message": sr.provider_result.error_message,
-                        }
-                        if sr.provider_result is not None
-                        else None
-                    ),
-                    "error_message": sr.error_message,
-                    "blocked_by": str(sr.blocked_by) if sr.blocked_by is not None else None,
-                }
+                str(aid): sr.to_dict(redact_identifiers=True)
                 for aid, sr in self.step_records.items()
             },
             "pending_approvals": [

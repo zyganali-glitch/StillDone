@@ -1665,3 +1665,238 @@ def test_defect_e_live_ready_stops_before_fixture_drift(monkeypatch: pytest.Monk
     direct = runner.step_p13_07_mutate_and_drift()
     assert direct.status == "NOT_RUN"
     assert "DRIFTED" not in json.dumps(direct.to_dict())
+
+
+def test_defect_b_live_plan_validation_order_zero_seeding_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zero external mutation before invalid model-plan rejection.
+
+    If candidate plan proposal fails canonical validation, the live runner must:
+    - execute zero Google seeding mutations;
+    - execute zero candidate actions;
+    - consume zero approvals;
+    - fail closed with status FAILED and total_writes_performed == 0;
+    - never fall back to fixture proposal.
+    """
+    from unittest.mock import MagicMock
+
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+    from stilldone.planning.contracts import (
+        CandidateActionProposal,
+        CandidatePlanProposal,
+        SymbolicTargetRef,
+    )
+
+    fake_planner = MagicMock(spec=BedrockPlannerAdapter)
+    runner = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=fake_planner)
+
+    # Injected invalid plan: Step 0 is TASK_CREATE instead of WEATHER_READ (invalid order)
+    bad_plan = CandidatePlanProposal.create(
+        mission_id=runner.mission_id,
+        steps=[
+            CandidateActionProposal.create(
+                action_type=ActionType.TASK_CREATE,
+                target_ref=SymbolicTargetRef.TASK_LIST,
+                parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": "2026-10-04"},
+            ),
+            CandidateActionProposal.create(
+                action_type=ActionType.WEATHER_READ,
+                target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                parameters={},
+            ),
+            CandidateActionProposal.create(
+                action_type=ActionType.CALENDAR_UPDATE,
+                target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+                parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+            ),
+        ],
+    )
+    fake_planner.plan.return_value = MagicMock(plan=bad_plan)
+
+    seed_spy = MagicMock()
+    runner.env.cal_seed_transport = seed_spy
+
+    outcome = runner.run_full_slice()
+
+    # Must fail closed with 0 mutations executed
+    assert outcome.final_state == MissionState.FAILED
+    assert outcome.total_writes_performed == 0
+    assert outcome.steps["P-13.02"].status == "FAILED"
+    assert "InvalidActionOrderError" in outcome.steps["P-13.02"].details
+    assert outcome.steps["P-13.01"].status == "NOT_RUN"
+    seed_spy.create_event.assert_not_called()
+    assert runner.total_writes == 0
+
+
+def test_live_approval_alternate_entry_and_replay_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative controls: direct live approval bypass, wrong pending identity,
+
+    replayed decision, and stale authorization are all rejected fail-closed.
+    """
+    from datetime import timedelta
+    from unittest.mock import MagicMock
+
+    from stilldone.killer_mission import (
+        AuthorizedPostPendingApprovalDecision,
+        KillerMissionAuthorityError,
+        compute_action_parameter_fingerprint,
+        create_authorized_post_pending_decision,
+    )
+    from stilldone.pending_approval import ApprovalDecision
+    from stilldone.planning.bedrock import BedrockPlannerAdapter
+
+    fake_planner = MagicMock(spec=BedrockPlannerAdapter)
+    runner = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=fake_planner)
+    runner.seeded_event_id = "provider_evt_live_test_123"
+
+    # Setup runner steps up to P-13.04 (approval pause)
+    runner.step_p13_04_calendar_pause()
+    assert runner.pending_approval is not None
+    pending = runner.pending_approval
+
+    # 1. Direct live approval bypass with raw APPROVE must be rejected
+    with pytest.raises(KillerMissionAuthorityError, match="Direct live approval bypass prohibited"):
+        runner.step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
+
+    with pytest.raises(KillerMissionAuthorityError, match="Direct live approval bypass prohibited"):
+        runner.step_p13_05_calendar_approve(decision="APPROVE")
+
+    # 2. Wrong pending identity must be rejected
+    wrong_pending_dec = AuthorizedPostPendingApprovalDecision(
+        decision_id="dec_wrong_pending_001",
+        pending_approval_id="wrong_pending_approval_id_999",
+        mission_id=str(runner.mission_id),
+        action_id=str(runner.action_cal.action_id),
+        target_event_id=runner.seeded_event_id,
+        action_parameter_fingerprint="some_fp",
+        decision=ApprovalDecision.APPROVE,
+        authority_source="HUMAN_OPERATOR",
+        decided_at=datetime.now(UTC),
+    )
+    with pytest.raises(KillerMissionAuthorityError, match="pending_approval_id mismatch"):
+        runner.step_p13_05_calendar_approve(decision=wrong_pending_dec)
+
+    # 3. Stale authorization (> 15 minutes) must be rejected
+    valid_fp = compute_action_parameter_fingerprint(runner.action_cal.parameters.to_dict())
+    stale_dec = AuthorizedPostPendingApprovalDecision(
+        decision_id="dec_stale_002",
+        pending_approval_id=str(pending.pending_approval_id),
+        mission_id=str(runner.mission_id),
+        action_id=str(runner.action_cal.action_id),
+        target_event_id=runner.seeded_event_id,
+        action_parameter_fingerprint=valid_fp,
+        decision=ApprovalDecision.APPROVE,
+        authority_source="HUMAN_OPERATOR",
+        decided_at=datetime.now(UTC) - timedelta(minutes=20),
+    )
+    with pytest.raises(KillerMissionAuthorityError, match="stale / expired"):
+        runner.step_p13_05_calendar_approve(decision=stale_dec)
+
+    # 4. Target event ID mismatch must be rejected
+    mismatched_target_dec = create_authorized_post_pending_decision(
+        pending,
+        target_event_id="wrong_event_target_id",
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.APPROVE,
+    )
+    with pytest.raises(KillerMissionAuthorityError, match="target_event_id mismatch"):
+        runner.step_p13_05_calendar_approve(decision=mismatched_target_dec)
+
+    # 5. Valid decision via create_authorized_post_pending_decision with REJECT halts cleanly
+    valid_dec = create_authorized_post_pending_decision(
+        pending,
+        target_event_id=runner.seeded_event_id,
+        action_parameters=runner.action_cal.parameters.to_dict(),
+        decision=ApprovalDecision.REJECT,
+    )
+    res_rej = runner.step_p13_05_calendar_approve(decision=valid_dec)
+    assert res_rej.status == "REJECTED"
+    assert res_rej.writes_performed == 0
+
+    # 6. Replayed decision must be rejected fail-closed
+    with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+        runner.step_p13_05_calendar_approve(decision=valid_dec)
+
+
+def test_raw_provider_ids_redacted_in_public_serializers() -> None:
+    """Raw external Calendar and Tasks provider IDs must be redacted in public surfaces
+
+    while usable internally for exact provider read-back operations.
+    """
+    from stilldone.domain.execution import ExecutionAttempt, IdempotencyKey
+    from stilldone.execution.state import (
+        ActionExecutionStatus,
+        ProviderExecutionResult,
+        StepExecutionRecord,
+    )
+    from stilldone.killer_mission import (
+        KillerMissionStepResult,
+    )
+    from stilldone.redaction import REDACTED_IDENTIFIER
+
+    sentinel_task = "PROVIDER_TASK_SENTINEL_SECRET_999"
+    sentinel_event = "PROVIDER_EVENT_SENTINEL_SECRET_888"
+
+    # 1. ProviderExecutionResult details: raw internally, redacted in to_dict() and to_canonical()
+    p_res = ProviderExecutionResult(
+        action_type=ActionType.TASK_CREATE,
+        success=True,
+        status_name="COMPLETED",
+        writes_performed=1,
+        details={
+            "task_id": sentinel_task,
+            "provider_event_id": sentinel_event,
+            "status": "needsAction",
+        },
+    )
+    # Raw internally for read-backs
+    assert p_res.details["task_id"] == sentinel_task
+    assert p_res.details["provider_event_id"] == sentinel_event
+
+    # Redacted in public serialization
+    serialized_p = p_res.to_dict()
+    assert serialized_p["details"]["task_id"] == REDACTED_IDENTIFIER
+    assert serialized_p["details"]["provider_event_id"] == REDACTED_IDENTIFIER
+    assert sentinel_task not in json.dumps(serialized_p)
+    assert sentinel_event not in json.dumps(serialized_p)
+
+    # Canonical projection also redacts
+    canonical_p = p_res.to_canonical()
+    assert canonical_p["details"]["task_id"] == REDACTED_IDENTIFIER
+    assert sentinel_task not in json.dumps(canonical_p)
+
+    # 2. StepExecutionRecord public serialization
+    aid = ActionId("33333333-3333-4333-8333-333333333333")
+    att = ExecutionAttempt(
+        action_id=aid,
+        attempt_number=1,
+        idempotency_key=IdempotencyKey("44444444-4444-4444-4444-444444444444"),
+        started_at=datetime.now(UTC),
+    )
+    step_rec = StepExecutionRecord(
+        action_id=aid,
+        status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
+        attempt=att,
+        provider_result=p_res,
+    )
+    step_dict = step_rec.to_dict()
+    assert step_dict["provider_result"]["details"]["task_id"] == REDACTED_IDENTIFIER
+    assert sentinel_task not in json.dumps(step_dict)
+
+    # 3. KillerMissionStepResult extra_metadata and details
+    step_res = KillerMissionStepResult(
+        task_id="P-13.03",
+        step_name="Tasks Prep",
+        status="PASS",
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        details="Created task in list",
+        extra_metadata={"provider_task_id": sentinel_task, "event_id": sentinel_event},
+    )
+    step_res_dict = step_res.to_dict()
+    assert step_res_dict["extra_metadata"]["provider_task_id"] == REDACTED_IDENTIFIER
+    assert step_res_dict["extra_metadata"]["event_id"] == REDACTED_IDENTIFIER
+    assert sentinel_task not in json.dumps(step_res_dict)
+    assert sentinel_event not in json.dumps(step_res_dict)

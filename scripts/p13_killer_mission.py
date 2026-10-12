@@ -187,10 +187,10 @@ def run_killer_mission(
 
         if has_google_token:
             try:
-                from google.oauth2.credentials import Credentials
-                from googleapiclient.discovery import (  # type: ignore[import-not-found]
-                    build,
-                )
+                import importlib
+
+                creds_mod = importlib.import_module("google.oauth2.credentials")
+                discovery_mod = importlib.import_module("googleapiclient.discovery")
 
                 resolved_token = (
                     token_path
@@ -198,12 +198,12 @@ def run_killer_mission(
                     else creds_path
                 )
                 if resolved_token and os.path.exists(str(resolved_token)):
-                    creds = Credentials.from_authorized_user_file(  # type: ignore[no-untyped-call]
-                        str(resolved_token)
-                    )
+                    credentials_cls = creds_mod.Credentials
+                    build_fn = discovery_mod.build
+                    creds = credentials_cls.from_authorized_user_file(str(resolved_token))
                     google_creds = creds
-                    cal_service = build("calendar", "v3", credentials=creds)
-                    tasks_service = build("tasks", "v1", credentials=creds)
+                    cal_service = build_fn("calendar", "v3", credentials=creds)
+                    tasks_service = build_fn("tasks", "v1", credentials=creds)
                     cal_transport = GoogleApiClientCalendarTransport(service=cal_service)
                     tasks_transport = GoogleApiClientTasksTransport(service=tasks_service)
             except Exception:

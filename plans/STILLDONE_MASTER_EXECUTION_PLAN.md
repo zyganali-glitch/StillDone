@@ -1378,6 +1378,7 @@ Acceptance:
 - when credentials/approval are unestablished, truthfully reports `BLOCKED_LIVE` (`provenance="NOT_RUN"`);
 - deterministic regression vertical slice preserved under `provenance="FIXTURE"`;
 - canonical natural language intent parsed and compiled into 3-action structured contract (`weather.read`, `task.create`, `calendar.update`);
+- canonical plan proposal and contract validation strictly precede resource seeding in live execution (`run_full_slice`), ensuring zero provider mutations occur if the model candidate plan fails validation;
 - strict model authority boundary enforced: model proposal confers zero execution authority and zero readiness authority;
 - verified in `step_p13_02_plan()` and `test_p13_02_model_proposal_has_zero_execution_or_readiness_authority`.
 
@@ -1406,9 +1407,9 @@ Acceptance:
 Status: BLOCKED_LIVE / NOT_RUN (Deterministic Live Path Implemented; Regression Validated under FIXTURE)
 
 Acceptance:
-- human operator decision requires explicit `ApprovalDecision` bound to exact `PendingApproval` via canonical `resolve_pending_approval`;
+- human operator decision requires explicit `AuthorizedPostPendingApprovalDecision` bound to exact `PendingApproval` via canonical post-pending boundary; raw `decision="APPROVE"` bypass rejected fail-closed;
 - `None` decision halts fail-closed (`AWAITING_APPROVAL`, 0 writes); `REJECT` decision halts fail-closed (`REJECTED`, 0 writes);
-- `APPROVE` decision produces exact single-use `ApprovalGrant` consumed via canonical P-11.04 path;
+- `APPROVE` decision produces exact single-use `ApprovalGrant` consumed via canonical P-11.04 path with replay prevention;
 - calendar update executed once (`writes_performed=1`);
 - independent read-back via `calendar.read` verifies start time matches mission target date departure time;
 - `ApprovedActionReceipt` issued with full evidence lineage;
@@ -1654,6 +1655,7 @@ Acceptance:
 - records emitted for task creation verification, calendar approval boundary, calendar verified mutation, and drift reconciliation;
 - non-decorative justification: monitors StillDone core invariants in real time with zero network overhead and zero third-party daemon dependencies;
 - bounded live proof harness implemented in `CloudWatchLiveProofHarness` (`src/stilldone/aws_builder.py`);
+- single-emission correlation verifies absence of conflicting emissions with identical values within the 60-second window lacking the exact proof token; conflicting emissions fail closed as `LOG_INGESTION_OBSERVED` (`is_verified=False`), preventing temporal proximity alone from claiming verified metric extraction;
 - live observation call halted fail-closed (`BLOCKED_LIVE`) to preserve Zero Personal Spend Law ($0.00) until operator authorizes billable CloudWatch ingestion;
 - verified in `test_p16_03_prove_added_aws_service_not_decorative`.
 
@@ -1671,7 +1673,7 @@ Status: BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN (Gross Architecture Estimates Boun
 Acceptance:
 - gross costs strictly separated into `ESTIMATED_GROSS_COST` (< $0.05 USD bounded) and `RECORDED_HISTORICAL_USAGE` (September 2026 recorded MicroVM usage);
 - promotional credit coverage cannot be asserted to definitively cover all usage without independent account evidence;
-- `AWSAccountObservation` requires an authoritative timestamp, valid provenance, and a source reference resolved against durable repository evidence;
+- `AWSAccountObservation` requires an authoritative timestamp, valid provenance, and a source reference resolved against a canonical typed `AWSAccountEvidenceRecord` JSON fixture; arbitrary files (e.g. `docs/AWS_BUILDER_MAP.md`), empty files, path traversal, untrusted absolute paths, and caller claim mismatches are rejected fail-closed;
 - net personal spend, promotional credit sufficiency, and zero personal spend maintenance preserved as `NOT_OBSERVED` without an authoritative, verified `AWSAccountObservation`;
 - Zero Personal Spend Law ($0.00) architectural invariants enforced fail-closed;
 - verified in `test_p16_05_cost_impact_validation_against_zero_personal_spend`.
