@@ -16,6 +16,7 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -42,6 +43,7 @@ from stilldone.adapters.tasks import (
     TaskCreateStatus,
     TaskRateLimitError,
     TaskReadbackStatus,
+    TaskReadStatus,
     TaskTransportError,
 )
 from stilldone.adapters.weather import (
@@ -88,6 +90,8 @@ class ProviderQuotaSpec:
     published_limit_description: str
     published_limit_units_per_day: int
     stilldone_mission_consumption_estimate: int
+    applicable_restrictions: list[str]
+    usage_based_billing_exposure: str
     actual_remaining_account_quota: str = "NOT_OBSERVED"
     authenticated_usage_observed: bool = False
 
@@ -98,9 +102,25 @@ PUBLISHED_QUOTA_SPECS: dict[str, ProviderQuotaSpec] = {
         provider_name="Google Calendar API v3",
         official_documentation_url="https://developers.google.com/workspace/calendar/api/guides/quota",
         verification_date="2026-10-13",
-        published_limit_description="1,000,000 queries per day default per project",
+        published_limit_description=(
+            "1,000,000 queries per day billing threshold; 10,000 requests/minute/project; "
+            "600 requests/minute/user/project (May 1, 2026 quota revision)"
+        ),
         published_limit_units_per_day=1_000_000,
-        stilldone_mission_consumption_estimate=3,  # 1 read + 1 update + 1 read-back
+        # Estimated 3 calls: 1 read + 1 update + 1 read-back
+        stilldone_mission_consumption_estimate=3,
+        applicable_restrictions=[
+            "10,000 requests/minute/project default rate limit",
+            "600 requests/minute/user/project user concurrency limit",
+            "1,000,000 requests/day/project billing threshold",
+            "Historical quota preservation may apply to eligible older projects",
+            "Over-threshold usage subject to pay-as-you-go billing if billing enabled",
+        ],
+        usage_based_billing_exposure=(
+            "Exceeding 1M daily queries incurs pay-as-you-go charges. StillDone enforces "
+            "strict call bounds to remain orders of magnitude below threshold "
+            "($0.00 personal spend)."
+        ),
         actual_remaining_account_quota="NOT_OBSERVED",
         authenticated_usage_observed=False,
     ),
@@ -110,17 +130,38 @@ PUBLISHED_QUOTA_SPECS: dict[str, ProviderQuotaSpec] = {
         verification_date="2026-10-13",
         published_limit_description="50,000 queries per day courtesy limit",
         published_limit_units_per_day=50_000,
-        stilldone_mission_consumption_estimate=2,  # 1 create + 1 read-back
+        stilldone_mission_consumption_estimate=2,  # Estimated 2 calls: 1 create + 1 read-back
+        applicable_restrictions=[
+            "50,000 queries/day courtesy limit",
+            "Account-level quota increases require administrative console request",
+        ],
+        usage_based_billing_exposure=(
+            "Standard courtesy quota. Hard limit stops execution fail-closed "
+            "without automatic billing."
+        ),
         actual_remaining_account_quota="NOT_OBSERVED",
         authenticated_usage_observed=False,
     ),
     "open_meteo": ProviderQuotaSpec(
         provider_name="Open-Meteo Free Forecast API",
-        official_documentation_url="https://open-meteo.com/en/pricing",
+        official_documentation_url="https://open-meteo.com/en/terms",
         verification_date="2026-10-13",
-        published_limit_description="10,000 calls per day for non-commercial use (CC BY 4.0)",
+        published_limit_description=(
+            "10,000 calls per day, 5,000 calls per hour, 600 calls per minute for "
+            "non-commercial free use (CC BY 4.0 attribution required)"
+        ),
         published_limit_units_per_day=10_000,
-        stilldone_mission_consumption_estimate=1,  # 1 weather read
+        stilldone_mission_consumption_estimate=1,  # Estimated 1 call: 1 weather read
+        applicable_restrictions=[
+            "10,000 daily API calls",
+            "5,000 hourly API calls",
+            "600 per-minute burst rate",
+            "Non-commercial use only",
+            "CC BY 4.0 attribution required",
+        ],
+        usage_based_billing_exposure=(
+            "Free tier non-commercial use has zero fee; commercial use requires paid license."
+        ),
         actual_remaining_account_quota="NOT_OBSERVED",
         authenticated_usage_observed=False,
     ),
@@ -142,12 +183,14 @@ class TestPublishedLimitsAndUnobservedQuotaTruth:
             assert spec.verification_date == "2026-10-13"
             assert spec.published_limit_units_per_day > 0
             assert spec.stilldone_mission_consumption_estimate > 0
+            assert len(spec.applicable_restrictions) > 0
+            assert spec.usage_based_billing_exposure != ""
             # Offline execution invariant: actual quota MUST be NOT_OBSERVED
             assert spec.actual_remaining_account_quota == "NOT_OBSERVED"
             assert spec.authenticated_usage_observed is False
 
     def test_canonical_mission_consumption_is_negligible_fraction_of_limits(self) -> None:
-        """StillDone canonical mission consumes <= 0.01% of any daily limit."""
+        """Estimated mission consumption is <= 0.01% of published default daily limits."""
         for name, spec in PUBLISHED_QUOTA_SPECS.items():
             ratio = spec.stilldone_mission_consumption_estimate / spec.published_limit_units_per_day
             assert ratio <= 0.0001, f"{name} consumption ratio too high: {ratio}"
@@ -590,3 +633,223 @@ class TestFullMissionSliceUnderProviderThrottling:
         assert runner.ready_receipt is None
         # Writes performed is strictly 1 (seed event only; zero tasks and zero calendar writes)
         assert runner.total_writes == 1
+
+
+# ===========================================================================
+# 6. Ambiguous Mutation Safety & Read-Back Requirement
+# ===========================================================================
+
+
+class TestAmbiguousMutationSafety:
+    """Verify ambiguous mutations never infer zero writes and strictly require read-back."""
+
+    @pytest.fixture
+    def scope(self) -> DemoResourceScope:
+        return DemoResourceScope(
+            calendar_id="demo-cal-123@group.calendar.google.com",
+            task_list_id="demo-tl-456",
+        )
+
+    def test_ambiguous_calendar_mutation_never_infers_zero_remote_writes_and_fails_closed(
+        self,
+        scope: DemoResourceScope,
+    ) -> None:
+        """Transport failure after write cannot assume 0 remote writes; readback resolves truth."""
+        remote_store: dict[str, Any] = {
+            "evt-1": {
+                "id": "evt-1",
+                "summary": "Leave for School",
+                "start": {"dateTime": "2026-10-14T07:45:00Z"},
+                "end": {"dateTime": "2026-10-14T08:15:00Z"},
+                "status": "confirmed",
+                "etag": '"etag-v1"',
+            }
+        }
+
+        class AmbiguousCalendarTransport:
+            def __init__(self) -> None:
+                self.write_attempted = False
+
+            def get_event(self, calendar_id: str, event_id: str) -> CalendarTransportEvent | None:
+                raw = remote_store.get(event_id)
+                if not raw:
+                    return None
+                return CalendarTransportEvent(
+                    id=raw["id"],
+                    etag=raw["etag"],
+                    summary=raw.get("summary", "Leave for School"),
+                    start_time=raw["start"]["dateTime"],
+                    end_time=raw["end"]["dateTime"],
+                    all_day=False,
+                    status=raw["status"],
+                    raw_resource=copy.deepcopy(raw),
+                )
+
+            def update_event(
+                self,
+                calendar_id: str,
+                event_id: str,
+                payload: dict[str, Any],
+                if_match: str,
+                send_updates: str = "none",
+            ) -> CalendarTransportEvent:
+                # The write lands on the remote server
+                self.write_attempted = True
+                remote_store[event_id]["start"]["dateTime"] = payload["start"]["dateTime"]
+                remote_store[event_id]["etag"] = '"etag-v2"'
+                # BUT the network connection drops before response is delivered back
+                raise CalendarTransportError("Connection reset by peer after server write")
+
+        transport = AmbiguousCalendarTransport()
+        update_adapter = GoogleCalendarUpdateAdapter(scope=scope, transport=transport)
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id="evt-1",
+            parent_id=scope.calendar_id,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=target,
+            parameters={"start_time": "2026-10-14T07:30:00Z"},
+        )
+        grant = ApprovalGrant.create(
+            action=action,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=T_REF,
+            expires_at=T_REF + timedelta(minutes=15),
+        )
+
+        res = update_adapter.update_event(
+            action=action,
+            approval=grant,
+            at=T_REF,
+        )
+
+        # 1. Update adapter reports PROVIDER_ERROR fail-closed
+        assert res.status == CalendarUpdateStatus.PROVIDER_ERROR
+        # 2. Never falsely mark verified
+        assert not hasattr(res, "is_verified") or not getattr(res, "is_verified", False)
+        # 3. Remote state was actually modified despite client exception (proves non-zero reality)
+        assert transport.write_attempted is True
+        assert remote_store["evt-1"]["start"]["dateTime"] in (
+            "2026-10-14T07:30:00Z",
+            "2026-10-14T07:30:00+00:00",
+        )
+
+        # 4. Independent read-back resolves actual state without repeating the write
+        read_adapter = GoogleCalendarReadAdapter(scope=scope, transport=transport)
+        verifier = GoogleCalendarReadbackVerifier(read_adapter=read_adapter)
+        expected = ExpectedCalendarState(
+            start_time="2026-10-14T07:30:00Z",
+        )
+        readback_res = verifier.verify(target=target, expected=expected)
+        assert readback_res.status == CalendarReadbackStatus.MATCH
+
+    def test_ambiguous_tasks_mutation_requires_readback_before_retry(
+        self,
+        scope: DemoResourceScope,
+    ) -> None:
+        """Ambiguous task insertion fails closed and must be read back before safe retry."""
+        remote_tasks: dict[str, Any] = {}
+
+        class AmbiguousTasksTransport:
+            def __init__(self) -> None:
+                self.insertion_attempted = False
+
+            def insert_task(self, task_list_id: str, body: dict[str, Any]) -> Any:
+                self.insertion_attempted = True
+                task_id = "task-ambiguous-001"
+                remote_tasks[task_id] = {
+                    "id": task_id,
+                    "title": body["title"],
+                    "status": "needsAction",
+                    "due": body.get("due"),
+                }
+                # Network timeout while awaiting acknowledgment
+                raise TaskTransportError("HTTP 504 Gateway Timeout on task insert")
+
+            def get_task(self, task_list_id: str, task_id: str) -> Any:
+                raw = remote_tasks.get(task_id)
+                if not raw:
+                    return None
+                from stilldone.adapters.tasks import TaskTransportItem
+
+                return TaskTransportItem(
+                    id=raw["id"],
+                    title=raw["title"],
+                    status=raw["status"],
+                    due=raw.get("due"),
+                )
+
+            def list_tasks(self, task_list_id: str, **kwargs: Any) -> Any:
+                from stilldone.adapters.tasks import TaskTransportItem
+
+                items = [
+                    TaskTransportItem(
+                        id=v["id"],
+                        title=v["title"],
+                        status=v["status"],
+                        due=v.get("due"),
+                    )
+                    for v in remote_tasks.values()
+                ]
+                return items, None
+
+        transport: Any = AmbiguousTasksTransport()
+        create_adapter = GoogleTasksCreateAdapter(scope=scope, transport=transport)
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK_LIST,
+            resource_id=scope.task_list_id,
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters={"title": "Pack backpacks"},
+        )
+
+        res = create_adapter.create_task(action=action, approval=None, at=T_REF)
+
+        # 1. Adapter returns PROVIDER_ERROR; does NOT confer VERIFIED
+        assert res.status == TaskCreateStatus.PROVIDER_ERROR
+        assert transport.insertion_attempted is True
+        # Remote store actually contains the task
+        assert "task-ambiguous-001" in remote_tasks
+
+        # 2. Independent read-back detects the task exists via task read
+        read_adapter = GoogleTasksReadAdapter(scope=scope, transport=transport)
+        task_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK,
+            resource_id="task-ambiguous-001",
+            parent_id=scope.task_list_id,
+        )
+        read_action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_READ,
+            target=task_target,
+            parameters={},
+        )
+        read_res = read_adapter.read_task(action=read_action)
+        assert read_res.status == TaskReadStatus.MATCH
+        assert read_res.observation is not None
+        assert read_res.observation.title == "Pack backpacks"
+
+    def test_calendar_usage_based_billing_exposure_documented_and_bounded(self) -> None:
+        """Verify Calendar API 1M queries/day billing threshold is documented and bounded."""
+        spec = PUBLISHED_QUOTA_SPECS["google_calendar"]
+        assert "billing threshold" in spec.published_limit_description.lower()
+        assert spec.published_limit_units_per_day == 1_000_000
+        # Estimated consumption represents 0.0003% of threshold
+        assert spec.stilldone_mission_consumption_estimate == 3
+        ratio = spec.stilldone_mission_consumption_estimate / spec.published_limit_units_per_day
+        assert ratio < 0.00001
+        # Preserves zero personal spend policy
+        assert "personal spend" in spec.usage_based_billing_exposure.lower()

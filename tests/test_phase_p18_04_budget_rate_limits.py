@@ -762,3 +762,158 @@ class TestAssertionsDisabledBoundary:
                 assert_nodes.append(node.lineno)
 
         assert len(assert_nodes) == 0, f"Found assert statements at lines: {assert_nodes}"
+
+
+# ===========================================================================
+# 10. Runtime Admission Protection Truth & Capability Boundary
+# ===========================================================================
+
+
+class TestRuntimeAdmissionProtectionTruth:
+    """Verify actual middleware boundary, safe exception handling, and non-paid MCP tool surface."""
+
+    def test_unexpected_store_exception_fails_closed_without_unbound_body(
+        self,
+        tmp_db: Path,
+        base_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """Arbitrary non-RateLimitStoreError exceptions produce privacy-safe
+        500 response without crashing.
+        """
+        import asyncio
+        import json
+        from unittest.mock import MagicMock
+
+        from stilldone.mcp.rate_limit import RateLimitMiddleware, SqliteRateLimitStore
+
+        store = SqliteRateLimitStore(tmp_db, window_duration_seconds=60)
+        # Force an unexpected exception (e.g. unexpected RuntimeError, sqlite3 error)
+        store.check_and_consume = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("Internal SQLite disk crash /secret/path")
+        )
+
+        middleware = RateLimitMiddleware(
+            app=MagicMock(),
+            store=store,
+            policy=base_policy,
+            clock=lambda: T_MID,
+        )
+
+        sent_messages: list[dict[str, Any]] = []
+
+        async def mock_receive() -> Any:
+            return {"type": "http.request"}
+
+        async def mock_send(message: Any) -> None:
+            sent_messages.append(message)
+
+        scope = {"type": "http", "method": "GET", "path": "/mcp"}
+        # Must execute cleanly without UnboundLocalError
+        asyncio.run(middleware(scope, mock_receive, mock_send))
+
+        # Check HTTP 500 status
+        start_msgs = [m for m in sent_messages if m.get("type") == "http.response.start"]
+        assert len(start_msgs) == 1
+        assert start_msgs[0]["status"] == 500
+
+        # Check privacy-safe payload
+        body_msgs = [m for m in sent_messages if m.get("type") == "http.response.body"]
+        assert len(body_msgs) == 1
+        body_data = json.loads(body_msgs[0]["body"].decode("utf-8"))
+        assert body_data["error"] == "rate_limit_unavailable"
+        assert body_data["description"] == "Rate limiting storage unavailable"
+        # Crucial: no leaking of internal exception text or paths
+        assert "Internal SQLite" not in body_msgs[0]["body"].decode("utf-8")
+        assert "secret" not in body_msgs[0]["body"].decode("utf-8")
+
+    def test_real_middleware_assessment_is_strictly_no_paid_capability(
+        self,
+        tmp_db: Path,
+        base_policy: EndpointProtectionPolicy,
+    ) -> None:
+        """Confirm that public RateLimitMiddleware evaluates requests as NO_PAID_CAPABILITY."""
+        import asyncio
+
+        from stilldone.mcp.rate_limit import RateLimitMiddleware, SqliteRateLimitStore
+
+        store = SqliteRateLimitStore(tmp_db, window_duration_seconds=60)
+        captured_assessments: list[EndpointRequestAssessment] = []
+        original_consume = store.check_and_consume
+
+        def spy_consume(
+            req: EndpointRequestAssessment,
+            pol: EndpointProtectionPolicy,
+            at: datetime,
+        ) -> EndpointAdmissionDecision:
+            captured_assessments.append(req)
+            return original_consume(req, pol, at)
+
+        store.check_and_consume = spy_consume  # type: ignore[assignment]
+
+        async def dummy_app(scope: Any, receive: Any, send: Any) -> None:
+            pass
+
+        middleware = RateLimitMiddleware(
+            app=dummy_app,
+            store=store,
+            policy=base_policy,
+            clock=lambda: T_MID,
+        )
+
+        async def mock_receive() -> Any:
+            return {"type": "http.request"}
+
+        async def mock_send(message: Any) -> None:
+            pass
+
+        scope = {"type": "http", "method": "POST", "path": "/mcp"}
+        asyncio.run(middleware(scope, mock_receive, mock_send))
+
+        assert len(captured_assessments) == 1
+        req = captured_assessments[0]
+        # Verified capability boundary
+        assert req.exposure_class == RequestExposureClass.NO_PAID_CAPABILITY
+        assert req.caller_class == CallerClass.PUBLIC_UNTRUSTED
+        assert req.cost_estimate is None
+
+    def test_current_mcp_tools_do_not_invoke_paid_execution(self) -> None:
+        """Confirm current MCP business tools (mission_start, mission_status)
+        do not trigger paid calls.
+        """
+        from stilldone.application.ports.ledger_port import InMemoryNonDurableLedger
+        from stilldone.domain.lifecycle import MissionState
+        from stilldone.mcp.mission_start import (
+            MISSION_START_TOOL_DESCRIPTION,
+            create_mission_start_handler,
+        )
+        from stilldone.mcp.mission_status import (
+            MISSION_STATUS_TOOL_DESCRIPTION,
+            create_mission_status_handler,
+        )
+
+        # 1. Inspect tool contracts
+        assert (
+            "without executing, planning, or mutating external systems"
+            in MISSION_START_TOOL_DESCRIPTION
+        )
+        assert (
+            "without executing, mutating, approving, reconciling, verifying, or refreshing"
+            in MISSION_STATUS_TOOL_DESCRIPTION
+        )
+
+        # 2. Execute mission_start: creates local DRAFT mission only (0 network/paid calls)
+        from stilldone.domain.mission import MissionId
+
+        ledger = InMemoryNonDurableLedger()
+        start_handler = create_mission_start_handler(ledger)
+        start_result = start_handler("Pack backpacks for school tomorrow morning")
+        assert start_result.mission_id is not None
+        assert start_result.state == MissionState.DRAFT.value
+        created_record = ledger.get_mission(MissionId(start_result.mission_id))
+        assert created_record.state == MissionState.DRAFT
+
+        # 3. Execute mission_status: reads local ledger only (0 network/paid calls)
+        status_handler = create_mission_status_handler(ledger)
+        status_result = status_handler(created_record.mission_id.value)
+        assert status_result.mission_id == created_record.mission_id.value
+        assert status_result.state == MissionState.DRAFT.value

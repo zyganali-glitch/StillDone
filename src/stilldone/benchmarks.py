@@ -1541,6 +1541,8 @@ class MissionReliabilityTestResult:
     provenance: MeasurementProvenance = MeasurementProvenance.FIXTURE
     source_sha: str = "UNKNOWN"
     environment: str = "LOCAL"
+    qualification_status: str = "QUALIFIED"
+    untested_scenarios: tuple[str, ...] = ()
     non_certification_statement: str = (
         "This offline reliability test exercises simulated fixture environments only. "
         "It does NOT certify production reliability or live provider availability."
@@ -1561,6 +1563,8 @@ class MissionReliabilityTestResult:
             "provenance": self.provenance.value,
             "source_sha": self.source_sha,
             "environment": self.environment,
+            "qualification_status": self.qualification_status,
+            "untested_scenarios": list(self.untested_scenarios),
             "non_certification_statement": self.non_certification_statement,
             "runs": [r.to_dict() for r in self.runs],
         }
@@ -1603,8 +1607,21 @@ def run_repeated_mission_reliability_test(
     )
     from stilldone.pending_approval import ApprovalDecision
 
+    if isinstance(iteration_cap, bool) or not isinstance(iteration_cap, int):
+        raise TypeError("iteration_cap must be an integer")
     if iteration_cap <= 0:
         raise ValueError("iteration_cap must be strictly positive")
+    if iteration_cap > 1000:
+        raise ValueError("iteration_cap must not exceed reasonable bounded maximum (1000)")
+
+    if isinstance(timeout_per_run_seconds, bool) or not isinstance(
+        timeout_per_run_seconds, (int, float)
+    ):
+        raise TypeError("timeout_per_run_seconds must be a float or int")
+    if not math.isfinite(timeout_per_run_seconds) or timeout_per_run_seconds <= 0.0:
+        raise ValueError("timeout_per_run_seconds must be a positive finite number")
+
+    timeout_ns = int(timeout_per_run_seconds * 1_000_000_000)
 
     runs: list[MissionReliabilityRunOutcome] = []
     seen_mission_ids: set[str] = set()
@@ -1688,25 +1705,101 @@ def run_repeated_mission_reliability_test(
                 t1 = timer()
                 dt_ns = t1 - t0
 
+                ready_step = runner.step_results.get("P-13.06")
+                drift_step = runner.step_results.get("P-13.07")
+
+                ready_reached = (
+                    runner.ready_receipt is not None
+                    and ready_step is not None
+                    and ready_step.status == "PASS"
+                    and ready_step.is_verified is True
+                    and ready_step.extra_metadata.get("mission_state") == "READY"
+                )
+                drift_reached = (
+                    drift_step is not None
+                    and drift_step.status == "PASS"
+                    and drift_step.is_verified is True
+                    and drift_step.extra_metadata.get("reconciled_state") == "DRIFTED"
+                )
+
                 ready_hash = runner.ready_receipt_hash
                 drifted_hash = (
                     runner.ready_receipt.receipt_hash.value if runner.ready_receipt else None
                 )
-                receipt_intact = ready_hash is not None and drifted_hash == ready_hash
+                receipt_intact = (
+                    ready_reached
+                    and ready_hash is not None
+                    and drifted_hash == ready_hash
+                    and drift_step is not None
+                    and drift_step.extra_metadata.get("historical_receipt_intact") is True
+                )
                 if not receipt_intact:
                     historical_receipt_intact_all = False
 
+                # Dynamically evaluate canonical predicates against actual observations
+                from stilldone.verifier.predicates import (
+                    PredicateTruth,
+                    evaluate_predicate,
+                )
+
+                obs_map = {
+                    runner.pred_weather.predicate_id: runner.weather_observation,
+                    runner.pred_task.predicate_id: runner.task_observation,
+                    runner.pred_calendar.predicate_id: runner.calendar_observation,
+                }
+                run_preds_ok = True
+                for pred in runner.canonical_predicates:
+                    obs = obs_map.get(pred.predicate_id)
+                    if obs is None:
+                        run_preds_ok = False
+                        break
+                    eval_res = evaluate_predicate(pred, obs)
+                    if eval_res.truth != PredicateTruth.TRUE:
+                        run_preds_ok = False
+                        break
+
+                if not run_preds_ok:
+                    predicate_correctness_all = False
+
                 if runner.total_writes != 3:
                     duplicate_mutation_detected = True
+
+                err_cat = None
+                timeout_msg = (
+                    f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
+                    f"{timeout_per_run_seconds * 1e3:.2f}ms)"
+                )
+                if dt_ns > timeout_ns:
+                    run_status = "FAILED"
+                    err_cat = "EXECUTION_TIMEOUT"
+                    ready_reached = False
+                    drift_reached = False
+                    details = timeout_msg
+                elif not run_preds_ok:
+                    run_status = "FAILED"
+                    err_cat = "PREDICATE_EVALUATION_FAILED"
+                    details = "Canonical predicate failed dynamic evaluation against observations."
+                elif (
+                    ready_reached and drift_reached and receipt_intact and runner.total_writes == 3
+                ):
+                    run_status = "PASS"
+                    details = "Full 7-step slice: READY -> DRIFTED with receipt intact."
+                else:
+                    run_status = "FAILED"
+                    err_cat = "LIFECYCLE_VERIFICATION_MISMATCH"
+                    details = (
+                        "Lifecycle execution failed to achieve required "
+                        "READY and DRIFTED milestones."
+                    )
 
                 runs.append(
                     MissionReliabilityRunOutcome(
                         run_index=run_idx,
                         mission_id=mid.value,
                         scenario=scenario,
-                        status="PASS",
-                        reached_ready=True,
-                        reached_drifted=True,
+                        status=run_status,
+                        reached_ready=ready_reached,
+                        reached_drifted=drift_reached,
                         receipt_projection_hash=ready_hash,
                         drifted_receipt_projection_hash=drifted_hash,
                         historical_receipt_intact=receipt_intact,
@@ -1714,7 +1807,8 @@ def run_repeated_mission_reliability_test(
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
-                        details="Full 7-step slice: READY -> DRIFTED with receipt intact.",
+                        error_category=err_cat,
+                        details=details,
                     )
                 )
 
@@ -1737,12 +1831,22 @@ def run_repeated_mission_reliability_test(
                 if runner.ready_receipt is not None:
                     false_ready_detected = True
 
+                blocked_status = "BLOCKED"
+                err_cat = None
+                timeout_msg = (
+                    f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
+                    f"{timeout_per_run_seconds * 1e3:.2f}ms)"
+                )
+                if dt_ns > timeout_ns:
+                    blocked_status = "FAILED"
+                    err_cat = "EXECUTION_TIMEOUT"
+
                 runs.append(
                     MissionReliabilityRunOutcome(
                         run_index=run_idx,
                         mission_id=mid.value,
                         scenario=scenario,
-                        status="BLOCKED",
+                        status=blocked_status,
                         reached_ready=False,
                         reached_drifted=False,
                         receipt_projection_hash=None,
@@ -1752,7 +1856,10 @@ def run_repeated_mission_reliability_test(
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
-                        details="Operator rejected calendar change at approval boundary; 0 writes.",
+                        error_category=err_cat,
+                        details="Operator rejected calendar change at approval boundary; 0 writes."
+                        if err_cat is None
+                        else timeout_msg,
                     )
                 )
 
@@ -1766,12 +1873,22 @@ def run_repeated_mission_reliability_test(
                 if report.is_ready:
                     false_ready_detected = True
 
+                preflight_status = "BLOCKED"
+                err_cat = None
+                timeout_msg = (
+                    f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
+                    f"{timeout_per_run_seconds * 1e3:.2f}ms)"
+                )
+                if dt_ns > timeout_ns:
+                    preflight_status = "FAILED"
+                    err_cat = "EXECUTION_TIMEOUT"
+
                 runs.append(
                     MissionReliabilityRunOutcome(
                         run_index=run_idx,
                         mission_id=mid.value,
                         scenario=scenario,
-                        status="BLOCKED",
+                        status=preflight_status,
                         reached_ready=False,
                         reached_drifted=False,
                         receipt_projection_hash=None,
@@ -1781,7 +1898,10 @@ def run_repeated_mission_reliability_test(
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
-                        details="Live preflight halted: operator authorization missing.",
+                        error_category=err_cat,
+                        details="Live preflight halted: operator authorization missing."
+                        if err_cat is None
+                        else timeout_msg,
                     )
                 )
 
@@ -1828,6 +1948,13 @@ def run_repeated_mission_reliability_test(
                 if runner.ready_receipt is not None:
                     false_ready_detected = True
 
+                timeout_msg = (
+                    f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
+                    f"{timeout_per_run_seconds * 1e3:.2f}ms)"
+                )
+                if dt_ns > timeout_ns:
+                    err_cat = "EXECUTION_TIMEOUT"
+
                 runs.append(
                     MissionReliabilityRunOutcome(
                         run_index=run_idx,
@@ -1844,7 +1971,9 @@ def run_repeated_mission_reliability_test(
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Readback verifier detected wrong title; halted unverified.",
+                        details="Readback verifier detected wrong title; halted unverified."
+                        if err_cat != "EXECUTION_TIMEOUT"
+                        else timeout_msg,
                     )
                 )
 
@@ -1878,6 +2007,13 @@ def run_repeated_mission_reliability_test(
                 if runner.ready_receipt is not None:
                     false_ready_detected = True
 
+                timeout_msg = (
+                    f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
+                    f"{timeout_per_run_seconds * 1e3:.2f}ms)"
+                )
+                if dt_ns > timeout_ns:
+                    err_cat = "EXECUTION_TIMEOUT"
+
                 runs.append(
                     MissionReliabilityRunOutcome(
                         run_index=run_idx,
@@ -1894,9 +2030,22 @@ def run_repeated_mission_reliability_test(
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Provider 429 rate limit injected at tasks prep; slice aborted.",
+                        details="Provider 429 rate limit injected at tasks prep; slice aborted."
+                        if err_cat != "EXECUTION_TIMEOUT"
+                        else timeout_msg,
                     )
                 )
+
+        ALL_REPRESENTATIVE_SCENARIOS = (
+            "SUCCESSFUL_LIFECYCLE",
+            "BLOCKED_APPROVAL",
+            "BLOCKED_PREFLIGHT",
+            "FAILED_READBACK",
+            "INTERRUPTED_PROVIDER_ERROR",
+        )
+        exercised_scenarios = {r.scenario for r in runs}
+        untested = tuple(s for s in ALL_REPRESENTATIVE_SCENARIOS if s not in exercised_scenarios)
+        qualification_status = "QUALIFIED" if len(untested) == 0 else "PARTIAL_UNQUALIFIED"
 
         successful_count = sum(1 for r in runs if r.status == "PASS")
         blocked_count = sum(1 for r in runs if r.status == "BLOCKED")
@@ -1917,4 +2066,6 @@ def run_repeated_mission_reliability_test(
             provenance=MeasurementProvenance.FIXTURE,
             source_sha=source_sha,
             environment=env_desc,
+            qualification_status=qualification_status,
+            untested_scenarios=untested,
         )

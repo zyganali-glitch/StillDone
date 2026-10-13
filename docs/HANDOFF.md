@@ -79,11 +79,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-18.01 → P-18.03 BOUNDED PERFORMANCE & COST-EVIDENCE BATCH
+Active task: STILLDONE — P-18.04 → P-18.07 FINAL CONSOLIDATED QA REPAIR
 
-Starting Remote SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`
-Independently QA-passed repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`
-Last Independently VERIFIED contiguous P-00–P-12 baseline: `05fd91d767360cbea21573d804bd429ed116ca9c`
+Starting Remote SHA: `49bb8c95585283aa50f687244252ae2a3887d91b`
+Last Independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅
@@ -96,33 +95,33 @@ Status:
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18.01: REPAIRED (Consolidated measurement-truth repair; awaiting independent QA review)
-  - Monotonic per-step and end-to-end mission latency measured in fixture mode.
-  - Complete per-run outcomes preserved in benchmark runs (PASS, BLOCKED, FAILED, NOT_RUN).
-  - Attempted vs successful sample counts strictly separated; blocked/failed steps do not pollute success p95 stats.
-  - Ordinary step exceptions handled as privacy-safe FAILED outcomes; subsequent steps aborted as NOT_RUN with 0ns.
-  - Zero import-time logger mutations; scoped suppression fully restored.
-  - Discrete execution status truth enforced; NOT_RUN steps report 0ns.
-  - CLI and JSON serialization fully protected against KeyError on partial, blocked, or failed runs.
-  - Aggregate fixture timing nature explicitly disclosed; zero live calls claimed.
-- P-18.02: REPAIRED (Consolidated transport-latency repair; awaiting independent QA review)
-  - Loopback Streamable HTTP transport latency measured against official Alexa+ < 500ms requirement.
-  - LOCAL_PASS strictly awarded only when all operations succeed, sample count is sufficient, and p95 is strictly < 500.0ms.
-  - Verified responses at or exceeding 500.0ms produce explicit LOCAL_SLOW comparison verdict.
-  - Protocol exceptions, tool errors, mismatched mission identity, or missing tools produce LOCAL_FAILED.
-  - Canonical provenance strictly separated: P-01.07 historical remote echo is RECORDED_LIVE; P-05.07 loopback is LOCAL_EXECUTION.
-  - Remote and Alexa+ partner client paths truthfully reported as NOT_RUN.
-- P-18.03: REPAIRED (Consolidated cost-accounting repair; awaiting independent QA review)
-  - CloudWatch EMF estimated cost set to None (NOT_ESTIMABLE) because account-wide monthly usage is unobserved offline.
-  - Bedrock-only conditional scenario ($0.00002100) explicitly labeled and separated from definitive gross total.
-  - Misleading total_estimated_cost_usd alias set to None; definitive gross mission total marked NOT_ESTIMABLE_OFFLINE.
-  - AgentCore categorized as VERIFIED_RATE_UNOBSERVED_CONSUMPTION with verified published rates ($0.0895-$0.1276/vCPU-hr active, $0.00945-$0.0169/GB-hr memory) while runtime consumption is unobserved offline.
-  - Zero personal spend law ($0.00) preserved; zero Bedrock invocations authorized; no account billing fabricated.
-- P-18.04+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18.04)
+- P-18.01–P-18.03: COMPLETED (Candidate for independent QA review)
+- P-18.04: REPAIRED (Consolidated admission-truth repair; candidate for independent QA review)
+  - End-to-end middleware and MCP capability boundaries confirmed: current MCP tools (`mission_start`, `mission_status`) operate strictly under non-paid capability (`NO_PAID_CAPABILITY / PUBLIC_UNTRUSTED`) creating local DRAFT missions without executing paid provider operations.
+  - Active general request limiter distinguished from separately tested paid-capable admission contract.
+  - Exception path in `RateLimitMiddleware` repaired fail-closed to unconditionally initialize sanitized JSON 500 payload, eliminating `UnboundLocalError` risks.
+  - Validated via 21 passing tests in `tests/test_phase_p18_04_budget_rate_limits.py`.
+- P-18.05: REPAIRED (Consolidated quota & ambiguous mutation repair; candidate for independent QA review)
+  - Official published quotas reconciled: Google Calendar (May 1, 2026 revision: 1M/day, 10k/min/project, 600/min/user), Google Tasks (50k/day courtesy), Open-Meteo (/terms: 10k/day, 5k/hr, 600/min).
+  - Actual remaining account quotas strictly `NOT_OBSERVED` offline.
+  - Ambiguous mutation safety verified: transport drops after server-side write never infer zero remote writes; read-back verification required before safe retry, preventing duplicate writes and false verified states.
+  - Validated via 15 passing tests in `tests/test_phase_p18_05_quota_safety.py`.
+- P-18.06: REPAIRED (Consolidated reliability observation repair; candidate for independent QA review)
+  - Bounded runner validates `iteration_cap` (1 to 1000) and `timeout_per_run_seconds` (positive finite float); actually enforces per-run timeouts.
+  - Dynamically evaluates canonical predicates against actual runner observations; derives `reached_ready`, `reached_drifted`, and `historical_receipt_intact` from runner state.
+  - Tracks qualification status (`QUALIFIED` vs `PARTIAL_UNQUALIFIED` with explicit `untested_scenarios` when `iteration_cap < 15`).
+  - Validated via 16 passing tests in `tests/test_phase_p18_06_reliability.py`.
+- P-18.07: REPAIRED (Consolidated availability plan repair; candidate for independent QA review)
+  - Official Devpost deadline recorded: Friday, October 23, 2026 at 12:00 PM PDT (22:00 Europe/Istanbul, 19:00 UTC); judging period November 9–20, 2026.
+  - Documented operational conflict between official Devpost FAQ and Community Forum topics 45493 & 45411; secrets sanitized.
+  - Removed unsupported burst/concurrency claims; documented persistent SQLite sliding-window limiter (`RateLimitMiddleware`) and on-demand supervision.
+  - Plan document labeled `IMPLEMENTED / QA_PENDING`.
+  - Validated via 11 passing tests in `tests/test_phase_p18_07_availability_plan.py`.
+- P-19+: PENDING / NOT_RUN (strictly STOPPED before P-19)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-18.01 → P-18.03 Consolidated Repair Batch
-(P-18.04 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
+Next exact task: Independent QA Review of P-18.04 → P-18.07 Final Consolidated QA Repair
+(P-19 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

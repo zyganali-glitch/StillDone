@@ -3,7 +3,7 @@
 **Task**: `P-18.07 — Verify judge-period availability plan and credit expiry`  
 **Date**: `2026-10-13`  
 **Governing Authority**: [AGENTS.md](../AGENTS.md) § 11–13, § 22; [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md); [COMPETITION_CONTRACT.md](COMPETITION_CONTRACT.md)  
-**Status**: `VERIFIED PLAN (Pre-Deployment Planning Only)`  
+**Status**: `IMPLEMENTED / QA_PENDING (Pre-Deployment Planning Only)`  
 
 ---
 
@@ -13,7 +13,7 @@ This plan defines the architectural, operational, and financial framework to ens
 
 > [!IMPORTANT]
 > **Planning Contract**:
-> This task produces a **verified architectural plan**, NOT deployed cloud infrastructure, published secrets, activated paid services, or public write-capable endpoints. No infrastructure is provisioned or altered during this task.
+> This task produces an **implemented architectural plan (QA pending)**, NOT deployed cloud infrastructure, published secrets, activated paid services, or public write-capable endpoints. No infrastructure is provisioned or altered during this task.
 
 ---
 
@@ -23,11 +23,19 @@ This plan defines the architectural, operational, and financial framework to ens
 
 | Dimension | Official Competition Requirement (Devpost / Rules) | Platform Recommendation / Best Practice | Unverified Assumption (Rejected) |
 |---|---|---|---|
-| **Submission Deadline** | Wednesday, October 23, 2026 at 5:00 PM EDT | Video preparation by October 16, 2026 | "Judging requires 24/7 unmetered cloud uptime" (Rejected) |
+| **Submission Deadline** | Friday, October 23, 2026 at 12:00 PM PDT (22:00 Europe/Istanbul, 19:00 UTC) | Video preparation by October 16, 2026 | "Judging requires 24/7 unmetered cloud uptime" (Rejected) |
 | **Required Deliverables** | 1. Text description explaining function and architecture<br>2. Video demo (max 3 minutes) demonstrating working solution<br>3. Public code repository URL | Clear setup instructions for local evaluation | "Public judges must be able to trigger unlimited arbitrary paid Bedrock inferences" (Rejected) |
-| **Evaluation Period** | Judge evaluation runs post-submission through winners announcement | Providing live demo links where feasible | "Hosting must be on custom paid domain" (Rejected) |
+| **Evaluation Period** | November 9–20, 2026 (Winners announced December 2, 2026) | Providing live demo links where feasible | "Hosting must be on custom paid domain" (Rejected) |
 | **AWS Usage** | Entrants are solely responsible for all AWS charges; credits requested by Oct 21 | Use promotional credits and free tier | "AWS credits guarantee zero personal spend automatically" (Rejected) |
 | **Alexa+ Integration** | Solution addresses Alexa+ / smart assistant context | Model Context Protocol (MCP) Streamable HTTP transport | "Alexa+ partner production certification required before hackathon submission" (Rejected) |
+
+### 2.2 Devpost Operational Ambiguity & Forum Topic Analysis
+
+An operational discrepancy exists across official Devpost documentation channels regarding submission visibility:
+
+- **Official Devpost FAQ Policy**: States that *"all submissions will be visible to the public after the deadline."*
+- **Devpost Community / Forum Discrepancies (Topics 45493 and 45411)**: Multiple participant queries document confusion and conflicting guidance regarding whether draft submissions or submission edits are immediately visible before the October 23, 2026 12:00 PM PDT deadline, versus hidden until the judging period commences on November 9, 2026.
+- **Operational Safety Stance**: StillDone assumes public visibility may occur immediately upon submission. All artifacts, code repositories, video links, and evidence documents are sanitized of private identifiers, account credentials, and personal tokens prior to submission freeze.
 
 ---
 
@@ -78,9 +86,10 @@ StillDone separates public evaluation from live execution across two distinct su
 | SURFACE 2: AUTHENTICATED OPERATOR RUNTIME                               |
 | Streamable HTTP MCP Server & Bedrock Runtime                            |
 | - Operator authentication mandatory (SigV4 / OAuth token)               |
-| - Enforced rate limits (P-18.04): 10 req/min, burst 20, 2 concurrent    |
+| - Enforced rate limits (P-18.04): Persistent SQLite sliding window      |
+| - Primary judge review via video & repository; on-demand execution only |
 | - Endpoint protection gate: live_paid_path_enabled=False fails closed   |
-| - On-demand execution during scheduled judge evaluation windows         |
+| - On-demand execution during scheduled operator-supervised windows      |
 | - NO public unmetered access / NO anonymous paid paths                  |
 +-------------------------------------------------------------------------+
 ```
@@ -103,10 +112,11 @@ StillDone separates public evaluation from live execution across two distinct su
 - **Admission Protection** (Enforced in `P-18.04`):
   - Strict authentication required on all paid-capable endpoints.
   - Anonymous/public requests fail closed with HTTP 401/403.
-  - Rate limits: 10 req/min per caller, 20 burst, max 2 concurrent executions.
+  - Rate limits: Persistent SQLite sliding-window limiter (`RateLimitMiddleware`, default 60 req/min fail-closed).
   - Atomic persistent SQLite tracking under concurrency.
   - Fail-closed behavior on missing or stale budget snapshots.
-- **Operational Window**:
+- **Judge Interaction Model**:
+  - Official judging proceeds via public repository review and recorded video demonstration (max 3 minutes).
   - Runtime is NOT kept running 24/7 unmetered.
   - Booted on-demand by the operator during scheduled live demonstration sessions or active judge evaluation windows.
   - Immediate shutdown following evaluation.

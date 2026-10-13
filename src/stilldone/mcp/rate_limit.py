@@ -322,15 +322,15 @@ class RateLimitMiddleware:
                 self.policy,
                 at,
             )
-        except Exception as exc:
-            if isinstance(exc, RateLimitStoreError) or type(exc).__name__ == "RateLimitStoreError":
-                # Fail closed on storage error without leaking internals
-                body = json.dumps(
-                    {
-                        "error": "rate_limit_unavailable",
-                        "description": "Rate limiting storage unavailable",
-                    }
-                ).encode("utf-8")
+        except Exception:
+            # Fail closed on any storage, evaluation, or unexpected error without leaking internals.
+            # Bounded privacy-safe error response guarantees 'body' is always initialized.
+            body = json.dumps(
+                {
+                    "error": "rate_limit_unavailable",
+                    "description": "Rate limiting storage unavailable",
+                }
+            ).encode("utf-8")
             await send(
                 {
                     "type": "http.response.start",

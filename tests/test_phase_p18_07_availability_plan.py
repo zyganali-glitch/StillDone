@@ -84,10 +84,40 @@ def test_plan_defines_bounded_fallback_plan() -> None:
 
 
 def test_plan_verifies_zero_infrastructure_deployment() -> None:
-    """Verify that this task produces a verified plan without deploying cloud infrastructure."""
+    """Verify that this task produces an implemented plan without deploying cloud infrastructure."""
     content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
-    assert "VERIFIED PLAN" in content
+    assert "IMPLEMENTED / QA_PENDING" in content
     has_deploy_notice = (
         "No infrastructure is provisioned" in content or "Zero infrastructure deployed" in content
     )
     assert has_deploy_notice
+
+
+def test_plan_records_exact_official_deadline_and_judging_period() -> None:
+    """Verify official deadline (Oct 23, 12:00 PM PDT / 22:00 TRT) and judging window (Nov 9–20)."""
+    content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
+    assert "October 23, 2026 at 12:00 PM PDT" in content
+    assert "22:00 Europe/Istanbul" in content
+    assert "November 9–20, 2026" in content
+
+
+def test_plan_records_devpost_faq_vs_forum_visibility_ambiguity() -> None:
+    """Verify documentation of Devpost FAQ vs Community Forum topics 45493 and 45411 conflict."""
+    content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
+    assert "Devpost Operational Ambiguity & Forum Topic Analysis" in content
+    assert "45493" in content
+    assert "45411" in content
+    assert "FAQ" in content
+    assert "sanitized" in content.lower()
+
+
+def test_plan_documents_rate_limiter_and_judge_interaction_model() -> None:
+    """Verify persistent sliding window rate limiter and on-demand judge interaction model."""
+    content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
+    assert "RateLimitMiddleware" in content
+    assert "sliding-window" in content.lower() or "sliding window" in content.lower()
+    assert "max 3 minutes" in content
+    assert "on-demand" in content.lower()
+    # Confirm burst 20 / max 2 concurrent claims were removed
+    assert "burst 20" not in content
+    assert "2 concurrent" not in content

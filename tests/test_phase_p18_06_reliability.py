@@ -15,6 +15,7 @@ Verifies:
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -208,3 +209,138 @@ def test_serialization_and_disclaimer() -> None:
     parsed = json.loads(raw_json)
     assert parsed["total_runs"] == 5
     assert parsed["provenance"] == "FIXTURE"
+
+
+class TestReliabilityAdversarialIntegrity:
+    """Adversarial coverage for injected corruptions, predicate mismatches, and timeouts."""
+
+    def test_iteration_cap_type_and_bound_validation(self) -> None:
+        """Reject non-int, boolean, zero, negative, and unreasonable iteration caps."""
+        with pytest.raises(TypeError, match="must be an integer"):
+            run_repeated_mission_reliability_test(iteration_cap=True)
+
+        with pytest.raises(TypeError, match="must be an integer"):
+            run_repeated_mission_reliability_test(iteration_cap="15")  # type: ignore[arg-type]
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            run_repeated_mission_reliability_test(iteration_cap=0)
+
+        with pytest.raises(ValueError, match="must not exceed reasonable bounded maximum"):
+            run_repeated_mission_reliability_test(iteration_cap=1001)
+
+    def test_timeout_validation_rejects_invalid_inputs(self) -> None:
+        """Reject non-float, boolean, non-positive, and infinite timeouts."""
+        with pytest.raises(TypeError, match="must be a float or int"):
+            run_repeated_mission_reliability_test(timeout_per_run_seconds=True)
+
+        with pytest.raises(TypeError, match="must be a float or int"):
+            run_repeated_mission_reliability_test(timeout_per_run_seconds="5.0")  # type: ignore[arg-type]
+
+        with pytest.raises(ValueError, match="positive finite number"):
+            run_repeated_mission_reliability_test(timeout_per_run_seconds=-1.0)
+
+        with pytest.raises(ValueError, match="positive finite number"):
+            run_repeated_mission_reliability_test(timeout_per_run_seconds=float("inf"))
+
+    def test_runner_timeout_enforcement_marks_run_failed(self) -> None:
+        """Enforces execution timeout: excessive duration yields FAILED with EXECUTION_TIMEOUT."""
+        curr = 0
+
+        def leaping_timer() -> int:
+            nonlocal curr
+            curr += 10_000_000_000  # 10 seconds per timer call
+            return curr
+
+        result = run_repeated_mission_reliability_test(
+            iteration_cap=1,
+            timeout_per_run_seconds=1.0,
+            timer=leaping_timer,
+        )
+
+        assert result.failed_runs == 1
+        assert result.successful_runs == 0
+        run0 = result.runs[0]
+        assert run0.status == "FAILED"
+        assert run0.error_category == "EXECUTION_TIMEOUT"
+        assert run0.reached_ready is False
+        assert run0.reached_drifted is False
+        assert "Execution timed out" in (run0.details or "")
+
+    def test_injected_predicate_mismatch_fails_qualification(self) -> None:
+        """Injected predicate mismatch prevents false PASS and marks
+        predicate verification FALSE.
+        """
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        orig_step7 = KillerMissionSliceRunner.step_p13_07_mutate_and_drift
+
+        def tampered_step7(self: Any) -> Any:
+            res = orig_step7(self)
+            self.weather_observation = replace(
+                self.weather_observation,
+                properties={"weather_status": "rainy_mismatch"},
+            )
+            return res
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_07_mutate_and_drift", tampered_step7):
+            result = run_repeated_mission_reliability_test(iteration_cap=1)
+
+            assert result.predicate_correctness_verified is False
+            assert result.failed_runs == 1
+            assert result.successful_runs == 0
+            assert result.runs[0].status == "FAILED"
+            assert result.runs[0].error_category == "PREDICATE_EVALUATION_FAILED"
+
+    def test_injected_corrupted_receipt_hash_fails_integrity(self) -> None:
+        """Altering historical receipt hash during drift causes receipt integrity to fail."""
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+        from stilldone.receipt import ReceiptHash
+
+        orig_step = KillerMissionSliceRunner.step_p13_07_mutate_and_drift
+
+        def corrupting_step(self: Any) -> Any:
+            res = orig_step(self)
+            # Tamper with the receipt hash object
+            if self.ready_receipt is not None:
+                object.__setattr__(
+                    self.ready_receipt,
+                    "receipt_hash",
+                    ReceiptHash("0" * 64),
+                )
+            return res
+
+        with patch.object(
+            KillerMissionSliceRunner, "step_p13_07_mutate_and_drift", corrupting_step
+        ):
+            result = run_repeated_mission_reliability_test(iteration_cap=1)
+
+            assert result.historical_receipt_integrity_verified is False
+            assert result.failed_runs == 1
+            assert result.successful_runs == 0
+            assert result.runs[0].historical_receipt_intact is False
+
+    def test_partial_run_explicitly_tracks_untested_scenarios(self) -> None:
+        """When iteration_cap < 15, qualification is PARTIAL_UNQUALIFIED
+        and untested scenarios are explicit.
+        """
+        partial = run_repeated_mission_reliability_test(iteration_cap=3)
+        assert partial.qualification_status == "PARTIAL_UNQUALIFIED"
+        assert len(partial.untested_scenarios) == 4
+        assert "BLOCKED_APPROVAL" in partial.untested_scenarios
+        assert "BLOCKED_PREFLIGHT" in partial.untested_scenarios
+        assert "FAILED_READBACK" in partial.untested_scenarios
+        assert "INTERRUPTED_PROVIDER_ERROR" in partial.untested_scenarios
+        d = partial.to_dict()
+        assert d["qualification_status"] == "PARTIAL_UNQUALIFIED"
+        assert "BLOCKED_APPROVAL" in d["untested_scenarios"]
+
+        full = run_repeated_mission_reliability_test(iteration_cap=15)
+        assert full.qualification_status == "QUALIFIED"
+        assert full.untested_scenarios == ()
+        assert full.to_dict()["qualification_status"] == "QUALIFIED"
+        assert full.to_dict()["untested_scenarios"] == []
