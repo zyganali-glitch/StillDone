@@ -1755,16 +1755,41 @@ Goal:
 ensure the real build survives judging and stays within budget.
 
 ### P-18.01 — Measure end-to-end mission latency and per-component latency
-Status: PENDING
+Status: DONE (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- Monotonic timing: Measured via `time.perf_counter_ns()`; cold startup separated via warmup runs.
+- End-to-end latency: Measured in fixture mode across canonical killer mission slice (p50 ~12.60ms, p95 ~13.50ms).
+- Per-component latency: Measured discrete steps (seed: ~0.04ms, plan: ~0.12ms, tasks prep: ~1.02ms, calendar pause: ~1.08ms, calendar update: ~6.12ms, receipt projection: ~2.18ms, drift: ~2.31ms).
+- Provenance: `FIXTURE` (fixture execution) / `LOCAL_EXECUTION`.
+- Live provider integrations: Truthfully classified as `NOT_RUN` (no fake live claims).
+- Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.02 — Measure MCP transport latency against current Alexa+ requirements
-Status: PENDING
+Status: DONE (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- Alexa+ requirement re-verified: Amazon developer documentation mandates < 500ms round-trip query response latency; standalone SLA contract is `NOT_FOUND`.
+- Local loopback measurement: In-process Streamable HTTP loopback measured (`initialize`: p95 ~2.52ms, `tools/list`: p95 ~2.48ms, `mission_status`: p95 ~3.05ms; ~496.95ms headroom).
+- Assessment: `LOCAL_PASS` for local headroom; `REQUIREMENT_NOT_VERIFIED` for remote / production compliance.
+- Unexecuted paths: Remote public MCP endpoint and Alexa+ partner client-to-MCP remain `NOT_RUN` (partner access `NOT_ESTABLISHED`).
+- Historical remote echo preserved: `61.26ms` (`RECORDED_LIVE` from P-01.07).
+- Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.03 — Measure AWS usage/cost per canonical mission
-Status: PENDING
+Status: DONE (PASS Candidate, awaiting independent QA review)
+
+Acceptance:
+- Category separation enforced:
+  - Category A (Real measured account usage): Preserved as `NOT_OBSERVED` (no unapproved live AWS invocation; billing delta requires authenticated account observation).
+  - Category B (Local runtime activity): 100% `FIXTURE` / `LOCAL_EXECUTION` (0 live Bedrock calls, 0 live Google calls, 0 live AgentCore calls).
+  - Category C (Pricing-based estimates): Official verified pricing applied (Bedrock Nova Micro @ $0.000035/1K in, $0.00014/1K out; open-source SDK @ $0.00; IAM @ $0.00; CloudWatch Logs free tier @ $0.00; total estimated gross cost ~$0.00012100 USD/mission).
+  - Category D (NOT_OBSERVED fields): 6 explicit unobserved fields recorded.
+- Zero Personal Spend Law: Target remains strictly `$0.00`; no billable AWS calls or paid services activated.
+- Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.04 — Enforce runtime budget/rate limits
-Status: PENDING
+Status: PENDING (Strictly NOT AUTHORIZED / NOT_RUN in this batch)
 
 ### P-18.05 — Verify Google/Open-Meteo quota safety
 Status: PENDING

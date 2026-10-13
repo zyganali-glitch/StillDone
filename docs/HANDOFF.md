@@ -6,15 +6,13 @@ Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
 Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) |
-Starting remote HEAD: `be1cf635b633285bff296a7fde5c7fa2c6f5026a` |
-Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` |
-P-13 Final Execution-Contract Parity Closure (Eliminated silent Calendar rebinding;
-enforced contract parity against canonical plan for Tasks creation and Calendar PendingApproval;
-preceding execution truth requires genuine observations and writes;
-dual-runtime validator PASS across Core & Strands;
-live AWS/Google mutations BLOCKED_LIVE / NOT_RUN;
-external publication BLOCKED_EXTERNAL / NOT_RUN;
-awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Starting remote HEAD: `797dd01d45157c46da1e562e5c2c05ce6bffeed7` |
+Independently QA-passed repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7` |
+Last independently VERIFIED contiguous P-00–P-12 baseline: `05fd91d767360cbea21573d804bd429ed116ca9c` |
+P-18.01 → P-18.03 Bounded Performance & Cost-Evidence Batch: COMPLETED (PASS Candidate, awaiting independent QA review) |
+Live AWS/Google mutations BLOCKED_LIVE / NOT_RUN |
+Actual AWS billing delta NOT_OBSERVED |
+P-18.04+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -83,39 +81,37 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-13 FINAL EXECUTION-CONTRACT PARITY CLOSURE
+Active task: STILLDONE — P-18.01 → P-18.03 BOUNDED PERFORMANCE & COST-EVIDENCE BATCH
 
-Starting Remote SHA: `be1cf635b633285bff296a7fde5c7fa2c6f5026a`
-Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
+Starting Remote SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`
+Independently QA-passed repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`
+Last Independently VERIFIED contiguous P-00–P-12 baseline: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅
   (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13: Final Execution-Contract Parity Closure Applied
-  (PASS Candidate, awaiting independent QA review)
-  - Execution Action Contract Parity: In `step_p13_03_tasks_prep()`, validated `self.action_task`
-    contract and plan parity (title, due date, target list ID vs demo scope) and tracker
-    consistency before provider writes.
-  - Prohibition of Silent Calendar Rebinding: In `step_p13_04_calendar_pause()`, completely
-    eliminated silent target rebinding when `action_cal.target.resource_id != seeded_event_id`.
-    Fails closed if compiled action, validated action, canonical plan, provider event ID,
-    or demo scope disagree.
-  - Preceding Execution Truth: Preceding steps require genuine verified observations
-    (`weather_obs.exists`, `task_obs.exists`, created task ID) and non-zero write counts
-    (`writes_performed >= 1`), not status strings alone.
-  - Adversarial Regression Suite: Proved altered Tasks due date/title/target, altered Calendar
-    start time, wrong provider event, parent container mismatch, and action mismatch all fail
-    closed without mutations.
+- P-13: Execution-Contract Repair CLOSED — independent QA PASS ✅
+  (Verified repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`)
+  (Live mutation path remains BLOCKED_LIVE / NOT_RUN; fixture regression mode green)
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
 - P-15: P-15.01–P-15.07 COMPLETED (including headless browser responsive & WCAG AA validation)
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18)
+- P-18.01: COMPLETED (PASS Candidate, awaiting independent QA review)
+  - Monotonic per-step and end-to-end mission latency measured in fixture mode.
+  - Zero live external provider calls claimed.
+- P-18.02: COMPLETED (PASS Candidate, awaiting independent QA review)
+  - Loopback Streamable HTTP transport latency measured (<500ms target observed with ~496.95ms headroom).
+  - Remote and Alexa+ partner client paths truthfully reported as NOT_RUN.
+- P-18.03: COMPLETED (PASS Candidate, awaiting independent QA review)
+  - Separated real account usage (NOT_OBSERVED), local activity (FIXTURE), verified official pricing estimates ($0.00012100 USD/mission), and NOT_OBSERVED billing fields.
+  - Zero personal spend law ($0.00) preserved; zero Bedrock invocations authorized.
+- P-18.04+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18.04)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-13 Final Execution-Contract Parity Closure
-(P-18 remains strictly PENDING / NOT_RUN)
+Next exact task: Independent QA Review of P-18.01 → P-18.03 Bounded Batch
+(P-18.04 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
