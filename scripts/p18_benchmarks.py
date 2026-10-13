@@ -71,19 +71,42 @@ def print_human_report(results: dict[str, Any]) -> None:
         print(f"Provenance:        {p1['provenance']} (Run mode: {p1['run_mode']})")
         print(f"Warmup / Samples:  {p1['warmup_count']} / {p1['sample_count']}")
         e2e = p1["end_to_end"]
-        print(
-            f"E2E Min / Median / P95 / Max: "
-            f"{e2e['min_ms']:.2f}ms / {e2e['median_ms']:.2f}ms / "
-            f"{e2e['p95_ms']:.2f}ms / {e2e['max_ms']:.2f}ms"
-        )
+        if e2e.get("was_executed") and e2e.get("sample_count", 0) > 0:
+            print(
+                f"E2E Min / Median / P95 / Max: "
+                f"{e2e.get('min_ms', 0.0):.2f}ms / {e2e.get('median_ms', 0.0):.2f}ms / "
+                f"{e2e.get('p95_ms', 0.0):.2f}ms / {e2e.get('max_ms', 0.0):.2f}ms"
+            )
+        else:
+            status_str = e2e.get("status", "NOT_RUN")
+            att = e2e.get("attempted_sample_count", 0)
+            succ = e2e.get("successful_sample_count", e2e.get("sample_count", 0))
+            print(
+                f"E2E Status:        {status_str} "
+                f"(Attempted: {att}, Successful: {succ}) - No successful end-to-end execution"
+            )
         print("\nPer-Component Breakdown:")
-        print(f"{'Component':<28} {'Status':<10} {'Median (ms)':<12} {'P95 (ms)':<12}")
-        print("-" * 64)
+        print(
+            f"{'Component':<28} {'Status':<14} {'Attempted':<10} "
+            f"{'Success':<10} {'Median (ms)':<12} {'P95 (ms)':<12}"
+        )
+        print("-" * 88)
         for comp_name, stats in p1["components"].items():
-            status = "EXECUTED" if stats.get("was_executed") else "NOT_RUN"
-            med = f"{stats.get('median_ms', 0):.2f}" if stats.get("was_executed") else "N/A"
-            p95 = f"{stats.get('p95_ms', 0):.2f}" if stats.get("was_executed") else "N/A"
-            print(f"{comp_name:<28} {status:<10} {med:<12} {p95:<12}")
+            status = stats.get("status", "NOT_RUN")
+            att = stats.get(
+                "attempted_sample_count",
+                stats.get("sample_count", 0) if stats.get("was_executed") else 0,
+            )
+            succ = stats.get("successful_sample_count", stats.get("sample_count", 0))
+            med = (
+                f"{stats.get('median_ms', 0):.2f}"
+                if stats.get("was_executed") and succ > 0
+                else "N/A"
+            )
+            p95 = (
+                f"{stats.get('p95_ms', 0):.2f}" if stats.get("was_executed") and succ > 0 else "N/A"
+            )
+            print(f"{comp_name:<28} {status:<14} {att:<10} {succ:<10} {med:<12} {p95:<12}")
         print(f"\nLive Integrations NOT_RUN: {', '.join(p1['live_integrations_not_run'])}")
         print(f"Disclaimer: {p1['non_certification_statement']}")
 

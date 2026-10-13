@@ -98,21 +98,28 @@ Status:
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18.01: REPAIRED (Consolidated repair addressing Defects A & B; awaiting independent QA review)
+- P-18.01: REPAIRED (Consolidated measurement-truth repair; awaiting independent QA review)
   - Monotonic per-step and end-to-end mission latency measured in fixture mode.
+  - Complete per-run outcomes preserved in benchmark runs (PASS, BLOCKED, FAILED, NOT_RUN).
+  - Attempted vs successful sample counts strictly separated; blocked/failed steps do not pollute success p95 stats.
+  - Ordinary step exceptions handled as privacy-safe FAILED outcomes; subsequent steps aborted as NOT_RUN with 0ns.
   - Zero import-time logger mutations; scoped suppression fully restored.
-  - Discrete execution status truth enforced (PASS, FAILED, BLOCKED, NOT_RUN); NOT_RUN steps report 0ns.
+  - Discrete execution status truth enforced; NOT_RUN steps report 0ns.
+  - CLI and JSON serialization fully protected against KeyError on partial, blocked, or failed runs.
   - Aggregate fixture timing nature explicitly disclosed; zero live calls claimed.
-- P-18.02: REPAIRED (Consolidated repair addressing Defect C; awaiting independent QA review)
-  - Loopback Streamable HTTP transport latency measured (<500ms target observed with ~492.07ms headroom).
-  - Protocol version, tool presence, and intended mission payload verified before counting valid samples.
+- P-18.02: REPAIRED (Consolidated transport-latency repair; awaiting independent QA review)
+  - Loopback Streamable HTTP transport latency measured against official Alexa+ < 500ms requirement.
+  - LOCAL_PASS strictly awarded only when all operations succeed, sample count is sufficient, and p95 is strictly < 500.0ms.
+  - Verified responses at or exceeding 500.0ms produce explicit LOCAL_SLOW comparison verdict.
+  - Protocol exceptions, tool errors, mismatched mission identity, or missing tools produce LOCAL_FAILED.
   - Canonical provenance strictly separated: P-01.07 historical remote echo is RECORDED_LIVE; P-05.07 loopback is LOCAL_EXECUTION.
   - Remote and Alexa+ partner client paths truthfully reported as NOT_RUN.
-- P-18.03: REPAIRED (Consolidated repair addressing Defect D; awaiting independent QA review)
-  - Cost categories separated: VERIFIED_PRICING, EXAMPLE_ASSUMPTIONS, DIRECT_FEE_ZERO, ACCOUNT_USAGE_DEPENDENT, UNVERIFIED_RATE.
-  - AgentCore microVM costs marked NOT_ESTIMABLE_OFFLINE; CloudWatch EMF free tier marked ACCOUNT_USAGE_DEPENDENT.
-  - No premature gross total dollar amount published; promotional credit sufficiency claim removed.
-  - Zero personal spend law ($0.00) preserved; zero Bedrock invocations authorized.
+- P-18.03: REPAIRED (Consolidated cost-accounting repair; awaiting independent QA review)
+  - CloudWatch EMF estimated cost set to None (NOT_ESTIMABLE) because account-wide monthly usage is unobserved offline.
+  - Bedrock-only conditional scenario ($0.00002100) explicitly labeled and separated from definitive gross total.
+  - Misleading total_estimated_cost_usd alias set to None; definitive gross mission total marked NOT_ESTIMABLE_OFFLINE.
+  - AgentCore categorized as VERIFIED_RATE_UNOBSERVED_CONSUMPTION with verified published rates ($0.0895-$0.1276/vCPU-hr active, $0.00945-$0.0169/GB-hr memory) while runtime consumption is unobserved offline.
+  - Zero personal spend law ($0.00) preserved; zero Bedrock invocations authorized; no account billing fabricated.
 - P-18.04+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18.04)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`

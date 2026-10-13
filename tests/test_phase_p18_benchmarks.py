@@ -27,15 +27,19 @@ Verifies:
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import logging
 import math
 import time
+from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from scripts.p18_benchmarks import print_human_report
 from stilldone.benchmarks import (
     ALEXA_PLUS_LATENCY_REQUIREMENT_MS,
     HISTORICAL_P0107_ECHO_MS,
@@ -450,12 +454,16 @@ class TestP1803AWSCostPerMissionHarness:
         )
         assert cw_est.category == CostEstimateCategory.ACCOUNT_USAGE_DEPENDENT.value
         assert cw_est.is_covered_by_free_tier == "ACCOUNT_USAGE_DEPENDENT"
+        assert cw_est.estimated_cost_usd is None
+        assert cw_est.unit_price_usd is None
+        assert "NOT_ESTIMABLE" in cw_est.notes
 
-        # AgentCore: unverified per-invocation rate, NOT_ESTIMABLE_OFFLINE
+        # AgentCore: verified rate, unobserved consumption, NOT_ESTIMABLE_OFFLINE
         ac_est = next(
             e for e in cost_report.cost_estimates if e.service == "Amazon Bedrock AgentCore Runtime"
         )
-        assert ac_est.pricing_verified is False
+        assert ac_est.pricing_verified is True
+        assert ac_est.category == CostEstimateCategory.VERIFIED_RATE_UNOBSERVED_CONSUMPTION.value
         assert ac_est.estimated_cost_usd is None
         assert ac_est.estimated_quantity is None
         assert "NOT_ESTIMABLE_OFFLINE" in ac_est.notes
@@ -467,6 +475,7 @@ class TestP1803AWSCostPerMissionHarness:
         # Conditional scenario total is positive (Bedrock Nova Micro only)
         assert cost_report.conditional_scenario_total_usd > Decimal("0.00")
         assert cost_report.conditional_scenario_total_usd < Decimal("0.01")
+        assert cost_report.total_estimated_cost_usd is None
 
         # Category D: NOT_OBSERVED fields are explicitly listed
         assert len(cost_report.not_observed) >= 5
@@ -483,6 +492,7 @@ class TestP1803AWSCostPerMissionHarness:
             parsed["category_c_pricing_estimates"]["definitive_gross_total_status"]
             == "NOT_ESTIMABLE_OFFLINE"
         )
+        assert parsed["category_c_pricing_estimates"]["total_estimated_cost_usd"] is None
         assert (
             "no fixed number of missions"
             in (parsed["billing_boundary"]["promotional_credit_statement"])
@@ -515,7 +525,7 @@ class TestP1803AWSCostPerMissionHarness:
 
 
 class TestDefectBNegativeExecutionTruth:
-    """Tests for Defect B: verifying blocked and failed step handling in run_mission_benchmark."""
+    """Tests for Defect 1: verifying blocked, failed, and uninvoked step handling."""
 
     def test_sequence_aborts_on_blocked_step_leaving_remainder_not_run(
         self, monkeypatch: pytest.MonkeyPatch
@@ -551,15 +561,23 @@ class TestDefectBNegativeExecutionTruth:
         res = run_mission_benchmark(warmup_count=0, sample_count=1)
         assert res.e2e_stats.was_executed is False
         assert res.e2e_stats.sample_count == 0
+        assert res.e2e_stats.attempted_sample_count == 1
+        assert res.e2e_stats.successful_sample_count == 0
+        assert res.e2e_stats.status == "BLOCKED"
 
         # Steps 1-3 were executed successfully
         for comp in ("seed_demo_resources", "plan_compilation", "tasks_prep"):
             timing = res.component_stats[comp]
             assert timing.was_executed is True
+            assert timing.status == "PASS"
 
-        # Step 4 was invoked and BLOCKED
+        # Step 4 was invoked and BLOCKED: never marked NOT_RUN
         pause_timing = res.component_stats["calendar_approval_pause"]
         assert pause_timing.was_executed is False
+        assert pause_timing.status == "BLOCKED"
+        assert pause_timing.to_dict()["status"] == "BLOCKED"
+        assert pause_timing.attempted_sample_count == 1
+        assert pause_timing.successful_sample_count == 0
 
         # Steps 5-7 were NOT invoked: strictly 0ns, NOT_RUN
         for comp in (
@@ -569,8 +587,11 @@ class TestDefectBNegativeExecutionTruth:
         ):
             not_run_timing = res.component_stats[comp]
             assert not_run_timing.was_executed is False
+            assert not_run_timing.status == "NOT_RUN"
+            assert not_run_timing.to_dict()["status"] == "NOT_RUN"
             assert not_run_timing.min_ms == 0.0
             assert not_run_timing.max_ms == 0.0
+            assert not_run_timing.attempted_sample_count == 0
 
     def test_sequence_aborts_on_failed_step(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When a step returns FAILED, subsequent steps are NOT_RUN and mission fails."""
@@ -603,13 +624,289 @@ class TestDefectBNegativeExecutionTruth:
 
         res = run_mission_benchmark(warmup_count=0, sample_count=1)
         assert res.e2e_stats.was_executed is False
-        assert res.component_stats["plan_compilation"].was_executed is False
+        plan_timing = res.component_stats["plan_compilation"]
+        assert plan_timing.was_executed is False
+        assert plan_timing.status == "FAILED"
+        assert plan_timing.to_dict()["status"] == "FAILED"
+        assert plan_timing.attempted_sample_count == 1
+        assert plan_timing.successful_sample_count == 0
+
+        # Subsequent steps are NOT_RUN
         assert res.component_stats["tasks_prep"].was_executed is False
+        assert res.component_stats["tasks_prep"].status == "NOT_RUN"
         assert res.component_stats["drift_reconciliation"].was_executed is False
+        assert res.component_stats["drift_reconciliation"].status == "NOT_RUN"
+
+    def test_raised_ordinary_exception_produces_privacy_safe_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A raised controlled exception in a timed step produces privacy-safe FAILED outcome."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        secret_error_message = (
+            "database password leaked in error: secret_token_xyz /var/secrets/key"
+        )
+
+        def mock_exploding_step(self_runner: KillerMissionSliceRunner) -> Any:
+            raise RuntimeError(secret_error_message)
+
+        monkeypatch.setattr(
+            KillerMissionSliceRunner,
+            "step_p13_03_tasks_prep",
+            mock_exploding_step,
+        )
+
+        res = run_mission_benchmark(warmup_count=0, sample_count=1)
+        assert res.e2e_stats.was_executed is False
+        assert res.e2e_stats.status == "FAILED"
+
+        tasks_timing = res.component_stats["tasks_prep"]
+        assert tasks_timing.was_executed is False
+        assert tasks_timing.status == "FAILED"
+        assert tasks_timing.to_dict()["status"] == "FAILED"
+
+        # Check that subsequent steps were marked NOT_RUN
+        for comp in (
+            "calendar_approval_pause",
+            "calendar_update_approved",
+            "ready_receipt_projection",
+            "drift_reconciliation",
+        ):
+            assert res.component_stats[comp].status == "NOT_RUN"
+            assert res.component_stats[comp].min_ms == 0.0
+
+        # Privacy invariant: secret string or raw exception does not leak into serialized JSON
+        res_json = res.to_json()
+        assert "secret_token_xyz" not in res_json
+        assert "/var/secrets/key" not in res_json
+        assert "RuntimeError" not in res_json
+
+    def test_zero_successful_missions_does_not_crash_serialization_or_cli(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Zero successful missions serializes to JSON and renders in CLI without KeyError."""
+        from stilldone.domain.provenance import EvidenceProvenance
+        from stilldone.killer_mission import (
+            KillerMissionSliceRunner,
+            KillerMissionStepResult,
+        )
+
+        def mock_step_p13_01_seed(self_runner: KillerMissionSliceRunner) -> KillerMissionStepResult:
+            return KillerMissionStepResult(
+                task_id="P-13.01",
+                step_name="Seed",
+                status="FAILED",
+                provenance=EvidenceProvenance.FIXTURE,
+                details="Failing immediately",
+                writes_performed=0,
+                is_verified=False,
+            )
+
+        monkeypatch.setattr(
+            KillerMissionSliceRunner,
+            "step_p13_01_seed",
+            mock_step_p13_01_seed,
+        )
+
+        res = run_mission_benchmark(warmup_count=0, sample_count=2)
+        assert res.e2e_stats.was_executed is False
+        assert res.e2e_stats.sample_count == 0
+
+        # JSON serialization does not fail
+        d = res.to_dict()
+        assert d["end_to_end"]["status"] == "FAILED"
+        assert d["end_to_end"]["was_executed"] is False
+        assert "min_ms" in d["end_to_end"]
+
+        # CLI print_human_report does not raise KeyError
+        print_human_report({"p18_01_mission_latency": d})
+        captured = capsys.readouterr()
+        assert "STILLDONE P-18 PERFORMANCE" in captured.out
+        assert "E2E Status:" in captured.out
+        assert "No successful end-to-end execution" in captured.out
+
+    def test_one_successful_and_one_failed_mission_separate_sample_counts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One success and one failure separate sample counts; no false two-sample p95."""
+        from stilldone.domain.provenance import EvidenceProvenance
+        from stilldone.killer_mission import (
+            KillerMissionSliceRunner,
+            KillerMissionStepResult,
+        )
+
+        original_plan = KillerMissionSliceRunner.step_p13_02_plan
+        call_count = [0]
+
+        def alternating_plan(self_runner: KillerMissionSliceRunner) -> KillerMissionStepResult:
+            call_count[0] += 1
+            if call_count[0] == 2:
+                # Second run fails at step 2
+                res = KillerMissionStepResult(
+                    task_id="P-13.02",
+                    step_name="Natural Language Planning & Compilation",
+                    status="FAILED",
+                    provenance=EvidenceProvenance.FIXTURE,
+                    details="Simulated intermittent plan failure",
+                    writes_performed=0,
+                    is_verified=False,
+                )
+                self_runner.step_results["P-13.02"] = res
+                return res
+            return original_plan(self_runner)
+
+        monkeypatch.setattr(KillerMissionSliceRunner, "step_p13_02_plan", alternating_plan)
+
+        res = run_mission_benchmark(warmup_count=0, sample_count=2)
+        # 1 run succeeded, 1 run failed
+        assert res.e2e_stats.attempted_sample_count == 2
+        assert res.e2e_stats.successful_sample_count == 1
+        assert res.e2e_stats.sample_count == 1
+        assert res.e2e_stats.status == "PARTIAL_SUCCESS"
+
+        plan_stats = res.component_stats["plan_compilation"]
+        assert plan_stats.attempted_sample_count == 2
+        assert plan_stats.successful_sample_count == 1
+        assert plan_stats.sample_count == 1
+        assert plan_stats.status == "PARTIAL_SUCCESS"
+
+    def test_invalid_not_run_timing_cannot_carry_nonzero_milliseconds(self) -> None:
+        """NOT_RUN steps cannot carry nonzero milliseconds, failing closed."""
+        with pytest.raises(ValueError, match="NOT_RUN steps must have elapsed_ns == 0"):
+            ComponentTiming(
+                component="test_step",
+                elapsed_ns=0,
+                elapsed_ms=1.5,
+                provenance=MeasurementProvenance.NOT_RUN,
+                was_executed=False,
+                sample_index=0,
+                status=StepExecutionStatus.NOT_RUN.value,
+                was_invoked=False,
+            )
+
+        with pytest.raises(ValueError, match="NOT_RUN steps must have elapsed_ns == 0"):
+            ComponentTiming(
+                component="test_step",
+                elapsed_ns=1_500_000,
+                elapsed_ms=0.0,
+                provenance=MeasurementProvenance.NOT_RUN,
+                was_executed=False,
+                sample_index=0,
+                status=StepExecutionStatus.NOT_RUN.value,
+                was_invoked=False,
+            )
+
+    def test_timing_consistency_elapsed_ms_and_elapsed_ns(self) -> None:
+        """ComponentTiming enforces mathematical consistency between elapsed_ms and elapsed_ns."""
+        with pytest.raises(ValueError, match="inconsistent with elapsed_ns"):
+            ComponentTiming(
+                component="test_step",
+                elapsed_ns=2_000_000,
+                elapsed_ms=5.0,  # Expected 2.0 ms
+                provenance=MeasurementProvenance.FIXTURE,
+                was_executed=True,
+                sample_index=0,
+                status=StepExecutionStatus.PASS.value,
+                was_invoked=True,
+            )
+
+
+# ============================================================================
+# Helpers for MCP deterministic test doubles
+# ============================================================================
+
+
+class MockMCPResponse:
+    """Deterministic mock for MCP responses."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class MockMCPSession:
+    """Deterministic test double for ClientSession in MCP latency measurement."""
+
+    def __init__(
+        self,
+        mission_id: str = "test-mission",
+        is_error: bool = False,
+        wrong_mission_id: bool = False,
+        missing_tool: bool = False,
+        raise_transport_error: bool = False,
+        fail_after_n_samples: int | None = None,
+    ) -> None:
+        self.mission_id = mission_id
+        self.is_error = is_error
+        self.wrong_mission_id = wrong_mission_id
+        self.missing_tool = missing_tool
+        self.raise_transport_error = raise_transport_error
+        self.fail_after_n_samples = fail_after_n_samples
+        self.call_count = 0
+
+    async def initialize(self) -> Any:
+        self.call_count += 1
+        if self.raise_transport_error:
+            raise RuntimeError("Injected MCP transport failure")
+        if self.fail_after_n_samples is not None and self.call_count > self.fail_after_n_samples:
+            raise RuntimeError("Sample limit reached in mock session")
+        server_info = MockMCPResponse(name="StillDone")
+        return MockMCPResponse(protocol_version="2024-11-05", server_info=server_info)
+
+    async def list_tools(self) -> Any:
+        self.call_count += 1
+        if self.raise_transport_error:
+            raise RuntimeError("Injected MCP transport failure")
+        if self.fail_after_n_samples is not None and self.call_count > self.fail_after_n_samples:
+            raise RuntimeError("Sample limit reached in mock session")
+        if self.missing_tool:
+            tools = [MockMCPResponse(name="other_tool")]
+        else:
+            tools = [MockMCPResponse(name="mission_status")]
+        return MockMCPResponse(tools=tools)
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        self.call_count += 1
+        if self.raise_transport_error:
+            raise RuntimeError("Injected MCP transport failure")
+        if self.fail_after_n_samples is not None and self.call_count > self.fail_after_n_samples:
+            raise RuntimeError("Sample limit reached in mock session")
+        if self.is_error:
+            return MockMCPResponse(is_error=True, structured_content=None, content=[])
+        res_mission_id = (
+            "wrong-uuid"
+            if self.wrong_mission_id
+            else (arguments.get("mission_id") if arguments else self.mission_id)
+        )
+        return MockMCPResponse(
+            is_error=False,
+            structured_content={"mission_id": res_mission_id, "state": "DRAFT"},
+            content=[MockMCPResponse(text=json.dumps({"mission_id": res_mission_id}))],
+        )
+
+
+def make_mock_session_factory(**mock_kwargs: Any) -> Any:
+    @contextlib.asynccontextmanager
+    async def factory(endpoint_url: str) -> AsyncIterator[Any]:
+        yield MockMCPSession(**mock_kwargs)
+
+    return factory
+
+
+def make_stepped_timer(step_ns: int) -> Callable[[], int]:
+    """Timer incrementing by step_ns per query, yielding deterministic durations."""
+    current = [0]
+
+    def timer() -> int:
+        val = current[0]
+        current[0] += step_ns
+        return val
+
+    return timer
 
 
 class TestDefectCMCPNegativeValidation:
-    """Tests for Defect C: negative validation paths for MCP transport measurement."""
+    """Tests for Defect 2: MCP transport measurement decision path and negative validations."""
 
     def test_mcp_comparison_fails_closed_when_operation_fails(self) -> None:
         """If any operation fails validation, local_headroom must report LOCAL_FAILED."""
@@ -644,6 +941,168 @@ class TestDefectCMCPNegativeValidation:
         assert "LOCAL_PASS" not in failed_comparison.local_headroom_assessment
         d = failed_comparison.to_dict()
         assert d["compliance_assessment"]["local_headroom"].startswith("LOCAL_FAILED")
+
+    @pytest.mark.anyio
+    async def test_mcp_below_500ms_awards_local_pass(self) -> None:
+        """When measured p95 is below 500ms and responses are valid, awards LOCAL_PASS."""
+        # 10ms simulated step (10_000_000 ns)
+        timer = make_stepped_timer(10_000_000)
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(),
+            timer=timer,
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_PASS")
+
+    @pytest.mark.anyio
+    async def test_mcp_at_exactly_500ms_does_not_award_local_pass(self) -> None:
+        """When measured p95 is exactly 500ms, does NOT award LOCAL_PASS; awards LOCAL_SLOW."""
+        # Exactly 500ms simulated step (500_000_000 ns)
+        timer = make_stepped_timer(500_000_000)
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(),
+            timer=timer,
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_SLOW")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_above_500ms_does_not_award_local_pass(self) -> None:
+        """When measured p95 exceeds 500ms, awards LOCAL_SLOW, not LOCAL_PASS."""
+        # 600ms simulated step (600_000_000 ns)
+        timer = make_stepped_timer(600_000_000)
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(),
+            timer=timer,
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_SLOW")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_mission_status_error_response_produces_local_failed(self) -> None:
+        """When mission_status returns is_error=True, produces LOCAL_FAILED."""
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(is_error=True),
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_FAILED")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_mission_status_wrong_mission_identity_produces_local_failed(self) -> None:
+        """When mission_status returns mismatched mission ID, produces LOCAL_FAILED."""
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(wrong_mission_id=True),
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_FAILED")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_missing_expected_tool_produces_local_failed(self) -> None:
+        """When tools/list is missing mission_status, produces LOCAL_FAILED."""
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(missing_tool=True),
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_FAILED")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_transport_exception_produces_no_false_local_pass(self) -> None:
+        """When transport throws an exception, produces LOCAL_FAILED and no false LOCAL_PASS."""
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=2,
+            client_session_factory=make_mock_session_factory(raise_transport_error=True),
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_FAILED")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+    @pytest.mark.anyio
+    async def test_mcp_insufficient_valid_samples_produces_no_false_local_pass(self) -> None:
+        """When insufficient valid samples are collected, produces LOCAL_FAILED."""
+        res = await measure_mcp_transport_latency(
+            warmup_count=1,
+            sample_count=5,
+            client_session_factory=make_mock_session_factory(fail_after_n_samples=2),
+        )
+        assert res.local_headroom_assessment.startswith("LOCAL_FAILED")
+        assert "LOCAL_PASS" not in res.local_headroom_assessment
+
+
+class TestDefectDCostTruth:
+    """Tests for Defect 3: unknown AWS cost must not be zero and pricing distinctions."""
+
+    def test_cloudwatch_unknown_cost_is_none_not_zero(self) -> None:
+        """CloudWatch EMF cost is None (NOT_ESTIMABLE), never an unconditional zero dollar claim."""
+        report = estimate_aws_cost_per_mission()
+        cw = next(e for e in report.cost_estimates if e.service == "Amazon CloudWatch (EMF)")
+        assert cw.estimated_cost_usd is None, "CloudWatch EMF cost cannot be assumed $0.00"
+        assert cw.unit_price_usd is None
+        assert cw.category == CostEstimateCategory.ACCOUNT_USAGE_DEPENDENT.value
+        assert "NOT_ESTIMABLE" in cw.notes
+
+    def test_unknown_components_never_silently_contribute_zero_to_definitive_total(self) -> None:
+        """Gross total is NOT_ESTIMABLE_OFFLINE; unknown items do not silently sum as 0."""
+        report = estimate_aws_cost_per_mission()
+        assert report.definitive_gross_total_status == "NOT_ESTIMABLE_OFFLINE"
+        assert report.total_estimated_cost_usd is None
+        assert len(report.unestimated_components) >= 2
+
+    def test_conditional_bedrock_inference_scenario_cannot_be_mistaken_for_gross_total(
+        self,
+    ) -> None:
+        """Bedrock example scenario is labeled conditional, not complete gross mission cost."""
+        report = estimate_aws_cost_per_mission()
+        assert report.conditional_scenario_total_usd > Decimal("0.00")
+        assert report.total_estimated_cost_usd is None
+        d = report.to_dict()
+        assert d["category_c_pricing_estimates"]["total_estimated_cost_usd"] is None
+        assert "disclaimer" in d["category_c_pricing_estimates"]
+
+    def test_agentcore_rate_provenance_and_actual_consumption_uncertainty_separated(self) -> None:
+        """AgentCore rates are published pricing, but workload consumption is unobserved."""
+        report = estimate_aws_cost_per_mission()
+        ac = next(
+            e for e in report.cost_estimates if e.service == "Amazon Bedrock AgentCore Runtime"
+        )
+        assert ac.pricing_verified is True
+        assert "https://aws.amazon.com/bedrock/agentcore/pricing/" in ac.pricing_source
+        assert ac.estimated_quantity is None
+        assert ac.estimated_cost_usd is None
+        assert ac.category == CostEstimateCategory.VERIFIED_RATE_UNOBSERVED_CONSUMPTION.value
+        assert "NOT_ESTIMABLE_OFFLINE" in ac.notes
+
+    def test_json_and_cli_preserve_cost_distinctions(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """CLI report prints NOT_ESTIMABLE for unknown components without crashing."""
+        report = estimate_aws_cost_per_mission()
+        print_human_report({"p18_03_aws_cost": report.to_dict()})
+        captured = capsys.readouterr()
+        assert "Amazon CloudWatch (EMF)" in captured.out
+        assert "NOT_ESTIMABLE" in captured.out
+        assert "Amazon Bedrock AgentCore" in captured.out
+        assert "Definitive Gross Mission Total:   NOT_ESTIMABLE_OFFLINE" in captured.out
+
+    def test_no_account_spend_or_billing_evidence_fabricated(self) -> None:
+        """Account spend and billing remain strictly NOT_OBSERVED offline."""
+        report = estimate_aws_cost_per_mission()
+        assert report.personal_spend_target == "$0.00"
+        assert report.actual_personal_spend == "NOT_OBSERVED"
+        assert report.real_measured_usage == "NOT_OBSERVED"
+        assert report.promotional_credit_remaining == "NOT_OBSERVED"
+        assert report.bedrock_invocation_authorized is False
+        assert report.paid_services_activated is False
 
 
 class TestConstitutionalInvariants:

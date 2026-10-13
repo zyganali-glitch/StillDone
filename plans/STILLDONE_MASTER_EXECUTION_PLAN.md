@@ -1755,24 +1755,26 @@ Goal:
 ensure the real build survives judging and stays within budget.
 
 ### P-18.01 — Measure end-to-end mission latency and per-component latency
-Status: REPAIRED (Consolidated repair addressing Defects A & B; awaiting independent QA review)
+Status: REPAIRED (Consolidated measurement-truth repair; awaiting independent QA review)
 
 Acceptance:
 - Monotonic timing: Measured via `time.perf_counter_ns()`; cold startup separated via warmup runs.
-- End-to-end latency: Measured in fixture mode across canonical killer mission slice (p50 ~12.60ms, p95 ~13.50ms).
-- Per-component latency: Measured discrete steps with execution status truth (seed: ~0.04ms, plan: ~0.12ms, tasks prep: ~1.02ms, calendar pause: ~1.08ms, calendar update: ~6.12ms, receipt projection: ~2.18ms, drift: ~2.31ms).
-- Invariant & timing truth: NOT_RUN steps strictly report 0ns; unexecuted or blocked steps are never labeled as successfully executed provider work.
+- Complete outcome preservation: Benchmark runs record PASS, BLOCKED, FAILED, and NOT_RUN steps; attempted vs successful sample counts separated.
+- Step exception handling: Ordinary step exceptions handled as privacy-safe FAILED outcomes; subsequent steps aborted as NOT_RUN with strictly 0ns duration.
+- CLI & serialization resilience: Human report and JSON serialization render partial, blocked, or 0-success runs without KeyError or false success.
+- Timing consistency: elapsed_ms mathematically consistent with elapsed_ns; NOT_RUN steps strictly report 0ns.
 - Logger isolation: Benchmark module import alters zero global logger configurations; scoped suppression restored on exit.
 - Provenance: `FIXTURE` (fixture execution) / `LOCAL_EXECUTION`.
 - Disclosure: Aggregate lifecycle-step fixture timings measure local compute overhead only; live provider latency remains `NOT_RUN`.
 - Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.02 — Measure MCP transport latency against current Alexa+ requirements
-Status: REPAIRED (Consolidated repair addressing Defect C; awaiting independent QA review)
+Status: REPAIRED (Consolidated transport-latency repair; awaiting independent QA review)
 
 Acceptance:
 - Alexa+ requirement re-verified: Amazon developer documentation mandates < 500ms round-trip query response latency (https://www.developer.amazon.com/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html); standalone SLA contract is `NOT_FOUND`.
-- Local loopback measurement: In-process Streamable HTTP loopback measured (`initialize`: p95 ~5.46ms, `tools/list`: p95 ~7.93ms, `mission_status`: p95 ~4.66ms; ~492.07ms headroom).
+- Local loopback measurement: In-process Streamable HTTP loopback measured against < 500.0ms threshold.
+- Threshold & failure enforcement: `LOCAL_PASS` awarded strictly when all operations succeed and measured p95 < 500.0ms; $\ge 500.0$ms produces `LOCAL_SLOW`; protocol errors, wrong mission identity, or missing tools produce `LOCAL_FAILED`.
 - Protocol & payload validation: initialize, tools/list, and mission_status responses validated for protocol version, tool presence, and intended mission payload before counting valid samples.
 - Assessment: `LOCAL_PASS` for local headroom; `REQUIREMENT_NOT_VERIFIED` for remote / production compliance.
 - Unexecuted paths: Remote public MCP endpoint and Alexa+ partner client-to-MCP remain `NOT_RUN` (partner access `NOT_ESTABLISHED`).
@@ -1780,13 +1782,14 @@ Acceptance:
 - Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.03 — Measure AWS usage/cost per canonical mission
-Status: REPAIRED (Consolidated repair addressing Defect D; awaiting independent QA review)
+Status: REPAIRED (Consolidated cost-accounting repair; awaiting independent QA review)
 
 Acceptance:
 - Category separation enforced:
   - Category A (Real measured account usage): Preserved as `NOT_OBSERVED` (no unapproved live AWS invocation; billing delta requires authenticated account observation).
   - Category B (Local runtime activity): 100% `FIXTURE` / `LOCAL_EXECUTION` (0 live Bedrock calls, 0 live Google calls, 0 live AgentCore calls).
-  - Category C (Pricing-based estimates): Categorized into VERIFIED_PRICING (Bedrock Nova Micro rates), EXAMPLE_ASSUMPTIONS (200 in / 100 out tokens), DIRECT_FEE_ZERO (SDK and IAM direct fees), ACCOUNT_USAGE_DEPENDENT (CloudWatch EMF free tier), and UNVERIFIED_RATE (AgentCore microVM resource-model).
+  - Category C (Pricing-based estimates): Categorized into VERIFIED_PRICING (Bedrock Nova Micro rates), EXAMPLE_ASSUMPTIONS (200 in / 100 out tokens), DIRECT_FEE_ZERO (SDK and IAM direct fees), ACCOUNT_USAGE_DEPENDENT (CloudWatch EMF free tier; estimated cost None / NOT_ESTIMABLE), and VERIFIED_RATE_UNOBSERVED_CONSUMPTION (AgentCore microVM published rates verified, runtime consumption unobserved offline; NOT_ESTIMABLE).
+  - Bedrock scenario separation: Bedrock inference example scenario ($0.00002100) explicitly labeled conditional, not complete gross mission cost. `total_estimated_cost_usd` is None.
   - Definitive Gross Mission Total: Marked `NOT_ESTIMABLE_OFFLINE`; no premature or non-defensible dollar total published.
   - Category D (NOT_OBSERVED fields): 6 explicit unobserved fields recorded.
 - Zero Personal Spend Law: Target remains strictly `$0.00`; no billable AWS calls or paid services activated.
