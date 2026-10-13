@@ -27,6 +27,7 @@ from stilldone.approval_consumption import (
     ApprovalLedger,
     ApprovalRevokedError,
     ApprovalUsageStatus,
+    MalformedApprovalStateError,
     UsedApprovalRegistry,
 )
 from stilldone.demo_isolation import DemoResourceScope
@@ -48,6 +49,7 @@ from stilldone.domain.desired_state import (
 from stilldone.domain.execution import ExecutionAttempt, IdempotencyKey
 from stilldone.domain.lifecycle import MissionState
 from stilldone.domain.mission import MissionId
+from stilldone.domain.provenance import EvidenceOrigin, EvidenceProvenance
 from stilldone.evidence import EvidenceId
 from stilldone.execution.state import (
     ActionExecutionStatus,
@@ -61,7 +63,7 @@ from stilldone.killer_mission import (
     KillerMissionIntegrityError,
     LiveKillerMissionSliceRunner,
 )
-from stilldone.ledger import ActionRecord
+from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord
 from stilldone.pending_approval import (
     ApprovalDecision,
     OneDecisionContract,
@@ -218,6 +220,11 @@ class TestA2AuthorityRecordStateModel:
         assert record_after.status == ApprovalUsageStatus.CONSUMED
         assert registry.is_consumed(aid) is True
 
+        # 4. Direct negative check: ApprovalLedger.consume fails closed (cannot become usable again)
+        app_ledger = ApprovalLedger(registry=registry)
+        with pytest.raises(ApprovalAlreadyUsedError, match="already consumed"):
+            app_ledger.consume(grant, grant.action, at=now)
+
     def test_revoked_approval_followed_by_rejection_key_collision(self) -> None:
         """A2.2: Revoked approval evidence must never be overwritten by rejection record."""
         registry = UsedApprovalRegistry()
@@ -251,6 +258,95 @@ class TestA2AuthorityRecordStateModel:
         assert record_after is not None
         assert record_after.status == ApprovalUsageStatus.REVOKED
         assert registry.is_revoked(aid) is True
+
+        # 4. Direct negative check: ApprovalLedger.consume fails closed
+        app_ledger = ApprovalLedger(registry=registry)
+        with pytest.raises(ApprovalRevokedError, match="revoked and cannot be consumed"):
+            app_ledger.consume(grant, grant.action, at=now)
+
+    def test_consumed_approval_cannot_become_usable_after_rejection_collision_including_hydration(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.7 direct negative test: Consumed approval cannot become usable after
+        rejection collision or hydration.
+        """
+        runner = _setup_live_runner(tmp_path)
+        aid = "11111111-1111-1111-1111-111111110077"
+        grant = _dummy_grant(
+            approval_id=aid,
+            mission_id=str(runner.mission_id),
+            action_id=str(runner.action_cal.action_id),
+        )
+        now = datetime.now(UTC)
+
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=grant.action_id,
+                mission_id=grant.mission_id,
+                action=grant.action,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+
+        app_ledger = runner.env.approval_ledger
+        # 1. Consume approval
+        res = app_ledger.consume(grant, grant.action, at=now)
+        assert res.is_authorized is True
+        assert app_ledger.is_consumed(aid) is True
+
+        # 2. Rejection collision attempt fails closed
+        with pytest.raises(ApprovalAlreadyUsedError, match="already consumed"):
+            app_ledger.record_rejection(
+                "dec_collision_hydr_01",
+                action_id=grant.action_id,
+                mission_id=grant.mission_id,
+                at=now,
+                pending_approval_id=aid,
+            )
+
+        # 3. Direct negative proof: cannot be consumed again
+        with pytest.raises(ApprovalAlreadyUsedError, match="already consumed"):
+            app_ledger.consume(grant, grant.action, at=now)
+
+        # 4. Process restart & hydration from disk
+        hydrated_ledger = ApprovalLedger.from_ledger(DurableFileLedger(runner.env.ledger_file))
+        assert hydrated_ledger.is_consumed(aid) is True
+
+        # 5. Direct negative proof across restart: still cannot be consumed
+        with pytest.raises(ApprovalAlreadyUsedError, match="already consumed"):
+            hydrated_ledger.consume(grant, grant.action, at=now)
+
+        # 6. Negative proof of hydration integrity: if a corrupt ledger injects
+        # rejection at consumed key
+        from stilldone.approval_consumption import APPROVAL_REJECTION_EVIDENCE_TYPE
+
+        corrupt_ev = EvidenceRecord.create(
+            action_id=grant.action_id,
+            mission_id=grant.mission_id,
+            origin=EvidenceOrigin(
+                provenance=EvidenceProvenance.LOCAL_EXECUTION,
+                observed_at=now,
+            ),
+            payload={
+                "evidence_type": APPROVAL_REJECTION_EVIDENCE_TYPE,
+                "decision_id": "dec_injected_evil",
+                "mission_id": str(grant.mission_id),
+                "action_id": str(grant.action_id),
+                "decision": "REJECT",
+                "status": "REJECTED",
+                "consumed_at": now.isoformat(),
+                "pending_approval_id": aid,
+            },
+            created_at=now,
+        )
+        runner.env.mission_ledger.append_evidence(corrupt_ev)
+
+        # Hydrating the corrupted ledger must fail closed with MalformedApprovalStateError
+        with pytest.raises(
+            MalformedApprovalStateError, match="rejection evidence cannot overwrite"
+        ):
+            ApprovalLedger.from_ledger(DurableFileLedger(runner.env.ledger_file))
 
     def test_conflicting_decision_ids_and_approval_ids_namespaces(self) -> None:
         """A2.3: Decision IDs and Approval IDs maintain distinct namespaces without collision."""
@@ -385,6 +481,71 @@ class TestA2AuthorityRecordStateModel:
         runner._consumed_decisions_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         with pytest.raises(KillerMissionIntegrityError, match="Discrepancy detected"):
+            runner._load_consumed_decision_ids()
+
+    def test_matching_decision_ids_with_contradictory_mission_action_decision_data(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.6: Matching decision IDs with contradictory mission/action/decision
+        data fail closed.
+        """
+        runner = _setup_live_runner(tmp_path)
+        now = datetime.now(UTC)
+
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=runner.action_cal.action_id,
+                mission_id=runner.mission_id,
+                action=runner.action_cal,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+        runner.env.approval_ledger.record_rejection(
+            "dec_matched_common",
+            action_id=runner.action_cal.action_id,
+            mission_id=runner.mission_id,
+            at=now,
+        )
+
+        # Case 1: Contradictory mission_id
+        line_bad_mission = json.dumps(
+            {
+                "decision_id": "dec_matched_common",
+                "consumed_at": now.isoformat(),
+                "decision": "REJECT",
+                "mission_id": "00000000-0000-0000-0000-000000000000",
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{line_bad_mission}\n", encoding="utf-8")
+        with pytest.raises(KillerMissionIntegrityError, match="Contradictory mission_id"):
+            runner._load_consumed_decision_ids()
+
+        # Case 2: Contradictory decision value (APPROVE vs REJECT)
+        line_bad_decision = json.dumps(
+            {
+                "decision_id": "dec_matched_common",
+                "consumed_at": now.isoformat(),
+                "decision": "APPROVE",
+                "mission_id": str(runner.mission_id),
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{line_bad_decision}\n", encoding="utf-8")
+        with pytest.raises(KillerMissionIntegrityError, match="Contradictory decision value"):
+            runner._load_consumed_decision_ids()
+
+        # Case 3: Contradictory action_id
+        line_bad_action = json.dumps(
+            {
+                "decision_id": "dec_matched_common",
+                "consumed_at": now.isoformat(),
+                "decision": "REJECT",
+                "mission_id": str(runner.mission_id),
+                "action_id": "00000000-0000-0000-0000-000000000000",
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{line_bad_action}\n", encoding="utf-8")
+        with pytest.raises(KillerMissionIntegrityError, match="Contradictory action_id"):
             runner._load_consumed_decision_ids()
 
     def test_ledger_append_failure_and_interrupted_persistence_rollback(
@@ -686,6 +847,21 @@ class TestA3UnrestoredRunnerExecutionGating:
         # Provider event ID remains exact and preserved in target
         assert action.target.resource_id == evt_id
         assert runner.seeded_event_id == evt_id
+
+    def test_unrestored_runner_blocks_step_p13_06_and_07(self, tmp_path: Path) -> None:
+        """A3: Unrestored runner blocks direct entry to step_p13_06_ready_receipt
+        and step_p13_07_mutate_and_drift.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        with pytest.raises(KillerMissionIntegrityError, match="Cannot produce ready receipt"):
+            runner2.step_p13_06_ready_receipt()
+
+        with pytest.raises(KillerMissionIntegrityError, match="Cannot execute drift"):
+            runner2.step_p13_07_mutate_and_drift()
 
 
 # ===========================================================================

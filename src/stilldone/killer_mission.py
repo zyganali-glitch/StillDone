@@ -2379,7 +2379,14 @@ class KillerMissionSliceRunner:
 
 
 ALLOWED_CONSUMED_DECISION_KEYS: frozenset[str] = frozenset(
-    {"decision_id", "consumed_at", "decision", "mission_id"}
+    {
+        "decision_id",
+        "consumed_at",
+        "decision",
+        "mission_id",
+        "action_id",
+        "pending_approval_id",
+    }
 )
 REQUIRED_CONSUMED_DECISION_KEYS: frozenset[str] = frozenset({"decision_id", "consumed_at"})
 
@@ -2512,8 +2519,12 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         with self._consumed_decisions_lock:
             # 1. Hydrate from canonical ApprovalLedger
             ledger_dec_ids: set[str] = set()
+            ledger_records_by_id: dict[str, Any] = {}
             if hasattr(self.env, "approval_ledger") and self.env.approval_ledger is not None:
-                ledger_dec_ids = self.env.approval_ledger.get_consumed_decision_ids()
+                for rec in self.env.approval_ledger._registry.get_decision_records():
+                    if rec.decision_id:
+                        ledger_dec_ids.add(rec.decision_id)
+                        ledger_records_by_id[rec.decision_id] = rec
                 self._consumed_approval_decision_ids.update(ledger_dec_ids)
 
             # 2. If decision log file exists, validate strictly
@@ -2601,6 +2612,52 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                                 )
                             loaded_ids.add(did)
 
+                            # Verify full decision lineage against canonical ledger
+                            if did in ledger_records_by_id:
+                                l_rec = ledger_records_by_id[did]
+                                if "mission_id" in d and str(d["mission_id"]) != str(
+                                    l_rec.mission_id
+                                ):
+                                    raise KillerMissionIntegrityError(
+                                        f"Contradictory mission_id for decision '{did}' between "
+                                        f"JSONL ('{d['mission_id']}') and canonical ledger "
+                                        f"('{l_rec.mission_id}')"
+                                    )
+                                if (
+                                    "action_id" in d
+                                    and l_rec.action_id
+                                    and str(d["action_id"]) != str(l_rec.action_id)
+                                ):
+                                    raise KillerMissionIntegrityError(
+                                        f"Contradictory action_id for decision '{did}' between "
+                                        f"JSONL ('{d['action_id']}') and canonical ledger "
+                                        f"('{l_rec.action_id}')"
+                                    )
+                                if "decision" in d:
+                                    jsonl_dec = d["decision"]
+                                    if jsonl_dec == "REJECT" and l_rec.status.value != "REJECTED":
+                                        raise KillerMissionIntegrityError(
+                                            f"Contradictory decision value for decision '{did}': "
+                                            f"JSONL has '{jsonl_dec}', but canonical ledger record "
+                                            f"has status '{l_rec.status.value}'"
+                                        )
+                                    elif (
+                                        jsonl_dec == "APPROVE" and l_rec.status.value != "CONSUMED"
+                                    ):
+                                        raise KillerMissionIntegrityError(
+                                            f"Contradictory decision value for decision '{did}': "
+                                            f"JSONL has '{jsonl_dec}', but canonical ledger record "
+                                            f"has status '{l_rec.status.value}'"
+                                        )
+                                if "pending_approval_id" in d and l_rec.approval_id:
+                                    if str(d["pending_approval_id"]) != str(l_rec.approval_id):
+                                        raise KillerMissionIntegrityError(
+                                            f"Contradictory pending_approval_id for decision "
+                                            f"'{did}' between JSONL "
+                                            f"('{d['pending_approval_id']}') and "
+                                            f"canonical ledger ('{l_rec.approval_id}')"
+                                        )
+
                     # 3. Discrepancy detection between decision log and canonical ledger (Repair A2)
                     # The canonical ApprovalLedger is the single authoritative source of
                     # current approval/decision authority. The JSONL is auxiliary historical
@@ -2631,7 +2688,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                         # The ledger is authoritative; this is acceptable but log it
                         # as the auxiliary history is incomplete.
                         pass  # Ledger is authoritative; JSONL absence is not fatal.
-                    self._consumed_approval_decision_ids.update(loaded_ids)
+                    if not ledger_dec_ids:
+                        self._consumed_approval_decision_ids.update(loaded_ids)
                 except OSError as e:
                     raise KillerMissionIntegrityError(
                         f"Failed to read durable consumed approval decisions: {e}"
@@ -3253,12 +3311,26 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         return res
 
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
-        """Produce ready receipt; gated strictly by live preflight."""
+        """Produce ready receipt; gated strictly by live preflight and unrestored runner gate."""
+        # A3 RECOVERY GATE
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                f"Cannot produce ready receipt for existing mission '{self.mission_id}': "
+                "full safe rehydration is not supported. "
+                "Use a new mission ID with fresh stable storage."
+            )
         self._require_preflight()
         return super().step_p13_06_ready_receipt()
 
     def step_p13_07_mutate_and_drift(self) -> KillerMissionStepResult:
         """Mutate and drift; in live execution external drift is NOT exercised automatically."""
+        # A3 RECOVERY GATE
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                f"Cannot execute drift for existing mission '{self.mission_id}': "
+                "full safe rehydration is not supported. "
+                "Use a new mission ID with fresh stable storage."
+            )
         self._require_preflight()
         res = KillerMissionStepResult(
             task_id="P-13.07",

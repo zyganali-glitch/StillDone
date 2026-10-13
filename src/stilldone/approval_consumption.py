@@ -256,14 +256,11 @@ class UsedApprovalRegistry:
         key = str(approval_id)
         with self._lock:
             rec = self._records.get(key)
-            if rec is not None and rec.status in {
+            return rec is not None and rec.status in {
                 ApprovalUsageStatus.CONSUMED,
                 ApprovalUsageStatus.REVOKED,
                 ApprovalUsageStatus.REJECTED,
-            }:
-                return True
-            d_rec = self._decision_records.get(key)
-            return d_rec is not None
+            }
 
     def is_consumed(self, approval_id: ApprovalId | str) -> bool:
         """Check if an approval ID has been consumed."""
@@ -310,10 +307,7 @@ class UsedApprovalRegistry:
         """Retrieve the consumption record for an approval ID if present."""
         key = str(approval_id)
         with self._lock:
-            rec = self._records.get(key)
-            if rec is not None:
-                return rec
-            return self._decision_records.get(key)
+            return self._records.get(key)
 
     def record_consumption(
         self,
@@ -418,6 +412,11 @@ class UsedApprovalRegistry:
                         raise ApprovalAlreadyUsedError(
                             f"Cannot record rejection at key '{pa_key}': approval was already "
                             "revoked and rejection cannot overwrite revoked authority evidence"
+                        )
+                    if existing_at_pa_key.status == ApprovalUsageStatus.REJECTED:
+                        raise ApprovalAlreadyUsedError(
+                            f"Cannot record rejection at key '{pa_key}': approval was already "
+                            "rejected and rejection cannot overwrite existing rejection evidence"
                         )
 
             record = ApprovalConsumptionRecord(
@@ -711,7 +710,33 @@ class ApprovalLedger:
                     )
                     hydrated_decisions[did] = rec
                     if raw_paid:
-                        hydrated_records[str(raw_paid)] = rec
+                        pa_key = str(raw_paid)
+                        if pa_key in hydrated_records:
+                            existing_pa_rec = hydrated_records[pa_key]
+                            if existing_pa_rec.status == ApprovalUsageStatus.CONSUMED:
+                                raise MalformedApprovalStateError(
+                                    f"Forbidden approval status transition for '{pa_key}': "
+                                    "rejection evidence cannot overwrite or replace prior "
+                                    "CONSUMED record"
+                                )
+                            if existing_pa_rec.status == ApprovalUsageStatus.REVOKED:
+                                raise MalformedApprovalStateError(
+                                    f"Forbidden approval status transition for '{pa_key}': "
+                                    "rejection evidence cannot overwrite or replace prior "
+                                    "REVOKED record"
+                                )
+                            if existing_pa_rec.status == ApprovalUsageStatus.REJECTED:
+                                if (
+                                    existing_pa_rec.mission_id != mid
+                                    or existing_pa_rec.action_id != act_id
+                                    or existing_pa_rec.binding_hash != b_hash
+                                ):
+                                    raise MalformedApprovalStateError(
+                                        f"Contradictory rejection lineage for '{pa_key}' in "
+                                        "durable history"
+                                    )
+                                continue
+                        hydrated_records[pa_key] = rec
                     continue
 
                 raw_aid = payload.get("approval_id")
@@ -820,6 +845,17 @@ class ApprovalLedger:
                                 "approval cannot be consumed multiple times"
                             )
                         # CONSUMED -> REVOKED transitions to REVOKED
+                    elif existing.status == ApprovalUsageStatus.REJECTED:
+                        if status_val == ApprovalUsageStatus.CONSUMED:
+                            raise MalformedApprovalStateError(
+                                f"Forbidden approval status transition for '{aid}': "
+                                "REJECTED -> CONSUMED is prohibited in durable history"
+                            )
+                        if status_val == ApprovalUsageStatus.REVOKED:
+                            raise MalformedApprovalStateError(
+                                f"Forbidden approval status transition for '{aid}': "
+                                "REJECTED -> REVOKED is prohibited in durable history"
+                            )
 
                 rec = ApprovalConsumptionRecord(
                     approval_id=aid,
@@ -917,6 +953,21 @@ class ApprovalLedger:
                 raise ApprovalAlreadyUsedError(
                     f"Decision '{dec_id}' has already been consumed or recorded"
                 )
+
+            if pending_approval_id is not None:
+                pa_str = str(pending_approval_id)
+                if self._registry.is_consumed(pa_str):
+                    raise ApprovalAlreadyUsedError(
+                        f"Cannot record rejection: approval '{pa_str}' was already consumed"
+                    )
+                if self._registry.is_revoked(pa_str):
+                    raise ApprovalAlreadyUsedError(
+                        f"Cannot record rejection: approval '{pa_str}' was already revoked"
+                    )
+                if self._registry.is_rejected(pa_str):
+                    raise ApprovalAlreadyUsedError(
+                        f"Cannot record rejection: approval '{pa_str}' was already rejected"
+                    )
 
             # Ensure action exists in ledger and belongs to mission using public methods
             if self._ledger is not None:
@@ -1078,6 +1129,10 @@ class ApprovalLedger:
             if self._registry.is_revoked(grant.approval_id):
                 raise ApprovalRevokedError(
                     f"Approval '{grant.approval_id}' has been revoked and cannot be consumed"
+                )
+            if self._registry.is_rejected(grant.approval_id):
+                raise ApprovalAlreadyUsedError(
+                    f"Approval '{grant.approval_id}' was rejected and cannot be consumed"
                 )
 
             # 3. Durable persistence BEFORE execution (if backed by MissionLedgerPort)
