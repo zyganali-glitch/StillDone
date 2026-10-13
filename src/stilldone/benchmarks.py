@@ -7,37 +7,62 @@ P-18.03: AWS usage/cost per canonical mission.
 Constitutional Invariants:
 - Monotonic timing via time.perf_counter_ns().
 - FIXTURE provenance clearly labeled; never presented as LIVE.
-- NOT_RUN steps report no duration.
+- NOT_RUN steps report strictly zero duration (0 ns).
 - Benchmark instrumentation has zero effect on mission authority or evidence claims.
 - Zero personal spend ($0.00).
+- Module import does not alter any global logger configurations.
+- Unexecuted or blocked steps are never labeled as successfully executed provider work.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import platform
 import statistics
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Final
 
-# Suppress verbose transport/request logs during benchmark measurements
-for _logger_name in (
-    "httpx",
-    "httpx2",
-    "mcp",
-    "uvicorn",
-    "uvicorn.access",
-    "uvicorn.error",
-):
-    _l = logging.getLogger(_logger_name)
-    _l.setLevel(logging.WARNING)
-    _l.disabled = True
+# ============================================================================
+# Scoped Benchmark Logging Management (Defect A Repair)
+# ============================================================================
+
+
+@contextlib.contextmanager
+def scoped_benchmark_logging_suppression(
+    logger_names: Sequence[str] = (
+        "httpx",
+        "httpx2",
+        "mcp",
+        "uvicorn",
+        "uvicorn.access",
+        "uvicorn.error",
+    ),
+) -> Iterator[None]:
+    """Temporarily suppress verbose transport loggers during benchmarks, restoring on exit.
+
+    Importing this module does NOT alter logger configuration. Scoped suppression
+    is strictly localized to execution contexts that opt in and fully restored in finally.
+    """
+    snapshots: list[tuple[logging.Logger, int, bool, bool]] = []
+    for name in logger_names:
+        lgr = logging.getLogger(name)
+        snapshots.append((lgr, lgr.level, lgr.disabled, lgr.propagate))
+        lgr.setLevel(logging.WARNING)
+        lgr.disabled = True
+    try:
+        yield
+    finally:
+        for lgr, old_level, old_disabled, old_propagate in snapshots:
+            lgr.setLevel(old_level)
+            lgr.disabled = old_disabled
+            lgr.propagate = old_propagate
 
 
 # ============================================================================
@@ -57,9 +82,27 @@ class MeasurementProvenance(StrEnum):
     NOT_RUN = "NOT_RUN"
 
 
+class StepExecutionStatus(StrEnum):
+    """Lifecycle execution status of a timed step."""
+
+    PASS = "PASS"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+    BLOCKED_LIVE = "BLOCKED_LIVE"
+    NOT_RUN = "NOT_RUN"
+
+
 @dataclass(frozen=True)
 class ComponentTiming:
-    """Timing measurement for a single mission component."""
+    """Timing measurement for a single mission component.
+
+    Invariants:
+    - NOT_RUN operations MUST have elapsed_ns == 0, was_executed == False, was_invoked == False.
+    - FAILED / BLOCKED operations have was_invoked == True, was_executed == False, and
+      may record local elapsed processing time (elapsed_ns >= 0), but MUST NOT be labeled
+      as successfully executed provider work.
+    - PASS operations have was_invoked == True, was_executed == True, elapsed_ns >= 0.
+    """
 
     component: str
     elapsed_ns: int
@@ -67,25 +110,69 @@ class ComponentTiming:
     provenance: MeasurementProvenance
     was_executed: bool
     sample_index: int
+    status: str = "PASS"
+    was_invoked: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.component, str) or not self.component.strip():
             raise ValueError("component must be a non-empty string")
         if not isinstance(self.elapsed_ns, int):
             raise TypeError("elapsed_ns must be an integer")
-        if self.was_executed and self.elapsed_ns < 0:
+        if self.elapsed_ns < 0:
             raise ValueError("elapsed_ns cannot be negative for an executed step")
-        if not self.was_executed and self.elapsed_ns != 0:
-            raise ValueError("NOT_RUN steps must have elapsed_ns == 0")
         if not isinstance(self.provenance, MeasurementProvenance):
             raise TypeError("provenance must be a MeasurementProvenance")
+
+        # Auto-align status/was_invoked if defaulted
+        if self.provenance == MeasurementProvenance.NOT_RUN:
+            object.__setattr__(self, "status", StepExecutionStatus.NOT_RUN.value)
+            object.__setattr__(self, "was_invoked", False)
+        elif not self.was_executed and self.elapsed_ns == 0 and self.status == "PASS":
+            object.__setattr__(self, "status", StepExecutionStatus.NOT_RUN.value)
+            object.__setattr__(self, "was_invoked", False)
+        elif not self.was_executed and self.elapsed_ns > 0 and self.status == "PASS":
+            object.__setattr__(self, "status", StepExecutionStatus.FAILED.value)
+            object.__setattr__(self, "was_invoked", True)
+
+        if self.status == StepExecutionStatus.NOT_RUN.value:
+            if self.elapsed_ns != 0:
+                raise ValueError("NOT_RUN steps must have elapsed_ns == 0")
+            if self.was_executed:
+                raise ValueError(
+                    "NOT_RUN steps cannot be marked as successfully executed "
+                    "(was_executed must be False)"
+                )
+            if self.was_invoked:
+                raise ValueError("NOT_RUN steps cannot be marked as invoked")
+            if self.provenance != MeasurementProvenance.NOT_RUN:
+                raise ValueError("NOT_RUN steps must have provenance=MeasurementProvenance.NOT_RUN")
+        elif self.status in (
+            StepExecutionStatus.FAILED.value,
+            StepExecutionStatus.BLOCKED.value,
+            StepExecutionStatus.BLOCKED_LIVE.value,
+        ):
+            if not self.was_invoked:
+                raise ValueError(f"{self.status} steps must have was_invoked=True")
+            if self.was_executed:
+                raise ValueError(
+                    f"{self.status} steps cannot be labeled as successfully executed provider work"
+                )
+        elif self.status == StepExecutionStatus.PASS.value:
+            if not self.was_invoked:
+                raise ValueError("PASS steps must have was_invoked=True")
+            if not self.was_executed:
+                raise ValueError("PASS steps must have was_executed=True")
+        else:
+            raise ValueError(f"Unknown execution status: {self.status}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "component": self.component,
+            "status": self.status,
             "elapsed_ns": self.elapsed_ns,
             "elapsed_ms": round(self.elapsed_ms, 3),
             "provenance": self.provenance.value,
+            "was_invoked": self.was_invoked,
             "was_executed": self.was_executed,
             "sample_index": self.sample_index,
         }
@@ -193,8 +280,7 @@ MISSION_COMPONENTS: Final[list[str]] = [
 # Components that are NOT_RUN in fixture mode (live-only)
 LIVE_ONLY_COMPONENTS: Final[frozenset[str]] = frozenset(
     {
-        # All components above are exercised in fixture mode for the canonical mission
-        # But external provider calls are fixture-backed, not live
+        # External provider calls are fixture-backed, not live
     }
 )
 
@@ -289,6 +375,10 @@ def run_mission_benchmark(
     Cold startup is separated: warmup runs are excluded from statistics.
     All timings are LOCAL_EXECUTION/FIXTURE provenance.
     Live provider timings are NOT_RUN.
+
+    Disclosure:
+    Timings are aggregate lifecycle-step fixture timings. They do NOT separately measure
+    real Bedrock inference, provider network latency, independent read-back, or cold-start time.
     """
     import subprocess
 
@@ -315,117 +405,100 @@ def run_mission_benchmark(
         env = KillerMissionEnvironment.create_fixture_environment()
         runner = KillerMissionSliceRunner(env=env)
 
-        # Time individual components through the runner steps
         component_timings: dict[str, ComponentTiming] = {}
         provenance = MeasurementProvenance.FIXTURE
 
-        # Measure total end-to-end and individual steps
+        step_definitions: list[tuple[str, Callable[[], Any]]] = [
+            ("seed_demo_resources", runner.step_p13_01_seed),
+            ("plan_compilation", runner.step_p13_02_plan),
+            ("tasks_prep", runner.step_p13_03_tasks_prep),
+            ("calendar_approval_pause", runner.step_p13_04_calendar_pause),
+            ("calendar_update_approved", runner.step_p13_05_calendar_approve),
+            ("ready_receipt_projection", runner.step_p13_06_ready_receipt),
+            ("drift_reconciliation", runner.step_p13_07_mutate_and_drift),
+        ]
+
+        abort_sequence = False
         t_start = timer()
 
-        # Step 1: P-13.01 Seed
-        t0 = timer()
-        s1 = runner.step_p13_01_seed()
-        t1 = timer()
-        dt1_ns = t1 - t0
-        component_timings["seed_demo_resources"] = ComponentTiming(
-            component="seed_demo_resources",
-            elapsed_ns=dt1_ns,
-            elapsed_ms=dt1_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s1.status == "PASS"),
-            sample_index=run_idx,
-        )
+        for comp_name, step_fn in step_definitions:
+            if abort_sequence:
+                # Step was NOT invoked: strictly 0 duration, NOT_RUN provenance
+                component_timings[comp_name] = ComponentTiming(
+                    component=comp_name,
+                    elapsed_ns=0,
+                    elapsed_ms=0.0,
+                    provenance=MeasurementProvenance.NOT_RUN,
+                    was_executed=False,
+                    sample_index=run_idx,
+                    status=StepExecutionStatus.NOT_RUN.value,
+                    was_invoked=False,
+                )
+                continue
 
-        # Step 2: P-13.02 Plan compilation
-        t0 = timer()
-        s2 = runner.step_p13_02_plan()
-        t1 = timer()
-        dt2_ns = t1 - t0
-        component_timings["plan_compilation"] = ComponentTiming(
-            component="plan_compilation",
-            elapsed_ns=dt2_ns,
-            elapsed_ms=dt2_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s2.status == "PASS"),
-            sample_index=run_idx,
-        )
+            t0 = timer()
+            step_result = step_fn()
+            t1 = timer()
+            dt_ns = t1 - t0
 
-        # Step 3: P-13.03 Tasks prep
-        t0 = timer()
-        s3 = runner.step_p13_03_tasks_prep()
-        t1 = timer()
-        dt3_ns = t1 - t0
-        component_timings["tasks_prep"] = ComponentTiming(
-            component="tasks_prep",
-            elapsed_ns=dt3_ns,
-            elapsed_ms=dt3_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s3.status == "PASS"),
-            sample_index=run_idx,
-        )
-
-        # Step 4: P-13.04 Calendar pause
-        t0 = timer()
-        s4 = runner.step_p13_04_calendar_pause()
-        t1 = timer()
-        dt4_ns = t1 - t0
-        component_timings["calendar_approval_pause"] = ComponentTiming(
-            component="calendar_approval_pause",
-            elapsed_ns=dt4_ns,
-            elapsed_ms=dt4_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s4.status == "PASS"),
-            sample_index=run_idx,
-        )
-
-        # Step 5: P-13.05 Calendar update approved
-        t0 = timer()
-        s5 = runner.step_p13_05_calendar_approve()
-        t1 = timer()
-        dt5_ns = t1 - t0
-        component_timings["calendar_update_approved"] = ComponentTiming(
-            component="calendar_update_approved",
-            elapsed_ns=dt5_ns,
-            elapsed_ms=dt5_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s5.status == "PASS"),
-            sample_index=run_idx,
-        )
-
-        # Step 6: P-13.06 Ready receipt
-        t0 = timer()
-        s6 = runner.step_p13_06_ready_receipt()
-        t1 = timer()
-        dt6_ns = t1 - t0
-        component_timings["ready_receipt_projection"] = ComponentTiming(
-            component="ready_receipt_projection",
-            elapsed_ns=dt6_ns,
-            elapsed_ms=dt6_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s6.status == "PASS"),
-            sample_index=run_idx,
-        )
-
-        # Step 7: P-13.07 Drift reconciliation
-        t0 = timer()
-        s7 = runner.step_p13_07_mutate_and_drift()
-        t1 = timer()
-        dt7_ns = t1 - t0
-        component_timings["drift_reconciliation"] = ComponentTiming(
-            component="drift_reconciliation",
-            elapsed_ns=dt7_ns,
-            elapsed_ms=dt7_ns / 1_000_000.0,
-            provenance=provenance,
-            was_executed=(s7.status == "PASS"),
-            sample_index=run_idx,
-        )
+            step_status = getattr(step_result, "status", "UNKNOWN")
+            if step_status == "PASS":
+                component_timings[comp_name] = ComponentTiming(
+                    component=comp_name,
+                    elapsed_ns=dt_ns,
+                    elapsed_ms=dt_ns / 1_000_000.0,
+                    provenance=provenance,
+                    was_executed=True,
+                    sample_index=run_idx,
+                    status=StepExecutionStatus.PASS.value,
+                    was_invoked=True,
+                )
+            elif step_status in ("BLOCKED", "BLOCKED_LIVE"):
+                abort_sequence = True
+                component_timings[comp_name] = ComponentTiming(
+                    component=comp_name,
+                    elapsed_ns=dt_ns,
+                    elapsed_ms=dt_ns / 1_000_000.0,
+                    provenance=MeasurementProvenance.LOCAL_EXECUTION,
+                    was_executed=False,
+                    sample_index=run_idx,
+                    status=StepExecutionStatus.BLOCKED.value,
+                    was_invoked=True,
+                )
+            else:
+                abort_sequence = True
+                component_timings[comp_name] = ComponentTiming(
+                    component=comp_name,
+                    elapsed_ns=dt_ns,
+                    elapsed_ms=dt_ns / 1_000_000.0,
+                    provenance=MeasurementProvenance.LOCAL_EXECUTION,
+                    was_executed=False,
+                    sample_index=run_idx,
+                    status=StepExecutionStatus.FAILED.value,
+                    was_invoked=True,
+                )
 
         t_end = timer()
         total_ns = t_end - t_start
         total_ms = total_ns / 1_000_000.0
 
-        mission_succeeded = s7.status == "PASS"
-        final_state = MissionState.DRIFTED if mission_succeeded else MissionState.FAILED
+        # Mission success follows actual completed lifecycle truth (DRIFTED)
+        drift_timing = component_timings.get("drift_reconciliation")
+        step_7_res = runner.step_results.get("P-13.07")
+        mission_succeeded = (
+            not abort_sequence
+            and drift_timing is not None
+            and drift_timing.was_executed
+            and step_7_res is not None
+            and step_7_res.status == "PASS"
+            and step_7_res.extra_metadata.get("reconciled_state") == MissionState.DRIFTED.value
+        )
+        if mission_succeeded:
+            final_state = MissionState.DRIFTED.value
+        elif any(t.status in ("BLOCKED", "BLOCKED_LIVE") for t in component_timings.values()):
+            final_state = MissionState.DRAFT.value
+        else:
+            final_state = MissionState.FAILED.value
 
         run = MissionBenchmarkRun(
             run_index=run_idx,
@@ -434,13 +507,14 @@ def run_mission_benchmark(
             total_elapsed_ms=total_ms,
             component_timings=component_timings,
             mission_succeeded=mission_succeeded,
-            final_state=final_state.value,
+            final_state=final_state,
             provenance=provenance,
         )
         all_runs.append(run)
 
         if not is_warmup:
-            e2e_samples_ms.append(total_ms)
+            if mission_succeeded:
+                e2e_samples_ms.append(total_ms)
             for comp_name, timing in component_timings.items():
                 if timing.was_executed and comp_name in component_samples:
                     component_samples[comp_name].append(timing.elapsed_ms)
@@ -491,10 +565,12 @@ def run_mission_benchmark(
         ],
         non_certification_statement=(
             "All timings are measured in FIXTURE mode using deterministic test doubles. "
-            "No live external provider calls were executed. Fixture timings measure "
-            "local computation overhead only and MUST NOT be presented as live provider "
-            "latency. Live provider latency remains NOT_RUN. "
-            "Per AGENTS.md §9-10, live measurements require genuine provider execution."
+            "Timings are aggregate lifecycle-step fixture timings and do NOT separately "
+            "measure real Bedrock inference, provider network latency, independent read-back, "
+            "or cold-start time. No live external provider calls were executed. Fixture timings "
+            "measure local computational overhead only and MUST NOT be presented as live "
+            "provider latency. Live provider latency remains NOT_RUN. Per AGENTS.md § 9-10, "
+            "live measurements require genuine provider execution."
         ),
     )
 
@@ -505,17 +581,25 @@ def run_mission_benchmark(
 
 ALEXA_PLUS_LATENCY_REQUIREMENT_MS: Final[float] = 500.0
 ALEXA_PLUS_REQUIREMENT_SOURCE: Final[str] = (
-    "Amazon Alexa+ MCP Server documentation: 'MCP server round-trip query response latency < 500ms'"
+    "https://www.developer.amazon.com/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html"
 )
 ALEXA_PLUS_REQUIREMENT_STATUS: Final[str] = "OBSERVED_IN_DOCUMENTATION"
 
-# Historical recorded-live measurements from P-01.07 and P-05.07
+# Historical recorded-live remote echo from P-01.07
 HISTORICAL_P0107_ECHO_MS: Final[float] = 61.26
 HISTORICAL_P0107_PROVENANCE: Final[str] = "RECORDED_LIVE"
+HISTORICAL_P0107_REFERENCE: Final[str] = (
+    "docs/P01_AWS_FEASIBILITY_EVIDENCE.md (P-01.07 remote echo over Streamable HTTP)"
+)
+
+# Historical local loopback measurements from P-05.07 (LOCAL_EXECUTION provenance)
 HISTORICAL_P0507_INIT_P50_MS: Final[float] = 8.05
 HISTORICAL_P0507_TOOLS_LIST_P50_MS: Final[float] = 7.33
 HISTORICAL_P0507_MISSION_STATUS_P50_MS: Final[float] = 15.18
-HISTORICAL_P0507_PROVENANCE: Final[str] = "RECORDED_LIVE"
+HISTORICAL_P0507_PROVENANCE: Final[str] = "LOCAL_EXECUTION"
+HISTORICAL_P0507_REFERENCE: Final[str] = (
+    "docs/P05_MCP_SPECIFICATION_EVIDENCE.md (P-05.07 local Streamable HTTP loopback)"
+)
 
 
 @dataclass(frozen=True)
@@ -528,21 +612,23 @@ class MCPLatencyComparison:
     alexa_requirement_status: str
 
     # In-process/local loopback measurements (current)
-    local_measurements: dict[str, Any]  # From current run_latency_campaign
+    local_measurements: dict[str, Any]
     local_provenance: str
 
     # Historical recorded-live remote measurements
     historical_remote_echo_ms: float
     historical_remote_provenance: str
+    historical_remote_reference: str
 
     # Historical local measurements from P-05.07
     historical_local_init_p50_ms: float
     historical_local_tools_list_p50_ms: float
     historical_local_mission_status_p50_ms: float
     historical_local_provenance: str
+    historical_local_reference: str
 
     # Live remote measurements (NOT_RUN unless genuinely observed)
-    live_remote_measurement: str  # "NOT_RUN" or actual data
+    live_remote_measurement: str  # "NOT_RUN"
     live_alexa_client_measurement: str  # "NOT_RUN"
 
     # Compliance assessment
@@ -565,19 +651,21 @@ class MCPLatencyComparison:
             "current_local_measurements": {
                 "measurements": self.local_measurements,
                 "provenance": self.local_provenance,
-                "classification": "IN_PROCESS_LOOPBACK",
+                "classification": "CURRENT_LOCAL_LOOPBACK",
             },
             "historical_remote_measurements": {
                 "p0107_echo_ms": self.historical_remote_echo_ms,
                 "provenance": self.historical_remote_provenance,
                 "classification": "RECORDED_LIVE_REMOTE_MCP",
+                "reference": self.historical_remote_reference,
             },
             "historical_local_measurements": {
                 "initialize_p50_ms": self.historical_local_init_p50_ms,
                 "tools_list_p50_ms": self.historical_local_tools_list_p50_ms,
                 "mission_status_p50_ms": self.historical_local_mission_status_p50_ms,
                 "provenance": self.historical_local_provenance,
-                "classification": "RECORDED_LIVE_LOCAL_LOOPBACK",
+                "classification": "HISTORICAL_LOCAL_LOOPBACK",
+                "reference": self.historical_local_reference,
             },
             "live_remote_mcp_transport": {
                 "status": self.live_remote_measurement,
@@ -607,6 +695,7 @@ async def measure_mcp_transport_latency(
 
     Measures:
     - In-process/local loopback Streamable HTTP latency (current run)
+    - Verifies protocol and tool payload success before accepting timing samples
     - Compares against historical recorded-live measurements
     - Reports remote and Alexa+ paths as NOT_RUN
     """
@@ -636,72 +725,139 @@ async def measure_mcp_transport_latency(
     mission_id_str = str(contract.mission_id)
 
     local_measurements: dict[str, Any] = {}
+    validation_failures: list[str] = []
 
-    async with run_loopback_mcp_server(config, ledger=ledger) as (_, endpoint_url):
-        # Measure initialize
-        init_samples: list[float] = []
-        for i in range(warmup_count + sample_count):
+    with scoped_benchmark_logging_suppression():
+        async with run_loopback_mcp_server(config, ledger=ledger) as (_, endpoint_url):
+            # 1. Measure initialize with protocol validation
+            init_samples: list[float] = []
+            for i in range(warmup_count + sample_count):
+                async with streamable_http_client(endpoint_url) as (r, w):
+                    async with ClientSession(r, w) as session:
+                        t0 = time.perf_counter_ns()
+                        init_res = await session.initialize()
+                        t1 = time.perf_counter_ns()
+
+                        # Validate response
+                        if (
+                            init_res is None
+                            or not getattr(init_res, "protocol_version", None)
+                            or not getattr(init_res, "server_info", None)
+                            or init_res.server_info.name != "StillDone"
+                        ):
+                            validation_failures.append(
+                                f"initialize failed validation at sample {i}"
+                            )
+                            continue
+
+                        if i >= warmup_count:
+                            init_samples.append((t1 - t0) / 1_000_000.0)
+
+            init_stats = compute_component_stats(
+                "initialize",
+                init_samples,
+                warmup_count,
+                MeasurementProvenance.LOCAL_EXECUTION,
+            )
+            local_measurements["initialize"] = init_stats.to_dict()
+
+            # 2. Measure tools/list with tool presence validation
+            tl_samples: list[float] = []
             async with streamable_http_client(endpoint_url) as (r, w):
                 async with ClientSession(r, w) as session:
-                    t0 = time.perf_counter_ns()
                     await session.initialize()
-                    t1 = time.perf_counter_ns()
-                    if i >= warmup_count:
-                        init_samples.append((t1 - t0) / 1_000_000.0)
+                    for i in range(warmup_count + sample_count):
+                        t0 = time.perf_counter_ns()
+                        tools_res = await session.list_tools()
+                        t1 = time.perf_counter_ns()
 
-        init_stats = compute_component_stats(
-            "initialize", init_samples, warmup_count, MeasurementProvenance.LOCAL_EXECUTION
-        )
-        local_measurements["initialize"] = init_stats.to_dict()
+                        tool_names = [
+                            t.name for t in getattr(tools_res, "tools", []) if hasattr(t, "name")
+                        ]
+                        if "mission_status" not in tool_names:
+                            validation_failures.append(
+                                f"tools/list missing mission_status at sample {i}"
+                            )
+                            continue
 
-        # Measure tools/list
-        tl_samples: list[float] = []
-        async with streamable_http_client(endpoint_url) as (r, w):
-            async with ClientSession(r, w) as session:
-                await session.initialize()
-                for i in range(warmup_count + sample_count):
-                    t0 = time.perf_counter_ns()
-                    await session.list_tools()
-                    t1 = time.perf_counter_ns()
-                    if i >= warmup_count:
-                        tl_samples.append((t1 - t0) / 1_000_000.0)
+                        if i >= warmup_count:
+                            tl_samples.append((t1 - t0) / 1_000_000.0)
 
-        tl_stats = compute_component_stats(
-            "tools_list", tl_samples, warmup_count, MeasurementProvenance.LOCAL_EXECUTION
-        )
-        local_measurements["tools_list"] = tl_stats.to_dict()
+            tl_stats = compute_component_stats(
+                "tools_list",
+                tl_samples,
+                warmup_count,
+                MeasurementProvenance.LOCAL_EXECUTION,
+            )
+            local_measurements["tools_list"] = tl_stats.to_dict()
 
-        # Measure mission_status
-        ms_samples: list[float] = []
-        async with streamable_http_client(endpoint_url) as (r, w):
-            async with ClientSession(r, w) as session:
-                await session.initialize()
-                for i in range(warmup_count + sample_count):
-                    t0 = time.perf_counter_ns()
-                    await session.call_tool(
-                        "mission_status", arguments={"mission_id": mission_id_str}
-                    )
-                    t1 = time.perf_counter_ns()
-                    if i >= warmup_count:
-                        ms_samples.append((t1 - t0) / 1_000_000.0)
+            # 3. Measure mission_status with structured return value validation
+            ms_samples: list[float] = []
+            async with streamable_http_client(endpoint_url) as (r, w):
+                async with ClientSession(r, w) as session:
+                    await session.initialize()
+                    for i in range(warmup_count + sample_count):
+                        t0 = time.perf_counter_ns()
+                        call_res = await session.call_tool(
+                            "mission_status", arguments={"mission_id": mission_id_str}
+                        )
+                        t1 = time.perf_counter_ns()
 
-        ms_stats = compute_component_stats(
-            "mission_status", ms_samples, warmup_count, MeasurementProvenance.LOCAL_EXECUTION
-        )
-        local_measurements["mission_status"] = ms_stats.to_dict()
+                        # Validate that call_res is NOT error and returns intended mission
+                        is_err = getattr(call_res, "is_error", False)
+                        content_ok = False
+                        if not is_err:
+                            structured = getattr(call_res, "structured_content", None)
+                            if (
+                                isinstance(structured, dict)
+                                and structured.get("mission_id") == mission_id_str
+                            ):
+                                content_ok = True
+                            elif hasattr(call_res, "content") and call_res.content:
+                                text_val = getattr(call_res.content[0], "text", "")
+                                try:
+                                    parsed = json.loads(text_val)
+                                    if parsed.get("mission_id") == mission_id_str:
+                                        content_ok = True
+                                except Exception:
+                                    content_ok = False
+
+                        if not content_ok:
+                            validation_failures.append(
+                                f"mission_status payload validation failed at sample {i}"
+                            )
+                            continue
+
+                        if i >= warmup_count:
+                            ms_samples.append((t1 - t0) / 1_000_000.0)
+
+            ms_stats = compute_component_stats(
+                "mission_status",
+                ms_samples,
+                warmup_count,
+                MeasurementProvenance.LOCAL_EXECUTION,
+            )
+            local_measurements["mission_status"] = ms_stats.to_dict()
 
     # Compute headroom assessment
-    max_local_p95 = max(
-        init_stats.p95_ms if init_stats.was_executed else 0.0,
-        tl_stats.p95_ms if tl_stats.was_executed else 0.0,
-        ms_stats.p95_ms if ms_stats.was_executed else 0.0,
-    )
-    headroom_ms = ALEXA_PLUS_LATENCY_REQUIREMENT_MS - max_local_p95
-    local_headroom = (
-        f"LOCAL_PASS: All local p95 measurements ({max_local_p95:.2f}ms) are below "
-        f"{ALEXA_PLUS_LATENCY_REQUIREMENT_MS}ms target with {headroom_ms:.2f}ms headroom. "
-        f"This is LOCAL_EXECUTION only and does NOT certify remote or Alexa+ compliance."
-    )
+    if validation_failures:
+        local_headroom = (
+            f"LOCAL_FAILED: One or more MCP operations failed verification: "
+            f"{'; '.join(validation_failures)}. No false LOCAL_PASS awarded."
+        )
+    elif not all((init_stats.was_executed, tl_stats.was_executed, ms_stats.was_executed)):
+        local_headroom = (
+            "LOCAL_FAILED: Zero valid samples gathered for one or more operations. "
+            "No false LOCAL_PASS awarded."
+        )
+    else:
+        max_local_p95 = max(init_stats.p95_ms, tl_stats.p95_ms, ms_stats.p95_ms)
+        headroom_ms = ALEXA_PLUS_LATENCY_REQUIREMENT_MS - max_local_p95
+        local_headroom = (
+            f"LOCAL_PASS: All local loopback p95 measurements ({max_local_p95:.2f}ms) are below "
+            f"{ALEXA_PLUS_LATENCY_REQUIREMENT_MS}ms target with {headroom_ms:.2f}ms headroom. "
+            f"This is LOCAL_EXECUTION only and does NOT certify remote or Alexa+ compliance."
+        )
 
     try:
         sha_result = subprocess.run(
@@ -722,10 +878,12 @@ async def measure_mcp_transport_latency(
         local_provenance="LOCAL_EXECUTION",
         historical_remote_echo_ms=HISTORICAL_P0107_ECHO_MS,
         historical_remote_provenance=HISTORICAL_P0107_PROVENANCE,
+        historical_remote_reference=HISTORICAL_P0107_REFERENCE,
         historical_local_init_p50_ms=HISTORICAL_P0507_INIT_P50_MS,
         historical_local_tools_list_p50_ms=HISTORICAL_P0507_TOOLS_LIST_P50_MS,
         historical_local_mission_status_p50_ms=HISTORICAL_P0507_MISSION_STATUS_P50_MS,
         historical_local_provenance=HISTORICAL_P0507_PROVENANCE,
+        historical_local_reference=HISTORICAL_P0507_REFERENCE,
         live_remote_measurement="NOT_RUN",
         live_alexa_client_measurement="NOT_RUN",
         local_headroom_assessment=local_headroom,
@@ -744,45 +902,76 @@ async def measure_mcp_transport_latency(
 # ============================================================================
 
 
+class CostEstimateCategory(StrEnum):
+    """Categorical classification of cost estimate components."""
+
+    VERIFIED_PRICING = "VERIFIED_PRICING"
+    EXAMPLE_ASSUMPTIONS = "EXAMPLE_ASSUMPTIONS"
+    DIRECT_FEE_ZERO = "DIRECT_FEE_ZERO"
+    UNVERIFIED_RATE = "UNVERIFIED_RATE"
+    ACCOUNT_USAGE_DEPENDENT = "ACCOUNT_USAGE_DEPENDENT"
+    NOT_OBSERVED_ACCOUNT_USAGE = "NOT_OBSERVED_ACCOUNT_USAGE"
+
+
 @dataclass(frozen=True)
 class AWSServiceCostEstimate:
     """Cost estimate for a single AWS service per canonical mission."""
 
     service: str
     component: str
+    category: str
     unit: str
-    estimated_quantity: float
-    unit_price_usd: Decimal
-    estimated_cost_usd: Decimal
+    estimated_quantity: float | None
+    unit_price_usd: Decimal | None
+    estimated_cost_usd: Decimal | None
     pricing_source: str
     pricing_verified: bool
     pricing_verification_date: str
-    is_covered_by_free_tier: bool | None  # None = NOT_OBSERVED
-    is_covered_by_promotional_credit: bool | None  # None = NOT_OBSERVED
-    observed_actual_cost: str  # "NOT_OBSERVED" or actual
+    is_covered_by_free_tier: bool | str | None  # "TRUE", "ACCOUNT_USAGE_DEPENDENT", etc.
+    is_covered_by_promotional_credit: bool | str | None
+    observed_actual_cost: str  # "NOT_OBSERVED"
+    notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        tier_rep: str
+        if self.is_covered_by_free_tier is True:
+            tier_rep = "TRUE"
+        elif self.is_covered_by_free_tier is False:
+            tier_rep = "FALSE"
+        elif isinstance(self.is_covered_by_free_tier, str):
+            tier_rep = self.is_covered_by_free_tier
+        else:
+            tier_rep = "NOT_OBSERVED"
+
+        credit_rep: str
+        if self.is_covered_by_promotional_credit is True:
+            credit_rep = "TRUE"
+        elif self.is_covered_by_promotional_credit is False:
+            credit_rep = "FALSE"
+        elif isinstance(self.is_covered_by_promotional_credit, str):
+            credit_rep = self.is_covered_by_promotional_credit
+        else:
+            credit_rep = "NOT_OBSERVED"
+
         return {
             "service": self.service,
             "component": self.component,
+            "category": self.category,
             "unit": self.unit,
             "estimated_quantity": self.estimated_quantity,
-            "unit_price_usd": str(self.unit_price_usd),
-            "estimated_cost_usd": str(self.estimated_cost_usd),
+            "unit_price_usd": (
+                str(self.unit_price_usd) if self.unit_price_usd is not None else None
+            ),
+            "estimated_cost_usd": (
+                str(self.estimated_cost_usd) if self.estimated_cost_usd is not None else None
+            ),
             "pricing_source": self.pricing_source,
             "pricing_verified": self.pricing_verified,
             "pricing_verification_date": self.pricing_verification_date,
-            "is_covered_by_free_tier": (
-                self.is_covered_by_free_tier
-                if self.is_covered_by_free_tier is not None
-                else "NOT_OBSERVED"
-            ),
-            "is_covered_by_promotional_credit": (
-                self.is_covered_by_promotional_credit
-                if self.is_covered_by_promotional_credit is not None
-                else "NOT_OBSERVED"
-            ),
+            "is_covered_by_free_tier": tier_rep,
+            "is_covered_by_promotional_credit": credit_rep,
             "observed_actual_cost": self.observed_actual_cost,
+            "notes": self.notes,
         }
 
 
@@ -801,7 +990,9 @@ class AWSCostPerMission:
 
     # Category C: Pricing-based estimates
     cost_estimates: list[AWSServiceCostEstimate]
-    total_estimated_cost_usd: Decimal
+    conditional_scenario_total_usd: Decimal  # Bedrock Nova Micro example scenario
+    unestimated_components: list[str]
+    definitive_gross_total_status: str  # "NOT_ESTIMABLE_OFFLINE"
 
     # Category D: NOT_OBSERVED fields
     not_observed: list[str]
@@ -817,6 +1008,11 @@ class AWSCostPerMission:
 
     # Provenance
     provenance: str
+
+    @property
+    def total_estimated_cost_usd(self) -> Decimal:
+        """Alias for conditional_scenario_total_usd for compatibility."""
+        return self.conditional_scenario_total_usd
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -834,11 +1030,18 @@ class AWSCostPerMission:
             "category_b_local_runtime_activity": self.local_runtime_activity,
             "category_c_pricing_estimates": {
                 "estimates": [e.to_dict() for e in self.cost_estimates],
-                "total_estimated_cost_usd": str(self.total_estimated_cost_usd),
+                "conditional_scenario_total_usd": str(self.conditional_scenario_total_usd),
+                "total_estimated_cost_usd": str(self.conditional_scenario_total_usd),
+                "unestimated_components": self.unestimated_components,
+                "definitive_gross_total_status": self.definitive_gross_total_status,
                 "disclaimer": (
-                    "Estimates use independently verified official AWS pricing. "
-                    "Actual billed cost may differ due to promotional credits, "
-                    "free tier, rounding, and billing aggregation."
+                    "No single definitive gross mission dollar total is published because "
+                    "AgentCore microVM runtime costs and account-level CloudWatch quotas "
+                    "cannot be verified offline. The conditional scenario total reflects "
+                    "Bedrock Nova Micro inference only under example hypothetical assumptions "
+                    "(200 in / 100 out tokens) at verified official rates. Actual billed cost "
+                    "may differ due to promotional credits, free tier, rounding, and "
+                    "account-wide billing aggregation."
                 ),
             },
             "category_d_not_observed": self.not_observed,
@@ -846,6 +1049,11 @@ class AWSCostPerMission:
                 "personal_spend_target": self.personal_spend_target,
                 "actual_personal_spend": self.actual_personal_spend,
                 "promotional_credit_remaining": self.promotional_credit_remaining,
+                "promotional_credit_statement": (
+                    "Promotional credit of $150.00 was recorded in P-01.01. Because AgentCore "
+                    "microVM pricing and total account billing are unobserved offline, no fixed "
+                    "number of missions can be definitively guaranteed by the credit."
+                ),
             },
             "authorization": {
                 "bedrock_invocation_authorized": self.bedrock_invocation_authorized,
@@ -861,111 +1069,141 @@ class AWSCostPerMission:
 def estimate_aws_cost_per_mission() -> AWSCostPerMission:
     """Estimate AWS usage and cost for one canonical killer mission execution.
 
-    This task does NOT authorize real Bedrock invocation.
-    Uses independently verified official AWS pricing for estimates.
-    Actual billing observation requires authenticated AWS account access.
+    Invariants:
+    - This task does NOT authorize real Bedrock invocation.
+    - Uses independently verified official AWS pricing where available.
+    - AgentCore microVM costs are resource-model dependent and marked NOT_ESTIMABLE_OFFLINE.
+    - Direct library/IAM fees are distinguished from underlying account charges.
+    - CloudWatch EMF free tier is marked ACCOUNT_USAGE_DEPENDENT.
+    - No single definitive gross dollar total is published.
+    - Actual billing observation remains strictly NOT_OBSERVED.
     """
     import subprocess
 
-    # Token counts from P-01.02, P-01.03, P-07.06 live evidence
-    # P-01.02: inputTokens=8, outputTokens=3, totalTokens=11
-    # P-01.03: inputTokens=8, outputTokens=5, totalTokens=13
-    # P-07.06: actual planner inference with mission prompt
-    # Conservative canonical mission estimate: ~200 input tokens, ~100 output tokens
-    estimated_input_tokens = 200
-    estimated_output_tokens = 100
+    # Example token assumptions (hypothetical planning prompt + response)
+    # Explicitly labeled EXAMPLE_ASSUMPTIONS, not measured canonical consumption
+    example_input_tokens = 200
+    example_output_tokens = 100
 
     # Official Amazon Bedrock pricing for amazon.nova-micro-v1:0 in us-east-1
     # Source: https://aws.amazon.com/bedrock/pricing/
-    nova_micro_input_price_per_1k = Decimal("0.000035")  # per 1K input tokens
-    nova_micro_output_price_per_1k = Decimal("0.00014")  # per 1K output tokens
+    nova_micro_input_price_per_1k = Decimal("0.000035")  # $0.035 / 1M tokens
+    nova_micro_output_price_per_1k = Decimal("0.00014")  # $0.14 / 1M tokens
 
     input_cost = (
-        Decimal(str(estimated_input_tokens)) / Decimal("1000")
+        Decimal(str(example_input_tokens)) / Decimal("1000")
     ) * nova_micro_input_price_per_1k
     output_cost = (
-        Decimal(str(estimated_output_tokens)) / Decimal("1000")
+        Decimal(str(example_output_tokens)) / Decimal("1000")
     ) * nova_micro_output_price_per_1k
-    bedrock_cost = input_cost + output_cost
+    bedrock_scenario_cost = input_cost + output_cost
 
     cost_estimates = [
         AWSServiceCostEstimate(
             service="Amazon Bedrock",
             component="amazon.nova-micro-v1:0 Converse API",
-            unit="tokens",
-            estimated_quantity=float(estimated_input_tokens + estimated_output_tokens),
-            unit_price_usd=nova_micro_input_price_per_1k,  # representative
-            estimated_cost_usd=bedrock_cost,
+            category=CostEstimateCategory.VERIFIED_PRICING.value,
+            unit="tokens (200 in / 100 out example assumptions)",
+            estimated_quantity=float(example_input_tokens + example_output_tokens),
+            unit_price_usd=nova_micro_input_price_per_1k,
+            estimated_cost_usd=bedrock_scenario_cost,
             pricing_source="https://aws.amazon.com/bedrock/pricing/",
             pricing_verified=True,
             pricing_verification_date="2026-10-01",
-            is_covered_by_free_tier=None,  # NOT_OBSERVED
-            is_covered_by_promotional_credit=None,  # NOT_OBSERVED
+            is_covered_by_free_tier=False,
+            is_covered_by_promotional_credit="ACCOUNT_USAGE_DEPENDENT",
             observed_actual_cost="NOT_OBSERVED",
+            notes=(
+                "EXAMPLE_ASSUMPTIONS: 200 in / 100 out tokens are hypothetical planning "
+                "assumptions, NOT measured canonical mission consumption or billed tokens."
+            ),
         ),
         AWSServiceCostEstimate(
             service="AWS Strands Agents SDK",
             component="strands-agents==1.57.2 (open-source SDK)",
-            unit="invocations",
+            category=CostEstimateCategory.DIRECT_FEE_ZERO.value,
+            unit="library invocations",
             estimated_quantity=1.0,
             unit_price_usd=Decimal("0.00"),
             estimated_cost_usd=Decimal("0.00"),
-            pricing_source="Open-source Apache-2.0; no direct AWS charge",
+            pricing_source="Open-source Apache-2.0 library",
             pricing_verified=True,
             pricing_verification_date="2026-10-01",
             is_covered_by_free_tier=True,
-            is_covered_by_promotional_credit=None,
+            is_covered_by_promotional_credit="NOT_APPLICABLE",
             observed_actual_cost="NOT_OBSERVED",
-        ),
-        AWSServiceCostEstimate(
-            service="Amazon Bedrock AgentCore Runtime",
-            component="Serverless CodeZip microVM (per-invocation)",
-            unit="invocations",
-            estimated_quantity=1.0,
-            unit_price_usd=Decimal("0.0001"),  # estimate, pricing may vary
-            estimated_cost_usd=Decimal("0.0001"),
-            pricing_source=(
-                "AgentCore pricing not independently confirmed as of 2026-10; estimate only"
+            notes=(
+                "Direct SDK library invocation fee is $0.00. This is a client-side library charge "
+                "and does not cover underlying compute, network, or Bedrock API calls."
             ),
-            pricing_verified=False,
-            pricing_verification_date="NOT_VERIFIED",
-            is_covered_by_free_tier=None,
-            is_covered_by_promotional_credit=None,
-            observed_actual_cost="NOT_OBSERVED",
         ),
         AWSServiceCostEstimate(
             service="AWS IAM",
             component="SigV4 request signing",
-            unit="requests",
+            category=CostEstimateCategory.DIRECT_FEE_ZERO.value,
+            unit="signing requests",
             estimated_quantity=1.0,
             unit_price_usd=Decimal("0.00"),
             estimated_cost_usd=Decimal("0.00"),
-            pricing_source="IAM has no direct per-request charge",
+            pricing_source="AWS IAM standard service policy (no charge for SigV4 signing)",
             pricing_verified=True,
             pricing_verification_date="2026-10-01",
             is_covered_by_free_tier=True,
-            is_covered_by_promotional_credit=None,
+            is_covered_by_promotional_credit="NOT_APPLICABLE",
             observed_actual_cost="NOT_OBSERVED",
+            notes=(
+                "IAM SigV4 signing has no direct per-request charge. Underlying AWS service "
+                "request charges are accounted separately under their respective services."
+            ),
         ),
         AWSServiceCostEstimate(
             service="Amazon CloudWatch (EMF)",
             component="PutLogEvents EMF ingestion (prepared, NOT_RUN)",
+            category=CostEstimateCategory.ACCOUNT_USAGE_DEPENDENT.value,
             unit="log events",
             estimated_quantity=4.0,
-            unit_price_usd=Decimal("0.00"),  # First 5GB/month free; well below
+            unit_price_usd=Decimal("0.00"),
             estimated_cost_usd=Decimal("0.00"),
             pricing_source=(
-                "https://aws.amazon.com/cloudwatch/pricing/ - Logs ingestion free tier 5GB/month"
+                "https://aws.amazon.com/cloudwatch/pricing/ - 5GB/month ingestion free tier"
             ),
             pricing_verified=True,
             pricing_verification_date="2026-10-01",
-            is_covered_by_free_tier=True,
-            is_covered_by_promotional_credit=None,
+            is_covered_by_free_tier="ACCOUNT_USAGE_DEPENDENT",
+            is_covered_by_promotional_credit="NOT_OBSERVED",
             observed_actual_cost="NOT_OBSERVED",
+            notes=(
+                "CloudWatch includes 5GB/month free ingestion. Whether this mission falls within "
+                "free tier depends on aggregate account-wide usage across all services and billing "
+                "cycles, which is NOT_OBSERVED offline."
+            ),
+        ),
+        AWSServiceCostEstimate(
+            service="Amazon Bedrock AgentCore Runtime",
+            component="Serverless CodeZip microVM execution",
+            category=CostEstimateCategory.UNVERIFIED_RATE.value,
+            unit="vCPU-seconds / memory-seconds / duration",
+            estimated_quantity=None,
+            unit_price_usd=None,
+            estimated_cost_usd=None,
+            pricing_source=(
+                "AgentCore serverless microVM pricing model depends on allocated vCPU, memory, "
+                "and execution duration over time; per-invocation flat rate is unverified in "
+                "official public documentation as of 2026-10"
+            ),
+            pricing_verified=False,
+            pricing_verification_date="NOT_VERIFIED",
+            is_covered_by_free_tier="NOT_OBSERVED",
+            is_covered_by_promotional_credit="NOT_OBSERVED",
+            observed_actual_cost="NOT_OBSERVED",
+            notes=(
+                "NOT_ESTIMABLE_OFFLINE: AgentCore microVM pricing depends on runtime resource "
+                "consumption (vCPU, memory, execution duration). A flat per-invocation dollar "
+                "amount cannot be defensibly established without authenticated live profiling "
+                "and official pricing documentation."
+            ),
         ),
     ]
-
-    total_estimated = sum((e.estimated_cost_usd for e in cost_estimates), Decimal("0.00"))
 
     try:
         sha_result = subprocess.run(
@@ -993,7 +1231,15 @@ def estimate_aws_cost_per_mission() -> AWSCostPerMission:
             ),
         },
         cost_estimates=cost_estimates,
-        total_estimated_cost_usd=total_estimated,
+        conditional_scenario_total_usd=bedrock_scenario_cost,
+        unestimated_components=[
+            (
+                "Amazon Bedrock AgentCore Runtime (microVM resource consumption model "
+                "requires runtime profiling and verified pricing)"
+            ),
+            "Amazon CloudWatch (EMF) (subject to account-wide monthly free-tier quota)",
+        ],
+        definitive_gross_total_status="NOT_ESTIMABLE_OFFLINE",
         not_observed=[
             "Actual AWS account billing delta per mission",
             "Actual promotional credit consumption per mission",

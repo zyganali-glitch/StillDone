@@ -95,6 +95,7 @@ def print_human_report(results: dict[str, Any]) -> None:
             f"Alexa+ Requirement:      < {req['max_round_trip_ms']:.1f}ms "
             f"({req['verification_status']})"
         )
+        print(f"Alexa+ Source:           {req['source']}")
         print(f"Local Headroom Verdict:  {p2['compliance_assessment']['local_headroom']}")
         print(f"Remote Status:           {p2['compliance_assessment']['remote_compliance']}")
         local_ops = p2["current_local_measurements"]["measurements"]
@@ -107,10 +108,18 @@ def print_human_report(results: dict[str, Any]) -> None:
                 f"{stats.get('median_ms', 0):.2f}ms{'':<6} "
                 f"{stats.get('p95_ms', 0):.2f}ms"
             )
-        hist = p2["historical_remote_measurements"]
+        hist_remote = p2["historical_remote_measurements"]
         print(
-            f"\nHistorical Remote Echo (P-01.07): {hist['p0107_echo_ms']:.2f}ms "
-            f"({hist['provenance']})"
+            f"\nHistorical Remote Echo (P-01.07): {hist_remote['p0107_echo_ms']:.2f}ms "
+            f"({hist_remote['provenance']})"
+        )
+        hist_local = p2["historical_local_measurements"]
+        print(
+            f"Historical Local Loopback (P-05.07): "
+            f"init={hist_local['initialize_p50_ms']:.2f}ms, "
+            f"tools={hist_local['tools_list_p50_ms']:.2f}ms, "
+            f"status={hist_local['mission_status_p50_ms']:.2f}ms "
+            f"({hist_local['provenance']})"
         )
         print(f"Live Remote Transport:            {p2['live_remote_mcp_transport']['status']}")
         print(f"Live Alexa+ Client-to-MCP:        {p2['live_alexa_client_to_mcp']['status']}")
@@ -127,16 +136,28 @@ def print_human_report(results: dict[str, Any]) -> None:
         auth_status = p3["authorization"]["bedrock_invocation_authorized"]
         print(f"Bedrock Invocation Authorized:    {auth_status}")
         est = p3["category_c_pricing_estimates"]
-        total_usd = Decimal(est["total_estimated_cost_usd"])
-        print(f"Total Estimated Gross Cost:       ${total_usd:.8f} USD")
+        scenario_usd = Decimal(est["conditional_scenario_total_usd"])
+        print(
+            f"Conditional Scenario Cost:        ${scenario_usd:.8f} USD (Nova Micro planning only)"
+        )
+        print(f"Definitive Gross Mission Total:   {est['definitive_gross_total_status']}")
+        print(f"Unestimated Components:           {', '.join(est['unestimated_components'])}")
         print("\nCost Breakdown by Service (Pricing-based Estimates):")
-        print(f"{'Service':<22} {'Component':<26} {'Quantity':<10} {'Est Cost (USD)':<16}")
-        print("-" * 76)
+        print(f"{'Service':<22} {'Component':<26} {'Quantity':<12} {'Est Cost (USD)':<16}")
+        print("-" * 78)
         for item in est["estimates"]:
-            item_cost = Decimal(item["estimated_cost_usd"])
+            cost_str = (
+                f"${Decimal(item['estimated_cost_usd']):.8f}"
+                if item["estimated_cost_usd"] is not None
+                else "NOT_ESTIMABLE"
+            )
+            qty_str = (
+                f"{item['estimated_quantity']:.1f}"
+                if item["estimated_quantity"] is not None
+                else "N/A"
+            )
             print(
-                f"{item['service']:<22} {item['component'][:25]:<26} "
-                f"{item['estimated_quantity']:<10.1f} ${item_cost:.8f}"
+                f"{item['service']:<22} {item['component'][:25]:<26} {qty_str:<12} {cost_str:<16}"
             )
         cat_a_status = p3["category_a_real_measured_usage"]["status"]
         print(f"\nCategory A (Real Measured Account Usage): {cat_a_status}")

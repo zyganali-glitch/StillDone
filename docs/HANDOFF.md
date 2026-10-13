@@ -98,19 +98,25 @@ Status:
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18.01: COMPLETED (PASS Candidate, awaiting independent QA review)
+- P-18.01: REPAIRED (Consolidated repair addressing Defects A & B; awaiting independent QA review)
   - Monotonic per-step and end-to-end mission latency measured in fixture mode.
-  - Zero live external provider calls claimed.
-- P-18.02: COMPLETED (PASS Candidate, awaiting independent QA review)
-  - Loopback Streamable HTTP transport latency measured (<500ms target observed with ~496.95ms headroom).
+  - Zero import-time logger mutations; scoped suppression fully restored.
+  - Discrete execution status truth enforced (PASS, FAILED, BLOCKED, NOT_RUN); NOT_RUN steps report 0ns.
+  - Aggregate fixture timing nature explicitly disclosed; zero live calls claimed.
+- P-18.02: REPAIRED (Consolidated repair addressing Defect C; awaiting independent QA review)
+  - Loopback Streamable HTTP transport latency measured (<500ms target observed with ~492.07ms headroom).
+  - Protocol version, tool presence, and intended mission payload verified before counting valid samples.
+  - Canonical provenance strictly separated: P-01.07 historical remote echo is RECORDED_LIVE; P-05.07 loopback is LOCAL_EXECUTION.
   - Remote and Alexa+ partner client paths truthfully reported as NOT_RUN.
-- P-18.03: COMPLETED (PASS Candidate, awaiting independent QA review)
-  - Separated real account usage (NOT_OBSERVED), local activity (FIXTURE), verified official pricing estimates ($0.00012100 USD/mission), and NOT_OBSERVED billing fields.
+- P-18.03: REPAIRED (Consolidated repair addressing Defect D; awaiting independent QA review)
+  - Cost categories separated: VERIFIED_PRICING, EXAMPLE_ASSUMPTIONS, DIRECT_FEE_ZERO, ACCOUNT_USAGE_DEPENDENT, UNVERIFIED_RATE.
+  - AgentCore microVM costs marked NOT_ESTIMABLE_OFFLINE; CloudWatch EMF free tier marked ACCOUNT_USAGE_DEPENDENT.
+  - No premature gross total dollar amount published; promotional credit sufficiency claim removed.
   - Zero personal spend law ($0.00) preserved; zero Bedrock invocations authorized.
 - P-18.04+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18.04)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-18.01 → P-18.03 Bounded Batch
+Next exact task: Independent QA Review of P-18.01 → P-18.03 Consolidated Repair Batch
 (P-18.04 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
