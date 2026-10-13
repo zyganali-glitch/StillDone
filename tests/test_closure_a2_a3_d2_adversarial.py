@@ -8,6 +8,7 @@ Validates the full set of adversarial security and integrity requirements for:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -61,7 +62,9 @@ from stilldone.killer_mission import (
     KillerMissionAuthorityError,
     KillerMissionEnvironment,
     KillerMissionIntegrityError,
+    KillerMissionSequenceError,
     LiveKillerMissionSliceRunner,
+    create_authorized_post_pending_decision,
 )
 from stilldone.ledger import ActionRecord, DurableFileLedger, EvidenceRecord
 from stilldone.pending_approval import (
@@ -506,6 +509,7 @@ class TestA2AuthorityRecordStateModel:
             action_id=runner.action_cal.action_id,
             mission_id=runner.mission_id,
             at=now,
+            pending_approval_id="pa_canonical_real",
         )
 
         # Case 1: Contradictory mission_id
@@ -546,6 +550,21 @@ class TestA2AuthorityRecordStateModel:
         )
         runner._consumed_decisions_file.write_text(f"{line_bad_action}\n", encoding="utf-8")
         with pytest.raises(KillerMissionIntegrityError, match="Contradictory action_id"):
+            runner._load_consumed_decision_ids()
+
+        # Case 4: Contradictory pending_approval_id
+        line_bad_pa = json.dumps(
+            {
+                "decision_id": "dec_matched_common",
+                "consumed_at": now.isoformat(),
+                "decision": "REJECT",
+                "mission_id": str(runner.mission_id),
+                "action_id": str(runner.action_cal.action_id),
+                "pending_approval_id": "pa_contradictory_fake",
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{line_bad_pa}\n", encoding="utf-8")
+        with pytest.raises(KillerMissionIntegrityError, match="Contradictory pending_approval_id"):
             runner._load_consumed_decision_ids()
 
     def test_ledger_append_failure_and_interrupted_persistence_rollback(
@@ -617,6 +636,220 @@ class TestA2AuthorityRecordStateModel:
         with pytest.raises(ApprovalRevokedError):
             ledger = ApprovalLedger(registry=registry)
             ledger.consume(grant2, grant2.action, at=now)
+
+    def test_rejection_persists_exact_pending_approval_binding(self, tmp_path: Path) -> None:
+        """A2.1: Rejection persists exact PendingApproval binding to ledger and JSONL."""
+        runner = _setup_live_runner(tmp_path)
+        pa_id = "pa_exact_binding_9999"
+        runner._persist_consumed_decision_id(
+            "dec_rejection_binding_1",
+            pending_approval_id=pa_id,
+            action_id=str(runner.action_cal.action_id),
+        )
+
+        # 1. Verify canonical ApprovalLedger recorded rejection with exact pending_approval_id
+        ledger_rec = runner.env.approval_ledger.get_record(pa_id)
+        assert ledger_rec is not None
+        assert ledger_rec.status == ApprovalUsageStatus.REJECTED
+        assert ledger_rec.approval_id == pa_id
+        assert ledger_rec.decision_id == "dec_rejection_binding_1"
+        assert runner.env.approval_ledger.is_rejected(pa_id) is True
+
+        # 2. Verify JSONL contains both action_id and pending_approval_id
+        assert runner._consumed_decisions_file.exists()
+        line = json.loads(runner._consumed_decisions_file.read_text(encoding="utf-8").strip())
+        assert line["decision_id"] == "dec_rejection_binding_1"
+        assert line["pending_approval_id"] == pa_id
+        assert line["action_id"] == str(runner.action_cal.action_id)
+        assert line["decision"] == "REJECT"
+
+    def test_two_distinct_decision_ids_cannot_independently_reject_same_pending_approval(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.2: Two distinct decision IDs cannot independently reject the same PendingApproval."""
+        runner = _setup_live_runner(tmp_path)
+        pa_id = "pa_single_rejection_target"
+
+        # First rejection succeeds
+        runner._persist_consumed_decision_id(
+            "dec_rej_alpha",
+            pending_approval_id=pa_id,
+            action_id=str(runner.action_cal.action_id),
+        )
+        assert "dec_rej_alpha" in runner._consumed_approval_decision_ids
+        assert runner.env.approval_ledger.is_rejected(pa_id) is True
+
+        # Second decision attempting to reject the same pending approval must fail closed
+        with pytest.raises(
+            (KillerMissionAuthorityError, ApprovalAlreadyUsedError),
+            match="already rejected",
+        ):
+            runner._persist_consumed_decision_id(
+                "dec_rej_beta",
+                pending_approval_id=pa_id,
+                action_id=str(runner.action_cal.action_id),
+            )
+
+        # Second decision was NOT added to in-memory set, JSONL, or ledger
+        assert "dec_rej_beta" not in runner._consumed_approval_decision_ids
+        assert runner.env.approval_ledger.is_decision_consumed("dec_rej_beta") is False
+
+    def test_synthetic_approve_passed_to_rejection_persistence_prohibited(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.3: Synthetic APPROVE passed to rejection persistence is prohibited."""
+        runner = _setup_live_runner(tmp_path)
+
+        with pytest.raises(
+            KillerMissionAuthorityError, match="Prohibited decision value 'APPROVE'"
+        ):
+            runner._persist_consumed_decision_id(
+                "synth_approve_dec_1",
+                decision=ApprovalDecision.APPROVE,
+                action_id=str(runner.action_cal.action_id),
+            )
+
+        with pytest.raises(
+            KillerMissionAuthorityError, match="Prohibited decision value 'APPROVE'"
+        ):
+            runner._persist_consumed_decision_id(
+                "synth_approve_dec_2",
+                decision="APPROVE",
+                action_id=str(runner.action_cal.action_id),
+            )
+
+        # Must not be recorded
+        assert "synth_approve_dec_1" not in runner._consumed_approval_decision_ids
+        assert "synth_approve_dec_2" not in runner._consumed_approval_decision_ids
+
+    def test_canonical_only_history_followed_by_new_decision_reloads_safely(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.4: Canonical-only history A followed by new decision B reloads safely
+        without false discrepancy.
+        """
+        runner = _setup_live_runner(tmp_path)
+        now = datetime.now(UTC)
+
+        # 1. Add canonical-only decision A directly to ledger (no JSONL)
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=runner.action_cal.action_id,
+                mission_id=runner.mission_id,
+                action=runner.action_cal,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+        runner.env.approval_ledger.record_rejection(
+            "canonical_dec_a",
+            action_id=runner.action_cal.action_id,
+            mission_id=runner.mission_id,
+            at=now,
+            pending_approval_id="pa_historical_a",
+        )
+        assert runner._consumed_decisions_file.exists() is False
+
+        # 2. Add new decision B via live helper (persists to JSONL and ledger)
+        runner._consumed_approval_decision_ids.clear()
+        runner._load_consumed_decision_ids()
+        assert "canonical_dec_a" in runner._consumed_approval_decision_ids
+
+        runner._persist_consumed_decision_id(
+            "new_dec_b",
+            action_id=str(runner.action_cal.action_id),
+            pending_approval_id="pa_new_b",
+        )
+        assert "new_dec_b" in runner._consumed_approval_decision_ids
+
+        # 3. Simulate process restart / reload
+        runner._consumed_approval_decision_ids.clear()
+        runner._load_consumed_decision_ids()
+
+        # Both canonical decision A and new decision B must be loaded cleanly without
+        # false discrepancy
+        assert "canonical_dec_a" in runner._consumed_approval_decision_ids
+        assert "new_dec_b" in runner._consumed_approval_decision_ids
+
+    def test_concurrent_duplicate_decisions_cannot_both_succeed(self, tmp_path: Path) -> None:
+        """A2.8: Concurrent duplicate decisions cannot both succeed."""
+        runner = _setup_live_runner(tmp_path)
+        success_count = 0
+        authority_error_count = 0
+
+        def _persist_same() -> None:
+            nonlocal success_count, authority_error_count
+            try:
+                runner._persist_consumed_decision_id(
+                    "concurrent_dup_decision_id",
+                    action_id=str(runner.action_cal.action_id),
+                )
+                success_count += 1
+            except KillerMissionAuthorityError:
+                authority_error_count += 1
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            f1 = executor.submit(_persist_same)
+            f2 = executor.submit(_persist_same)
+            f1.result()
+            f2.result()
+
+        assert success_count == 1
+        assert authority_error_count == 1
+        assert "concurrent_dup_decision_id" in runner._consumed_approval_decision_ids
+
+    def test_legacy_valid_history_interpreted_cleanly_and_corrupt_history_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """A2.10: Legacy valid history with minimal fields loads cleanly;
+        corrupt file fails closed.
+        """
+        runner = _setup_live_runner(tmp_path)
+        now = datetime.now(UTC)
+
+        # 1. Canonical ledger has decision
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=runner.action_cal.action_id,
+                mission_id=runner.mission_id,
+                action=runner.action_cal,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+        runner.env.approval_ledger.record_rejection(
+            "legacy_dec_1",
+            action_id=runner.action_cal.action_id,
+            mission_id=runner.mission_id,
+            at=now,
+        )
+
+        # Legacy JSONL without action_id or pending_approval_id
+        legacy_line = json.dumps(
+            {
+                "decision_id": "legacy_dec_1",
+                "consumed_at": now.isoformat(),
+                "decision": "REJECT",
+                "mission_id": str(runner.mission_id),
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{legacy_line}\n", encoding="utf-8")
+
+        runner._consumed_approval_decision_ids.clear()
+        runner._load_consumed_decision_ids()
+        assert "legacy_dec_1" in runner._consumed_approval_decision_ids
+
+        # 2. Corrupt history (non-UTC offset) fails closed with trustworthy reason
+        corrupt_line = json.dumps(
+            {
+                "decision_id": "corrupt_dec_2",
+                "consumed_at": "2026-10-04T12:00:00+05:00",
+            }
+        )
+        runner._consumed_decisions_file.write_text(f"{corrupt_line}\n", encoding="utf-8")
+        runner._consumed_approval_decision_ids.clear()
+        with pytest.raises(KillerMissionIntegrityError, match="consumed_at timestamp must be UTC"):
+            runner._load_consumed_decision_ids()
 
 
 # ===========================================================================
@@ -862,6 +1095,285 @@ class TestA3UnrestoredRunnerExecutionGating:
 
         with pytest.raises(KillerMissionIntegrityError, match="Cannot execute drift"):
             runner2.step_p13_07_mutate_and_drift()
+
+    def test_unrestored_runner_raw_reject_cannot_change_durable_approval_record(
+        self, tmp_path: Path
+    ) -> None:
+        """A3 adversarial 1: On detected-but-unrestored runner, raw REJECT cannot
+        change durable approval records.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        initial_records = len(runner2.env.approval_ledger.get_decision_records())
+        assert runner2.total_writes == 0
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+
+        # Verify no durable records changed
+        assert len(runner2.env.approval_ledger.get_decision_records()) == initial_records
+        assert runner2.total_writes == 0
+        if runner2._consumed_decisions_file.exists():
+            content = runner2._consumed_decisions_file.read_text(encoding="utf-8").strip()
+            assert content == ""
+
+    def test_unrestored_runner_callback_reject_cannot_change_durable_approval_record(
+        self, tmp_path: Path
+    ) -> None:
+        """A3 adversarial 2: On detected-but-unrestored runner, callback REJECT is
+        blocked before invocation.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        callback_invoked = False
+
+        def cb(pa: Any) -> Any:
+            nonlocal callback_invoked
+            callback_invoked = True
+            return ApprovalDecision.REJECT
+
+        runner2.post_pending_decision_callback = cb
+        initial_records = len(runner2.env.approval_ledger.get_decision_records())
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=None)
+
+        # Gate triggered before callback invocation
+        assert callback_invoked is False
+        assert len(runner2.env.approval_ledger.get_decision_records()) == initial_records
+        assert runner2.total_writes == 0
+
+    def test_unrestored_runner_bound_typed_reject_cannot_change_durable_approval_record(
+        self, tmp_path: Path
+    ) -> None:
+        """A3 adversarial 3: On detected-but-unrestored runner, bound typed REJECT
+        cannot change durable records.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        pending = create_pending_approval(
+            validate_action_contract(runner2.action_cal),
+            requested_at=datetime.now(UTC),
+        )
+        typed_reject = create_authorized_post_pending_decision(
+            pending,
+            target_event_id="seeded_evt_123",
+            action_parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+            decision=ApprovalDecision.REJECT,
+        )
+
+        initial_records = len(runner2.env.approval_ledger.get_decision_records())
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=typed_reject)
+
+        assert runner2.env.approval_ledger.is_decision_consumed(typed_reject.decision_id) is False
+        assert len(runner2.env.approval_ledger.get_decision_records()) == initial_records
+        assert runner2.total_writes == 0
+
+    def test_unrestored_runner_approve_cannot_authorize_mutation(self, tmp_path: Path) -> None:
+        """A3 adversarial 4: On detected-but-unrestored runner, raw or typed APPROVE
+        cannot authorize mutation.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        pending = create_pending_approval(
+            validate_action_contract(runner2.action_cal),
+            requested_at=datetime.now(UTC),
+        )
+        typed_approve = create_authorized_post_pending_decision(
+            pending,
+            target_event_id="seeded_evt_123",
+            action_parameters={"start_time": "2026-10-04T07:30:00+00:00"},
+            decision=ApprovalDecision.APPROVE,
+        )
+
+        # Raw APPROVE fails closed under recovery gate
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
+
+        # Typed APPROVE fails closed under recovery gate
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=typed_approve)
+
+        assert runner2.total_writes == 0
+
+    def test_unrestored_runner_none_decision_cannot_bypass_recovery_gate(
+        self, tmp_path: Path
+    ) -> None:
+        """A3 adversarial 5: On detected-but-unrestored runner, None decision
+        cannot bypass recovery gate.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute calendar mutation approval for existing mission",
+        ):
+            runner2.step_p13_05_calendar_approve(decision=None)
+
+        assert runner2.total_writes == 0
+
+    def test_unrestored_runner_direct_consumption_helper_cannot_create_authoritative_state(
+        self, tmp_path: Path
+    ) -> None:
+        """A3 adversarial 6: On detected-but-unrestored runner, direct helper
+        cannot create state.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        initial_records = len(runner2.env.approval_ledger.get_decision_records())
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot persist consumed decision for existing mission",
+        ):
+            runner2._persist_consumed_decision_id(
+                "unrestored_helper_attempt",
+                action_id=str(runner2.action_cal.action_id),
+            )
+
+        assert len(runner2.env.approval_ledger.get_decision_records()) == initial_records
+        assert "unrestored_helper_attempt" not in runner2._consumed_approval_decision_ids
+        assert runner2.total_writes == 0
+
+    def test_unrestored_runner_zero_provider_writes_across_all_paths(self, tmp_path: Path) -> None:
+        """A3 adversarial 7: Detected-but-unrestored runner guarantees zero provider
+        writes across all step paths.
+        """
+        _setup_live_runner(tmp_path)
+        runner2 = _setup_live_runner(tmp_path)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_01_seed()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_02_plan()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_03_tasks_prep()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_04_calendar_pause()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_05_calendar_approve(decision=None)
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_06_ready_receipt()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.step_p13_07_mutate_and_drift()
+        with pytest.raises(KillerMissionIntegrityError):
+            runner2.run_full_slice()
+
+        assert runner2.total_writes == 0
+
+    def test_first_time_runner_execution_ordering_and_negative_approval_boundaries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A3 adversarial 8: First-time runner retains legitimate P-13 ordering
+        and negative approval boundaries.
+        """
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        assert runner.is_first_time_storage is True
+        assert runner.existing_mission_detected is False
+
+        # 1. Sequence error: calling step 5 before step 4 establishes pending approval
+        with pytest.raises(
+            KillerMissionSequenceError, match="Cannot approve calendar update before P-13.04"
+        ):
+            runner.step_p13_05_calendar_approve()
+
+        # Mock seed for Step 1
+        monkeypatch.setattr(
+            "stilldone.killer_mission.seed_canonical_demo_resources",
+            lambda **kwargs: DemoSeedResult(
+                status=SeedOperationStatus.MUTATION_EXECUTED,
+                provenance=runner.env.provenance,
+                calendar_id=runner.env.scope.calendar_id,
+                task_list_id=runner.env.scope.task_list_id,
+                event_id="seeded_clean_evt_456",
+                event_start_time=runner.initial_start_time,
+                writes_performed=1,
+                readback_verified=True,
+                is_seed_complete=True,
+                details="Clean seed",
+            ),
+        )
+
+        res1 = runner.step_p13_01_seed()
+        assert res1.status == "PASS"
+
+        # Step 4 pause establishes pending approval
+        res4 = runner.step_p13_04_calendar_pause()
+        assert res4.status == "PASS"
+        assert runner.pending_approval is not None
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        # 2. Negative approval boundary: raw APPROVE parameter is rejected
+        with pytest.raises(
+            KillerMissionAuthorityError, match="Direct live approval bypass prohibited: raw APPROVE"
+        ):
+            runner.step_p13_05_calendar_approve(decision=ApprovalDecision.APPROVE)
+
+        # 3. Negative approval boundary: unauthenticated callback returning raw APPROVE
+        runner.post_pending_decision_callback = lambda pa: ApprovalDecision.APPROVE
+        res_cb = runner.step_p13_05_calendar_approve(decision=None)
+        assert res_cb.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res_cb.writes_performed == 0
+        assert res_cb.is_verified is False
+
+        # 4. Legitimate rejection: bound typed REJECT records rejection and terminates
+        runner.post_pending_decision_callback = None
+        auth_dec_rej = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+        res_rej = runner.step_p13_05_calendar_approve(decision=auth_dec_rej)
+        assert res_rej.status == "REJECTED"
+        assert res_rej.writes_performed == 0
+        assert runner.env.approval_ledger.is_rejected(pa_id) is True
+        assert runner.env.approval_ledger.is_decision_consumed(auth_dec_rej.decision_id) is True
+
+        # 5. Replay attempt on same rejected decision/pending approval fails closed
+        with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+            runner.step_p13_05_calendar_approve(decision=auth_dec_rej)
 
 
 # ===========================================================================

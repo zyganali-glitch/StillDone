@@ -485,6 +485,10 @@ class UsedApprovalRegistry:
                     )
                 if existing.status == ApprovalUsageStatus.REVOKED:
                     return existing
+                if existing.status == ApprovalUsageStatus.REJECTED:
+                    raise ApprovalAlreadyUsedError(
+                        f"Approval '{aid}' was already rejected and cannot be revoked"
+                    )
 
             record = ApprovalConsumptionRecord(
                 approval_id=aid,
@@ -735,6 +739,13 @@ class ApprovalLedger:
                                         f"Contradictory rejection lineage for '{pa_key}' in "
                                         "durable history"
                                     )
+                                if existing_pa_rec.decision_id != did:
+                                    raise MalformedApprovalStateError(
+                                        f"Duplicate or contradictory rejection for pending "
+                                        f"approval '{pa_key}' in durable history: already "
+                                        f"rejected by decision '{existing_pa_rec.decision_id}', "
+                                        f"cannot be rejected again by decision '{did}'"
+                                    )
                                 continue
                         hydrated_records[pa_key] = rec
                     continue
@@ -922,6 +933,16 @@ class ApprovalLedger:
             return set(
                 r.decision_id for r in self._registry.get_decision_records() if r.decision_id
             )
+
+    def get_decision_records(self) -> tuple[ApprovalConsumptionRecord, ...]:
+        """Retrieve all recorded decision records through public ledger boundary."""
+        with self._lock:
+            return self._registry.get_decision_records()
+
+    def get_decision_record(self, decision_id: str) -> ApprovalConsumptionRecord | None:
+        """Retrieve the record for a specific decision ID through public ledger boundary."""
+        with self._lock:
+            return self._registry.get_decision_record(decision_id)
 
     def record_rejection(
         self,

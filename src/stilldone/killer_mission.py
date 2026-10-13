@@ -2521,7 +2521,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             ledger_dec_ids: set[str] = set()
             ledger_records_by_id: dict[str, Any] = {}
             if hasattr(self.env, "approval_ledger") and self.env.approval_ledger is not None:
-                for rec in self.env.approval_ledger._registry.get_decision_records():
+                for rec in self.env.approval_ledger.get_decision_records():
                     if rec.decision_id:
                         ledger_dec_ids.add(rec.decision_id)
                         ledger_records_by_id[rec.decision_id] = rec
@@ -2663,18 +2663,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     # current approval/decision authority. The JSONL is auxiliary historical
                     # input only — it must never independently authorize execution.
                     # Missing, contradictory or incomplete evidence must fail closed.
-                    if loaded_ids and ledger_dec_ids:
-                        # Both nonempty: must match exactly
-                        if loaded_ids != ledger_dec_ids:
-                            raise KillerMissionIntegrityError(
-                                "Discrepancy detected between decision log and canonical approval "
-                                "ledger: JSONL has decisions "
-                                f"{loaded_ids - ledger_dec_ids or 'matching'}, "
-                                f"ledger has decisions "
-                                f"{ledger_dec_ids - loaded_ids or 'matching'}; "
-                                "reconciliation required"
-                            )
-                    elif loaded_ids and not ledger_dec_ids:
+                    if loaded_ids and not ledger_dec_ids:
                         # JSONL has decisions but canonical ledger is empty — the JSONL
                         # cannot independently authorize; fail closed.
                         raise KillerMissionIntegrityError(
@@ -2683,13 +2672,19 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                             "JSONL cannot be an independent authorization source. "
                             "Missing canonical ledger evidence must fail closed."
                         )
-                    elif ledger_dec_ids and not loaded_ids:
-                        # Canonical ledger has decisions but JSONL is empty/absent.
-                        # The ledger is authoritative; this is acceptable but log it
-                        # as the auxiliary history is incomplete.
-                        pass  # Ledger is authoritative; JSONL absence is not fatal.
-                    if not ledger_dec_ids:
-                        self._consumed_approval_decision_ids.update(loaded_ids)
+                    elif loaded_ids - ledger_dec_ids:
+                        # Auxiliary JSONL contains decisions not present in the authoritative
+                        # canonical ApprovalLedger. Auxiliary records cannot claim authority without
+                        # matching canonical evidence; fail closed.
+                        unmatched = loaded_ids - ledger_dec_ids
+                        raise KillerMissionIntegrityError(
+                            "Discrepancy detected between decision log and canonical approval "
+                            f"ledger: JSONL has decisions {unmatched} not found in canonical "
+                            "ledger; auxiliary log cannot independently establish authority "
+                            "without matching trusted canonical evidence."
+                        )
+                    # Canonical-only history (ledger_dec_ids - loaded_ids) is completely valid,
+                    # as ApprovalLedger backed by canonical mission ledger is authoritative.
                 except OSError as e:
                     raise KillerMissionIntegrityError(
                         f"Failed to read durable consumed approval decisions: {e}"
@@ -2702,12 +2697,41 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         decision: ApprovalDecision | str = ApprovalDecision.REJECT,
         action_id: str | None = None,
         mission_id: str | None = None,
+        pending_approval_id: str | None = None,
     ) -> None:
         """Durably persist consumed decision ID with append, fsync, and atomic rollback."""
         if getattr(self, "_persistence_failed", False):
             raise KillerMissionIntegrityError(
                 "Persistence failure previously occurred; "
                 "cannot continue authorization-sensitive operations"
+            )
+
+        dec_str = decision.value if isinstance(decision, ApprovalDecision) else str(decision)
+        if dec_str != ApprovalDecision.REJECT.value:
+            raise KillerMissionAuthorityError(
+                f"Prohibited decision value '{dec_str}' passed to rejection persistence: "
+                "until an authenticated production approval channel exists, persisting "
+                "APPROVE is prohibited and cannot be recorded as a rejection"
+            )
+
+        # Replay check: already consumed decisions fail closed under authority boundary
+        if decision_id in self._consumed_approval_decision_ids or (
+            hasattr(self.env, "approval_ledger")
+            and self.env.approval_ledger is not None
+            and self.env.approval_ledger.is_decision_consumed(decision_id)
+        ):
+            raise KillerMissionAuthorityError(
+                f"Approval decision '{decision_id}' has already been consumed "
+                "(duplicate/replay prohibited)"
+            )
+
+        # A3 RECOVERY GATE: Helper cannot mutate durable state on unrestored runner
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                f"Cannot persist consumed decision for existing mission '{self.mission_id}': "
+                "an existing durable mission record was detected in persistent storage, "
+                "but full safe rehydration is not supported. "
+                "Use a new mission ID with fresh stable storage."
             )
 
         with self._consumed_decisions_lock:
@@ -2738,7 +2762,6 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     ) from exc
 
             now_utc = datetime.now(UTC)
-            dec_str = decision.value if isinstance(decision, ApprovalDecision) else str(decision)
             mid_str = str(mission_id) if mission_id else str(self.mission_id)
             act_str = (
                 str(action_id)
@@ -2750,6 +2773,25 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 raise KillerMissionIntegrityError(
                     "Cannot persist approval decision without action_id binding"
                 )
+
+            pa_str = str(pending_approval_id) if pending_approval_id else None
+
+            # Check if pending_approval was already rejected/consumed in approval_ledger
+            if (
+                pa_str is not None
+                and hasattr(self.env, "approval_ledger")
+                and self.env.approval_ledger is not None
+            ):
+                if self.env.approval_ledger.is_rejected(pa_str):
+                    raise KillerMissionAuthorityError(
+                        f"Pending approval '{pa_str}' was already rejected; "
+                        "second decision cannot independently reject the same pending approval"
+                    )
+                if self.env.approval_ledger.is_consumed(pa_str):
+                    raise KillerMissionAuthorityError(
+                        f"Pending approval '{pa_str}' was already consumed; "
+                        "rejection cannot overwrite consumed approval"
+                    )
 
             # Ensure action exists in mission ledger using public method get_action
             if hasattr(self.env, "mission_ledger") and self.env.mission_ledger is not None:
@@ -2774,12 +2816,16 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                             f"Action '{act_str}' not found in ledger; cannot record decision"
                         ) from exc
 
-            rec = {
+            rec: dict[str, Any] = {
                 "decision_id": decision_id,
                 "consumed_at": now_utc.isoformat(),
                 "decision": dec_str,
                 "mission_id": mid_str,
+                "action_id": act_str,
             }
+            if pa_str is not None:
+                rec["pending_approval_id"] = pa_str
+
             line = json.dumps(rec) + "\n"
 
             orig_size = (
@@ -2818,6 +2864,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                         action_id=ActionId(act_str),
                         mission_id=MissionId(mid_str),
                         at=now_utc,
+                        pending_approval_id=pa_str,
                     )
                 except Exception as exc:
                     # Rollback the JSONL append if ledger append fails
@@ -3092,6 +3139,29 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         come through an authenticated, explicitly authorized post-PendingApproval
         human decision channel.
         """
+        # Replay check: already consumed decision ID fails closed under authority boundary
+        dec_id = getattr(decision, "decision_id", None)
+        if dec_id and (
+            dec_id in self._consumed_approval_decision_ids
+            or (
+                hasattr(self.env, "approval_ledger")
+                and self.env.approval_ledger is not None
+                and self.env.approval_ledger.is_decision_consumed(str(dec_id))
+            )
+        ):
+            raise KillerMissionAuthorityError(
+                f"Approval decision '{dec_id}' has already been consumed (replay prohibited)"
+            )
+
+        # A3 RECOVERY GATE: Block decision paths on unrestored runner at entry boundary
+        if self._existing_mission_detected and not self._execution_state_restored:
+            raise KillerMissionIntegrityError(
+                "Cannot execute calendar mutation approval for existing mission "
+                f"'{self.mission_id}': an existing durable mission record was detected "
+                "in persistent storage, but full safe rehydration is not supported. "
+                "Use a new mission ID with fresh stable storage."
+            )
+
         if getattr(self.env, "is_ephemeral_storage", False) or not getattr(
             self.env, "has_explicit_base_dir", True
         ):
@@ -3106,9 +3176,20 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 "cannot continue authorization-sensitive operations"
             )
         self._require_preflight()
-        if self.pending_approval is None:
+        if not hasattr(self, "pending_approval") or self.pending_approval is None:
             raise KillerMissionSequenceError(
                 "Cannot approve calendar update before P-13.04 establishes PendingApproval"
+            )
+
+        pa_id_str = str(self.pending_approval.pending_approval_id)
+        if (
+            hasattr(self.env, "approval_ledger")
+            and self.env.approval_ledger is not None
+            and self.env.approval_ledger.is_rejected(pa_id_str)
+        ):
+            raise KillerMissionAuthorityError(
+                f"Pending approval '{pa_id_str}' has already been consumed / rejected "
+                "(replay prohibited)"
             )
 
         eff_decision = decision
@@ -3228,6 +3309,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 decision=eff_decision.decision,
                 action_id=str(self.action_cal.action_id),
                 mission_id=str(self.mission_id),
+                pending_approval_id=str(self.pending_approval.pending_approval_id),
             )
             return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
 
