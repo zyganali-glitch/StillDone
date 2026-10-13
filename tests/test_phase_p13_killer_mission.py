@@ -1368,18 +1368,14 @@ def _live_runner_for_boundary_tests(
     live_env: KillerMissionEnvironment | None = None,
     *,
     prepare_preceding_steps: bool | None = None,
+    seeded_event_id: str | None = None,
     **kwargs: object,
 ) -> LiveKillerMissionSliceRunner:
     """Live runner over production transport classes with injected (non-network) clients."""
     from datetime import UTC, datetime
 
     from stilldone.demo_isolation import DemoResourceScope
-    from stilldone.domain.action import (
-        ActionContract,
-        ActionType,
-        ResourceKind,
-        TargetIdentity,
-    )
+    from stilldone.domain.action import ActionType
     from stilldone.killer_mission import LivePreflightReport
 
     if live_env is None:
@@ -1404,9 +1400,9 @@ def _live_runner_for_boundary_tests(
             SymbolicTargetRef,
         )
 
-        fake_p = MagicMock(spec=BedrockPlannerAdapter)
+        mid_str = str(kwargs.get("mission_id") or "11111111-2222-3333-4444-555555555555")
         valid_p = CandidatePlanProposal.create(
-            mission_id="11111111-2222-3333-4444-555555555555",
+            mission_id=mid_str,
             steps=[
                 CandidateActionProposal.create(
                     action_type=ActionType.WEATHER_READ,
@@ -1425,6 +1421,7 @@ def _live_runner_for_boundary_tests(
                 ),
             ],
         )
+        fake_p = MagicMock(spec=BedrockPlannerAdapter)
         fake_p.plan.return_value = MagicMock(plan=valid_p)
         kwargs["bedrock_planner"] = fake_p
 
@@ -1474,6 +1471,10 @@ def _live_runner_for_boundary_tests(
     )
     if should_prepare:
         from stilldone.action_policy import validate_action_contract
+        from stilldone.execution.compiler import compile_candidate_plan
+        from stilldone.execution.contracts import SymbolicTargetResolver
+        from stilldone.execution.scheduler import schedule_execution
+        from stilldone.execution.state import ExecutionStateTracker
         from stilldone.killer_mission import KillerMissionStepResult
         from stilldone.planning.contracts import (
             CandidateActionProposal,
@@ -1482,7 +1483,7 @@ def _live_runner_for_boundary_tests(
         )
         from stilldone.verifier.contracts import VerificationObservation
 
-        if valid_p is None:
+        if valid_p is None or valid_p.mission_id != runner.mission_id:
             valid_p = CandidatePlanProposal.create(
                 mission_id=str(runner.mission_id),
                 steps=[
@@ -1505,22 +1506,21 @@ def _live_runner_for_boundary_tests(
             )
         runner.candidate_plan = valid_p
         runner.validated_candidate_plan = valid_p
-        runner.seeded_event_id = "provider_evt_seeded_boundary"
-        runner.action_cal = ActionContract.create(
-            mission_id=runner.mission_id,
-            action_type=ActionType.CALENDAR_UPDATE,
-            target=TargetIdentity(
-                system="google_calendar",
-                resource_kind=ResourceKind.CALENDAR_EVENT,
-                resource_id=runner.seeded_event_id,
-                parent_id=runner.env.scope.calendar_id,
-            ),
-            parameters=getattr(
-                runner.action_cal, "parameters", {"start_time": runner.desired_start_time}
-            ),
-            action_id=runner.action_cal.action_id,
+        runner.seeded_event_id = seeded_event_id or "provider_evt_seeded_boundary"
+        resolver = SymbolicTargetResolver(
+            scope=runner.env.scope,
+            event_id_mappings={
+                SymbolicTargetRef.LEAVE_FOR_SCHOOL: runner.seeded_event_id,
+            },
         )
+        runner.execution_contract = compile_candidate_plan(valid_p, resolver)
+        runner.schedule = schedule_execution(runner.execution_contract)
+        runner.tracker = ExecutionStateTracker(runner.execution_contract, runner.schedule)
+        runner.action_weather = runner.execution_contract.actions[0]
+        runner.action_task = runner.execution_contract.actions[1]
+        runner.action_cal = runner.execution_contract.actions[2]
         runner.validated_action_cal = validate_action_contract(runner.action_cal)
+        runner.created_task_id = "t_boundary_prep_001"
         runner.step_results["P-13.01"] = KillerMissionStepResult(
             task_id="P-13.01",
             step_name="Seed Initial State",
@@ -2005,8 +2005,10 @@ def test_live_approval_alternate_entry_and_replay_controls(
     )
     from stilldone.pending_approval import ApprovalDecision
 
-    runner = _live_runner_for_boundary_tests(monkeypatch)
-    runner.seeded_event_id = "provider_evt_live_test_123"
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        seeded_event_id="provider_evt_live_test_123",
+    )
 
     # Setup runner steps up to P-13.04 (approval pause)
     runner.step_p13_04_calendar_pause()
@@ -2188,8 +2190,10 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     )
     from stilldone.pending_approval import ApprovalDecision
 
-    runner = _live_runner_for_boundary_tests(monkeypatch)
-    runner.seeded_event_id = "provider_evt_live_test_456"
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        seeded_event_id="provider_evt_live_test_456",
+    )
 
     # Setup up to approval pause
     runner.step_p13_04_calendar_pause()
@@ -2384,7 +2388,8 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 3. Manually injected non-null invalid candidate into runner state: zero writes
     runner_injected = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy3 = MagicMock()
-    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3  # type: ignore[attr-defined]
+    cal_trans3 = runner_injected.env.cal_seed_transport
+    cal_trans3.create_event = cal_seed_spy3  # type: ignore[attr-defined]
     runner_injected.candidate_plan = bad_plan  # manually injected invalid plan
     with pytest.raises(CanonicalKillerPlanValidationError):
         runner_injected.step_p13_01_seed()
@@ -2394,7 +2399,8 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 4. Plan mutation / replacement after validation: zero writes unless revalidated
     runner_tampered = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy4 = MagicMock()
-    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4  # type: ignore[attr-defined]
+    cal_trans4 = runner_tampered.env.cal_seed_transport
+    cal_trans4.create_event = cal_seed_spy4  # type: ignore[attr-defined]
     # Set validated_candidate_plan to valid, but mutate candidate_plan to bad_plan
     runner_tampered.validated_candidate_plan = MagicMock()
     runner_tampered.candidate_plan = bad_plan
@@ -2612,8 +2618,10 @@ def test_repair_a1_shared_live_approval_boundary_inherited_bypass_prohibited(
     )
     from stilldone.pending_approval import ApprovalDecision
 
-    runner = _live_runner_for_boundary_tests(monkeypatch)
-    runner.seeded_event_id = "provider_evt_live_a1_bypass"
+    runner = _live_runner_for_boundary_tests(
+        monkeypatch,
+        seeded_event_id="provider_evt_live_a1_bypass",
+    )
     runner.operator_approved = True
 
     # Advance to pending approval
@@ -2674,8 +2682,8 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
         monkeypatch,
         live_env=live_env,
         operator_approved=True,
+        seeded_event_id="provider_evt_live_a2",
     )
-    runner.seeded_event_id = "provider_evt_live_a2"
     runner.step_p13_04_calendar_pause()
     pending = runner.pending_approval
     assert pending is not None

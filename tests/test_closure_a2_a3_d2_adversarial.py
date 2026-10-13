@@ -2304,3 +2304,381 @@ class TestD2PublicSummaryPrivacy:
         assert "evt_raw_123" in auth["human_summary"]
         # Calling to_dict(redact_identifiers=False) is identical to authoritative
         assert contract.to_dict(redact_identifiers=False) == auth
+
+
+# ===========================================================================
+# Execution Action Contract Parity & Anti-Drift Boundary
+# ===========================================================================
+
+
+def _advance_runner_through_steps_1_and_2(
+    runner: LiveKillerMissionSliceRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    event_id: str = "seeded_evt_clean_123",
+) -> None:
+    monkeypatch.setattr(
+        "stilldone.killer_mission.seed_canonical_demo_resources",
+        lambda **kwargs: DemoSeedResult(
+            status=SeedOperationStatus.MUTATION_EXECUTED,
+            provenance=runner.env.provenance,
+            calendar_id=runner.env.scope.calendar_id,
+            task_list_id=runner.env.scope.task_list_id,
+            event_id=event_id,
+            event_start_time=runner.initial_start_time,
+            writes_performed=1,
+            readback_verified=True,
+            is_seed_complete=True,
+            details="Seeded clean demo event",
+        ),
+    )
+    s1 = runner.step_p13_01_seed()
+    assert s1.status == "PASS"
+    s2 = runner.step_p13_02_plan()
+    assert s2.status == "PASS"
+
+
+def _advance_runner_through_step_3(
+    runner: LiveKillerMissionSliceRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: str = "t_clean_123",
+) -> None:
+    monkeypatch.setattr(
+        runner.tasks_create_adapter,
+        "create_task",
+        lambda act, **kw: TaskCreateResult(
+            status=TaskCreateStatus.CREATED,
+            task_id=task_id,
+            task_list_id=runner.env.scope.task_list_id,
+            title="Pack backpacks",
+            due=runner.demo_date,
+            writes_performed=1,
+        ),
+    )
+    monkeypatch.setattr(
+        runner.tasks_read_adapter,
+        "read_task",
+        lambda act: TaskReadResult(
+            status=TaskReadStatus.MATCH,
+            observation=TaskObservation(
+                task_id=act.target.resource_id,
+                task_list_id=runner.env.scope.task_list_id,
+                title="Pack backpacks",
+                due=runner.demo_date,
+                status="needsAction",
+                deleted=False,
+                hidden=False,
+                etag="etag_clean_123",
+                observed_at=datetime.now(UTC),
+            ),
+        ),
+    )
+    s3 = runner.step_p13_03_tasks_prep()
+    assert s3.status == "PASS"
+
+
+class TestExecutionActionContractParityAdversarial:
+    """Validate execution action parity against validated plan and anti-rebinding."""
+
+    def test_valid_plan_altered_tasks_due_date_zero_tasks_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Altered compiled Tasks due date must fail closed before any Tasks write."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+
+        # Alter compiled Tasks due date away from canonical plan
+        bad_task = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.TASK_CREATE,
+            target=runner.action_task.target,
+            parameters={"title": "Pack backpacks", "due": "2099-01-01"},
+            action_id=runner.action_task.action_id,
+        )
+        runner.action_task = bad_task
+
+        tasks_spy = MagicMock()
+        monkeypatch.setattr(runner.tasks_create_adapter, "create_task", tasks_spy)
+
+        # Ordinary live-runner step invocation fails closed
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Tasks action due date '2099-01-01' does not match validated plan",
+        ):
+            runner.step_p13_03_tasks_prep()
+        tasks_spy.assert_not_called()
+        assert runner.total_writes == 1  # Only preceding seeding write performed
+
+        # Direct base-class method invocation also fails closed
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Tasks action due date '2099-01-01' does not match validated plan",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        tasks_spy.assert_not_called()
+        assert runner.total_writes == 1
+
+    def test_valid_plan_altered_tasks_target_or_title_zero_tasks_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Altered Tasks target or title fails closed before any provider write."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+
+        tasks_spy = MagicMock()
+        monkeypatch.setattr(runner.tasks_create_adapter, "create_task", tasks_spy)
+
+        # Case A: Altered title
+        runner.action_task = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.TASK_CREATE,
+            target=runner.action_task.target,
+            parameters={"title": "Pack altered backpacks", "due": runner.demo_date},
+            action_id=runner.action_task.action_id,
+        )
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Tasks action title 'Pack altered backpacks' does not match",
+        ):
+            runner.step_p13_03_tasks_prep()
+        tasks_spy.assert_not_called()
+
+        # Case B: Altered target list ID
+        bad_target = TargetIdentity(
+            system="google_tasks",
+            resource_kind=ResourceKind.TASK_LIST,
+            resource_id="wrong_task_list_container_999",
+            parent_id=None,
+        )
+        runner.action_task = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.TASK_CREATE,
+            target=bad_target,
+            parameters={"title": "Pack backpacks", "due": runner.demo_date},
+            action_id=runner.action_task.action_id,
+        )
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Tasks action target list ID 'wrong_task_list_container_999' does not match",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        tasks_spy.assert_not_called()
+        assert runner.total_writes == 1
+
+    def test_valid_plan_altered_calendar_start_time_zero_pending_approval(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Altered Calendar start time fails closed before creating PendingApproval."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+        _advance_runner_through_step_3(runner, monkeypatch)
+
+        # Alter Calendar start time away from canonical plan
+        bad_cal = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=runner.action_cal.target,
+            parameters={"start_time": "2026-10-04T09:00:00+00:00"},
+            action_id=runner.action_cal.action_id,
+        )
+        runner.action_cal = bad_cal
+        runner.validated_action_cal = validate_action_contract(bad_cal)
+
+        # Live method invocation fails closed
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Calendar action start_time '2026-10-04T09:00:00\\+00:00' does not match",
+        ):
+            runner.step_p13_04_calendar_pause()
+        assert getattr(runner, "pending_approval", None) is None
+
+        # Direct base method invocation also fails closed
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Calendar action start_time '2026-10-04T09:00:00\\+00:00' does not match",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+
+    def test_calendar_action_wrong_provider_event_no_silent_rebinding(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Calendar action targeting wrong event must fail closed without silent rebinding."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+        _advance_runner_through_step_3(runner, monkeypatch)
+
+        seeded_evt = runner.seeded_event_id
+        bad_evt = "wrong_provider_event_tampered_999"
+
+        # Point action_cal at wrong provider event
+        tampered_cal = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id=bad_evt,
+                parent_id=runner.env.scope.calendar_id,
+            ),
+            parameters=runner.action_cal.parameters,
+            action_id=runner.action_cal.action_id,
+        )
+        runner.action_cal = tampered_cal
+        runner.validated_action_cal = validate_action_contract(tampered_cal)
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Silent target rebinding is strictly prohibited",
+        ):
+            runner.step_p13_04_calendar_pause()
+
+        # Target MUST NOT have been silently repaired/rebound
+        assert runner.action_cal.target.resource_id == bad_evt
+        assert runner.action_cal.target.resource_id != seeded_evt
+        assert getattr(runner, "pending_approval", None) is None
+
+        # Direct base-method call also fails closed without silent repair
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Silent target rebinding is strictly prohibited",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert runner.action_cal.target.resource_id == bad_evt
+
+    def test_calendar_parent_container_mismatch_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Calendar parent container mismatch fails closed before creating PendingApproval."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+        _advance_runner_through_step_3(runner, monkeypatch)
+
+        mismatched_target = TargetIdentity(
+            system="google_calendar",
+            resource_kind=ResourceKind.CALENDAR_EVENT,
+            resource_id=runner.seeded_event_id,
+            parent_id="wrong_calendar_scope_id",
+        )
+        mismatched_cal = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=mismatched_target,
+            parameters=runner.action_cal.parameters,
+            action_id=runner.action_cal.action_id,
+        )
+        runner.action_cal = mismatched_cal
+        runner.validated_action_cal = validate_action_contract(mismatched_cal)
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="does not match scope calendar ID",
+        ):
+            runner.step_p13_04_calendar_pause()
+        assert getattr(runner, "pending_approval", None) is None
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="does not match scope calendar ID",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+
+    def test_mismatch_between_action_cal_and_validated_action_cal_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mismatch between action_cal and validated_action_cal fails closed."""
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+        _advance_runner_through_step_3(runner, monkeypatch)
+
+        # Create a differing validated contract
+        differing_action = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=runner.action_cal.target,
+            parameters={"start_time": runner.initial_start_time},
+            action_id=runner.action_cal.action_id,
+        )
+        runner.validated_action_cal = validate_action_contract(differing_action)
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Mismatch between self.action_cal and self.validated_action_cal",
+        ):
+            runner.step_p13_04_calendar_pause()
+        assert getattr(runner, "pending_approval", None) is None
+
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Mismatch between self.action_cal and self.validated_action_cal",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+
+    def test_missing_or_inconsistent_execution_identity_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing or inconsistent mission or action identity fails closed."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch)
+
+        # 1. Tasks action with wrong mission ID
+        foreign_task = ActionContract.create(
+            mission_id=MissionId("99999999-9999-9999-9999-999999999999"),
+            action_type=ActionType.TASK_CREATE,
+            target=runner.action_task.target,
+            parameters=runner.action_task.parameters,
+            action_id=runner.action_task.action_id,
+        )
+        runner.action_task = foreign_task
+        with pytest.raises(KillerMissionIntegrityError, match="does not match active mission ID"):
+            runner.step_p13_03_tasks_prep()
+
+        # Restore valid task action and complete step 3
+        runner.action_task = runner.execution_contract.actions[1]
+        _advance_runner_through_step_3(runner, monkeypatch)
+
+        # 2. Calendar action with wrong mission ID
+        foreign_cal = ActionContract.create(
+            mission_id=MissionId("99999999-9999-9999-9999-999999999999"),
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=runner.action_cal.target,
+            parameters=runner.action_cal.parameters,
+            action_id=runner.action_cal.action_id,
+        )
+        runner.action_cal = foreign_cal
+        runner.validated_action_cal = validate_action_contract(foreign_cal)
+        with pytest.raises(KillerMissionIntegrityError, match="does not match active mission ID"):
+            runner.step_p13_04_calendar_pause()
+        assert getattr(runner, "pending_approval", None) is None
+
+    def test_legitimate_seeded_provider_event_id_preserved_through_compilation_and_pending_approval(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legitimate seeded provider event ID is preserved end-to-end without rebinding."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        sentinel_id = "provider_sentinel_evt_xyz_777"
+        _advance_runner_through_steps_1_and_2(runner, monkeypatch, event_id=sentinel_id)
+
+        assert runner.seeded_event_id == sentinel_id
+        assert runner.action_cal.target.resource_id == sentinel_id
+
+        _advance_runner_through_step_3(runner, monkeypatch)
+        s4 = runner.step_p13_04_calendar_pause()
+        assert s4.status == "PASS"
+
+        assert runner.pending_approval is not None
+        assert runner.pending_approval.target.resource_id == sentinel_id
+        assert runner.action_cal.target.resource_id == sentinel_id

@@ -5,7 +5,16 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote HEAD: `09ec902cc4ab7bfb03834b6c93524a1f56469b3f` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Shared Execution & Human-Authority Boundary Closure (Defects 1, 2 closed in single bounded batch; mandatory live preflight; validated execution ordering enforced at shared mutation boundaries; genuine human-origin decision channel verification required before durable authority records; dual-runtime validator PASS across Core & Strands; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) |
+Starting remote HEAD: `be1cf635b633285bff296a7fde5c7fa2c6f5026a` |
+Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` |
+P-13 Final Execution-Contract Parity Closure (Eliminated silent Calendar rebinding;
+enforced contract parity against canonical plan for Tasks creation and Calendar PendingApproval;
+preceding execution truth requires genuine observations and writes;
+dual-runtime validator PASS across Core & Strands;
+live AWS/Google mutations BLOCKED_LIVE / NOT_RUN;
+external publication BLOCKED_EXTERNAL / NOT_RUN;
+awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,24 +83,39 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-13 + P-16 SHARED EXECUTION & HUMAN-AUTHORITY BOUNDARY CLOSURE (Defects 1, 2)
+Active task: STILLDONE — P-13 FINAL EXECUTION-CONTRACT PARITY CLOSURE
 
-Starting Remote SHA: `09ec902cc4ab7bfb03834b6c93524a1f56469b3f`
+Starting Remote SHA: `be1cf635b633285bff296a7fde5c7fa2c6f5026a`
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
-- P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 + P-16: Shared Execution & Human-Authority Boundary Closure Applied (Defects 1, 2 closed; PASS Candidate, awaiting independent QA review)
-  - Defect 1 (Shared Execution Order Bypass): Mandatory preflight in `_require_shared_live_mutation_boundary()` failing closed if `_require_preflight` missing/non-callable; enforced execution order and prerequisites at shared mutation/side-effect boundaries: `step_p13_03_tasks_prep()` requires validated candidate plan, weather observation, and preceding steps; `step_p13_04_calendar_pause()` requires validated candidate plan, P-13.01, P-13.02, P-13.03 PASS & verified, weather observation, task observation, and established provider event ID. Zero writes, zero unauthorized PendingApproval, no false verification/READY.
-  - Defect 2 (Typed Rejection Lacks Authenticated Human Origin): Separated structural decision validity from authenticated human-origin verification. Both APPROVE and REJECT require genuine trusted decision-channel verification via `approval_channel.verify_decision()`. In production absence of an authenticated human decision channel, all decisions fail closed as `BLOCKED_APPROVAL_CHANNEL / NOT_RUN` with 0 writes performed and 0 consumed decision records committed. Self-constructed typed REJECT, forged `authority_source`, unauthenticated callback typed REJECT, or fake verifier returning True cannot establish production authority or durable rejection. Raw negative instructions halt mutation safely with 0 writes.
+- P-00 through P-12: CLOSED — independent QA PASS ✅
+  (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
+- P-13: Final Execution-Contract Parity Closure Applied
+  (PASS Candidate, awaiting independent QA review)
+  - Execution Action Contract Parity: In `step_p13_03_tasks_prep()`, validated `self.action_task`
+    contract and plan parity (title, due date, target list ID vs demo scope) and tracker
+    consistency before provider writes.
+  - Prohibition of Silent Calendar Rebinding: In `step_p13_04_calendar_pause()`, completely
+    eliminated silent target rebinding when `action_cal.target.resource_id != seeded_event_id`.
+    Fails closed if compiled action, validated action, canonical plan, provider event ID,
+    or demo scope disagree.
+  - Preceding Execution Truth: Preceding steps require genuine verified observations
+    (`weather_obs.exists`, `task_obs.exists`, created task ID) and non-zero write counts
+    (`writes_performed >= 1`), not status strings alone.
+  - Adversarial Regression Suite: Proved altered Tasks due date/title/target, altered Calendar
+    start time, wrong provider event, parent container mismatch, and action mismatch all fail
+    closed without mutations.
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
-- P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
-- P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
+- P-15: P-15.01–P-15.07 COMPLETED (including headless browser responsive & WCAG AA validation)
+- P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
+  P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18+: PENDING / NOT_RUN (strictly DO NOT BEGIN P-18)
 
-Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main` (eliminates stale self-referential tracking)
-Next exact task: Independent QA Review of Consolidated Repair Batch (P-18 remains strictly PENDING / NOT_RUN)
+Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
+Next exact task: Independent QA Review of P-13 Final Execution-Contract Parity Closure
+(P-18 remains strictly PENDING / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

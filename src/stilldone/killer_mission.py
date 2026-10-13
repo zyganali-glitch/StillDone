@@ -1662,10 +1662,15 @@ class KillerMissionSliceRunner:
                     "from seeding step P-13.01."
                 )
             step1 = self.step_results.get("P-13.01")
-            if step1 is None or step1.status != "PASS" or not step1.is_verified:
+            if (
+                step1 is None
+                or step1.status != "PASS"
+                or not step1.is_verified
+                or step1.writes_performed < 1
+            ):
                 raise KillerMissionSequenceError(
                     "Live tasks creation requires proven preceding seeding step P-13.01 "
-                    "with PASS status and independent read-back verification."
+                    "with PASS status, writes performed, and independent read-back verification."
                 )
             step2 = self.step_results.get("P-13.02")
             if step2 is None or step2.status != "PASS" or not step2.is_verified:
@@ -1673,7 +1678,9 @@ class KillerMissionSliceRunner:
                     "Live tasks creation requires proven preceding planning step P-13.02 "
                     "with PASS status and verified weather observation."
                 )
-            if getattr(self, "weather_observation", None) is None:
+            if getattr(self, "weather_observation", None) is None or not getattr(
+                self.weather_observation, "exists", False
+            ):
                 raise KillerMissionSequenceError(
                     "Live tasks creation requires an established, verified weather observation "
                     "from P-13.02."
@@ -1694,6 +1701,74 @@ class KillerMissionSliceRunner:
             )
             self.step_results["P-13.03"] = res
             return res
+
+        # Action contract parity and execution identity checks before provider write
+        if not hasattr(self, "action_task") or self.action_task is None:
+            raise KillerMissionSequenceError(
+                "Tasks creation requires an established action contract."
+            )
+        if self.action_task.mission_id != self.mission_id:
+            raise KillerMissionIntegrityError(
+                f"Tasks action mission ID '{self.action_task.mission_id}' "
+                f"does not match active mission ID '{self.mission_id}'."
+            )
+        if self.action_task.action_type != ActionType.TASK_CREATE:
+            raise KillerMissionIntegrityError(
+                f"Tasks action type must be TASK_CREATE, got '{self.action_task.action_type}'."
+            )
+        if self.action_task.target.system != "google_tasks":
+            raise KillerMissionIntegrityError(
+                f"Tasks action target system must be 'google_tasks', "
+                f"got '{self.action_task.target.system}'."
+            )
+        if self.action_task.target.resource_kind != ResourceKind.TASK_LIST:
+            raise KillerMissionIntegrityError(
+                f"Tasks action target kind must be ResourceKind.TASK_LIST, "
+                f"got '{self.action_task.target.resource_kind}'."
+            )
+        if str(self.action_task.target.resource_id) != str(self.env.scope.task_list_id):
+            raise KillerMissionIntegrityError(
+                f"Tasks action target list ID '{self.action_task.target.resource_id}' "
+                f"does not match scope task_list_id '{self.env.scope.task_list_id}'."
+            )
+
+        cand_plan = getattr(self, "candidate_plan", None)
+        if cand_plan is not None:
+            task_plan_steps = [
+                s for s in cand_plan.steps if s.action_type == ActionType.TASK_CREATE
+            ]
+            if not task_plan_steps or len(task_plan_steps) != 1:
+                raise KillerMissionIntegrityError(
+                    "Canonical candidate plan must contain exactly one TASK_CREATE step."
+                )
+            plan_task = task_plan_steps[0]
+            if self.action_task.parameters.get("title") != plan_task.parameters.get("title"):
+                raise KillerMissionIntegrityError(
+                    f"Tasks action title '{self.action_task.parameters.get('title')}' "
+                    f"does not match validated plan title '{plan_task.parameters.get('title')}'."
+                )
+            if self.action_task.parameters.get("due") != plan_task.parameters.get("due"):
+                raise KillerMissionIntegrityError(
+                    f"Tasks action due date '{self.action_task.parameters.get('due')}' "
+                    f"does not match validated plan due date '{plan_task.parameters.get('due')}'."
+                )
+            if self.action_task.parameters != plan_task.parameters:
+                raise KillerMissionIntegrityError(
+                    f"Tasks action parameters {self.action_task.parameters} "
+                    f"do not match validated plan parameters {plan_task.parameters}."
+                )
+
+        if hasattr(self, "tracker") and self.tracker is not None:
+            tracked_task = self.tracker._actions_by_id.get(self.action_task.action_id)
+            if tracked_task is None:
+                raise KillerMissionIntegrityError(
+                    f"Tasks action ID '{self.action_task.action_id}' is not recognized "
+                    "by execution tracker."
+                )
+            if tracked_task != self.action_task:
+                raise KillerMissionIntegrityError(
+                    "Tasks action contract differs from execution tracker contract."
+                )
 
         validated_action_task = validate_action_contract(self.action_task)
 
@@ -1852,57 +1927,172 @@ class KillerMissionSliceRunner:
                     "from seeding step P-13.01."
                 )
             step1 = self.step_results.get("P-13.01")
-            if step1 is None or step1.status != "PASS" or not step1.is_verified:
+            if (
+                step1 is None
+                or step1.status != "PASS"
+                or not step1.is_verified
+                or step1.writes_performed < 1
+            ):
                 raise KillerMissionSequenceError(
-                    "Live calendar pause requires proven preceding seeding step P-13.01."
+                    "Live calendar pause requires proven preceding seeding step P-13.01 "
+                    "with PASS status, writes performed, and independent read-back verification."
                 )
             step2 = self.step_results.get("P-13.02")
             if step2 is None or step2.status != "PASS" or not step2.is_verified:
                 raise KillerMissionSequenceError(
                     "Live calendar pause requires proven preceding planning step P-13.02."
                 )
-            if getattr(self, "weather_observation", None) is None:
+            if getattr(self, "weather_observation", None) is None or not getattr(
+                self.weather_observation, "exists", False
+            ):
                 raise KillerMissionSequenceError(
                     "Live calendar pause requires an established, verified weather observation "
                     "from P-13.02."
                 )
             step3 = self.step_results.get("P-13.03")
-            if step3 is None or step3.status != "PASS" or not step3.is_verified:
+            if (
+                step3 is None
+                or step3.status != "PASS"
+                or not step3.is_verified
+                or step3.writes_performed < 1
+            ):
                 raise KillerMissionSequenceError(
                     "Live calendar pause requires proven preceding tasks preparation step "
-                    "P-13.03 with PASS status and independent read-back verification."
+                    "P-13.03 with PASS status, writes performed, and independent read-back "
+                    "verification."
                 )
-            if getattr(self, "task_observation", None) is None:
+            task_obs = getattr(self, "task_observation", None)
+            if (
+                task_obs is None
+                or not task_obs.exists
+                or task_obs.properties.get("task_title") != CANONICAL_DEMO_TASK_TITLE
+            ):
                 raise KillerMissionSequenceError(
                     "Live calendar pause requires an established, verified tasks observation "
+                    "from P-13.03 with canonical task title."
+                )
+            if (
+                not getattr(self, "created_task_id", None)
+                or not isinstance(self.created_task_id, str)
+                or not self.created_task_id.strip()
+            ):
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires an established authoritative provider task ID "
                     "from P-13.03."
                 )
-            if not hasattr(self, "action_cal") or self.action_cal is None:
-                raise KillerMissionSequenceError(
-                    "Live calendar pause requires an established calendar update action."
+
+        if not hasattr(self, "action_cal") or self.action_cal is None:
+            raise KillerMissionSequenceError(
+                "Live calendar pause requires an established calendar update action."
+            )
+        if not hasattr(self, "validated_action_cal") or self.validated_action_cal is None:
+            raise KillerMissionSequenceError(
+                "Live calendar pause requires validated calendar action contract."
+            )
+
+        # 1. Mission identity
+        if self.action_cal.mission_id != self.mission_id:
+            raise KillerMissionIntegrityError(
+                f"Calendar action mission ID '{self.action_cal.mission_id}' "
+                f"does not match active mission ID '{self.mission_id}'."
+            )
+
+        # 2. Action type
+        if self.action_cal.action_type != ActionType.CALENDAR_UPDATE:
+            raise KillerMissionIntegrityError(
+                f"Calendar action type must be CALENDAR_UPDATE, "
+                f"got '{self.action_cal.action_type}'."
+            )
+
+        # 3. Target system & resource kind
+        if self.action_cal.target.system != "google_calendar":
+            raise KillerMissionIntegrityError(
+                f"Calendar action target system must be 'google_calendar', "
+                f"got '{self.action_cal.target.system}'."
+            )
+        if self.action_cal.target.resource_kind != ResourceKind.CALENDAR_EVENT:
+            raise KillerMissionIntegrityError(
+                f"Calendar action target kind must be ResourceKind.CALENDAR_EVENT, "
+                f"got '{self.action_cal.target.resource_kind}'."
+            )
+
+        # 4. Scope calendar / parent container identity
+        if str(self.action_cal.target.parent_id) != str(self.env.scope.calendar_id):
+            raise KillerMissionIntegrityError(
+                f"Calendar action parent ID '{self.action_cal.target.parent_id}' "
+                f"does not match scope calendar ID '{self.env.scope.calendar_id}'."
+            )
+
+        # 5. Authoritative provider event ID parity (NO silent rebinding!)
+        expected_event_id = getattr(self, "seeded_event_id", None)
+        if not expected_event_id or not str(expected_event_id).strip():
+            raise KillerMissionSequenceError(
+                "Calendar pause requires an established authoritative provider event ID."
+            )
+        if str(self.action_cal.target.resource_id) != str(expected_event_id):
+            raise KillerMissionIntegrityError(
+                f"Calendar action target resource ID '{self.action_cal.target.resource_id}' "
+                f"does not match authoritative seeded provider event ID '{expected_event_id}'. "
+                "Silent target rebinding is strictly prohibited."
+            )
+
+        # 6. Canonical plan parity
+        cand_cal = getattr(self, "candidate_plan", None)
+        if cand_cal is not None:
+            cal_plan_steps = [
+                s for s in cand_cal.steps if s.action_type == ActionType.CALENDAR_UPDATE
+            ]
+            if not cal_plan_steps or len(cal_plan_steps) != 1:
+                raise KillerMissionIntegrityError(
+                    "Canonical candidate plan must contain exactly one CALENDAR_UPDATE step."
                 )
-            if str(self.action_cal.target.resource_id) != str(seeded_id):
-                target_cal = TargetIdentity(
-                    system="google_calendar",
-                    resource_kind=ResourceKind.CALENDAR_EVENT,
-                    resource_id=str(seeded_id),
-                    parent_id=self.env.scope.calendar_id,
+            plan_cal = cal_plan_steps[0]
+            if self.action_cal.parameters.get("start_time") != plan_cal.parameters.get(
+                "start_time"
+            ):
+                raise KillerMissionIntegrityError(
+                    f"Calendar action start_time '{self.action_cal.parameters.get('start_time')}' "
+                    f"does not match validated plan start_time "
+                    f"'{plan_cal.parameters.get('start_time')}'."
                 )
-                self.action_cal = ActionContract.create(
-                    mission_id=self.mission_id,
-                    action_type=ActionType.CALENDAR_UPDATE,
-                    target=target_cal,
-                    parameters=getattr(
-                        self.action_cal, "parameters", {"start_time": self.desired_start_time}
-                    ),
-                    action_id=self.action_cal.action_id,
+            if self.action_cal.parameters.get("start_time") != self.desired_start_time:
+                raise KillerMissionIntegrityError(
+                    f"Calendar action start_time '{self.action_cal.parameters.get('start_time')}' "
+                    f"does not match canonical desired start_time '{self.desired_start_time}'."
                 )
-                self.validated_action_cal = validate_action_contract(self.action_cal)
-            if not hasattr(self, "validated_action_cal") or self.validated_action_cal is None:
-                raise KillerMissionSequenceError(
-                    "Live calendar pause requires validated calendar action contract."
+            if self.action_cal.parameters != plan_cal.parameters:
+                raise KillerMissionIntegrityError(
+                    f"Calendar action parameters {self.action_cal.parameters} "
+                    f"do not match validated plan parameters {plan_cal.parameters}."
                 )
-            validate_action_contract(self.action_cal)
+
+        # 7. Action contract vs validated contract parity
+        if self.validated_action_cal.action != self.action_cal:
+            raise KillerMissionIntegrityError(
+                "Mismatch between self.action_cal and self.validated_action_cal contract."
+            )
+        if self.validated_action_cal.action_id != self.action_cal.action_id:
+            raise KillerMissionIntegrityError(
+                "Mismatch between self.action_cal and self.validated_action_cal action ID."
+            )
+        freshly_validated = validate_action_contract(self.action_cal)
+        if freshly_validated.action != self.action_cal:
+            raise KillerMissionIntegrityError(
+                "Fresh validation of action_cal does not match self.action_cal."
+            )
+
+        # 8. Tracker parity
+        if hasattr(self, "tracker") and self.tracker is not None:
+            tracked_cal = self.tracker._actions_by_id.get(self.action_cal.action_id)
+            if tracked_cal is None:
+                raise KillerMissionIntegrityError(
+                    f"Calendar action ID '{self.action_cal.action_id}' is not recognized "
+                    "by execution tracker."
+                )
+            if tracked_cal != self.action_cal:
+                raise KillerMissionIntegrityError(
+                    "Calendar action contract differs from execution tracker contract."
+                )
         # Pre-execution authority gate evaluation: unapproved action MUST halt
         gate_decision = execute_gated_action(
             self.validated_action_cal,
