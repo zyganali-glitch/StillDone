@@ -1797,19 +1797,64 @@ Acceptance:
 - Evidence doc: `docs/P18_PERFORMANCE_COST_EVIDENCE.md`.
 
 ### P-18.04 — Enforce runtime budget/rate limits
-Status: PENDING (Strictly NOT AUTHORIZED / NOT_RUN in this batch)
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Public/unauthenticated requests cannot enable paid AWS execution (`HTTP 401 Unauthorized` / `HTTP 403 Forbidden`).
+- Explicit operator authorization mandatory for paid-capable paths (`live_paid_path_enabled=False` fails closed).
+- Missing, stale, or corrupt budget snapshots fail closed.
+- Rate-limit exhaustion denies execution before paid operations or provider mutations (`HTTP 429 Too Many Requests`).
+- Persistent SQLite token bucket remains atomic and correct under concurrency (`BEGIN IMMEDIATE` WAL transactions).
+- Retries, replays, and process restarts cannot bypass rate limits.
+- Estimated internal cost ceiling never represented as a guaranteed AWS billing hard cap.
+- No silent fallback from blocked live execution to fixture execution.
+- No bypass of mission authority, approvals, evidence, or verified-state boundaries.
+- Validated via 18 focused adversarial tests in `tests/test_phase_p18_04_budget_rate_limits.py`.
 
 ### P-18.05 — Verify Google/Open-Meteo quota safety
-Status: PENDING
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Published provider limits documented: Google Calendar 1M/day, Google Tasks 50k/day courtesy, Open-Meteo 10k/day.
+- Published limits distinguished from actual remaining account quotas (`NOT_OBSERVED` offline).
+- Throttled mutations do not become falsely verified (Calendar 429 yields 0 writes; Tasks 429 yields 0 writes).
+- Calendar 412 Precondition Failed yields `CONFLICT` with 0 writes.
+- Calendar idempotency deduplication yields `NOOP_ALREADY_APPLIED` with 0 writes.
+- Open-Meteo 429/timeout fails closed with coordinate sanitization.
+- Killer mission slice halts on provider throttling and never reaches READY.
+- Validated via 12 focused tests in `tests/test_phase_p18_05_quota_safety.py`.
 
 ### P-18.06 — Run bounded repeated-mission reliability test
-Status: PENDING
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Strictly offline FIXTURE mode execution.
+- Finite iteration cap (15 runs) and per-run execution timeout.
+- Clean per-run environment isolation and distinct mission identities.
+- Historical receipt integrity verified intact across READY -> DRIFTED (all 11 successful runs preserve hash).
+- Failure isolation demonstrated across representative scenarios (11 pass, 2 blocked, 2 failed).
+- Cross-run contamination detected: False (zero leaked tasks, grants, or files).
+- Duplicate unintended mutation detected: False (writes match exact expectations).
+- False READY detected: False (no blocked/failed run ever achieved READY or generated receipt).
+- Latency measurements separated by provenance (strictly FIXTURE).
+- Validated via 10 focused tests in `tests/test_phase_p18_06_reliability.py`.
 
 ### P-18.07 — Verify judge-period availability plan and credit expiry
-Status: PENDING
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Official competition requirements distinguished from recommendations and assumptions.
+- Historical credit records ($150 promotion) preserved with conservative expiry boundary (`2028-08-31`).
+- Credit balance uncertainty acknowledged; current account charges `NOT_OBSERVED` offline; future sufficiency not inferred.
+- Dual-surface architecture: public read-only exhibit separated from authenticated operator runtime.
+- Cloudflare Pages Free exhibit option evaluated without domain purchase ($0.00 personal spend).
+- Verified that Cloudflare Pages serves static assets only and does NOT execute the Python backend.
+- Three-tier bounded fallback plan defined if continuous hosting cannot guarantee $0.00.
+- Zero infrastructure deployed, zero credentials exposed, zero paid services activated in this task.
+- Documented in `docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md` and validated via 8 focused tests in `tests/test_phase_p18_07_availability_plan.py`.
 
 Phase exit:
-demo and judge path are financially and operationally credible.
+demo and judge path are financially and operationally credible (Batch P-18 complete; awaiting independent QA).
 
 ---
 

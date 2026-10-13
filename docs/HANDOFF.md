@@ -5,14 +5,12 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) |
-Starting remote HEAD: `797dd01d45157c46da1e562e5c2c05ce6bffeed7` |
-Independently QA-passed repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7` |
-Last independently VERIFIED contiguous P-00–P-12 baseline: `05fd91d767360cbea21573d804bd429ed116ca9c` |
-P-18.01 → P-18.03 Bounded Performance & Cost-Evidence Batch: COMPLETED (PASS Candidate, awaiting independent QA review) |
-Live AWS/Google mutations BLOCKED_LIVE / NOT_RUN |
-Actual AWS billing delta NOT_OBSERVED |
-P-18.04+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-17: CLOSED (independent QA PASS ✅) |
+Last independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce` |
+P-18 Batch (P-18.01 → P-18.07): COMPLETED (PASS Candidate, awaiting independent QA review) |
+Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
+Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
+Next phase (P-19+): PENDING / NOT_RUN (Strictly stopped before P-19)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 

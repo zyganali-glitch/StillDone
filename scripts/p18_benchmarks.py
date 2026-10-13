@@ -24,20 +24,23 @@ from stilldone.benchmarks import (
     estimate_aws_cost_per_mission,
     measure_mcp_transport_latency,
     run_mission_benchmark,
+    run_repeated_mission_reliability_test,
 )
 
 
 def run_all_benchmarks(
     warmup: int = 2,
     samples: int = 5,
+    reliability_iterations: int = 15,
     do_p18_01: bool = True,
     do_p18_02: bool = True,
     do_p18_03: bool = True,
+    do_p18_06: bool = True,
 ) -> dict[str, Any]:
     """Execute selected P-18 benchmarks sequentially."""
     results: dict[str, Any] = {
-        "batch": "P-18.01 -> P-18.03",
-        "title": "STILLDONE Performance & Cost-Evidence Batch",
+        "batch": "P-18.01 -> P-18.06",
+        "title": "STILLDONE Performance, Cost & Reliability Batch",
     }
 
     if do_p18_01:
@@ -53,6 +56,10 @@ def run_all_benchmarks(
     if do_p18_03:
         cost_res = estimate_aws_cost_per_mission()
         results["p18_03_aws_cost"] = cost_res.to_dict()
+
+    if do_p18_06:
+        rel_res = run_repeated_mission_reliability_test(iteration_cap=reliability_iterations)
+        results["p18_06_reliability"] = rel_res.to_dict()
 
     return results
 
@@ -185,37 +192,69 @@ def print_human_report(results: dict[str, Any]) -> None:
         cat_a_status = p3["category_a_real_measured_usage"]["status"]
         print(f"\nCategory A (Real Measured Account Usage): {cat_a_status}")
         print(f"Category D (NOT_OBSERVED Fields Count):   {len(p3['category_d_not_observed'])}")
+
+    if "p18_06_reliability" in results:
+        p6 = results["p18_06_reliability"]
+        print("\n--- P-18.06: Bounded Repeated-Mission Reliability Test ---")
+        print(f"Source SHA:                       {p6.get('source_sha')}")
+        print(f"Environment:                      {p6.get('environment')}")
+        print(f"Provenance:                       {p6.get('provenance')} (Simulated fixture)")
+        print(
+            f"Total Runs / Cap:                 {p6.get('total_runs')} / {p6.get('iteration_cap')}"
+        )
+        print(
+            f"Successful / Blocked / Failed:    "
+            f"{p6.get('successful_runs')} / {p6.get('blocked_runs')} / {p6.get('failed_runs')}"
+        )
+        print(f"Contamination Detected:           {p6.get('cross_run_contamination_detected')}")
+        dup = p6.get("duplicate_unintended_mutation_detected")
+        print(f"Duplicate Mutation Detected:      {dup}")
+        print(f"False READY Detected:             {p6.get('false_ready_detected')}")
+        rcpt = p6.get("historical_receipt_integrity_verified")
+        print(f"Receipt Integrity Verified:       {rcpt}")
+        print(f"Predicate Correctness Verified:   {p6.get('predicate_correctness_verified')}")
+        print(f"Disclaimer:                       {p6.get('non_certification_statement')}")
     print("=" * 78)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="StillDone P-18 Performance & Cost Benchmark")
     parser.add_argument(
-        "--all", action="store_true", default=True, help="Run all 3 benchmarks (default)"
+        "--all", action="store_true", default=True, help="Run all benchmarks (default)"
     )
     parser.add_argument("--p18-01", action="store_true", help="Run P-18.01 only")
     parser.add_argument("--p18-02", action="store_true", help="Run P-18.02 only")
     parser.add_argument("--p18-03", action="store_true", help="Run P-18.03 only")
+    parser.add_argument("--p18-06", action="store_true", help="Run P-18.06 reliability test only")
     parser.add_argument("--warmup", type=int, default=2, help="Warmup iterations (default: 2)")
     parser.add_argument(
         "--samples", type=int, default=5, help="Sample count per benchmark (default: 5)"
+    )
+    parser.add_argument(
+        "--reliability-iterations",
+        type=int,
+        default=15,
+        help="P-18.06 reliability iteration cap (default: 15)",
     )
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON only")
     parser.add_argument("--output", type=Path, default=None, help="Save JSON output to file")
 
     args = parser.parse_args()
 
-    specific_selected = args.p18_01 or args.p18_02 or args.p18_03
+    specific_selected = args.p18_01 or args.p18_02 or args.p18_03 or args.p18_06
     do_01 = args.p18_01 or not specific_selected
     do_02 = args.p18_02 or not specific_selected
     do_03 = args.p18_03 or not specific_selected
+    do_06 = args.p18_06 or not specific_selected
 
     results = run_all_benchmarks(
         warmup=args.warmup,
         samples=args.samples,
+        reliability_iterations=args.reliability_iterations,
         do_p18_01=do_01,
         do_p18_02=do_02,
         do_p18_03=do_03,
+        do_p18_06=do_06,
     )
 
     if args.output:

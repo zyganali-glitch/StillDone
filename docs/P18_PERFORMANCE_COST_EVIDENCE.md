@@ -1,20 +1,24 @@
 # P-18 Performance, Cost & Reliability Hardening — Evidence Pack
 
-**Batch**: `P-18.01 → P-18.03 Consolidated Measurement & Cost-Truth Repair Batch`  
+**Batch**: `P-18.01 → P-18.07 Bounded Reliability, Cost & Safety Hardening`  
 **Observation Date**: `2026-10-13`  
-**Canonical Baseline Remote SHA**: `79cf5f46418581d158ea2f1913bfc5c4b63b3263`  
+**Canonical Baseline Remote SHA**: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce`  
 **Governing Authority**: [AGENTS.md](../AGENTS.md) § 1–24; [STILLDONE_MASTER_EXECUTION_PLAN.md](../plans/STILLDONE_MASTER_EXECUTION_PLAN.md); [COST_AND_ACCESS_POLICY.md](COST_AND_ACCESS_POLICY.md)  
-**Evidence Provenance**: `LOCAL_EXECUTION` (local measurements) + `FIXTURE` (fixture mission measurements) + `RECORDED_LIVE` (historical P-01.07 evidence)  
+**Evidence Provenance**: `LOCAL_EXECUTION` + `FIXTURE` + `RECORDED_LIVE`  
 
 ---
 
 ## 1. Executive Summary
 
-This document establishes the empirical performance measurements and cost-accounting reality for the three tasks of the P-18 consolidated batch:
+This document establishes the empirical performance measurements, quota boundaries, reliability verification, and cost-accounting reality for the tasks of Phase P-18:
 
-1. **P-18.01 — End-to-End Mission Latency & Per-Component Latency**: Measured via deterministic monotonic instrumentation (`time.perf_counter_ns()`) across the canonical killer mission vertical slice. Discrete step execution statuses (`PASS`, `FAILED`, `BLOCKED`, `NOT_RUN`) and per-step runs are preserved across failure aggregation; unexecuted steps report strictly zero duration (0 ns). Attempted vs successful sample counts are separated so blocked/failed steps never distort success p95 latencies. Ordinary step exceptions are caught as privacy-safe `FAILED` outcomes and abort subsequent steps as `NOT_RUN`. Aggregate lifecycle-step fixture timings measure local compute overhead only; live provider latency remains `NOT_RUN`.
-2. **P-18.02 — MCP Transport Latency vs Alexa+ Requirements**: Measured via local loopback Streamable HTTP transport against official Amazon Alexa+ developer documentation (< 500ms round-trip query response requirement). `LOCAL_PASS` is strictly awarded only if all operations succeed and measured p95 is strictly < 500.0ms. Latencies $\ge 500.0$ms produce `LOCAL_SLOW`; protocol exceptions, wrong mission identity, or missing tools produce `LOCAL_FAILED`. Provenance is strictly separated: P-01.07 historical remote echo is `RECORDED_LIVE`; P-05.07 historical local loopback is `LOCAL_EXECUTION`; current local Streamable HTTP is `LOCAL_EXECUTION`. Remote public transport and Alexa+ partner client paths remain `NOT_RUN`.
-3. **P-18.03 — AWS Usage / Cost Per Canonical Mission**: Structured accounting separating real measured account usage (preserved as `NOT_OBSERVED`), local runtime activity (`FIXTURE`/`LOCAL_EXECUTION`), verified pricing estimates (based on official AWS pricing), and explicit `NOT_OBSERVED` account billing fields. Zero personal spend policy (`$0.00`) strictly preserved. CloudWatch EMF cost is `None` (`NOT_ESTIMABLE`) because account-wide usage is unobserved offline. AgentCore microVM rates are verified published pricing, but runtime consumption is unobserved (`VERIFIED_RATE_UNOBSERVED_CONSUMPTION`). Gross mission total is marked `NOT_ESTIMABLE_OFFLINE` and `total_estimated_cost_usd` is `None` to prevent mistaking Bedrock-only conditional planning scenarios for complete mission totals.
+1. **P-18.01 — End-to-End Mission Latency & Per-Component Latency**: Monotonic instrumentation (`time.perf_counter_ns()`) across the canonical killer mission vertical slice.
+2. **P-18.02 — MCP Transport Latency vs Alexa+ Requirements**: Local Streamable HTTP loopback against Amazon Alexa+ developer documentation (< 500ms round-trip query response requirement).
+3. **P-18.03 — AWS Usage / Cost Per Canonical Mission**: Structured accounting separating real measured account usage (`NOT_OBSERVED`), local runtime activity (`FIXTURE`/`LOCAL_EXECUTION`), verified pricing estimates, and explicit `NOT_OBSERVED` account billing fields.
+4. **P-18.04 — Enforce Runtime Budget/Rate Limits**: Deterministic endpoint admission protection. Unauthenticated requests denied; operator-controlled gate (`live_paid_path_enabled=False`) fails closed; missing/stale budget snapshots fail closed; rate-limit exhaustion denies execution before mutation; atomic SQLite concurrency safety; process restarts preserve limits; estimated cost ceiling != AWS billing hard cap.
+5. **P-18.05 — Verify Google/Open-Meteo Quota Safety**: Documented published provider limits (Google Calendar: 1M/day, Google Tasks: 50k/day courtesy, Open-Meteo: 10k/day). Actual remaining account quotas strictly `NOT_OBSERVED`. Calendar 429 yields 0 writes; 412 yields CONFLICT with 0 writes; idempotency duplicate yields NOOP with 0 writes; Tasks 429 yields 0 writes; Open-Meteo 429/timeout fails closed without coordinate/URL leakage.
+6. **P-18.06 — Run Bounded Repeated-Mission Reliability Test**: Offline fixture-mode repeated-mission harness. 15 iterations capped (11 pass, 2 blocked, 2 failed). Historical receipt hash verified intact across READY -> DRIFTED; zero cross-run contamination; zero duplicate unintended mutations; zero false READY.
+7. **P-18.07 — Verify Judge-Period Availability Plan and Credit Expiry**: Verified architectural plan (`docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md`). Distinguishes official Devpost rules from recommendations/assumptions; preserves historical credit grant ($150) and conservative expiry boundary (2028-08-31) while treating current balance as unobserved offline; dual-surface architecture (Cloudflare Pages Free static exhibit `*.pages.dev` + authenticated on-demand operator runtime); three-tier bounded fallback plan; strictly $0.00 personal spend.
 
 ---
 
@@ -143,13 +147,92 @@ In accordance with `AGENTS.md` § 11–12 and task acceptance criteria:
 
 ---
 
-## 5. Artifacts and Tooling Summary
+---
 
-- **Benchmark Module**: `src/stilldone/benchmarks.py`
+## 5. P-18.04 — Enforce Runtime Budget/Rate Limits
+
+### 5.1 Admission Control & Endpoint Protection
+- **Module**: `src/stilldone/endpoint_protection.py` & `src/stilldone/mcp/rate_limit.py`.
+- **Public & Unauthenticated Gate**: Public or anonymous requests cannot invoke paid AWS operations. Calling paid-capable endpoints requires valid authentication and active authorization (`HTTP 401 Unauthorized` / `HTTP 403 Forbidden`).
+- **Operator-Controlled Kill-Switch**: The admission gate evaluates `live_paid_path_enabled`. When `False` (default), all paid-capable invocation requests fail closed with `HTTP 403 Forbidden`.
+- **Budget Snapshot Fail-Closed**: Missing, expired, or corrupted budget snapshots immediately deny execution. Stale data never permits execution.
+- **Pre-Mutation Rate Limit Denial**: Rate-limit exhaustion returns `HTTP 429 Too Many Requests` *before* initiating any provider mutation or downstream model execution.
+- **Atomic Persistent Concurrency Safety**: The SQLite token bucket tracker operates under WAL mode with `BEGIN IMMEDIATE` transactions, ensuring atomic token reservation across concurrent callers.
+- **Cost Ceiling != AWS Billing Cap**: Internal estimated cost limits are strictly modeled as application-level admission thresholds and explicitly documented as distinct from guaranteed AWS billing hard stops.
+- **Evidence Provenance**: `LOCAL_EXECUTION` (18 focused adversarial tests in `tests/test_phase_p18_04_budget_rate_limits.py`). Zero live AWS calls executed.
+
+---
+
+## 6. P-18.05 — Verify Google/Open-Meteo Quota Safety
+
+### 6.1 Published Provider Limits vs. Actual Quotas
+- **Google Calendar API**:
+  - Published limit: Documented threshold of 1,000,000 queries/day for standard Workspace projects ([Google Calendar Quota Docs](https://developers.google.com/workspace/calendar/api/guides/quota)).
+  - Actual remaining account quota: Strictly `NOT_OBSERVED` offline without authenticated Google Cloud Console inspection.
+- **Google Tasks API**:
+  - Published limit: Documented courtesy limit of 50,000 queries/day ([Google Tasks Limits Docs](https://developers.google.com/workspace/tasks/limits)).
+  - Actual remaining account quota: Strictly `NOT_OBSERVED` offline.
+- **Open-Meteo API**:
+  - Published limit: 10,000 daily API calls for non-commercial evaluation ([Open-Meteo Pricing](https://open-meteo.com/en/pricing)).
+  - Actual remaining account quota: Strictly `NOT_OBSERVED` offline.
+
+### 6.2 Provider Failure & Throttling Safety
+- **HTTP 429 Throttling**: Simulated 429 responses in Google Calendar and Google Tasks adapters fail closed with `writes_performed = 0`. Throttling cannot trigger unbounded retries or duplicate writes.
+- **State Integrity**: Throttled or rejected mutations never transition to `VERIFIED` or `READY`.
+- **Idempotency Deduplication**: Duplicate event creation requests return `NOOP_ALREADY_APPLIED` with exactly 0 new writes performed.
+- **Privacy Preservation**: Open-Meteo adapter errors sanitize coordinates and query parameters from error messages and logs.
+- **Evidence Provenance**: `FIXTURE` / `LOCAL_EXECUTION` (12 focused quota safety tests in `tests/test_phase_p18_05_quota_safety.py`).
+
+---
+
+## 7. P-18.06 — Bounded Repeated-Mission Reliability Test
+
+### 7.1 Methodology & Invariants
+- **Harness**: `run_repeated_mission_reliability_test(iteration_cap=15)` in `src/stilldone/benchmarks.py`.
+- **Execution Mode**: Strictly `FIXTURE` (offline test doubles). Zero network calls.
+- **Lifecycle Verification**: Exercises the complete canonical killer mission slice across 15 bounded runs:
+  - 11 successful full lifecycle runs (`READY -> DRIFTED` with historical receipt hash intact).
+  - 2 blocked runs: operator rejected at approval boundary (writes = 0 for calendar), missing preflight authorization (writes = 0).
+  - 2 failed runs: contradictory read-back (mission halted unverified), provider 429 rate limit (slice aborted fail-closed).
+- **Integrity Checks**:
+  - Cross-run evidence contamination: `False` (zero leaked tasks, grants, or snapshot files across runs).
+  - Duplicate unintended mutation: `False` (successful runs perform exactly 3 planned writes; blocked/failed runs perform 0 unapproved writes).
+  - False READY: `False` (no blocked or failed run ever achieved `reached_ready = True` or generated a receipt).
+  - Historical receipt integrity: `True` (all 11 successful runs maintain identical `receipt_projection_hash` through `DRIFTED`).
+- **Evidence Provenance**: `FIXTURE` (10 tests in `tests/test_phase_p18_06_reliability.py`).
+
+---
+
+## 8. P-18.07 — Judge-Period Availability Plan and Credit Expiry
+
+### 8.1 Strategic Plan Summary
+- **Master Plan Document**: [docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md](JUDGE_PERIOD_AVAILABILITY_PLAN.md).
+- **Official Competition Requirements**: Devpost submission deadline October 23, 2026; 3-minute video; public code repository URL. 24/7 unmetered cloud uptime is NOT an official requirement.
+- **Historical Credit Facts**: $150.00 hackathon promotional credit granted; active at P-01 checkpoint. Conservative expiration boundary enforced as `2028-08-31`. Current balance and account-wide charges remain `NOT_OBSERVED` offline. Credits do not provide a hard spending cap.
+- **Dual-Surface Architecture**:
+  1. *Surface 1 (Public Read-Only Exhibit)*: Hosted on Cloudflare Pages Free tier (`*.pages.dev`, $0.00 cost, zero domain purchase). Serves static evidence, recorded live receipts, immutable hashes, video walkthrough, and local reproduction instructions. Does NOT execute Python or live Bedrock inference.
+  2. *Surface 2 (Authenticated Operator Runtime)*: Streamable HTTP MCP server with strict operator authentication (SigV4/OAuth) and endpoint admission protection. Run on-demand for live evaluations; never left unmetered 24/7.
+- **Three-Tier Fallback Plan**: (1) Static exhibit & video walkthrough; (2) Clean-checkout local reproduction CLI (`python scripts/p18_benchmarks.py --all`); (3) Scheduled operator-assisted live verification session.
+- **Evidence Provenance**: `LOCAL_EXECUTION` (8 tests in `tests/test_phase_p18_07_availability_plan.py`).
+
+---
+
+## 9. Artifacts and Tooling Summary
+
+- **Benchmark & Reliability Module**: `src/stilldone/benchmarks.py`
   - Zero import-time logger mutations; fully restored scoped suppression.
-  - `run_mission_benchmark()`: Monotonic per-step timing harness preserving complete run outcomes (PASS, BLOCKED, FAILED, NOT_RUN); privacy-safe exception handling; separated attempted vs successful sample counts.
-  - `measure_mcp_transport_latency()`: Loopback Streamable HTTP transport test with response verification, strict `< 500.0ms` threshold for `LOCAL_PASS`, explicit `LOCAL_SLOW` and `LOCAL_FAILED` verdicts.
-  - `estimate_aws_cost_per_mission()`: Pricing-backed cost estimation with explicit unestimated components; CloudWatch EMF cost `None` (`NOT_ESTIMABLE`); AgentCore published rates verified with unobserved consumption; `total_estimated_cost_usd is None`.
-- **CLI Runner**: `scripts/p18_benchmarks.py` (supports `--all`, `--p18-01`, `--p18-02`, `--p18-03`, `--json`, `--output`; KeyError-safe on partial/failed runs).
-- **Test Suite**: `tests/test_phase_p18_benchmarks.py` (38 passing tests, zero wall-clock assertions).
-- **Test Suite Invariant**: Core test suite: **2,451 PASSED**; Strands planner test suite: **1,155 PASSED**.
+  - `run_mission_benchmark()`: Monotonic per-step timing harness (PASS, BLOCKED, FAILED, NOT_RUN).
+  - `measure_mcp_transport_latency()`: Loopback Streamable HTTP transport test (< 500ms threshold).
+  - `estimate_aws_cost_per_mission()`: Pricing-backed cost estimation with explicit unestimated components.
+  - `run_repeated_mission_reliability_test()`: Offline fixture reliability harness (15 iterations, contamination detection, receipt hash verification).
+- **CLI Runner**: `scripts/p18_benchmarks.py` (supports `--all`, `--p18-01`, `--p18-02`, `--p18-03`, `--p18-06`, `--reliability-iterations`, `--json`, `--output`).
+- **Safety Architecture Document**: `docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md`.
+- **Test Suites**:
+  - `tests/test_phase_p18_benchmarks.py`: 38 passing tests.
+  - `tests/test_phase_p18_04_budget_rate_limits.py`: 18 passing tests.
+  - `tests/test_phase_p18_05_quota_safety.py`: 12 passing tests.
+  - `tests/test_phase_p18_06_reliability.py`: 10 passing tests.
+  - `tests/test_phase_p18_07_availability_plan.py`: 8 passing tests.
+  - **Batch P-18 Total**: **86 PASSED** tests.
+- **Zero Personal Spend Law**: Maximum personal spend is strictly `$0.00`. Zero paid cloud resources activated.
+
