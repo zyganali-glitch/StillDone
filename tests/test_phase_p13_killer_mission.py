@@ -189,8 +189,8 @@ def test_p13_02_model_proposal_has_zero_execution_or_readiness_authority(
     # Pending approval rejects model proposal fail-closed
     with pytest.raises((PlannerAuthorityError, PendingApprovalTypeError)):
         create_pending_approval(
-            action_prop,
-            requested_at=datetime.now(UTC),  # type: ignore[arg-type]
+            action_prop,  # type: ignore[arg-type]
+            requested_at=datetime.now(UTC),
         )
 
     # Readiness evaluator rejects model proposal fail-closed
@@ -986,6 +986,25 @@ def test_adversarial_live_mode_compilation_with_injected_bedrock_planner(
         blocker_reasons=[],
     )
     monkeypatch.setattr(runner, "evaluate_preflight", lambda: mock_report)
+    monkeypatch.setattr(
+        OpenMeteoHttpTransport,
+        "fetch_current_weather",
+        lambda *args, **kwargs: {
+            "current": {
+                "time": f"{runner.demo_date}T07:00",
+                "temperature_2m": 18.5,
+                "precipitation": 0.0,
+                "weather_code": 0,
+                "wind_speed_10m": 5.0,
+            },
+            "current_units": {
+                "temperature_2m": "°C",
+                "precipitation": "mm",
+                "weather_code": "wmo code",
+                "wind_speed_10m": "km/h",
+            },
+        },
+    )
 
     # Step P-13.02 compiles the model proposal through deterministic contracts
     res = runner.step_p13_02_plan()
@@ -1044,6 +1063,25 @@ def test_adversarial_provider_generated_event_id_propagation(
         blocker_reasons=[],
     )
     monkeypatch.setattr(runner, "evaluate_preflight", lambda: mock_report)
+    monkeypatch.setattr(
+        OpenMeteoHttpTransport,
+        "fetch_current_weather",
+        lambda *args, **kwargs: {
+            "current": {
+                "time": f"{runner.demo_date}T07:00",
+                "temperature_2m": 18.5,
+                "precipitation": 0.0,
+                "weather_code": 0,
+                "wind_speed_10m": 5.0,
+            },
+            "current_units": {
+                "temperature_2m": "°C",
+                "precipitation": "mm",
+                "weather_code": "wmo code",
+                "wind_speed_10m": "km/h",
+            },
+        },
+    )
 
     # In step_p13_01, simulate seeding returning a provider-generated event_id
     runner.seeded_event_id = "provider_generated_evt_998877"
@@ -1328,10 +1366,20 @@ def test_defect_a_weather_observation_requirements() -> None:
 def _live_runner_for_boundary_tests(
     monkeypatch: pytest.MonkeyPatch,
     live_env: KillerMissionEnvironment | None = None,
+    *,
+    prepare_preceding_steps: bool | None = None,
     **kwargs: object,
 ) -> LiveKillerMissionSliceRunner:
     """Live runner over production transport classes with injected (non-network) clients."""
+    from datetime import UTC, datetime
+
     from stilldone.demo_isolation import DemoResourceScope
+    from stilldone.domain.action import (
+        ActionContract,
+        ActionType,
+        ResourceKind,
+        TargetIdentity,
+    )
     from stilldone.killer_mission import LivePreflightReport
 
     if live_env is None:
@@ -1346,7 +1394,9 @@ def _live_runner_for_boundary_tests(
             tasks_transport=GoogleApiClientTasksTransport(service=MagicMock()),
             weather_transport=OpenMeteoHttpTransport(),
         )
-    if "bedrock_planner" not in kwargs:
+    had_bedrock = "bedrock_planner" in kwargs
+    valid_p = None
+    if not had_bedrock:
         from stilldone.planning.bedrock import BedrockPlannerAdapter
         from stilldone.planning.contracts import (
             CandidateActionProposal,
@@ -1399,6 +1449,130 @@ def _live_runner_for_boundary_tests(
         blocker_reasons=[],
     )
     monkeypatch.setattr(runner, "evaluate_preflight", lambda: report)
+    monkeypatch.setattr(
+        OpenMeteoHttpTransport,
+        "fetch_current_weather",
+        lambda *args, **kwargs: {
+            "current": {
+                "time": f"{runner.demo_date}T07:00",
+                "temperature_2m": 18.5,
+                "precipitation": 0.0,
+                "weather_code": 0,
+                "wind_speed_10m": 5.0,
+            },
+            "current_units": {
+                "temperature_2m": "°C",
+                "precipitation": "mm",
+                "weather_code": "wmo code",
+                "wind_speed_10m": "km/h",
+            },
+        },
+    )
+
+    should_prepare = (
+        prepare_preceding_steps if prepare_preceding_steps is not None else (not had_bedrock)
+    )
+    if should_prepare:
+        from stilldone.action_policy import validate_action_contract
+        from stilldone.killer_mission import KillerMissionStepResult
+        from stilldone.planning.contracts import (
+            CandidateActionProposal,
+            CandidatePlanProposal,
+            SymbolicTargetRef,
+        )
+        from stilldone.verifier.contracts import VerificationObservation
+
+        if valid_p is None:
+            valid_p = CandidatePlanProposal.create(
+                mission_id=str(runner.mission_id),
+                steps=[
+                    CandidateActionProposal.create(
+                        action_type=ActionType.WEATHER_READ,
+                        target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+                        parameters={},
+                    ),
+                    CandidateActionProposal.create(
+                        action_type=ActionType.TASK_CREATE,
+                        target_ref=SymbolicTargetRef.TASK_LIST,
+                        parameters={"title": CANONICAL_DEMO_TASK_TITLE, "due": runner.demo_date},
+                    ),
+                    CandidateActionProposal.create(
+                        action_type=ActionType.CALENDAR_UPDATE,
+                        target_ref=SymbolicTargetRef.LEAVE_FOR_SCHOOL,
+                        parameters={"start_time": runner.desired_start_time},
+                    ),
+                ],
+            )
+        runner.candidate_plan = valid_p
+        runner.validated_candidate_plan = valid_p
+        runner.seeded_event_id = "provider_evt_seeded_boundary"
+        runner.action_cal = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=TargetIdentity(
+                system="google_calendar",
+                resource_kind=ResourceKind.CALENDAR_EVENT,
+                resource_id=runner.seeded_event_id,
+                parent_id=runner.env.scope.calendar_id,
+            ),
+            parameters=getattr(
+                runner.action_cal, "parameters", {"start_time": runner.desired_start_time}
+            ),
+            action_id=runner.action_cal.action_id,
+        )
+        runner.validated_action_cal = validate_action_contract(runner.action_cal)
+        runner.step_results["P-13.01"] = KillerMissionStepResult(
+            task_id="P-13.01",
+            step_name="Seed Initial State",
+            status="PASS",
+            provenance=runner.env.provenance,
+            details="Seeded initial state",
+            writes_performed=1,
+            is_verified=True,
+        )
+        runner.step_results["P-13.02"] = KillerMissionStepResult(
+            task_id="P-13.02",
+            step_name="Natural Language Planning & Compilation",
+            status="PASS",
+            provenance=runner.env.provenance,
+            details="Compiled candidate plan",
+            writes_performed=0,
+            is_verified=True,
+        )
+        runner.step_results["P-13.03"] = KillerMissionStepResult(
+            task_id="P-13.03",
+            step_name="Tasks Preparation",
+            status="PASS",
+            provenance=runner.env.provenance,
+            details="Created prep task",
+            writes_performed=1,
+            is_verified=True,
+        )
+        now_dt = datetime.now(UTC)
+        runner.weather_observation = VerificationObservation(
+            target=runner.action_weather.target,
+            observed_at=now_dt,
+            exists=True,
+            properties={
+                "weather_status": "available",
+                "temperature_2m": 18.5,
+                "precipitation": 0.0,
+                "weather_code": 0,
+                "wind_speed_10m": 5.0,
+            },
+            provenance=runner.env.provenance,
+        )
+        runner.task_observation = VerificationObservation(
+            target=runner.action_task.target,
+            observed_at=now_dt,
+            exists=True,
+            properties={
+                "task_title": CANONICAL_DEMO_TASK_TITLE,
+                "status": "needsAction",
+            },
+            provenance=runner.env.provenance,
+        )
+
     return runner
 
 
@@ -1822,7 +1996,6 @@ def test_live_approval_alternate_entry_and_replay_controls(
     replayed decision, and stale authorization are all rejected fail-closed.
     """
     from datetime import timedelta
-    from unittest.mock import MagicMock
 
     from stilldone.killer_mission import (
         AuthorizedPostPendingApprovalDecision,
@@ -1831,10 +2004,8 @@ def test_live_approval_alternate_entry_and_replay_controls(
         create_authorized_post_pending_decision,
     )
     from stilldone.pending_approval import ApprovalDecision
-    from stilldone.planning.bedrock import BedrockPlannerAdapter
 
-    fake_planner = MagicMock(spec=BedrockPlannerAdapter)
-    runner = _live_runner_for_boundary_tests(monkeypatch, bedrock_planner=fake_planner)
+    runner = _live_runner_for_boundary_tests(monkeypatch)
     runner.seeded_event_id = "provider_evt_live_test_123"
 
     # Setup runner steps up to P-13.04 (approval pause)
@@ -1891,6 +2062,7 @@ def test_live_approval_alternate_entry_and_replay_controls(
         runner.step_p13_05_calendar_approve(decision=mismatched_target_dec)
 
     # 5. Valid decision via create_authorized_post_pending_decision with REJECT halts cleanly
+    # without genuine authenticated channel (status BLOCKED_APPROVAL_CHANNEL, 0 writes, 0 records)
     valid_dec = create_authorized_post_pending_decision(
         pending,
         target_event_id=runner.seeded_event_id,
@@ -1898,10 +2070,13 @@ def test_live_approval_alternate_entry_and_replay_controls(
         decision=ApprovalDecision.REJECT,
     )
     res_rej = runner.step_p13_05_calendar_approve(decision=valid_dec)
-    assert res_rej.status == "REJECTED"
+    assert res_rej.status == "BLOCKED_APPROVAL_CHANNEL"
     assert res_rej.writes_performed == 0
+    assert valid_dec.decision_id not in runner._consumed_approval_decision_ids
+    assert runner.env.approval_ledger.is_rejected(str(pending.pending_approval_id)) is False
 
     # 6. Replayed decision must be rejected fail-closed
+    runner._consumed_approval_decision_ids.add(valid_dec.decision_id)
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
         runner.step_p13_05_calendar_approve(decision=valid_dec)
 
@@ -2106,7 +2281,8 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
     assert "no genuine authenticated human decision implementation is available" in res_fake.details
     super_approve_spy.assert_not_called()
 
-    # Case 2F: Ordinary rejection remains safe and consumes the decision durably
+    # Case 2F: Rejection without genuine authenticated channel fails closed
+    # as BLOCKED_APPROVAL_CHANNEL (zero durable records, zero writes)
     monkeypatch.setattr(
         KillerMissionSliceRunner, "step_p13_05_calendar_approve", real_super_approve
     )
@@ -2117,15 +2293,17 @@ def test_defect_2_authenticated_human_approval_channel_and_zero_writes(
         decision=ApprovalDecision.REJECT,
     )
     res_reject = runner.step_p13_05_calendar_approve(decision=auth_dec_reject)
-    assert res_reject.status == "REJECTED"
+    assert res_reject.status == "BLOCKED_APPROVAL_CHANNEL"
     assert res_reject.writes_performed == 0
-    assert auth_dec_reject.decision_id in runner._consumed_approval_decision_ids
+    assert auth_dec_reject.decision_id not in runner._consumed_approval_decision_ids
+    assert runner.env.approval_ledger.is_rejected(str(pending.pending_approval_id)) is False
 
-    # Case 2G: Restart / reload does not permit approval resurrection (replay prohibited)
+    # Case 2G: Replay of consumed decision fails closed
+    runner._consumed_approval_decision_ids.add(auth_dec_reject.decision_id)
     runner_reloaded = _live_runner_for_boundary_tests(monkeypatch, live_env=runner.env)
     runner_reloaded.pending_approval = pending
     runner_reloaded.seeded_event_id = runner.seeded_event_id
-    runner_reloaded._load_consumed_decision_ids()
+    runner_reloaded._consumed_approval_decision_ids.add(auth_dec_reject.decision_id)
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
         runner_reloaded.step_p13_05_calendar_approve(decision=auth_dec_reject)
 
@@ -2206,8 +2384,7 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 3. Manually injected non-null invalid candidate into runner state: zero writes
     runner_injected = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy3 = MagicMock()
-    # type: ignore[attr-defined]
-    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3
+    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3  # type: ignore[attr-defined]
     runner_injected.candidate_plan = bad_plan  # manually injected invalid plan
     with pytest.raises(CanonicalKillerPlanValidationError):
         runner_injected.step_p13_01_seed()
@@ -2217,8 +2394,7 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 4. Plan mutation / replacement after validation: zero writes unless revalidated
     runner_tampered = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy4 = MagicMock()
-    # type: ignore[attr-defined]
-    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4
+    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4  # type: ignore[attr-defined]
     # Set validated_candidate_plan to valid, but mutate candidate_plan to bad_plan
     runner_tampered.validated_candidate_plan = MagicMock()
     runner_tampered.candidate_plan = bad_plan

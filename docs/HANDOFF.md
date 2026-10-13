@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote HEAD: `89654f1d265318f3fb7aa9d153856379fd0fd7f4` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Final Shared-Boundary Closure (A2, A3 closed in single bounded batch; shared mutation boundary bypass blocked at base-class boundary; raw REJECT halts mutation with 0 writes without claiming durable terminal rejection; typed REJECT requires exact PendingApproval binding; dual-runtime validator PASS across Core & Strands; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote HEAD: `09ec902cc4ab7bfb03834b6c93524a1f56469b3f` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Shared Execution & Human-Authority Boundary Closure (Defects 1, 2 closed in single bounded batch; mandatory live preflight; validated execution ordering enforced at shared mutation boundaries; genuine human-origin decision channel verification required before durable authority records; dual-runtime validator PASS across Core & Strands; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,16 +74,16 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-13 + P-16 FINAL SHARED-BOUNDARY CLOSURE (Defects A2, A3)
+Active task: STILLDONE — P-13 + P-16 SHARED EXECUTION & HUMAN-AUTHORITY BOUNDARY CLOSURE (Defects 1, 2)
 
-Starting Remote SHA: `89654f1d265318f3fb7aa9d153856379fd0fd7f4`
+Starting Remote SHA: `09ec902cc4ab7bfb03834b6c93524a1f56469b3f`
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 + P-16: Final Shared-Boundary Closure Applied (Defects A2, A3 closed; PASS Candidate, awaiting independent QA review)
-  - Defect A3 (Shared Mutation Boundary Bypass): Enforced live recovery (`_existing_mission_detected and not _execution_state_restored`) and preflight prerequisites at the shared side-effect boundaries in `KillerMissionSliceRunner` (including base-method calls `step_p13_01_seed`, `step_p13_03_tasks_prep`, `step_p13_04_calendar_pause`). Zero seeding writes, zero Tasks writes, zero new PendingApproval on unrestored missions; live seeding requires validated candidate plan (`candidate_plan is validated_candidate_plan`); preflight blocks unconfigured live paths; fixture execution unchanged.
-  - Defect A2 (Rejection Status Must Match Durable Authority): Raw `REJECT` parameter and callback raw `REJECT` safely halt live mutation with 0 writes and return `BLOCKED_APPROVAL_CHANNEL` with `raw_negative_instruction=True` and `durable_terminal_rejection=False`, without publishing false `REJECTED` status or modifying canonical `ApprovalLedger`. Verified typed `REJECT` requires exact `pending_approval_id`, mission, and action binding; direct persistence helper before P-13.04 fails closed (`KillerMissionSequenceError`).
+- P-13 + P-16: Shared Execution & Human-Authority Boundary Closure Applied (Defects 1, 2 closed; PASS Candidate, awaiting independent QA review)
+  - Defect 1 (Shared Execution Order Bypass): Mandatory preflight in `_require_shared_live_mutation_boundary()` failing closed if `_require_preflight` missing/non-callable; enforced execution order and prerequisites at shared mutation/side-effect boundaries: `step_p13_03_tasks_prep()` requires validated candidate plan, weather observation, and preceding steps; `step_p13_04_calendar_pause()` requires validated candidate plan, P-13.01, P-13.02, P-13.03 PASS & verified, weather observation, task observation, and established provider event ID. Zero writes, zero unauthorized PendingApproval, no false verification/READY.
+  - Defect 2 (Typed Rejection Lacks Authenticated Human Origin): Separated structural decision validity from authenticated human-origin verification. Both APPROVE and REJECT require genuine trusted decision-channel verification via `approval_channel.verify_decision()`. In production absence of an authenticated human decision channel, all decisions fail closed as `BLOCKED_APPROVAL_CHANNEL / NOT_RUN` with 0 writes performed and 0 consumed decision records committed. Self-constructed typed REJECT, forged `authority_source`, unauthenticated callback typed REJECT, or fake verifier returning True cannot establish production authority or durable rejection. Raw negative instructions halt mutation safely with 0 writes.
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
 - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.

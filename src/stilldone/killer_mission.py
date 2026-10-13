@@ -1406,8 +1406,15 @@ class KillerMissionSliceRunner:
                 "but full safe rehydration is not supported. "
                 "Use a new mission ID with fresh stable storage."
             )
-        if hasattr(self, "_require_preflight"):
-            self._require_preflight()
+        # Shared live preflight enforcement is mandatory:
+        preflight_fn = getattr(self, "_require_preflight", None)
+        if not callable(preflight_fn):
+            raise LivePreflightBlockedError(
+                f"Live execution boundary requires a mandatory '_require_preflight' "
+                f"implementation; missing or non-callable preflight on live runner "
+                f"fails closed for {operation}."
+            )
+        preflight_fn()
 
     # -----------------------------------------------------------------------
     # Step 1: P-13.01 — Seed canonical disposable demo resources reproducibly
@@ -1630,6 +1637,47 @@ class KillerMissionSliceRunner:
         """Execute task.create (REVERSIBLE_AUTO) and independently verify with task.read."""
         if self.live_mode:
             self._require_shared_live_mutation_boundary("tasks preparation")
+            cand = getattr(self, "candidate_plan", None)
+            val_cand = getattr(self, "validated_candidate_plan", None)
+            if cand is None or val_cand is None or cand is not val_cand:
+                raise CanonicalKillerPlanValidationError(
+                    "Live tasks creation cannot proceed without an independently validated "
+                    "canonical candidate plan."
+                )
+            validate_canonical_killer_mission_plan(
+                cand,
+                target_date=self.demo_date,
+                desired_start_time=self.desired_start_time,
+                scope=self.env.scope,
+            )
+            seeded_id = getattr(self, "seeded_event_id", None)
+            if (
+                not seeded_id
+                or not isinstance(seeded_id, str)
+                or not seeded_id.strip()
+                or seeded_id == CANONICAL_DEMO_EVENT_ID
+            ):
+                raise KillerMissionSequenceError(
+                    "Live tasks creation requires an established authoritative provider event ID "
+                    "from seeding step P-13.01."
+                )
+            step1 = self.step_results.get("P-13.01")
+            if step1 is None or step1.status != "PASS" or not step1.is_verified:
+                raise KillerMissionSequenceError(
+                    "Live tasks creation requires proven preceding seeding step P-13.01 "
+                    "with PASS status and independent read-back verification."
+                )
+            step2 = self.step_results.get("P-13.02")
+            if step2 is None or step2.status != "PASS" or not step2.is_verified:
+                raise KillerMissionSequenceError(
+                    "Live tasks creation requires proven preceding planning step P-13.02 "
+                    "with PASS status and verified weather observation."
+                )
+            if getattr(self, "weather_observation", None) is None:
+                raise KillerMissionSequenceError(
+                    "Live tasks creation requires an established, verified weather observation "
+                    "from P-13.02."
+                )
         if self.live_mode and not self.operator_approved:
             res = KillerMissionStepResult(
                 task_id="P-13.03",
@@ -1779,6 +1827,82 @@ class KillerMissionSliceRunner:
                     "approval authority; ephemeral or unconfigured storage cannot guarantee "
                     "restart replay protection."
                 )
+            cand = getattr(self, "candidate_plan", None)
+            val_cand = getattr(self, "validated_candidate_plan", None)
+            if cand is None or val_cand is None or cand is not val_cand:
+                raise CanonicalKillerPlanValidationError(
+                    "Live calendar pause cannot proceed without an independently validated "
+                    "canonical candidate plan."
+                )
+            validate_canonical_killer_mission_plan(
+                cand,
+                target_date=self.demo_date,
+                desired_start_time=self.desired_start_time,
+                scope=self.env.scope,
+            )
+            seeded_id = getattr(self, "seeded_event_id", None)
+            if (
+                not seeded_id
+                or not isinstance(seeded_id, str)
+                or not seeded_id.strip()
+                or seeded_id == CANONICAL_DEMO_EVENT_ID
+            ):
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires an established authoritative provider event ID "
+                    "from seeding step P-13.01."
+                )
+            step1 = self.step_results.get("P-13.01")
+            if step1 is None or step1.status != "PASS" or not step1.is_verified:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires proven preceding seeding step P-13.01."
+                )
+            step2 = self.step_results.get("P-13.02")
+            if step2 is None or step2.status != "PASS" or not step2.is_verified:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires proven preceding planning step P-13.02."
+                )
+            if getattr(self, "weather_observation", None) is None:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires an established, verified weather observation "
+                    "from P-13.02."
+                )
+            step3 = self.step_results.get("P-13.03")
+            if step3 is None or step3.status != "PASS" or not step3.is_verified:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires proven preceding tasks preparation step "
+                    "P-13.03 with PASS status and independent read-back verification."
+                )
+            if getattr(self, "task_observation", None) is None:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires an established, verified tasks observation "
+                    "from P-13.03."
+                )
+            if not hasattr(self, "action_cal") or self.action_cal is None:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires an established calendar update action."
+                )
+            if str(self.action_cal.target.resource_id) != str(seeded_id):
+                target_cal = TargetIdentity(
+                    system="google_calendar",
+                    resource_kind=ResourceKind.CALENDAR_EVENT,
+                    resource_id=str(seeded_id),
+                    parent_id=self.env.scope.calendar_id,
+                )
+                self.action_cal = ActionContract.create(
+                    mission_id=self.mission_id,
+                    action_type=ActionType.CALENDAR_UPDATE,
+                    target=target_cal,
+                    parameters=getattr(
+                        self.action_cal, "parameters", {"start_time": self.desired_start_time}
+                    ),
+                    action_id=self.action_cal.action_id,
+                )
+                self.validated_action_cal = validate_action_contract(self.action_cal)
+            if not hasattr(self, "validated_action_cal") or self.validated_action_cal is None:
+                raise KillerMissionSequenceError(
+                    "Live calendar pause requires validated calendar action contract."
+                )
+            validate_action_contract(self.action_cal)
         # Pre-execution authority gate evaluation: unapproved action MUST halt
         gate_decision = execute_gated_action(
             self.validated_action_cal,
@@ -3442,16 +3566,6 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 f"Authorized decision is stale / expired (age: {age.total_seconds():.1f}s)"
             )
 
-        if eff_decision.decision == ApprovalDecision.REJECT:
-            self._persist_consumed_decision_id(
-                eff_decision.decision_id,
-                decision=eff_decision.decision,
-                action_id=str(self.action_cal.action_id),
-                mission_id=str(self.mission_id),
-                pending_approval_id=str(self.pending_approval.pending_approval_id),
-            )
-            return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
-
         # A3 RECOVERY GATE: Block mutation approval on unrestored runner
         if self._existing_mission_detected and not self._execution_state_restored:
             raise KillerMissionIntegrityError(
@@ -3469,15 +3583,19 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 status="BLOCKED_APPROVAL_CHANNEL",
                 provenance=self.env.provenance,
                 details=(
-                    "Live calendar mutation blocked: no authenticated, trusted human decision "
-                    "channel is available. A dataclass, model response, callback return value, "
-                    "or self-declared authority_source is not independently authenticated human "
-                    "consent. Stopping before Calendar write to preserve negative invariant "
-                    "(0 writes performed)."
+                    f"Live calendar mutation blocked: no authenticated, trusted human decision "
+                    f"channel is available for {eff_decision.decision.value}. A dataclass, model "
+                    "response, callback return value, or self-declared authority_source is not "
+                    "independently authenticated human consent. Stopping before Calendar write or "
+                    "durable consumption (0 writes performed, 0 consumed approvals)."
                 ),
                 writes_performed=0,
                 is_verified=False,
-                extra_metadata={"blocked_approval_channel": True},
+                extra_metadata={
+                    "blocked_approval_channel": True,
+                    "unauthenticated_decision": True,
+                    "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                },
             )
             self.step_results["P-13.05"] = res
             return res
@@ -3497,12 +3615,16 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 status="BLOCKED_APPROVAL_CHANNEL",
                 provenance=self.env.provenance,
                 details=(
-                    "Live calendar mutation blocked: human approval channel authentication failed. "
-                    "0 writes performed."
+                    "Live calendar mutation blocked: human approval channel authentication failed "
+                    f"for {eff_decision.decision.value}. 0 writes performed, 0 consumed approvals."
                 ),
                 writes_performed=0,
                 is_verified=False,
-                extra_metadata={"blocked_approval_channel": True, "authentication_failed": True},
+                extra_metadata={
+                    "blocked_approval_channel": True,
+                    "authentication_failed": True,
+                    "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                },
             )
             self.step_results["P-13.05"] = res
             return res
@@ -3511,7 +3633,7 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
         # A mock channel, fake verifier, arbitrary object, or unestablished trust source
         # returning True cannot establish production human authority. Because no genuine
         # authenticated production channel is available in current deployment, production
-        # live approval fails closed with BLOCKED_APPROVAL_CHANNEL.
+        # live decisions fail closed with BLOCKED_APPROVAL_CHANNEL.
         res = KillerMissionStepResult(
             task_id="P-13.05",
             step_name="Approve, Execute & Verify Calendar Update",
@@ -3521,12 +3643,17 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 "Live calendar mutation blocked: no genuine authenticated human decision "
                 "implementation is available in production. A fake verifier or test mock returning "
                 "True cannot establish production human authority merely by implementing the "
-                "Protocol. Stopping before Calendar write to preserve zero personal spend and "
-                "negative invariant (0 writes performed)."
+                f"Protocol for {eff_decision.decision.value}. Stopping before Calendar write or "
+                "durable consumption to preserve negative invariant "
+                "(0 writes performed, 0 consumed approvals)."
             ),
             writes_performed=0,
             is_verified=False,
-            extra_metadata={"blocked_approval_channel": True, "unestablished_trust_source": True},
+            extra_metadata={
+                "blocked_approval_channel": True,
+                "unestablished_trust_source": True,
+                "pending_approval_id": str(self.pending_approval.pending_approval_id),
+            },
         )
         self.step_results["P-13.05"] = res
         return res

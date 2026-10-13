@@ -21,7 +21,14 @@ from stilldone.action_policy import (
     validate_action_contract,
 )
 from stilldone.adapters.calendar import GoogleApiClientCalendarTransport
-from stilldone.adapters.tasks import GoogleApiClientTasksTransport
+from stilldone.adapters.tasks import (
+    GoogleApiClientTasksTransport,
+    TaskCreateResult,
+    TaskCreateStatus,
+    TaskObservation,
+    TaskReadResult,
+    TaskReadStatus,
+)
 from stilldone.adapters.weather import OpenMeteoHttpTransport
 from stilldone.approval_consumption import (
     ApprovalAlreadyUsedError,
@@ -184,6 +191,25 @@ def _setup_live_runner(
             blocker_reasons=[],
         )
         monkeypatch.setattr(runner, "evaluate_preflight", lambda: report)
+        monkeypatch.setattr(
+            OpenMeteoHttpTransport,
+            "fetch_current_weather",
+            lambda *args, **kwargs: {
+                "current": {
+                    "time": f"{runner.demo_date}T07:00",
+                    "temperature_2m": 18.5,
+                    "precipitation": 0.0,
+                    "weather_code": 0,
+                    "wind_speed_10m": 5.0,
+                },
+                "current_units": {
+                    "temperature_2m": "°C",
+                    "precipitation": "mm",
+                    "weather_code": "wmo code",
+                    "wind_speed_10m": "km/h",
+                },
+            },
+        )
     return runner
 
 
@@ -939,6 +965,182 @@ class TestA2AuthorityRecordStateModel:
         assert runner.env.approval_ledger.is_rejected(pa_id) is False
         assert runner.total_writes == 0
 
+    def test_typed_reject_self_constructed_zero_durable_human_decision_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Self-constructed typed REJECT with matching IDs cannot create durable
+        human-decision records (zero records in ApprovalLedger, zero writes).
+        """
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        typed_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+
+        res = runner.step_p13_05_calendar_approve(decision=typed_reject)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert res.is_verified is False
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.env.approval_ledger.is_decision_consumed(typed_reject.decision_id) is False
+        assert typed_reject.decision_id not in runner._consumed_approval_decision_ids
+        assert runner.total_writes == 0
+
+    def test_typed_reject_with_forged_authority_source_zero_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Typed REJECT with forged authority_source creates zero records."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        forged_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+            authority_source="FORGED_ROOT_OPERATOR_TOKEN",
+        )
+
+        res = runner.step_p13_05_calendar_approve(decision=forged_reject)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.env.approval_ledger.is_decision_consumed(forged_reject.decision_id) is False
+        assert forged_reject.decision_id not in runner._consumed_approval_decision_ids
+        assert runner.total_writes == 0
+
+    def test_unauthenticated_callback_returning_typed_reject_zero_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Unauthenticated callback returning typed REJECT creates zero records."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        typed_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+        runner.post_pending_decision_callback = lambda pa: typed_reject
+
+        res = runner.step_p13_05_calendar_approve(decision=None)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.env.approval_ledger.is_decision_consumed(typed_reject.decision_id) is False
+        assert typed_reject.decision_id not in runner._consumed_approval_decision_ids
+        assert runner.total_writes == 0
+
+    def test_fake_verifier_returning_true_cannot_establish_production_consent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Fake verifier returning True cannot establish production consent."""
+        from unittest.mock import MagicMock
+
+        from stilldone.killer_mission import AuthenticatedHumanApprovalChannel
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        fake_channel = MagicMock(spec=AuthenticatedHumanApprovalChannel)
+        fake_channel.verify_decision.return_value = True
+        runner.approval_channel = fake_channel
+
+        typed_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+
+        res = runner.step_p13_05_calendar_approve(decision=typed_reject)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.env.approval_ledger.is_decision_consumed(typed_reject.decision_id) is False
+        assert typed_reject.decision_id not in runner._consumed_approval_decision_ids
+        assert runner.total_writes == 0
+
+    def test_missing_verifier_blocked_with_zero_writes_and_zero_consumed_approvals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Missing verifier blocks with zero writes and zero consumed approvals."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+        runner.approval_channel = None
+
+        typed_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+
+        res = runner.step_p13_05_calendar_approve(decision=typed_reject)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert typed_reject.decision_id not in runner._consumed_approval_decision_ids
+
+    def test_invalid_binding_typed_reject_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Invalid mission/action/target/parameter binding is blocked fail-closed."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+
+        # Mismatched target_event_id
+        mismatched_target = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id="forged_event_id_mismatch",
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+        with pytest.raises(KillerMissionAuthorityError, match="target_event_id mismatch"):
+            runner.step_p13_05_calendar_approve(decision=mismatched_target)
+
+        # Mismatched parameters
+        mismatched_params = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters={"start_time": "2026-10-04T09:00:00+00:00"},
+            decision=ApprovalDecision.REJECT,
+        )
+        with pytest.raises(
+            KillerMissionAuthorityError,
+            match="action_parameter_fingerprint mismatch",
+        ):
+            runner.step_p13_05_calendar_approve(decision=mismatched_params)
+
+    def test_replay_of_previously_durable_decision_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 2: Replay of previously consumed decision ID is blocked fail-closed."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+
+        typed_reject = create_authorized_post_pending_decision(
+            runner.pending_approval,
+            target_event_id=runner.seeded_event_id,
+            action_parameters=runner.action_cal.parameters.to_dict(),
+            decision=ApprovalDecision.REJECT,
+        )
+        # Mark decision as already consumed
+        runner._consumed_approval_decision_ids.add(typed_reject.decision_id)
+
+        with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
+            runner.step_p13_05_calendar_approve(decision=typed_reject)
+
     def test_legacy_valid_history_interpreted_cleanly_and_corrupt_history_fails_closed(
         self, tmp_path: Path
     ) -> None:
@@ -1134,10 +1336,49 @@ class TestA3UnrestoredRunnerExecutionGating:
             ),
         )
 
+        monkeypatch.setattr(
+            runner.tasks_create_adapter,
+            "create_task",
+            lambda act, **kw: TaskCreateResult(
+                status=TaskCreateStatus.CREATED,
+                task_id="t_clean_123",
+                task_list_id=runner.env.scope.task_list_id,
+                title="Pack backpacks",
+                due="2026-10-04",
+                writes_performed=1,
+            ),
+        )
+        monkeypatch.setattr(
+            runner.tasks_read_adapter,
+            "read_task",
+            lambda act: TaskReadResult(
+                status=TaskReadStatus.MATCH,
+                observation=TaskObservation(
+                    task_id=act.target.resource_id,
+                    task_list_id=runner.env.scope.task_list_id,
+                    title="Pack backpacks",
+                    due="2026-10-04",
+                    status="needsAction",
+                    deleted=False,
+                    hidden=False,
+                    etag="etag_clean_123",
+                    observed_at=datetime.now(UTC),
+                ),
+            ),
+        )
+
         # Step 1 seeding succeeds
         res1 = runner.step_p13_01_seed()
         assert res1.status == "PASS"
         assert runner.seeded_event_id == "seeded_evt_clean_123"
+
+        # Step 2 planning succeeds
+        res2 = runner.step_p13_02_plan()
+        assert res2.status == "PASS"
+
+        # Step 3 tasks prep succeeds
+        res3 = runner.step_p13_03_tasks_prep()
+        assert res3.status == "PASS"
 
         # Step 4 pause succeeds without recovery error
         res4 = runner.step_p13_04_calendar_pause()
@@ -1475,9 +1716,45 @@ class TestA3UnrestoredRunnerExecutionGating:
                 details="Clean seed",
             ),
         )
+        monkeypatch.setattr(
+            runner.tasks_create_adapter,
+            "create_task",
+            lambda act, **kw: TaskCreateResult(
+                status=TaskCreateStatus.CREATED,
+                task_id="t_clean_456",
+                task_list_id=runner.env.scope.task_list_id,
+                title="Pack backpacks",
+                due="2026-10-04",
+                writes_performed=1,
+            ),
+        )
+        monkeypatch.setattr(
+            runner.tasks_read_adapter,
+            "read_task",
+            lambda act: TaskReadResult(
+                status=TaskReadStatus.MATCH,
+                observation=TaskObservation(
+                    task_id=act.target.resource_id,
+                    task_list_id=runner.env.scope.task_list_id,
+                    title="Pack backpacks",
+                    due="2026-10-04",
+                    status="needsAction",
+                    deleted=False,
+                    hidden=False,
+                    etag="etag_clean_456",
+                    observed_at=datetime.now(UTC),
+                ),
+            ),
+        )
 
         res1 = runner.step_p13_01_seed()
         assert res1.status == "PASS"
+
+        res2 = runner.step_p13_02_plan()
+        assert res2.status == "PASS"
+
+        res3 = runner.step_p13_03_tasks_prep()
+        assert res3.status == "PASS"
 
         # Step 4 pause establishes pending approval
         res4 = runner.step_p13_04_calendar_pause()
@@ -1498,7 +1775,8 @@ class TestA3UnrestoredRunnerExecutionGating:
         assert res_cb.writes_performed == 0
         assert res_cb.is_verified is False
 
-        # 4. Legitimate rejection: bound typed REJECT records rejection and terminates
+        # 4. Typed REJECT without genuine authenticated channel halts safely
+        # as BLOCKED_APPROVAL_CHANNEL with zero durable records and zero writes
         runner.post_pending_decision_callback = None
         auth_dec_rej = create_authorized_post_pending_decision(
             runner.pending_approval,
@@ -1507,12 +1785,14 @@ class TestA3UnrestoredRunnerExecutionGating:
             decision=ApprovalDecision.REJECT,
         )
         res_rej = runner.step_p13_05_calendar_approve(decision=auth_dec_rej)
-        assert res_rej.status == "REJECTED"
+        assert res_rej.status == "BLOCKED_APPROVAL_CHANNEL"
         assert res_rej.writes_performed == 0
-        assert runner.env.approval_ledger.is_rejected(pa_id) is True
-        assert runner.env.approval_ledger.is_decision_consumed(auth_dec_rej.decision_id) is True
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.env.approval_ledger.is_decision_consumed(auth_dec_rej.decision_id) is False
+        assert auth_dec_rej.decision_id not in runner._consumed_approval_decision_ids
 
-        # 5. Replay attempt on same rejected decision/pending approval fails closed
+        # 5. Replay attempt of consumed decision fails closed
+        runner._consumed_approval_decision_ids.add(auth_dec_rej.decision_id)
         with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
             runner.step_p13_05_calendar_approve(decision=auth_dec_rej)
 
@@ -1602,6 +1882,260 @@ class TestA3UnrestoredRunnerExecutionGating:
         with pytest.raises(LivePreflightBlockedError, match="Live execution gate failed preflight"):
             KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
         assert runner.total_writes == 0
+
+    def test_base_methods_new_live_runner_preflight_passing_candidate_plan_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Explicit base methods on live runner without candidate plan are blocked."""
+        from stilldone.killer_mission import (
+            CanonicalKillerPlanValidationError,
+            KillerMissionSliceRunner,
+        )
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        runner.candidate_plan = None
+        runner.validated_candidate_plan = None
+
+        with pytest.raises(
+            CanonicalKillerPlanValidationError,
+            match="Live seeding cannot proceed without an independently validated",
+        ):
+            KillerMissionSliceRunner.step_p13_01_seed(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(
+            CanonicalKillerPlanValidationError,
+            match="Live tasks creation cannot proceed without an independently validated",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(
+            CanonicalKillerPlanValidationError,
+            match="Live calendar pause cannot proceed without an independently validated",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+        assert runner.total_writes == 0
+
+    def test_base_methods_new_live_runner_plan_present_but_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Explicit base methods on live runner with invalid plan are blocked."""
+        from stilldone.killer_mission import (
+            CanonicalKillerPlanValidationError,
+            KillerMissionSliceRunner,
+        )
+        from stilldone.planning.contracts import CandidateActionProposal, CandidatePlanProposal
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        # Create an invalid candidate plan (only 1 step instead of canonical 3 steps)
+        bad_action = CandidateActionProposal.create(
+            action_type=ActionType.WEATHER_READ,
+            target_ref=SymbolicTargetRef.WEATHER_LOCATION,
+            parameters={},
+            explanation="Invalid 1-step plan",
+        )
+        bad_plan = CandidatePlanProposal.create(
+            mission_id=runner.mission_id,
+            steps=[bad_action],
+            explanation="Invalid proposal with missing tasks and calendar actions",
+        )
+        runner.candidate_plan = bad_plan
+        runner.validated_candidate_plan = bad_plan
+
+        with pytest.raises(CanonicalKillerPlanValidationError):
+            KillerMissionSliceRunner.step_p13_01_seed(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(CanonicalKillerPlanValidationError):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(CanonicalKillerPlanValidationError):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+        assert runner.total_writes == 0
+
+    def test_base_methods_new_live_runner_valid_plan_prior_steps_not_executed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Tasks and pause methods on live runner without prior step execution
+        fail closed.
+        """
+        from stilldone.killer_mission import (
+            KillerMissionSequenceError,
+            KillerMissionSliceRunner,
+        )
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        plan = runner._create_deterministic_proposal()
+        runner.candidate_plan = plan
+        runner.validated_candidate_plan = plan
+        runner.seeded_event_id = "seeded_provider_evt_7766"
+        runner.step_results.clear()
+
+        # Tasks prep fails closed because P-13.01 and P-13.02 have not executed
+        with pytest.raises(
+            KillerMissionSequenceError,
+            match="Live tasks creation requires proven preceding seeding step",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        # Calendar pause fails closed because P-13.01, P-13.02, P-13.03 have not executed
+        with pytest.raises(
+            KillerMissionSequenceError,
+            match="Live calendar pause requires proven preceding seeding step",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+        assert runner.total_writes == 0
+
+    def test_base_methods_new_live_runner_no_established_event_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Tasks and pause methods on live runner without established event ID
+        fail closed.
+        """
+        from stilldone.killer_mission import (
+            KillerMissionSequenceError,
+            KillerMissionSliceRunner,
+        )
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        plan = runner._create_deterministic_proposal()
+        runner.candidate_plan = plan
+        runner.validated_candidate_plan = plan
+        runner.seeded_event_id = ""
+
+        with pytest.raises(
+            KillerMissionSequenceError,
+            match="Live tasks creation requires an established authoritative provider event ID",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(
+            KillerMissionSequenceError,
+            match="Live calendar pause requires an established authoritative provider event ID",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+        assert runner.total_writes == 0
+
+    def test_base_methods_live_capable_runner_without_require_preflight(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Live-capable runner without _require_preflight fails closed on all steps."""
+        from stilldone.killer_mission import (
+            KillerMissionSliceRunner,
+            LivePreflightBlockedError,
+        )
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        # Delete _require_preflight method from class
+        monkeypatch.delattr(LiveKillerMissionSliceRunner, "_require_preflight")
+
+        with pytest.raises(
+            LivePreflightBlockedError,
+            match="Live execution boundary requires a mandatory '_require_preflight'",
+        ):
+            KillerMissionSliceRunner.step_p13_01_seed(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(
+            LivePreflightBlockedError,
+            match="Live execution boundary requires a mandatory '_require_preflight'",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(
+            LivePreflightBlockedError,
+            match="Live execution boundary requires a mandatory '_require_preflight'",
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert getattr(runner, "pending_approval", None) is None
+        assert runner.total_writes == 0
+
+    def test_normal_first_time_valid_p13_ordering_remains_functional(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defect 1: Normal first-time valid P-13 execution ordering executes cleanly."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        plan = runner._create_deterministic_proposal()
+        runner.candidate_plan = plan
+        runner.validated_candidate_plan = plan
+
+        monkeypatch.setattr(
+            "stilldone.killer_mission.seed_canonical_demo_resources",
+            lambda **kwargs: DemoSeedResult(
+                status=SeedOperationStatus.MUTATION_EXECUTED,
+                provenance=runner.env.provenance,
+                calendar_id=runner.env.scope.calendar_id,
+                task_list_id=runner.env.scope.task_list_id,
+                event_id="seeded_evt_clean_123",
+                event_start_time=runner.initial_start_time,
+                writes_performed=1,
+                readback_verified=True,
+                is_seed_complete=True,
+                details="Seeded clean demo event",
+            ),
+        )
+        monkeypatch.setattr(
+            runner.tasks_create_adapter,
+            "create_task",
+            lambda act, **kw: TaskCreateResult(
+                status=TaskCreateStatus.CREATED,
+                task_id="t_clean_123",
+                task_list_id=runner.env.scope.task_list_id,
+                title="Pack backpacks",
+                due="2026-10-04",
+                writes_performed=1,
+            ),
+        )
+        monkeypatch.setattr(
+            runner.tasks_read_adapter,
+            "read_task",
+            lambda act: TaskReadResult(
+                status=TaskReadStatus.MATCH,
+                observation=TaskObservation(
+                    task_id=act.target.resource_id,
+                    task_list_id=runner.env.scope.task_list_id,
+                    title="Pack backpacks",
+                    due="2026-10-04",
+                    status="needsAction",
+                    deleted=False,
+                    hidden=False,
+                    etag="etag_clean_123",
+                    observed_at=datetime.now(UTC),
+                ),
+            ),
+        )
+
+        # Step 1: Seeding
+        s1 = runner.step_p13_01_seed()
+        assert s1.status == "PASS"
+        assert s1.is_verified is True
+        assert runner.seeded_event_id != ""
+
+        # Step 2: Planning & weather read
+        s2 = runner.step_p13_02_plan()
+        assert s2.status == "PASS"
+        assert s2.is_verified is True
+        assert runner.weather_observation is not None
+
+        # Step 3: Tasks preparation
+        s3 = runner.step_p13_03_tasks_prep()
+        assert s3.status == "PASS"
+        assert s3.is_verified is True
+        assert runner.task_observation is not None
+
+        # Step 4: Calendar pause
+        s4 = runner.step_p13_04_calendar_pause()
+        assert s4.status == "PASS"
+        assert runner.pending_approval is not None
 
 
 # ===========================================================================
