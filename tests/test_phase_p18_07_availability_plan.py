@@ -104,18 +104,21 @@ def test_plan_records_exact_official_deadline_and_judging_period() -> None:
 def test_plan_records_devpost_faq_vs_forum_visibility_ambiguity() -> None:
     """Verify documentation of Devpost FAQ vs Community Forum topics 45493 and 45411 conflict."""
     content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
-    assert "Devpost Operational Ambiguity & Forum Topic Analysis" in content
+    assert "Devpost FAQ vs. Community Forum Live-Hosting Conflict" in content
     assert "45493" in content
     assert "45411" in content
     assert "FAQ" in content
+    assert "UNRESOLVED" in content
     assert "sanitized" in content.lower()
 
 
 def test_plan_documents_rate_limiter_and_judge_interaction_model() -> None:
-    """Verify persistent sliding window rate limiter and on-demand judge interaction model."""
+    """Verify persistent fixed-window rate limiter and judge interaction model."""
     content = Path("docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md").read_text(encoding="utf-8")
     assert "RateLimitMiddleware" in content
-    assert "sliding-window" in content.lower() or "sliding window" in content.lower()
+    assert "fixed-window" in content.lower() or "fixed window" in content.lower()
+    assert "no_paid_capability" in content.lower()
+    assert "not_integrated" in content.lower()
     assert "max 3 minutes" in content
     assert "on-demand" in content.lower()
     # Confirm burst 20 / max 2 concurrent claims were removed

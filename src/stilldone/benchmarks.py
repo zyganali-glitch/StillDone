@@ -22,6 +22,7 @@ import logging
 import math
 import platform
 import statistics
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -1573,6 +1574,44 @@ class MissionReliabilityTestResult:
         return json.dumps(self.to_dict(), indent=indent)
 
 
+def _run_with_bounded_timeout(
+    target_fn: Callable[..., Any],
+    timeout_seconds: float,
+    timer: Callable[[], int],
+    *args: Any,
+) -> tuple[bool, Any, int]:
+    """Execute target_fn in a daemon thread bounded by timeout_seconds.
+
+    Returns (completed, result_or_exc, elapsed_ns).
+    - If timed out: completed is False, result_or_exc is None.
+    - If exception raised: completed is True, result_or_exc is the caught exception.
+    - If succeeded: completed is True, result_or_exc is the return value of target_fn.
+    """
+    res_container: list[Any] = [None]
+    exc_container: list[BaseException | None] = [None]
+
+    def worker() -> None:
+        try:
+            res_container[0] = target_fn(*args)
+        except BaseException as ex:
+            exc_container[0] = ex
+
+    thread = threading.Thread(target=worker, daemon=True)
+    t0 = timer()
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+    t1 = timer()
+    elapsed_ns = t1 - t0
+
+    if thread.is_alive():
+        return False, None, elapsed_ns
+
+    if exc_container[0] is not None:
+        return True, exc_container[0], elapsed_ns
+
+    return True, res_container[0], elapsed_ns
+
+
 def run_repeated_mission_reliability_test(
     iteration_cap: int = 15,
     timeout_per_run_seconds: float = 5.0,
@@ -1680,117 +1719,175 @@ def run_repeated_mission_reliability_test(
             else:
                 scenario = "SUCCESSFUL_LIFECYCLE"
 
-            t0 = timer()
-
             if scenario == "SUCCESSFUL_LIFECYCLE":
-                env = KillerMissionEnvironment.create_fixture_environment()
-                # Verify clean environment isolation
-                tasks_dict = getattr(env.tasks_transport, "_tasks", None)
-                if (tasks_dict is not None and len(tasks_dict) != 0) or len(
-                    env.approval_ledger.get_decision_records()
-                ) != 0:
-                    contamination_detected = True
-                if len(list(env.snapshot_repo.storage_path.glob("*.json"))) != 0:
-                    contamination_detected = True
+                runner_holder: list[Any] = [None]
 
-                runner = KillerMissionSliceRunner(env=env, mission_id=mid)
-                runner.step_p13_01_seed()
-                runner.step_p13_02_plan()
-                runner.step_p13_03_tasks_prep()
-                runner.step_p13_04_calendar_pause()
-                runner.step_p13_05_calendar_approve()
-                runner.step_p13_06_ready_receipt()
-                runner.step_p13_07_mutate_and_drift()
+                def run_lifecycle(
+                    current_mid: MissionId,
+                    holder: list[Any],
+                ) -> tuple[bool, bool, bool, str | None, str | None, bool, bool, bool, int]:
+                    env = KillerMissionEnvironment.create_fixture_environment()
+                    # Verify clean environment isolation
+                    tasks_dict = getattr(env.tasks_transport, "_tasks", None)
+                    c_det = False
+                    if (tasks_dict is not None and len(tasks_dict) != 0) or len(
+                        env.approval_ledger.get_decision_records()
+                    ) != 0:
+                        c_det = True
+                    if len(list(env.snapshot_repo.storage_path.glob("*.json"))) != 0:
+                        c_det = True
 
-                t1 = timer()
-                dt_ns = t1 - t0
+                    runner = KillerMissionSliceRunner(env=env, mission_id=current_mid)
+                    holder[0] = runner
+                    runner.step_p13_01_seed()
+                    runner.step_p13_02_plan()
+                    runner.step_p13_03_tasks_prep()
+                    runner.step_p13_04_calendar_pause()
+                    runner.step_p13_05_calendar_approve()
+                    runner.step_p13_06_ready_receipt()
+                    runner.step_p13_07_mutate_and_drift()
 
-                ready_step = runner.step_results.get("P-13.06")
-                drift_step = runner.step_results.get("P-13.07")
+                    ready_step = runner.step_results.get("P-13.06")
+                    drift_step = runner.step_results.get("P-13.07")
 
-                ready_reached = (
-                    runner.ready_receipt is not None
-                    and ready_step is not None
-                    and ready_step.status == "PASS"
-                    and ready_step.is_verified is True
-                    and ready_step.extra_metadata.get("mission_state") == "READY"
+                    r_reached = (
+                        runner.ready_receipt is not None
+                        and ready_step is not None
+                        and ready_step.status == "PASS"
+                        and ready_step.is_verified is True
+                        and ready_step.extra_metadata.get("mission_state") == "READY"
+                    )
+                    d_reached = (
+                        drift_step is not None
+                        and drift_step.status == "PASS"
+                        and drift_step.is_verified is True
+                        and drift_step.extra_metadata.get("reconciled_state") == "DRIFTED"
+                    )
+
+                    r_hash = runner.ready_receipt_hash
+                    d_hash = (
+                        runner.ready_receipt.receipt_hash.value if runner.ready_receipt else None
+                    )
+                    rcpt_intact = (
+                        r_reached
+                        and r_hash is not None
+                        and d_hash == r_hash
+                        and drift_step is not None
+                        and drift_step.extra_metadata.get("historical_receipt_intact") is True
+                    )
+
+                    from stilldone.verifier.predicates import (
+                        PredicateTruth,
+                        evaluate_predicate,
+                    )
+
+                    obs_map = {
+                        runner.pred_weather.predicate_id: runner.weather_observation,
+                        runner.pred_task.predicate_id: runner.task_observation,
+                        runner.pred_calendar.predicate_id: runner.calendar_observation,
+                    }
+                    preds_ok = True
+                    for pred in runner.canonical_predicates:
+                        obs = obs_map.get(pred.predicate_id)
+                        if obs is None:
+                            preds_ok = False
+                            break
+                        eval_res = evaluate_predicate(pred, obs)
+                        if eval_res.truth != PredicateTruth.TRUE:
+                            preds_ok = False
+                            break
+
+                    dup_mutation = runner.total_writes != 3
+                    return (
+                        c_det,
+                        r_reached,
+                        d_reached,
+                        r_hash,
+                        d_hash,
+                        rcpt_intact,
+                        preds_ok,
+                        dup_mutation,
+                        runner.total_writes,
+                    )
+
+                completed, outcome, dt_ns = _run_with_bounded_timeout(
+                    run_lifecycle, timeout_per_run_seconds, timer, mid, runner_holder
                 )
-                drift_reached = (
-                    drift_step is not None
-                    and drift_step.status == "PASS"
-                    and drift_step.is_verified is True
-                    and drift_step.extra_metadata.get("reconciled_state") == "DRIFTED"
-                )
 
-                ready_hash = runner.ready_receipt_hash
-                drifted_hash = (
-                    runner.ready_receipt.receipt_hash.value if runner.ready_receipt else None
-                )
-                receipt_intact = (
-                    ready_reached
-                    and ready_hash is not None
-                    and drifted_hash == ready_hash
-                    and drift_step is not None
-                    and drift_step.extra_metadata.get("historical_receipt_intact") is True
-                )
-                if not receipt_intact:
-                    historical_receipt_intact_all = False
-
-                # Dynamically evaluate canonical predicates against actual observations
-                from stilldone.verifier.predicates import (
-                    PredicateTruth,
-                    evaluate_predicate,
-                )
-
-                obs_map = {
-                    runner.pred_weather.predicate_id: runner.weather_observation,
-                    runner.pred_task.predicate_id: runner.task_observation,
-                    runner.pred_calendar.predicate_id: runner.calendar_observation,
-                }
-                run_preds_ok = True
-                for pred in runner.canonical_predicates:
-                    obs = obs_map.get(pred.predicate_id)
-                    if obs is None:
-                        run_preds_ok = False
-                        break
-                    eval_res = evaluate_predicate(pred, obs)
-                    if eval_res.truth != PredicateTruth.TRUE:
-                        run_preds_ok = False
-                        break
-
-                if not run_preds_ok:
-                    predicate_correctness_all = False
-
-                if runner.total_writes != 3:
-                    duplicate_mutation_detected = True
-
-                err_cat = None
                 timeout_msg = (
                     f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
                     f"{timeout_per_run_seconds * 1e3:.2f}ms)"
                 )
-                if dt_ns > timeout_ns:
+
+                if not completed or dt_ns > timeout_ns:
                     run_status = "FAILED"
                     err_cat = "EXECUTION_TIMEOUT"
                     ready_reached = False
                     drift_reached = False
+                    ready_hash = None
+                    drifted_hash = None
+                    receipt_intact = False
+                    historical_receipt_intact_all = False
+                    writes_performed = runner_holder[0].total_writes if runner_holder[0] else 0
                     details = timeout_msg
-                elif not run_preds_ok:
+                elif isinstance(outcome, BaseException):
                     run_status = "FAILED"
-                    err_cat = "PREDICATE_EVALUATION_FAILED"
-                    details = "Canonical predicate failed dynamic evaluation against observations."
-                elif (
-                    ready_reached and drift_reached and receipt_intact and runner.total_writes == 3
-                ):
-                    run_status = "PASS"
-                    details = "Full 7-step slice: READY -> DRIFTED with receipt intact."
-                else:
-                    run_status = "FAILED"
-                    err_cat = "LIFECYCLE_VERIFICATION_MISMATCH"
+                    err_cat = f"UNEXPECTED_EXCEPTION_{type(outcome).__name__}"
+                    ready_reached = False
+                    drift_reached = False
+                    ready_hash = None
+                    drifted_hash = None
+                    receipt_intact = False
+                    historical_receipt_intact_all = False
+                    writes_performed = runner_holder[0].total_writes if runner_holder[0] else 0
                     details = (
-                        "Lifecycle execution failed to achieve required "
-                        "READY and DRIFTED milestones."
+                        f"Unexpected exception in SUCCESSFUL_LIFECYCLE: {type(outcome).__name__}"
                     )
+                else:
+                    (
+                        c_det,
+                        ready_reached,
+                        drift_reached,
+                        ready_hash,
+                        drifted_hash,
+                        receipt_intact,
+                        run_preds_ok,
+                        dup_mutation,
+                        writes_performed,
+                    ) = outcome
+
+                    if c_det:
+                        contamination_detected = True
+                    if not receipt_intact:
+                        historical_receipt_intact_all = False
+                    if not run_preds_ok:
+                        predicate_correctness_all = False
+                    if dup_mutation:
+                        duplicate_mutation_detected = True
+
+                    if not run_preds_ok:
+                        run_status = "FAILED"
+                        err_cat = "PREDICATE_EVALUATION_FAILED"
+                        details = (
+                            "Canonical predicate failed dynamic evaluation against observations."
+                        )
+                    elif not receipt_intact:
+                        run_status = "FAILED"
+                        err_cat = "HISTORICAL_RECEIPT_CORRUPTED"
+                        details = "Historical receipt integrity failed."
+                    elif (
+                        ready_reached and drift_reached and receipt_intact and writes_performed == 3
+                    ):
+                        run_status = "PASS"
+                        err_cat = None
+                        details = "Full 7-step slice: READY -> DRIFTED with receipt intact."
+                    else:
+                        run_status = "FAILED"
+                        err_cat = "LIFECYCLE_VERIFICATION_MISMATCH"
+                        details = (
+                            "Lifecycle execution failed to achieve required "
+                            "READY and DRIFTED milestones."
+                        )
 
                 runs.append(
                     MissionReliabilityRunOutcome(
@@ -1803,7 +1900,7 @@ def run_repeated_mission_reliability_test(
                         receipt_projection_hash=ready_hash,
                         drifted_receipt_projection_hash=drifted_hash,
                         historical_receipt_intact=receipt_intact,
-                        writes_performed=runner.total_writes,
+                        writes_performed=writes_performed,
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
@@ -1813,33 +1910,52 @@ def run_repeated_mission_reliability_test(
                 )
 
             elif scenario == "BLOCKED_APPROVAL":
-                env = KillerMissionEnvironment.create_fixture_environment()
-                runner = KillerMissionSliceRunner(
-                    env=env,
-                    mission_id=mid,
-                    calendar_decision=ApprovalDecision.REJECT,
+                runner_holder = [None]
+
+                def run_blocked_approval(
+                    current_mid: MissionId,
+                    holder: list[Any],
+                ) -> tuple[bool, int]:
+                    env = KillerMissionEnvironment.create_fixture_environment()
+                    runner = KillerMissionSliceRunner(
+                        env=env,
+                        mission_id=current_mid,
+                        calendar_decision=ApprovalDecision.REJECT,
+                    )
+                    holder[0] = runner
+                    runner.step_p13_01_seed()
+                    runner.step_p13_02_plan()
+                    runner.step_p13_03_tasks_prep()
+                    runner.step_p13_04_calendar_pause()
+                    runner.step_p13_05_calendar_approve()
+                    return (runner.ready_receipt is not None, runner.total_writes)
+
+                completed, outcome, dt_ns = _run_with_bounded_timeout(
+                    run_blocked_approval, timeout_per_run_seconds, timer, mid, runner_holder
                 )
-                runner.step_p13_01_seed()
-                runner.step_p13_02_plan()
-                runner.step_p13_03_tasks_prep()
-                runner.step_p13_04_calendar_pause()
-                runner.step_p13_05_calendar_approve()
 
-                t1 = timer()
-                dt_ns = t1 - t0
-
-                if runner.ready_receipt is not None:
-                    false_ready_detected = True
-
-                blocked_status = "BLOCKED"
-                err_cat = None
                 timeout_msg = (
                     f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
                     f"{timeout_per_run_seconds * 1e3:.2f}ms)"
                 )
-                if dt_ns > timeout_ns:
+
+                if not completed or dt_ns > timeout_ns:
                     blocked_status = "FAILED"
                     err_cat = "EXECUTION_TIMEOUT"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = timeout_msg
+                elif isinstance(outcome, BaseException):
+                    blocked_status = "FAILED"
+                    err_cat = f"UNEXPECTED_EXCEPTION_{type(outcome).__name__}"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = f"Unexpected exception in BLOCKED_APPROVAL: {type(outcome).__name__}"
+                else:
+                    false_ready, writes = outcome
+                    if false_ready:
+                        false_ready_detected = True
+                    blocked_status = "BLOCKED"
+                    err_cat = None
+                    details = "Operator rejected calendar change at approval boundary; 0 writes."
 
                 runs.append(
                     MissionReliabilityRunOutcome(
@@ -1852,36 +1968,46 @@ def run_repeated_mission_reliability_test(
                         receipt_projection_hash=None,
                         drifted_receipt_projection_hash=None,
                         historical_receipt_intact=True,
-                        writes_performed=runner.total_writes,
+                        writes_performed=writes,
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Operator rejected calendar change at approval boundary; 0 writes."
-                        if err_cat is None
-                        else timeout_msg,
+                        details=details,
                     )
                 )
 
             elif scenario == "BLOCKED_PREFLIGHT":
-                scope = DemoResourceScope(calendar_id="cal-scope", task_list_id="tl-scope")
-                report = check_live_preflight(scope, operator_approved=False)
 
-                t1 = timer()
-                dt_ns = t1 - t0
+                def run_blocked_preflight() -> bool:
+                    scope = DemoResourceScope(calendar_id="cal-scope", task_list_id="tl-scope")
+                    report = check_live_preflight(scope, operator_approved=False)
+                    return report.is_ready
 
-                if report.is_ready:
-                    false_ready_detected = True
+                completed, outcome, dt_ns = _run_with_bounded_timeout(
+                    run_blocked_preflight, timeout_per_run_seconds, timer
+                )
 
-                preflight_status = "BLOCKED"
-                err_cat = None
                 timeout_msg = (
                     f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
                     f"{timeout_per_run_seconds * 1e3:.2f}ms)"
                 )
-                if dt_ns > timeout_ns:
+
+                if not completed or dt_ns > timeout_ns:
                     preflight_status = "FAILED"
                     err_cat = "EXECUTION_TIMEOUT"
+                    details = timeout_msg
+                elif isinstance(outcome, BaseException):
+                    preflight_status = "FAILED"
+                    err_cat = f"UNEXPECTED_EXCEPTION_{type(outcome).__name__}"
+                    details = f"Unexpected exception in BLOCKED_PREFLIGHT: {type(outcome).__name__}"
+                else:
+                    is_ready = outcome
+                    if is_ready:
+                        false_ready_detected = True
+                    preflight_status = "BLOCKED"
+                    err_cat = None
+                    details = "Live preflight halted: operator authorization missing."
 
                 runs.append(
                     MissionReliabilityRunOutcome(
@@ -1899,61 +2025,79 @@ def run_repeated_mission_reliability_test(
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Live preflight halted: operator authorization missing."
-                        if err_cat is None
-                        else timeout_msg,
+                        details=details,
                     )
                 )
 
             elif scenario == "FAILED_READBACK":
-                env = KillerMissionEnvironment.create_fixture_environment()
+                runner_holder = [None]
 
-                class ContradictoryTasksTransport:
-                    def __init__(self, inner: Any) -> None:
-                        self._inner = inner
+                def run_failed_readback(
+                    current_mid: MissionId,
+                    holder: list[Any],
+                ) -> tuple[bool, int]:
+                    env = KillerMissionEnvironment.create_fixture_environment()
 
-                    def insert_task(
-                        self, task_list_id: str, body: dict[str, Any], **kw: Any
-                    ) -> Any:
-                        return self._inner.insert_task(task_list_id, body, **kw)
+                    class ContradictoryTasksTransport:
+                        def __init__(self, inner: Any) -> None:
+                            self._inner = inner
 
-                    def list_tasks(self, task_list_id: str, **kw: Any) -> Any:
-                        return self._inner.list_tasks(task_list_id, **kw)
+                        def insert_task(
+                            self, task_list_id: str, body: dict[str, Any], **kw: Any
+                        ) -> Any:
+                            return self._inner.insert_task(task_list_id, body, **kw)
 
-                    def get_task(self, task_list_id: str, task_id: str) -> Any:
-                        item = self._inner.get_task(task_list_id, task_id)
-                        if item is None:
-                            return None
-                        return TaskTransportItem(
-                            id=item.id,
-                            title="Different Contradictory Title",
-                            status="needsAction",
-                            due=item.due,
-                        )
+                        def list_tasks(self, task_list_id: str, **kw: Any) -> Any:
+                            return self._inner.list_tasks(task_list_id, **kw)
 
-                env.tasks_transport = ContradictoryTasksTransport(env.tasks_transport)  # type: ignore[assignment]
-                runner = KillerMissionSliceRunner(env=env, mission_id=mid)
-                runner.step_p13_01_seed()
-                runner.step_p13_02_plan()
+                        def get_task(self, task_list_id: str, task_id: str) -> Any:
+                            item = self._inner.get_task(task_list_id, task_id)
+                            if item is None:
+                                return None
+                            return TaskTransportItem(
+                                id=item.id,
+                                title="Different Contradictory Title",
+                                status="needsAction",
+                                due=item.due,
+                            )
 
-                err_cat = None
-                try:
+                    env.tasks_transport = ContradictoryTasksTransport(env.tasks_transport)  # type: ignore[assignment]
+                    runner = KillerMissionSliceRunner(env=env, mission_id=current_mid)
+                    holder[0] = runner
+                    runner.step_p13_01_seed()
+                    runner.step_p13_02_plan()
                     runner.step_p13_03_tasks_prep()
-                except KillerMissionVerificationError:
-                    err_cat = "READBACK_CONTRADICTION"
+                    return (runner.ready_receipt is not None, runner.total_writes)
 
-                t1 = timer()
-                dt_ns = t1 - t0
-
-                if runner.ready_receipt is not None:
-                    false_ready_detected = True
+                completed, outcome, dt_ns = _run_with_bounded_timeout(
+                    run_failed_readback, timeout_per_run_seconds, timer, mid, runner_holder
+                )
 
                 timeout_msg = (
                     f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
                     f"{timeout_per_run_seconds * 1e3:.2f}ms)"
                 )
-                if dt_ns > timeout_ns:
+
+                if not completed or dt_ns > timeout_ns:
                     err_cat = "EXECUTION_TIMEOUT"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = timeout_msg
+                elif isinstance(outcome, KillerMissionVerificationError):
+                    err_cat = "READBACK_CONTRADICTION"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = "Readback verifier detected wrong title; halted unverified."
+                elif isinstance(outcome, BaseException):
+                    err_cat = f"UNEXPECTED_EXCEPTION_{type(outcome).__name__}"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = f"Unexpected exception in FAILED_READBACK: {type(outcome).__name__}"
+                else:
+                    false_ready, writes = outcome
+                    if false_ready:
+                        false_ready_detected = True
+                    err_cat = "MISSING_EXPECTED_EXCEPTION"
+                    details = (
+                        "Expected KillerMissionVerificationError was not raised in FAILED_READBACK."
+                    )
 
                 runs.append(
                     MissionReliabilityRunOutcome(
@@ -1966,53 +2110,75 @@ def run_repeated_mission_reliability_test(
                         receipt_projection_hash=None,
                         drifted_receipt_projection_hash=None,
                         historical_receipt_intact=True,
-                        writes_performed=runner.total_writes,
+                        writes_performed=writes,
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Readback verifier detected wrong title; halted unverified."
-                        if err_cat != "EXECUTION_TIMEOUT"
-                        else timeout_msg,
+                        details=details,
                     )
                 )
 
             elif scenario == "INTERRUPTED_PROVIDER_ERROR":
-                env = KillerMissionEnvironment.create_fixture_environment()
+                runner_holder = [None]
 
-                class ThrottledFakeTasks:
-                    def insert_task(self, *a: Any, **kw: Any) -> Any:
-                        raise TaskRateLimitError("429 Too Many Requests")
+                def run_interrupted_provider(
+                    current_mid: MissionId,
+                    holder: list[Any],
+                ) -> tuple[bool, int]:
+                    env = KillerMissionEnvironment.create_fixture_environment()
 
-                    def get_task(self, *a: Any, **kw: Any) -> Any:
-                        raise TaskRateLimitError("429 Too Many Requests")
+                    class ThrottledFakeTasks:
+                        def insert_task(self, *a: Any, **kw: Any) -> Any:
+                            raise TaskRateLimitError("429 Too Many Requests")
 
-                    def list_tasks(self, *a: Any, **kw: Any) -> list[Any]:
-                        raise TaskRateLimitError("429 Too Many Requests")
+                        def get_task(self, *a: Any, **kw: Any) -> Any:
+                            raise TaskRateLimitError("429 Too Many Requests")
 
-                env.tasks_transport = ThrottledFakeTasks()  # type: ignore[assignment]
-                runner = KillerMissionSliceRunner(env=env, mission_id=mid)
-                runner.step_p13_01_seed()
-                runner.step_p13_02_plan()
+                        def list_tasks(self, *a: Any, **kw: Any) -> list[Any]:
+                            raise TaskRateLimitError("429 Too Many Requests")
 
-                err_cat = None
-                try:
+                    env.tasks_transport = ThrottledFakeTasks()  # type: ignore[assignment]
+                    runner = KillerMissionSliceRunner(env=env, mission_id=current_mid)
+                    holder[0] = runner
+                    runner.step_p13_01_seed()
+                    runner.step_p13_02_plan()
                     runner.step_p13_03_tasks_prep()
-                except KillerMissionExecutionError:
-                    err_cat = "PROVIDER_429_THROTTLED"
+                    return (runner.ready_receipt is not None, runner.total_writes)
 
-                t1 = timer()
-                dt_ns = t1 - t0
-
-                if runner.ready_receipt is not None:
-                    false_ready_detected = True
+                completed, outcome, dt_ns = _run_with_bounded_timeout(
+                    run_interrupted_provider, timeout_per_run_seconds, timer, mid, runner_holder
+                )
 
                 timeout_msg = (
                     f"Execution timed out ({dt_ns / 1e6:.2f}ms > "
                     f"{timeout_per_run_seconds * 1e3:.2f}ms)"
                 )
-                if dt_ns > timeout_ns:
+
+                if not completed or dt_ns > timeout_ns:
                     err_cat = "EXECUTION_TIMEOUT"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = timeout_msg
+                elif isinstance(outcome, KillerMissionExecutionError):
+                    err_cat = "PROVIDER_429_THROTTLED"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = "Provider 429 rate limit injected at tasks prep; slice aborted."
+                elif isinstance(outcome, BaseException):
+                    err_cat = f"UNEXPECTED_EXCEPTION_{type(outcome).__name__}"
+                    writes = runner_holder[0].total_writes if runner_holder[0] else 0
+                    details = (
+                        f"Unexpected exception in INTERRUPTED_PROVIDER_ERROR: "
+                        f"{type(outcome).__name__}"
+                    )
+                else:
+                    false_ready, writes = outcome
+                    if false_ready:
+                        false_ready_detected = True
+                    err_cat = "MISSING_EXPECTED_EXCEPTION"
+                    details = (
+                        "Expected KillerMissionExecutionError was not raised in "
+                        "INTERRUPTED_PROVIDER_ERROR."
+                    )
 
                 runs.append(
                     MissionReliabilityRunOutcome(
@@ -2025,14 +2191,12 @@ def run_repeated_mission_reliability_test(
                         receipt_projection_hash=None,
                         drifted_receipt_projection_hash=None,
                         historical_receipt_intact=True,
-                        writes_performed=runner.total_writes,
+                        writes_performed=writes,
                         elapsed_ns=dt_ns,
                         elapsed_ms=dt_ns / 1_000_000.0,
                         provenance=MeasurementProvenance.FIXTURE,
                         error_category=err_cat,
-                        details="Provider 429 rate limit injected at tasks prep; slice aborted."
-                        if err_cat != "EXECUTION_TIMEOUT"
-                        else timeout_msg,
+                        details=details,
                     )
                 )
 
@@ -2045,7 +2209,41 @@ def run_repeated_mission_reliability_test(
         )
         exercised_scenarios = {r.scenario for r in runs}
         untested = tuple(s for s in ALL_REPRESENTATIVE_SCENARIOS if s not in exercised_scenarios)
-        qualification_status = "QUALIFIED" if len(untested) == 0 else "PARTIAL_UNQUALIFIED"
+
+        if len(untested) > 0:
+            qualification_status = "PARTIAL_UNQUALIFIED"
+        else:
+            all_scenarios_passed = True
+            for r in runs:
+                if r.scenario == "SUCCESSFUL_LIFECYCLE":
+                    if r.status != "PASS" or r.error_category is not None:
+                        all_scenarios_passed = False
+                        break
+                elif r.scenario in ("BLOCKED_APPROVAL", "BLOCKED_PREFLIGHT"):
+                    if r.status != "BLOCKED" or r.error_category is not None:
+                        all_scenarios_passed = False
+                        break
+                elif r.scenario == "FAILED_READBACK":
+                    if r.status != "FAILED" or r.error_category != "READBACK_CONTRADICTION":
+                        all_scenarios_passed = False
+                        break
+                elif r.scenario == "INTERRUPTED_PROVIDER_ERROR":
+                    if r.status != "FAILED" or r.error_category != "PROVIDER_429_THROTTLED":
+                        all_scenarios_passed = False
+                        break
+
+            integrity_passed = (
+                not contamination_detected
+                and not duplicate_mutation_detected
+                and not false_ready_detected
+                and historical_receipt_intact_all
+                and predicate_correctness_all
+            )
+
+            if all_scenarios_passed and integrity_passed:
+                qualification_status = "QUALIFIED"
+            else:
+                qualification_status = "DISQUALIFIED"
 
         successful_count = sum(1 for r in runs if r.status == "PASS")
         blocked_count = sum(1 for r in runs if r.status == "BLOCKED")

@@ -78,10 +78,11 @@ class ProviderExecutionResult:
     action_type: ActionType
     success: bool
     status_name: str
-    writes_performed: int = 0
+    writes_performed: int | None = 0
     captured_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     details: Mapping[str, Any] = field(default_factory=dict)
     error_message: str | None = None
+    writes_committed: str = "CONFIRMED"
 
     def __post_init__(self) -> None:
         if not isinstance(self.action_type, ActionType):
@@ -92,10 +93,13 @@ class ProviderExecutionResult:
             raise ExecutionContractTypeError("success must be a bool")
         if not isinstance(self.status_name, str) or not self.status_name.strip():
             raise ExecutionContractValueError("status_name must be a non-empty string")
-        if not isinstance(self.writes_performed, int) or isinstance(self.writes_performed, bool):
-            raise ExecutionContractTypeError("writes_performed must be an int")
-        if self.writes_performed < 0:
-            raise ExecutionContractValueError("writes_performed cannot be negative")
+        if self.writes_performed is not None:
+            if not isinstance(self.writes_performed, int) or isinstance(
+                self.writes_performed, bool
+            ):
+                raise ExecutionContractTypeError("writes_performed must be an int or None")
+            if self.writes_performed < 0:
+                raise ExecutionContractValueError("writes_performed cannot be negative")
         if not isinstance(self.captured_at, datetime):
             raise ExecutionContractTypeError("captured_at must be a datetime")
         if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
@@ -126,7 +130,10 @@ class ProviderExecutionResult:
             "action_type": self.action_type.value,
             "success": self.success,
             "status_name": self.status_name,
-            "writes_performed": self.writes_performed,
+            "writes_performed": (
+                self.writes_performed if self.writes_performed is not None else "UNKNOWN"
+            ),
+            "writes_committed": self.writes_committed,
             "captured_at": self.captured_at.isoformat(),
             "details": d,
             "error_message": self.error_message,

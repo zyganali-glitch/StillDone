@@ -214,12 +214,12 @@ In accordance with `AGENTS.md` § 11–12 and task acceptance criteria:
 ### 8.1 Strategic Plan Summary
 - **Master Plan Document**: [docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md](JUDGE_PERIOD_AVAILABILITY_PLAN.md) (Status: `IMPLEMENTED / QA_PENDING`).
 - **Official Competition Requirements**: Devpost submission deadline Friday, October 23, 2026 at 12:00 PM PDT (22:00 Europe/Istanbul, 19:00 UTC); judging period November 9–20, 2026; 3-minute video demo; public code repository URL. 24/7 unmetered cloud uptime is NOT an official requirement.
-- **Devpost FAQ vs Community Operational Conflict**: Documented ambiguity across official Devpost FAQ (visibility after deadline) vs Forum topics 45493 and 45411 (confusion over draft submission visibility). StillDone assumes immediate public visibility and sanitizes all secrets.
+- **Devpost FAQ vs Community Forum Live-Hosting Conflict**: Documented conflict between official Devpost FAQ (local repository and video demo suffice; hosting not required post-submission) vs Forum topics 45493 and 45411 (organizer states MCP endpoint must remain live through judging). Feasibility marked `UNRESOLVED` pending Phase P-19 deployment decision; on-demand execution does not guarantee organizer accessibility expectations.
 - **Historical Credit Facts**: $150.00 hackathon promotional credit granted; active at P-01 checkpoint. Conservative expiration boundary enforced as `2028-08-31`. Current balance and account-wide charges remain `NOT_OBSERVED` offline. Credits do not provide a hard spending cap.
 - **Dual-Surface Architecture**:
   1. *Surface 1 (Public Read-Only Exhibit)*: Hosted on Cloudflare Pages Free tier (`*.pages.dev`, $0.00 cost, zero domain purchase). Serves static evidence, recorded live receipts, immutable hashes, video walkthrough, and local reproduction instructions. Does NOT execute Python or live Bedrock inference.
-  2. *Surface 2 (Authenticated Operator Runtime)*: Streamable HTTP MCP server with persistent SQLite sliding window rate limiter (`RateLimitMiddleware`) and endpoint admission protection. Run on-demand for live evaluations; never left unmetered 24/7.
-- **Three-Tier Fallback Plan**: (1) Static exhibit & video walkthrough; (2) Clean-checkout local reproduction CLI (`python scripts/p18_benchmarks.py --all`); (3) Scheduled operator-assisted live verification session.
+  2. *Surface 2 (Authenticated Operator Runtime)*: Streamable HTTP MCP server with persistent SQLite fixed-window rate limiter (`RateLimitMiddleware`, `SqliteRateLimitStore`) evaluating requests as `NO_PAID_CAPABILITY`. Current tools are non-paid `mission_start` and `mission_status`; paid admission contracts are tested but live wiring is `NOT_INTEGRATED / NOT_AUTHORIZED`. No AWS billing hard cap is provided by internal admission limiter.
+- **Three-Tier Fallback Plan**: (1) Static exhibit & video walkthrough; (2) Clean-checkout local reproduction CLI (`python scripts/p18_benchmarks.py --all`, requires Python 3.13 and dependencies via lockfile); (3) Scheduled operator-assisted live verification session.
 - **Evidence Provenance**: `LOCAL_EXECUTION` (11 tests in `tests/test_phase_p18_07_availability_plan.py`).
 
 ---

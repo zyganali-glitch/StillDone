@@ -697,8 +697,10 @@ class TestAmbiguousMutationSafety:
                 self.write_attempted = True
                 remote_store[event_id]["start"]["dateTime"] = payload["start"]["dateTime"]
                 remote_store[event_id]["etag"] = '"etag-v2"'
-                # BUT the network connection drops before response is delivered back
-                raise CalendarTransportError("Connection reset by peer after server write")
+                # Server committed update, but connection timed out (HTTP 504)
+                raise CalendarTransportError(
+                    "HTTP 504 Gateway Timeout updating event", status_code=504
+                )
 
         transport = AmbiguousCalendarTransport()
         update_adapter = GoogleCalendarUpdateAdapter(scope=scope, transport=transport)
@@ -739,8 +741,36 @@ class TestAmbiguousMutationSafety:
             "2026-10-14T07:30:00Z",
             "2026-10-14T07:30:00+00:00",
         )
+        # 4. Never infer zero writes: writes_performed is None (ambiguous), committed is UNKNOWN
+        assert res.writes_performed is None
+        assert res.writes_committed == "UNKNOWN"
 
-        # 4. Independent read-back resolves actual state without repeating the write
+        # 5. Execution record preserves UNKNOWN writes without claiming 0
+        from stilldone.execution.attempts import record_calendar_update_result
+
+        prov_res = record_calendar_update_result(res)
+        assert prov_res.writes_performed is None
+        assert prov_res.writes_committed == "UNKNOWN"
+        assert prov_res.to_dict()["writes_performed"] == "UNKNOWN"
+
+        # 6. Adapter-to-recovery outcome: ambiguous timeout forbids blind retry, requires read-back
+        from stilldone.recovery.orchestrator import (
+            RecoveryActionType,
+            evaluate_post_execution_recovery,
+        )
+        from stilldone.recovery.retry import RetryClassification, RetryPolicy
+
+        rec_dec = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error=res.error_message,
+            policy=RetryPolicy(max_attempts=3),
+        )
+        assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert rec_dec.retry_classification == RetryClassification.RETRYABLE_TRANSIENT
+        assert "requires independent verification" in rec_dec.reason.lower()
+
+        # 7. Independent read-back resolves actual state without repeating the write
         read_adapter = GoogleCalendarReadAdapter(scope=scope, transport=transport)
         verifier = GoogleCalendarReadbackVerifier(read_adapter=read_adapter)
         expected = ExpectedCalendarState(
@@ -785,7 +815,16 @@ class TestAmbiguousMutationSafety:
                     due=raw.get("due"),
                 )
 
-            def list_tasks(self, task_list_id: str, **kwargs: Any) -> Any:
+            def list_tasks(
+                self,
+                task_list_id: str,
+                show_completed: bool = False,
+                show_deleted: bool = False,
+                show_hidden: bool = False,
+                show_assigned: bool = False,
+                max_results: int = 100,
+                page_token: str | None = None,
+            ) -> tuple[list[Any], str | None]:
                 from stilldone.adapters.tasks import TaskTransportItem
 
                 items = [
@@ -822,8 +861,36 @@ class TestAmbiguousMutationSafety:
         assert transport.insertion_attempted is True
         # Remote store actually contains the task
         assert "task-ambiguous-001" in remote_tasks
+        # 2. Never infer zero writes: writes_performed is None, committed is UNKNOWN
+        assert res.writes_performed is None
+        assert res.writes_committed == "UNKNOWN"
 
-        # 2. Independent read-back detects the task exists via task read
+        # 3. Execution record preserves UNKNOWN writes without claiming 0
+        from stilldone.execution.attempts import record_task_create_result
+
+        prov_res = record_task_create_result(res)
+        assert prov_res.writes_performed is None
+        assert prov_res.writes_committed == "UNKNOWN"
+        assert prov_res.to_dict()["writes_performed"] == "UNKNOWN"
+
+        # 4. Adapter-to-recovery outcome: ambiguous timeout forbids blind retry, requires read-back
+        from stilldone.recovery.orchestrator import (
+            RecoveryActionType,
+            evaluate_post_execution_recovery,
+        )
+        from stilldone.recovery.retry import RetryClassification, RetryPolicy
+
+        rec_dec = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error=res.error_message,
+            policy=RetryPolicy(max_attempts=3),
+        )
+        assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert rec_dec.retry_classification == RetryClassification.RETRYABLE_TRANSIENT
+        assert "requires read-before-retry" in rec_dec.reason.lower()
+
+        # 5. Independent read-back detects the task exists via task read
         read_adapter = GoogleTasksReadAdapter(scope=scope, transport=transport)
         task_target = TargetIdentity(
             system="google_tasks",

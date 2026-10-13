@@ -79,9 +79,9 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-18.04 → P-18.07 FINAL CONSOLIDATED QA REPAIR
+Active task: STILLDONE — P-18 FINAL EVIDENCE-INTEGRITY CLOSURE
 
-Starting Remote SHA: `49bb8c95585283aa50f687244252ae2a3887d91b`
+Starting Remote SHA: `a7764963b1db9b1c33ca66013712831cd4a28ad0`
 Last Independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce`
 
 Status:
@@ -96,31 +96,36 @@ Status:
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18.01–P-18.03: COMPLETED (Candidate for independent QA review)
-- P-18.04: REPAIRED (Consolidated admission-truth repair; candidate for independent QA review)
+- P-18.04: REPAIRED (Final admission-truth repair; candidate for independent QA review)
+  - `SqliteRateLimitStore` implements an atomic persistent fixed-window rate limiter.
   - End-to-end middleware and MCP capability boundaries confirmed: current MCP tools (`mission_start`, `mission_status`) operate strictly under non-paid capability (`NO_PAID_CAPABILITY / PUBLIC_UNTRUSTED`) creating local DRAFT missions without executing paid provider operations.
-  - Active general request limiter distinguished from separately tested paid-capable admission contract.
+  - Active general request limiter distinguished from separately tested paid-capable admission contract (`NOT_INTEGRATED / NOT_AUTHORIZED` for live runtime wiring).
+  - No AWS billing hard cap provided by internal admission rate limiter.
   - Exception path in `RateLimitMiddleware` repaired fail-closed to unconditionally initialize sanitized JSON 500 payload, eliminating `UnboundLocalError` risks.
   - Validated via 21 passing tests in `tests/test_phase_p18_04_budget_rate_limits.py`.
-- P-18.05: REPAIRED (Consolidated quota & ambiguous mutation repair; candidate for independent QA review)
+- P-18.05: REPAIRED (Final quota & ambiguous mutation truth repair; candidate for independent QA review)
   - Official published quotas reconciled: Google Calendar (May 1, 2026 revision: 1M/day, 10k/min/project, 600/min/user), Google Tasks (50k/day courtesy), Open-Meteo (/terms: 10k/day, 5k/hr, 600/min).
   - Actual remaining account quotas strictly `NOT_OBSERVED` offline.
-  - Ambiguous mutation safety verified: transport drops after server-side write never infer zero remote writes; read-back verification required before safe retry, preventing duplicate writes and false verified states.
+  - Ambiguous mutation safety verified: transport drops/timeouts after server-side write never infer zero remote writes (`writes_performed: None`, `writes_committed: "UNKNOWN"`); read-back verification required before safe retry, preventing duplicate writes and false verified states.
   - Validated via 15 passing tests in `tests/test_phase_p18_05_quota_safety.py`.
-- P-18.06: REPAIRED (Consolidated reliability observation repair; candidate for independent QA review)
-  - Bounded runner validates `iteration_cap` (1 to 1000) and `timeout_per_run_seconds` (positive finite float); actually enforces per-run timeouts.
+- P-18.06: REPAIRED (Final reliability bounding & qualification repair; candidate for independent QA review)
+  - Enforceable real-time bounded watchdog via daemon thread interrupts hung scenarios in real time; fails closed as `EXECUTION_TIMEOUT`.
+  - Bounded runner validates `iteration_cap` (1 to 1000) and `timeout_per_run_seconds` (positive finite float).
+  - Explicitly catches missing expected scenario exceptions (`MISSING_EXPECTED_EXCEPTION`) and unexpected exceptions (`UNEXPECTED_EXCEPTION_{name}` fail-closed).
+  - Unambiguous qualification state strictly enforced (`QUALIFIED`, `PARTIAL_UNQUALIFIED` when scenarios untested, `DISQUALIFIED` when any assertion or integrity check fails).
   - Dynamically evaluates canonical predicates against actual runner observations; derives `reached_ready`, `reached_drifted`, and `historical_receipt_intact` from runner state.
-  - Tracks qualification status (`QUALIFIED` vs `PARTIAL_UNQUALIFIED` with explicit `untested_scenarios` when `iteration_cap < 15`).
-  - Validated via 16 passing tests in `tests/test_phase_p18_06_reliability.py`.
-- P-18.07: REPAIRED (Consolidated availability plan repair; candidate for independent QA review)
+  - Validated via 20 passing tests in `tests/test_phase_p18_06_reliability.py`.
+- P-18.07: REPAIRED (Final availability plan repair; candidate for independent QA review)
   - Official Devpost deadline recorded: Friday, October 23, 2026 at 12:00 PM PDT (22:00 Europe/Istanbul, 19:00 UTC); judging period November 9–20, 2026.
-  - Documented operational conflict between official Devpost FAQ and Community Forum topics 45493 & 45411; secrets sanitized.
-  - Removed unsupported burst/concurrency claims; documented persistent SQLite sliding-window limiter (`RateLimitMiddleware`) and on-demand supervision.
+  - Documented operational conflict between official Devpost FAQ (hosting not required post-submission) and Community Forum topics 45493 & 45411 (organizer states MCP endpoint must remain live through judging); hosting feasibility marked UNRESOLVED pending P-19 deployment decisions.
+  - Documented persistent SQLite fixed-window limiter (`RateLimitMiddleware`) and supervised on-demand evaluation model.
+  - Fallback Tier 2 states local clean-checkout reproduction requires Python 3.13 and installing project dependencies via pinned lockfile.
   - Plan document labeled `IMPLEMENTED / QA_PENDING`.
   - Validated via 11 passing tests in `tests/test_phase_p18_07_availability_plan.py`.
 - P-19+: PENDING / NOT_RUN (strictly STOPPED before P-19)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-18.04 → P-18.07 Final Consolidated QA Repair
+Next exact task: Independent QA Review of P-18.04 → P-18.07 Final Evidence-Integrity Closure
 (P-19 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:

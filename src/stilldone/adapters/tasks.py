@@ -816,15 +816,17 @@ class TaskCreateResult:
     task_list_id: str | None = None
     title: str | None = None
     due: str | None = None
-    writes_performed: int = 0
+    writes_performed: int | None = 0
     error_message: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    writes_committed: str = "CONFIRMED"
 
     def __repr__(self) -> str:
         return (
             f"TaskCreateResult(status='{self.status.value}', "
             f"task_id='***', task_list_id='***', "
             f"writes_performed={self.writes_performed}, "
+            f"writes_committed='{self.writes_committed}', "
             f"error_message={redact_text(self.error_message) if self.error_message else None})"
         )
 
@@ -961,15 +963,25 @@ class GoogleTasksCreateAdapter:
                 title=item.title,
                 due=normalized_due,
                 writes_performed=1,
+                writes_committed="CONFIRMED",
                 created_at=completion_time,
             )
         except Exception as exc:
             completion_time = datetime.now(UTC)
             error_msg = _sanitize_tasks_transport_error(exc)
             logger.warning("Tasks create provider failure: %s", error_msg)
+            if isinstance(exc, (TaskRateLimitError, TaskAuthenticationError)) or getattr(
+                exc, "status_code", None
+            ) in (429, 401, 403):
+                writes: int | None = 0
+                committed = "NONE"
+            else:
+                writes = None
+                committed = "UNKNOWN"
             return TaskCreateResult(
                 status=TaskCreateStatus.PROVIDER_ERROR,
-                writes_performed=0,
+                writes_performed=writes,
+                writes_committed=committed,
                 error_message=error_msg,
                 created_at=completion_time,
             )

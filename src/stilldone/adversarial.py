@@ -268,7 +268,7 @@ class AdversarialCampaignHarness:
         create_res = create_adapter.create_task(action)
         if create_res.status != TaskCreateStatus.PROVIDER_ERROR:
             raise AdversarialVerificationError("Expected PROVIDER_ERROR status")
-        if create_res.writes_performed != 0 or transport.write_count != 0:
+        if create_res.writes_performed not in (0, None) or transport.write_count != 0:
             raise AdversarialVerificationError("Zero writes must occur on 5xx before mutation")
 
         # Classification check: error code 503 is classified as retryable transient
@@ -887,7 +887,7 @@ class AdversarialCampaignHarness:
             res = create_adapter.create_task(action)
             if res.status != TaskCreateStatus.CREATED:
                 raise AdversarialVerificationError(f"Task creation failed with status {res.status}")
-            writes += res.writes_performed
+            writes += res.writes_performed or 0
 
         # Runtime verification
         if writes != 1:

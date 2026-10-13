@@ -29,13 +29,22 @@ This plan defines the architectural, operational, and financial framework to ens
 | **AWS Usage** | Entrants are solely responsible for all AWS charges; credits requested by Oct 21 | Use promotional credits and free tier | "AWS credits guarantee zero personal spend automatically" (Rejected) |
 | **Alexa+ Integration** | Solution addresses Alexa+ / smart assistant context | Model Context Protocol (MCP) Streamable HTTP transport | "Alexa+ partner production certification required before hackathon submission" (Rejected) |
 
-### 2.2 Devpost Operational Ambiguity & Forum Topic Analysis
+### 2.2 Devpost FAQ vs. Community Forum Live-Hosting Conflict
 
-An operational discrepancy exists across official Devpost documentation channels regarding submission visibility:
+A direct operational conflict exists between official Devpost FAQ guidance and organizer forum responses regarding whether the hosted MCP endpoint must remain continuously live through judging:
 
-- **Official Devpost FAQ Policy**: States that *"all submissions will be visible to the public after the deadline."*
-- **Devpost Community / Forum Discrepancies (Topics 45493 and 45411)**: Multiple participant queries document confusion and conflicting guidance regarding whether draft submissions or submission edits are immediately visible before the October 23, 2026 12:00 PM PDT deadline, versus hidden until the judging period commences on November 9, 2026.
-- **Operational Safety Stance**: StillDone assumes public visibility may occur immediately upon submission. All artifacts, code repositories, video links, and evidence documents are sanitized of private identifiers, account credentials, and personal tokens prior to submission freeze.
+1. **Official Devpost FAQ Policy** ([Devpost FAQs](https://amazonappdev2026.devpost.com/details/faqs)):
+   - Indicates that local repository inspection and recorded video demonstration (max 3 minutes) can suffice for judging evaluation.
+   - States that hosted MCP endpoints are not mandatory to maintain online 24/7 post-submission.
+2. **Devpost Community Forum Organizer Guidance**:
+   - [Forum Topic 45493: Question related to production being live of the Alexa MCP server](https://amazonappdev2026.devpost.com/forum_topics/45493-question-related-to-production-being-live-of-the-alexa-mcp-server)
+   - [Forum Topic 45411: Must the hosted MCP endpoint stay live through judging](https://amazonappdev2026.devpost.com/forum_topics/45411-must-the-hosted-mcp-endpoint-stay-live-through-judging)
+   - In both discussions, organizer responses state that the MCP server needs to remain live and accessible through the end of the judging period (November 9–20, 2026).
+3. **Operational Assessment & Unresolved Feasibility**:
+   - **Hosting Feasibility Status**: `UNRESOLVED` pending Phase P-19 deployment decision and zero-personal-spend proof.
+   - **Accessibility Reality**: On-demand operator-supervised sessions do not necessarily satisfy organizer continuous-accessibility expectations.
+   - StillDone distinguishes the static read-only Cloudflare Pages exhibit from genuine remote MCP server availability.
+   - Submission artifacts are sanitized of private credentials and tokens prior to the October 23, 2026 12:00 PM PDT deadline.
 
 ---
 
@@ -86,10 +95,13 @@ StillDone separates public evaluation from live execution across two distinct su
 | SURFACE 2: AUTHENTICATED OPERATOR RUNTIME                               |
 | Streamable HTTP MCP Server & Bedrock Runtime                            |
 | - Operator authentication mandatory (SigV4 / OAuth token)               |
-| - Enforced rate limits (P-18.04): Persistent SQLite sliding window      |
+| - Enforced rate limits (P-18.04): Persistent SQLite fixed-window limiter |
+| - Non-paid MCP tools: mission_start (DRAFT) and mission_status only      |
+| - Middleware classifies incoming requests as NO_PAID_CAPABILITY         |
+| - Paid-capable admission contracts tested; live wiring NOT_INTEGRATED   |
+| - No AWS billing hard cap provided by internal admission limiter        |
 | - Primary judge review via video & repository; on-demand execution only |
 | - Endpoint protection gate: live_paid_path_enabled=False fails closed   |
-| - On-demand execution during scheduled operator-supervised windows      |
 | - NO public unmetered access / NO anonymous paid paths                  |
 +-------------------------------------------------------------------------+
 ```
@@ -110,16 +122,18 @@ StillDone separates public evaluation from live execution across two distinct su
 ### 4.2 Surface 2: Authenticated Operator-Only Execution Runtime
 - **Transport**: Streamable HTTP MCP server.
 - **Admission Protection** (Enforced in `P-18.04`):
-  - Strict authentication required on all paid-capable endpoints.
-  - Anonymous/public requests fail closed with HTTP 401/403.
-  - Rate limits: Persistent SQLite sliding-window limiter (`RateLimitMiddleware`, default 60 req/min fail-closed).
+  - Current MCP tools are non-paid `mission_start` and `mission_status`.
+  - Rate limits: Persistent SQLite fixed-window rate limiter (`RateLimitMiddleware`, `SqliteRateLimitStore`, default 60 req/min bucket fail-closed).
+  - Incoming requests are evaluated as `NO_PAID_CAPABILITY / PUBLIC_UNTRUSTED`.
+  - Paid-capable admission contracts are tested, but actual paid runtime wiring remains `NOT_INTEGRATED / NOT_AUTHORIZED`.
+  - No AWS billing hard cap is provided by these internal rate-limiting admission controls.
   - Atomic persistent SQLite tracking under concurrency.
   - Fail-closed behavior on missing or stale budget snapshots.
 - **Judge Interaction Model**:
   - Official judging proceeds via public repository review and recorded video demonstration (max 3 minutes).
   - Runtime is NOT kept running 24/7 unmetered.
-  - Booted on-demand by the operator during scheduled live demonstration sessions or active judge evaluation windows.
-  - Immediate shutdown following evaluation.
+  - Hosting feasibility remains `UNRESOLVED` pending Phase P-19 deployment decision.
+  - Supervised on-demand execution sessions do not necessarily satisfy organizer continuous-accessibility expectations.
 
 ---
 
@@ -134,6 +148,7 @@ If continuous cloud hosting or remote MCP execution cannot be proven 100% safe a
 
 2. **Fallback Tier 2 — Clean-Checkout Local Reproduction**:
    - Judges or evaluators clone the repository: `git clone https://github.com/zyganali-glitch/StillDone.git`.
+   - Setup requires Python 3.13 and installing project dependencies via pinned lockfile (`uv sync` or `pip install -e .`).
    - Run deterministic single-command offline reproduction: `python scripts/p18_benchmarks.py --all`.
    - 100% offline fixture verification passes with zero external credentials, zero network dependencies, and zero cost.
 

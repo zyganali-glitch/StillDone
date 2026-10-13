@@ -769,16 +769,18 @@ class CalendarUpdateResult:
 
     status: CalendarUpdateStatus
     event_id: str
-    writes_performed: int
+    writes_performed: int | None = 0
     observation: CalendarEventObservation | None = None
     applied_parameters: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    writes_committed: str = "CONFIRMED"
 
     def __repr__(self) -> str:
         return (
             f"CalendarUpdateResult(status={self.status.value}, "
-            f"event_id='***', writes_performed={self.writes_performed})"
+            f"event_id='***', writes_performed={self.writes_performed}, "
+            f"writes_committed='{self.writes_committed}')"
         )
 
     def __str__(self) -> str:
@@ -898,6 +900,7 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
                 writes_performed=0,
+                writes_committed="NONE",
                 error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
@@ -907,6 +910,7 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
                 writes_performed=0,
+                writes_committed="NONE",
                 error_message=f"Unexpected transport failure: {type(exc).__name__}",
                 updated_at=now,
             )
@@ -916,6 +920,7 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.NOT_FOUND,
                 event_id=event_id,
                 writes_performed=0,
+                writes_committed="NONE",
                 error_message="Event not found on demo calendar",
                 updated_at=now,
             )
@@ -956,6 +961,7 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.NOOP_ALREADY_APPLIED,
                 event_id=event_id,
                 writes_performed=0,
+                writes_committed="NONE",
                 observation=current_obs,
                 applied_parameters=dict(params),
                 updated_at=now,
@@ -1098,15 +1104,25 @@ class GoogleCalendarUpdateAdapter:
                 status=CalendarUpdateStatus.CONFLICT,
                 event_id=event_id,
                 writes_performed=0,
+                writes_committed="NONE",
                 error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
         except CalendarTransportError as exc:
             logger.error("Transport error executing event update: %s", type(exc).__name__)
+            if isinstance(exc, (CalendarRateLimitError, CalendarAuthenticationError)) or getattr(
+                exc, "status_code", None
+            ) in (429, 401, 403):
+                writes: int | None = 0
+                committed = "NONE"
+            else:
+                writes = None
+                committed = "UNKNOWN"
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
-                writes_performed=0,
+                writes_performed=writes,
+                writes_committed=committed,
                 error_message=_sanitize_calendar_transport_error(exc),
                 updated_at=now,
             )
@@ -1115,7 +1131,8 @@ class GoogleCalendarUpdateAdapter:
             return CalendarUpdateResult(
                 status=CalendarUpdateStatus.PROVIDER_ERROR,
                 event_id=event_id,
-                writes_performed=0,
+                writes_performed=None,
+                writes_committed="UNKNOWN",
                 error_message=f"Unexpected update failure: {type(exc).__name__}",
                 updated_at=now,
             )
@@ -1136,6 +1153,7 @@ class GoogleCalendarUpdateAdapter:
             status=CalendarUpdateStatus.UPDATED,
             event_id=event_id,
             writes_performed=1,
+            writes_committed="CONFIRMED",
             observation=updated_obs,
             applied_parameters=dict(params),
             updated_at=now,

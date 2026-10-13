@@ -344,3 +344,112 @@ class TestReliabilityAdversarialIntegrity:
         assert full.untested_scenarios == ()
         assert full.to_dict()["qualification_status"] == "QUALIFIED"
         assert full.to_dict()["untested_scenarios"] == []
+
+    def test_hanging_scenario_interrupted_in_real_time_within_bound(self) -> None:
+        """A hanging scenario is interrupted in real time by the daemon watchdog."""
+        import time
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        def hanging_seed(self: Any) -> Any:
+            time.sleep(2.0)
+
+        t_start = time.perf_counter()
+        with patch.object(KillerMissionSliceRunner, "step_p13_01_seed", hanging_seed):
+            result = run_repeated_mission_reliability_test(
+                iteration_cap=1,
+                timeout_per_run_seconds=0.1,
+            )
+        elapsed_wall = time.perf_counter() - t_start
+
+        # Interrupted promptly in ~0.1s; well before the 2.0s sleep would finish
+        assert elapsed_wall < 1.0, f"Watchdog took too long: {elapsed_wall:.2f}s"
+        assert result.failed_runs == 1
+        assert result.successful_runs == 0
+        run0 = result.runs[0]
+        assert run0.status == "FAILED"
+        assert run0.error_category == "EXECUTION_TIMEOUT"
+        assert "Execution timed out" in (run0.details or "")
+
+    def test_scenario_missing_expected_exception_fails_qualification(self) -> None:
+        """If FAILED_READBACK fails to raise its expected exception,
+        qualification is DISQUALIFIED.
+        """
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        orig_prep = KillerMissionSliceRunner.step_p13_03_tasks_prep
+
+        def suppressed_prep(self: Any) -> Any:
+            # If this is the FAILED_READBACK runner (which has ContradictoryTasksTransport),
+            # swallow the expected KillerMissionVerificationError
+            try:
+                return orig_prep(self)
+            except Exception:
+                # Silently suppress expected exception to simulate scenario defect
+                return None
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_03_tasks_prep", suppressed_prep):
+            result = run_repeated_mission_reliability_test(iteration_cap=15)
+
+            # Scenario 12 (FAILED_READBACK) must report MISSING_EXPECTED_EXCEPTION
+            readback_runs = [r for r in result.runs if r.scenario == "FAILED_READBACK"]
+            assert len(readback_runs) == 1
+            assert readback_runs[0].status == "FAILED"
+            assert readback_runs[0].error_category == "MISSING_EXPECTED_EXCEPTION"
+
+            # All 5 scenarios executed, but one failed assertion -> DISQUALIFIED
+            assert result.qualification_status == "DISQUALIFIED"
+
+    def test_unexpected_exception_is_caught_and_disqualifies(self) -> None:
+        """An unexpected harness exception is caught fail-closed and disqualifies."""
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        def exploding_seed(self: Any) -> Any:
+            raise RuntimeError("Unexpected harness bug simulation")
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_01_seed", exploding_seed):
+            result = run_repeated_mission_reliability_test(iteration_cap=15)
+
+            # Run did not crash unhandled; caught and classified fail-closed
+            assert result.failed_runs >= 1
+            for r in result.runs:
+                if r.scenario == "SUCCESSFUL_LIFECYCLE":
+                    assert r.status == "FAILED"
+                    assert r.error_category == "UNEXPECTED_EXCEPTION_RuntimeError"
+            assert result.qualification_status == "DISQUALIFIED"
+
+    def test_failed_lifecycle_marks_qualification_disqualified(self) -> None:
+        """A failure in SUCCESSFUL_LIFECYCLE prevents QUALIFIED and sets DISQUALIFIED."""
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        orig_drift = KillerMissionSliceRunner.step_p13_07_mutate_and_drift
+
+        call_count = 0
+
+        def failing_drift(self: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Fail the first SUCCESSFUL_LIFECYCLE run
+                res = orig_drift(self)
+                # Alter step result status to simulate verification failure
+                step_res = self.step_results["P-13.07"]
+                from dataclasses import replace
+
+                self.step_results["P-13.07"] = replace(step_res, status="FAILED")
+                return res
+            return orig_drift(self)
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_07_mutate_and_drift", failing_drift):
+            result = run_repeated_mission_reliability_test(iteration_cap=15)
+
+            assert result.runs[0].status == "FAILED"
+            assert result.runs[0].error_category == "LIFECYCLE_VERIFICATION_MISMATCH"
+            assert result.qualification_status == "DISQUALIFIED"

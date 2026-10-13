@@ -125,8 +125,12 @@ def record_calendar_update_result(result: CalendarUpdateResult) -> ProviderExecu
 
     success = result.status == CalendarUpdateStatus.UPDATED
     err = redact_text(result.error_message) if result.error_message else None
+    committed = getattr(result, "writes_committed", "CONFIRMED")
     details: dict[str, Any] = {
-        "writes_performed": result.writes_performed,
+        "writes_performed": (
+            result.writes_performed if result.writes_performed is not None else "UNKNOWN"
+        ),
+        "writes_committed": committed,
     }
 
     return ProviderExecutionResult(
@@ -134,6 +138,7 @@ def record_calendar_update_result(result: CalendarUpdateResult) -> ProviderExecu
         success=success,
         status_name=result.status.value,
         writes_performed=result.writes_performed,
+        writes_committed=committed,
         captured_at=result.updated_at,
         details=details,
         error_message=err,
@@ -157,6 +162,7 @@ def record_task_read_result(result: TaskReadResult) -> ProviderExecutionResult:
         success=success,
         status_name=result.status.value,
         writes_performed=0,
+        writes_committed="NONE",
         captured_at=result.observed_at,
         details=details,
         error_message=err,
@@ -170,8 +176,13 @@ def record_task_create_result(result: TaskCreateResult) -> ProviderExecutionResu
 
     success = result.status == TaskCreateStatus.CREATED
     err = redact_text(result.error_message) if result.error_message else None
+    committed = getattr(result, "writes_committed", "CONFIRMED")
     details: dict[str, Any] = {
         "task_id_present": result.task_id is not None,
+        "writes_performed": (
+            result.writes_performed if result.writes_performed is not None else "UNKNOWN"
+        ),
+        "writes_committed": committed,
     }
     if result.task_id is not None:
         details["task_id"] = result.task_id
@@ -181,6 +192,7 @@ def record_task_create_result(result: TaskCreateResult) -> ProviderExecutionResu
         success=success,
         status_name=result.status.value,
         writes_performed=result.writes_performed,
+        writes_committed=committed,
         captured_at=result.created_at,
         details=details,
         error_message=err,

@@ -1832,17 +1832,20 @@ Status: DONE (Candidate for independent QA review — Repaired)
 
 Acceptance:
 - Strictly offline FIXTURE mode execution.
-- Validated finite iteration cap (1 to 1000) and enforced per-run execution timeout.
+- Validated finite iteration cap (1 to 1000) and actually enforced per-run execution timeout via real-time daemon thread watchdog.
+- Scenario hangs interrupted in real time within bounded deadline; fails closed as `EXECUTION_TIMEOUT`.
+- In scenarios expecting exceptions (`FAILED_READBACK`, `INTERRUPTED_PROVIDER_ERROR`), explicitly verifies expected exceptions; missing exceptions classified as `MISSING_EXPECTED_EXCEPTION`.
+- Unexpected exceptions caught and sanitized as `UNEXPECTED_EXCEPTION_{name}`, preventing harness crashes.
+- Qualification status strictly and unambiguously enforced (`QUALIFIED`, `PARTIAL_UNQUALIFIED` when scenarios are missing, `DISQUALIFIED` when any scenario or integrity check fails).
 - Clean per-run environment isolation and distinct mission identities.
 - Historical receipt integrity verified intact across READY -> DRIFTED (all 11 successful runs preserve hash).
 - Milestones (`reached_ready`, `reached_drifted`) and canonical predicates evaluated dynamically from actual runner state.
-- Qualification status tracked (`QUALIFIED` vs `PARTIAL_UNQUALIFIED` with explicit untested scenarios).
 - Failure isolation demonstrated across representative scenarios (11 pass, 2 blocked, 2 failed).
 - Cross-run contamination detected: False (zero leaked tasks, grants, or files).
 - Duplicate unintended mutation detected: False (writes match exact expectations).
 - False READY detected: False (no blocked/failed run ever achieved READY or generated receipt).
 - Latency measurements separated by provenance (strictly FIXTURE).
-- Validated via 16 focused tests in `tests/test_phase_p18_06_reliability.py`.
+- Validated via 20 focused tests in `tests/test_phase_p18_06_reliability.py`.
 
 ### P-18.07 — Verify judge-period availability plan and credit expiry
 Status: DONE (Candidate for independent QA review — Repaired)
@@ -1855,8 +1858,7 @@ Acceptance:
 - Credit balance uncertainty acknowledged; current account charges `NOT_OBSERVED` offline; future sufficiency not inferred.
 - Dual-surface architecture: public read-only exhibit separated from authenticated operator runtime.
 - Cloudflare Pages Free exhibit option evaluated without domain purchase ($0.00 personal spend).
-- Verified that Cloudflare Pages serves static assets only and does NOT execute the Python backend.
-- Rate limiter documented as persistent SQLite sliding window (`RateLimitMiddleware`); judge review model documented as on-demand / video-first.
+- Rate limiter documented as persistent SQLite fixed window (`RateLimitMiddleware`); judge review model documented as on-demand / video-first; hosting feasibility UNRESOLVED.
 - Three-tier bounded fallback plan defined if continuous hosting cannot guarantee $0.00.
 - Zero infrastructure deployed, zero credentials exposed, zero paid services activated in this task.
 - Documented in `docs/JUDGE_PERIOD_AVAILABILITY_PLAN.md` (labeled `IMPLEMENTED / QA_PENDING`) and validated via 11 focused tests in `tests/test_phase_p18_07_availability_plan.py`.
