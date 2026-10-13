@@ -188,7 +188,10 @@ def test_p13_02_model_proposal_has_zero_execution_or_readiness_authority(
 
     # Pending approval rejects model proposal fail-closed
     with pytest.raises((PlannerAuthorityError, PendingApprovalTypeError)):
-        create_pending_approval(action_prop, requested_at=datetime.now(UTC))  # type: ignore[arg-type]
+        create_pending_approval(
+            action_prop,
+            requested_at=datetime.now(UTC),  # type: ignore[arg-type]
+        )
 
     # Readiness evaluator rejects model proposal fail-closed
     with pytest.raises((PlannerReadinessAuthorityError, TypeError)):
@@ -1399,6 +1402,44 @@ def _live_runner_for_boundary_tests(
     return runner
 
 
+def _attach_pending_approval(runner: LiveKillerMissionSliceRunner, action_suffix: str = "") -> str:
+    """Attach a valid PendingApproval and action to runner without running preflight steps."""
+    from datetime import UTC, datetime
+
+    from stilldone.action_policy import validate_action_contract
+    from stilldone.domain.action import ActionContract, ActionId, ActionType
+    from stilldone.ledger import ActionRecord
+    from stilldone.pending_approval import create_pending_approval
+
+    now = datetime.now(UTC)
+    if action_suffix:
+        act = ActionContract.create(
+            mission_id=runner.mission_id,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=runner.action_cal.target,
+            parameters={"start_time": f"2026-10-04T07:3{action_suffix}:00+00:00"},
+            action_id=ActionId.generate(),
+        )
+    else:
+        act = runner.action_cal
+    val_act = validate_action_contract(act)
+    pending = create_pending_approval(val_act, requested_at=now)
+    runner.pending_approval = pending
+    act_id_str = str(act.action_id)
+    ledger_actions = getattr(runner.env.mission_ledger, "_actions", {})
+    if act_id_str not in ledger_actions:
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=act.action_id,
+                mission_id=runner.mission_id,
+                action=act,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    return str(pending.pending_approval_id)
+
+
 def test_defect_b_plan_validation_contract() -> None:
     """Verify Defect B: exact canonical 3-step plan enforced at the P-13 mission boundary."""
     from stilldone.killer_mission import (
@@ -1565,7 +1606,9 @@ def test_defect_c_human_approval_post_pending_binding(monkeypatch: pytest.Monkey
     assert len(seen) == 1
     assert seen[0] is runner_r.pending_approval
     assert seen[0].pending_approval_id == runner_r.pending_approval.pending_approval_id
-    assert res_r.status == "REJECTED"
+    assert res_r.status == "BLOCKED_APPROVAL_CHANNEL"
+    assert res_r.extra_metadata["raw_negative_instruction"] is True
+    assert res_r.extra_metadata["durable_terminal_rejection"] is False
     assert res_r.writes_performed == 0
     assert runner_r.total_writes == 0
     assert not hasattr(runner_r, "approved_cal_outcome")
@@ -2163,7 +2206,8 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 3. Manually injected non-null invalid candidate into runner state: zero writes
     runner_injected = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy3 = MagicMock()
-    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3  # type: ignore[attr-defined]
+    # type: ignore[attr-defined]
+    runner_injected.env.cal_seed_transport.create_event = cal_seed_spy3
     runner_injected.candidate_plan = bad_plan  # manually injected invalid plan
     with pytest.raises(CanonicalKillerPlanValidationError):
         runner_injected.step_p13_01_seed()
@@ -2173,7 +2217,8 @@ def test_defect_3_canonical_ordering_and_zero_seeding_on_invalid_plan(
     # 4. Plan mutation / replacement after validation: zero writes unless revalidated
     runner_tampered = _live_runner_for_boundary_tests(monkeypatch)
     cal_seed_spy4 = MagicMock()
-    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4  # type: ignore[attr-defined]
+    # type: ignore[attr-defined]
+    runner_tampered.env.cal_seed_transport.create_event = cal_seed_spy4
     # Set validated_candidate_plan to valid, but mutate candidate_plan to bad_plan
     runner_tampered.validated_candidate_plan = MagicMock()
     runner_tampered.candidate_plan = bad_plan
@@ -2459,6 +2504,8 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
     pending = runner.pending_approval
     assert pending is not None
 
+    pa_id = str(pending.pending_approval_id)
+
     # 1. Simulated filesystem write failure in _persist_consumed_decision_id
     real_open = builtins.open
 
@@ -2471,7 +2518,11 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
 
     monkeypatch.setattr(builtins, "open", failing_open)
     with pytest.raises(KillerMissionIntegrityError, match="Failed to durably commit"):
-        runner._persist_consumed_decision_id("failing_dec_1")
+        runner._persist_consumed_decision_id(
+            "failing_dec_1",
+            pending_approval_id=pa_id,
+            action_id=str(runner.action_cal.action_id),
+        )
 
     # Decision MUST NOT be added to in-memory set when persistence fails
     assert "failing_dec_1" not in runner._consumed_approval_decision_ids
@@ -2481,7 +2532,11 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
     with pytest.raises(
         KillerMissionIntegrityError, match="Persistence failure previously occurred"
     ):
-        runner._persist_consumed_decision_id("retry_after_fail")
+        runner._persist_consumed_decision_id(
+            "retry_after_fail",
+            pending_approval_id=pa_id,
+            action_id=str(runner.action_cal.action_id),
+        )
 
     # 2. Corrupt or truncated consumption record fails closed with KillerMissionIntegrityError
     dec_file = runner._consumed_decisions_file
@@ -2517,14 +2572,29 @@ def test_repair_a2_and_a3_fail_closed_persistence_and_stable_storage_boundary(
     dec_file.write_text("", encoding="utf-8")
     runner._persistence_failed = False
     runner._consumed_approval_decision_ids.clear()
-    runner._persist_consumed_decision_id("unique_dec_1")
+    pa_id_uniq = _attach_pending_approval(runner, "uniq")
+    runner._persist_consumed_decision_id(
+        "unique_dec_1",
+        pending_approval_id=pa_id_uniq,
+        action_id=str(runner.pending_approval.action_id),
+    )
     assert "unique_dec_1" in runner._consumed_approval_decision_ids
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
-        runner._persist_consumed_decision_id("unique_dec_1")
+        runner._persist_consumed_decision_id(
+            "unique_dec_1",
+            pending_approval_id=pa_id_uniq,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
     # 6. Process-local thread concurrency: concurrent persistence is thread-safe
     def _concurrent_persist(i: int) -> None:
-        runner._persist_consumed_decision_id(f"concurrent_dec_{i}")
+        with runner._consumed_decisions_lock:
+            pa_i = _attach_pending_approval(runner, f"c{i}")
+            runner._persist_consumed_decision_id(
+                f"concurrent_dec_{i}",
+                pending_approval_id=pa_i,
+                action_id=str(runner.pending_approval.action_id),
+            )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(_concurrent_persist, i) for i in range(10)]
@@ -2622,7 +2692,13 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     )
 
     # 1. First write a valid decision
-    runner._persist_consumed_decision_id("init_dec_1", decision=ApprovalDecision.REJECT)
+    pa_id = _attach_pending_approval(runner)
+    runner._persist_consumed_decision_id(
+        "init_dec_1",
+        decision=ApprovalDecision.REJECT,
+        pending_approval_id=pa_id,
+        action_id=str(runner.action_cal.action_id),
+    )
     assert "init_dec_1" in runner._consumed_approval_decision_ids
     dec_file = runner._consumed_decisions_file
     orig_size = dec_file.stat().st_size
@@ -2658,8 +2734,13 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
         return real_open(file, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", partial_failing_open)
+    pa_id2 = _attach_pending_approval(runner, "2")
     with pytest.raises(KillerMissionIntegrityError, match="Failed to durably commit"):
-        runner._persist_consumed_decision_id("partial_dec_fail")
+        runner._persist_consumed_decision_id(
+            "partial_dec_fail",
+            pending_approval_id=pa_id2,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
     monkeypatch.undo()
 
@@ -2672,7 +2753,11 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     with pytest.raises(
         KillerMissionIntegrityError, match="Persistence failure previously occurred"
     ):
-        runner._persist_consumed_decision_id("any_retry_id")
+        runner._persist_consumed_decision_id(
+            "any_retry_id",
+            pending_approval_id=pa_id2,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
     # 4. Corrupted timestamp tests
     dec_file.write_text(
@@ -2747,7 +2832,13 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     runner._load_consumed_decision_ids()
     assert "init_dec_1" in runner._consumed_approval_decision_ids
 
-    runner._persist_consumed_decision_id("durable_reject_1", decision=ApprovalDecision.REJECT)
+    pa_id3 = _attach_pending_approval(runner, "3")
+    runner._persist_consumed_decision_id(
+        "durable_reject_1",
+        decision=ApprovalDecision.REJECT,
+        pending_approval_id=pa_id3,
+        action_id=str(runner.pending_approval.action_id),
+    )
     assert "durable_reject_1" in runner._consumed_approval_decision_ids
 
     # Read back raw jsonl
@@ -2779,8 +2870,13 @@ def test_repair_a2_durable_consumption_integrity_adversarial(
     assert "init_dec_1" in runner_restarted._consumed_approval_decision_ids
 
     # Replay must be rejected
+    runner_restarted.pending_approval = runner.pending_approval
     with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
-        runner_restarted._persist_consumed_decision_id("durable_reject_1")
+        runner_restarted._persist_consumed_decision_id(
+            "durable_reject_1",
+            pending_approval_id=pa_id3,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
 
 def test_repair_a3_enforce_storage_gate_in_actual_live_execution(
@@ -2887,7 +2983,12 @@ def test_repair_a3_enforce_storage_gate_in_actual_live_execution(
     assert fresh_runner.is_restored_session is False
 
     # Persist one decision to establish history
-    fresh_runner._persist_consumed_decision_id("first_time_dec_1")
+    pa_id = _attach_pending_approval(fresh_runner)
+    fresh_runner._persist_consumed_decision_id(
+        "first_time_dec_1",
+        pending_approval_id=pa_id,
+        action_id=str(fresh_runner.action_cal.action_id),
+    )
 
     # Second runner on same directory must be detected as restored session (restarting process)
     restored_env = KillerMissionEnvironment.create_live_environment(
@@ -3123,7 +3224,13 @@ def test_adversarial_jsonl_write_succeeds_but_ledger_fails_triggers_rollback(
     )
 
     # First write a valid decision
-    runner._persist_consumed_decision_id("init_dec_ok", decision=ApprovalDecision.REJECT)
+    pa_id = _attach_pending_approval(runner)
+    runner._persist_consumed_decision_id(
+        "init_dec_ok",
+        decision=ApprovalDecision.REJECT,
+        pending_approval_id=pa_id,
+        action_id=str(runner.action_cal.action_id),
+    )
     assert "init_dec_ok" in runner._consumed_approval_decision_ids
     orig_size = runner._consumed_decisions_file.stat().st_size
 
@@ -3133,11 +3240,17 @@ def test_adversarial_jsonl_write_succeeds_but_ledger_fails_triggers_rollback(
 
     monkeypatch.setattr(env.approval_ledger, "record_rejection", failing_record_rejection)
 
+    pa_id2 = _attach_pending_approval(runner, "2")
     with pytest.raises(
         KillerMissionIntegrityError,
         match="Failed to commit consumed approval decision to canonical approval ledger",
     ):
-        runner._persist_consumed_decision_id("orphan_attempt", decision=ApprovalDecision.REJECT)
+        runner._persist_consumed_decision_id(
+            "orphan_attempt",
+            decision=ApprovalDecision.REJECT,
+            pending_approval_id=pa_id2,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
     # Verify rollback: JSONL size must be restored to orig_size (no orphaned record)
     assert runner._consumed_decisions_file.stat().st_size == orig_size
@@ -3148,7 +3261,11 @@ def test_adversarial_jsonl_write_succeeds_but_ledger_fails_triggers_rollback(
     with pytest.raises(
         KillerMissionIntegrityError, match="Persistence failure previously occurred"
     ):
-        runner._persist_consumed_decision_id("another_id")
+        runner._persist_consumed_decision_id(
+            "another_id",
+            pending_approval_id=pa_id2,
+            action_id=str(runner.pending_approval.action_id),
+        )
 
 
 def test_adversarial_dual_store_discrepancy_fails_closed(
@@ -3179,7 +3296,13 @@ def test_adversarial_dual_store_discrepancy_fails_closed(
         mission_id=MissionId("11111111-1111-1111-1111-111111111111"),
         operator_approved=True,
     )
-    runner._persist_consumed_decision_id("dec_both", decision=ApprovalDecision.REJECT)
+    pa_id = _attach_pending_approval(runner)
+    runner._persist_consumed_decision_id(
+        "dec_both",
+        decision=ApprovalDecision.REJECT,
+        pending_approval_id=pa_id,
+        action_id=str(runner.action_cal.action_id),
+    )
 
     # Inject an extra record directly into JSONL that was never recorded in ApprovalLedger
     extra_record = json.dumps(

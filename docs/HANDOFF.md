@@ -5,7 +5,7 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote HEAD: `d6c7f86a16fb5baa1184547fe3a3e1068426cacc` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Final Bounded Authority-Store & Recovery-Gate Repair (A2, A3 closed in single bounded batch; 40 adversarial tests PASS; dual-runtime validator PASS across Core 2,380 & Strands 1,155; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
+Current repository state: **P-00 through P-12: CLOSED (independent QA PASS ✅) | Starting remote HEAD: `89654f1d265318f3fb7aa9d153856379fd0fd7f4` | Last independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c` | P-13 + P-16 Final Shared-Boundary Closure (A2, A3 closed in single bounded batch; shared mutation boundary bypass blocked at base-class boundary; raw REJECT halts mutation with 0 writes without claiming durable terminal rejection; typed REJECT requires exact PendingApproval binding; dual-runtime validator PASS across Core & Strands; live AWS/Google mutations BLOCKED_LIVE / NOT_RUN; external publication BLOCKED_EXTERNAL / NOT_RUN; awaiting independent QA review) | P-18+: PENDING / NOT_RUN**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -74,19 +74,16 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-13 + P-16 FINAL AUTHORITY & EVIDENCE CLOSURE (Defects 1-5)
+Active task: STILLDONE — P-13 + P-16 FINAL SHARED-BOUNDARY CLOSURE (Defects A2, A3)
 
-Starting Remote SHA: `ac58e057d7618b1a32e73103e4c1a1d93c71e4ad`
+Starting Remote SHA: `89654f1d265318f3fb7aa9d153856379fd0fd7f4`
 Last Independently VERIFIED contiguous SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅ (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13 + P-16: Final Authority & Evidence Closure Applied (Defects 1-5 closed; PASS Candidate, awaiting independent QA review)
-  - Defect 1 (AWS Account Fixture Boundary): Enforced strict provenance boundary rejecting test fixtures, repository paths, synthetic integrity references, and arbitrary caller provenance strings from authorizing `RECORDED_LIVE` or live billing evidence; untrusted observations fail closed to `NOT_OBSERVED`; P-16.05 remains `BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN`.
-  - Defect 2 (Authenticated Human Approval Channel): Removed raw `APPROVE` callback auto-promotion in `LiveKillerMissionSliceRunner.step_p13_05_calendar_approve()`; self-declared callbacks/dataclasses cannot grant consent; requires verified `approval_channel` protocol; unauthenticated approval reports `BLOCKED_APPROVAL_CHANNEL` with 0 Calendar writes (negative invariant proven).
-  - Defect 3 (Canonical Execution Ordering): Removed test-only production bypass `if "step_p13_02_plan" in self.__dict__:` from `LiveKillerMissionSliceRunner.run_full_slice()`; enforced strict canonical order: preflight -> candidate Bedrock proposal & plan validation -> authorized resource seeding -> binding -> compilation & execution -> read-back -> transition; invalid plan fails closed with 0 writes before seeding.
-  - Defect 4 (CloudWatch Metric Proof Correlation): CloudWatch proof harness handles paginated log retrieval across up to 10 pages; non-exhaustive pagination, truncated event windows, or duplicate/repeated metric values retain `status="LOG_INGESTION_OBSERVED"` with `is_verified=False` rather than overclaiming `VERIFIED_METRIC_EXTRACTION`; P-16.03 remains `BLOCKED_LIVE / NOT_RUN`.
-  - Defect 5 (Public Snapshot Privacy Separation): Created explicit boundary between privacy-safe public serialization (`to_public_dict()`) and authoritative durable serialization (`to_authoritative_dict()`); public output redacts all external Calendar event IDs, Tasks IDs, `resource_id`, `parent_id`, and human summaries with zero leakage; authoritative reload preserves exact identities; `from_dict()` fails closed with `SnapshotIntegrityError` if fed public redacted JSON.
+- P-13 + P-16: Final Shared-Boundary Closure Applied (Defects A2, A3 closed; PASS Candidate, awaiting independent QA review)
+  - Defect A3 (Shared Mutation Boundary Bypass): Enforced live recovery (`_existing_mission_detected and not _execution_state_restored`) and preflight prerequisites at the shared side-effect boundaries in `KillerMissionSliceRunner` (including base-method calls `step_p13_01_seed`, `step_p13_03_tasks_prep`, `step_p13_04_calendar_pause`). Zero seeding writes, zero Tasks writes, zero new PendingApproval on unrestored missions; live seeding requires validated candidate plan (`candidate_plan is validated_candidate_plan`); preflight blocks unconfigured live paths; fixture execution unchanged.
+  - Defect A2 (Rejection Status Must Match Durable Authority): Raw `REJECT` parameter and callback raw `REJECT` safely halt live mutation with 0 writes and return `BLOCKED_APPROVAL_CHANNEL` with `raw_negative_instruction=True` and `durable_terminal_rejection=False`, without publishing false `REJECTED` status or modifying canonical `ApprovalLedger`. Verified typed `REJECT` requires exact `pending_approval_id`, mission, and action binding; direct persistence helper before P-13.04 fails closed (`KillerMissionSequenceError`).
 - P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
 - P-15: P-15.01–P-15.07 COMPLETED (including headless browser 375px/1200px responsive & WCAG AA contrast validation)
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN; P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.

@@ -187,6 +187,29 @@ def _setup_live_runner(
     return runner
 
 
+def _attach_pending_approval(runner: LiveKillerMissionSliceRunner) -> str:
+    """Attach a valid PendingApproval and action to runner without running preflight steps."""
+    now = datetime.now(UTC)
+    pending = create_pending_approval(
+        validate_action_contract(runner.action_cal),
+        requested_at=now,
+    )
+    runner.pending_approval = pending
+    act_id_str = str(runner.action_cal.action_id)
+    ledger_actions = getattr(runner.env.mission_ledger, "_actions", {})
+    if act_id_str not in ledger_actions:
+        runner.env.mission_ledger.append_action(
+            ActionRecord(
+                action_id=runner.action_cal.action_id,
+                mission_id=runner.mission_id,
+                action=runner.action_cal,
+                approval_id=None,
+                created_at=now,
+            )
+        )
+    return str(pending.pending_approval_id)
+
+
 # ===========================================================================
 # A2 — Authority-Record State Model & Dual-Store Integrity
 # ===========================================================================
@@ -572,6 +595,7 @@ class TestA2AuthorityRecordStateModel:
     ) -> None:
         """A2.7: Interrupted persistence rolls back JSONL and latches failure fail-closed."""
         runner = _setup_live_runner(tmp_path)
+        pa_id = _attach_pending_approval(runner)
 
         # Cause approval ledger append to fail
         def failing_record_rejection(*args: Any, **kwargs: Any) -> Any:
@@ -582,7 +606,11 @@ class TestA2AuthorityRecordStateModel:
         )
 
         with pytest.raises(KillerMissionIntegrityError, match="Failed to commit consumed approval"):
-            runner._persist_consumed_decision_id("fail_append_dec_1")
+            runner._persist_consumed_decision_id(
+                "fail_append_dec_1",
+                pending_approval_id=pa_id,
+                action_id=str(runner.action_cal.action_id),
+            )
 
         # Rollback: decision must NOT be in JSONL or memory
         assert runner._persistence_failed is True
@@ -593,21 +621,35 @@ class TestA2AuthorityRecordStateModel:
 
         # Subsequent attempts fail closed immediately
         with pytest.raises(KillerMissionIntegrityError, match="Persistence failure previously"):
-            runner._persist_consumed_decision_id("any_subsequent_dec")
+            runner._persist_consumed_decision_id(
+                "any_subsequent_dec",
+                pending_approval_id=pa_id,
+                action_id=str(runner.action_cal.action_id),
+            )
 
     def test_repeated_consumption_after_restart_rejected(self, tmp_path: Path) -> None:
         """A2.8: Persisted decision is durably rejected upon process restart."""
         runner1 = _setup_live_runner(tmp_path)
-        runner1._persist_consumed_decision_id("restart_replay_dec_1")
+        pa_id = _attach_pending_approval(runner1)
+        runner1._persist_consumed_decision_id(
+            "restart_replay_dec_1",
+            pending_approval_id=pa_id,
+            action_id=str(runner1.action_cal.action_id),
+        )
         assert "restart_replay_dec_1" in runner1._consumed_approval_decision_ids
 
         # Construct runner 2 on same storage (process restart)
         runner2 = _setup_live_runner(tmp_path)
+        runner2.pending_approval = runner1.pending_approval
         assert "restart_replay_dec_1" in runner2._consumed_approval_decision_ids
 
         # Attempt to consume again raises KillerMissionAuthorityError
         with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
-            runner2._persist_consumed_decision_id("restart_replay_dec_1")
+            runner2._persist_consumed_decision_id(
+                "restart_replay_dec_1",
+                pending_approval_id=pa_id,
+                action_id=str(runner2.action_cal.action_id),
+            )
 
     def test_existing_p11_valid_consumption_and_revocation_unchanged(self) -> None:
         """A2.9: Valid P-11 single-use consumption and explicit revocation remain functional."""
@@ -640,7 +682,7 @@ class TestA2AuthorityRecordStateModel:
     def test_rejection_persists_exact_pending_approval_binding(self, tmp_path: Path) -> None:
         """A2.1: Rejection persists exact PendingApproval binding to ledger and JSONL."""
         runner = _setup_live_runner(tmp_path)
-        pa_id = "pa_exact_binding_9999"
+        pa_id = _attach_pending_approval(runner)
         runner._persist_consumed_decision_id(
             "dec_rejection_binding_1",
             pending_approval_id=pa_id,
@@ -668,7 +710,7 @@ class TestA2AuthorityRecordStateModel:
     ) -> None:
         """A2.2: Two distinct decision IDs cannot independently reject the same PendingApproval."""
         runner = _setup_live_runner(tmp_path)
-        pa_id = "pa_single_rejection_target"
+        pa_id = _attach_pending_approval(runner)
 
         # First rejection succeeds
         runner._persist_consumed_decision_id(
@@ -699,6 +741,7 @@ class TestA2AuthorityRecordStateModel:
     ) -> None:
         """A2.3: Synthetic APPROVE passed to rejection persistence is prohibited."""
         runner = _setup_live_runner(tmp_path)
+        pa_id = _attach_pending_approval(runner)
 
         with pytest.raises(
             KillerMissionAuthorityError, match="Prohibited decision value 'APPROVE'"
@@ -706,6 +749,7 @@ class TestA2AuthorityRecordStateModel:
             runner._persist_consumed_decision_id(
                 "synth_approve_dec_1",
                 decision=ApprovalDecision.APPROVE,
+                pending_approval_id=pa_id,
                 action_id=str(runner.action_cal.action_id),
             )
 
@@ -715,6 +759,7 @@ class TestA2AuthorityRecordStateModel:
             runner._persist_consumed_decision_id(
                 "synth_approve_dec_2",
                 decision="APPROVE",
+                pending_approval_id=pa_id,
                 action_id=str(runner.action_cal.action_id),
             )
 
@@ -755,10 +800,11 @@ class TestA2AuthorityRecordStateModel:
         runner._load_consumed_decision_ids()
         assert "canonical_dec_a" in runner._consumed_approval_decision_ids
 
+        pa_id = _attach_pending_approval(runner)
         runner._persist_consumed_decision_id(
             "new_dec_b",
             action_id=str(runner.action_cal.action_id),
-            pending_approval_id="pa_new_b",
+            pending_approval_id=pa_id,
         )
         assert "new_dec_b" in runner._consumed_approval_decision_ids
 
@@ -774,6 +820,7 @@ class TestA2AuthorityRecordStateModel:
     def test_concurrent_duplicate_decisions_cannot_both_succeed(self, tmp_path: Path) -> None:
         """A2.8: Concurrent duplicate decisions cannot both succeed."""
         runner = _setup_live_runner(tmp_path)
+        pa_id = _attach_pending_approval(runner)
         success_count = 0
         authority_error_count = 0
 
@@ -782,6 +829,7 @@ class TestA2AuthorityRecordStateModel:
             try:
                 runner._persist_consumed_decision_id(
                     "concurrent_dup_decision_id",
+                    pending_approval_id=pa_id,
                     action_id=str(runner.action_cal.action_id),
                 )
                 success_count += 1
@@ -797,6 +845,99 @@ class TestA2AuthorityRecordStateModel:
         assert success_count == 1
         assert authority_error_count == 1
         assert "concurrent_dup_decision_id" in runner._consumed_approval_decision_ids
+
+    def test_direct_persistence_helper_before_p13_04_cannot_create_bound_rejection(
+        self, tmp_path: Path
+    ) -> None:
+        """A2: Direct persistence helper before P-13.04 cannot create a bound rejection."""
+        runner = _setup_live_runner(tmp_path)
+        assert getattr(runner, "pending_approval", None) is None
+        with pytest.raises(
+            KillerMissionSequenceError,
+            match="Cannot persist consumed rejection before P-13.04 establishes PendingApproval",
+        ):
+            runner._persist_consumed_decision_id(
+                "early_dec_1",
+                pending_approval_id="pa_fake_early",
+                action_id=str(runner.action_cal.action_id),
+            )
+
+    def test_missing_forged_or_mismatched_pending_approval_no_canonical_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        """A2: Missing, empty, or mismatched pending_approval_id fails closed."""
+        runner = _setup_live_runner(tmp_path)
+        pa_id = _attach_pending_approval(runner)
+
+        # Missing pending_approval_id
+        with pytest.raises(
+            KillerMissionAuthorityError,
+            match="Cannot persist consumed rejection without exact pending_approval_id binding",
+        ):
+            runner._persist_consumed_decision_id(
+                "dec_missing_pa",
+                pending_approval_id=None,
+                action_id=str(runner.action_cal.action_id),
+            )
+
+        # Empty pending_approval_id
+        with pytest.raises(
+            KillerMissionAuthorityError,
+            match="Cannot persist consumed rejection without exact pending_approval_id binding",
+        ):
+            runner._persist_consumed_decision_id(
+                "dec_empty_pa",
+                pending_approval_id="   ",
+                action_id=str(runner.action_cal.action_id),
+            )
+
+        # Mismatched pending_approval_id
+        with pytest.raises(
+            KillerMissionAuthorityError,
+            match="Mismatched pending_approval_id",
+        ):
+            runner._persist_consumed_decision_id(
+                "dec_mismatched_pa",
+                pending_approval_id="pa_forged_different_123",
+                action_id=str(runner.action_cal.action_id),
+            )
+        assert runner.env.approval_ledger.is_rejected("pa_forged_different_123") is False
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+
+    def test_raw_reject_parameter_zero_writes_and_no_durable_terminal_claim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A2: Raw REJECT parameter safely halts mutation with 0 writes and no durable claim."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+
+        res = runner.step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert res.is_verified is False
+        assert res.extra_metadata["raw_negative_instruction"] is True
+        assert res.extra_metadata["durable_terminal_rejection"] is False
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.total_writes == 0
+
+    def test_callback_raw_reject_zero_writes_and_no_durable_terminal_claim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A2: Callback returning raw REJECT halts mutation with 0 writes and no durable claim."""
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        _attach_pending_approval(runner)
+        pa_id = str(runner.pending_approval.pending_approval_id)
+        runner.post_pending_decision_callback = lambda pa: ApprovalDecision.REJECT
+
+        res = runner.step_p13_05_calendar_approve(decision=None)
+        assert res.status == "BLOCKED_APPROVAL_CHANNEL"
+        assert res.writes_performed == 0
+        assert res.is_verified is False
+        assert res.extra_metadata["raw_negative_instruction"] is True
+        assert res.extra_metadata["durable_terminal_rejection"] is False
+        assert runner.env.approval_ledger.is_rejected(pa_id) is False
+        assert runner.total_writes == 0
 
     def test_legacy_valid_history_interpreted_cleanly_and_corrupt_history_fails_closed(
         self, tmp_path: Path
@@ -1374,6 +1515,93 @@ class TestA3UnrestoredRunnerExecutionGating:
         # 5. Replay attempt on same rejected decision/pending approval fails closed
         with pytest.raises(KillerMissionAuthorityError, match="already been consumed"):
             runner.step_p13_05_calendar_approve(decision=auth_dec_rej)
+
+    def test_base_class_invocation_shared_mutation_boundary_bypass_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A3: Explicit invocation of base-class methods cannot bypass live recovery guards.
+
+        Using a real LiveKillerMissionSliceRunner instance, invoke base-class methods:
+        - KillerMissionSliceRunner.step_p13_01_seed(live_runner)
+        - KillerMissionSliceRunner.step_p13_03_tasks_prep(live_runner)
+        - KillerMissionSliceRunner.step_p13_04_calendar_pause(live_runner)
+        Prove:
+        - Existing-but-unrestored mission: zero seeding writes.
+        - Existing-but-unrestored mission: zero Tasks writes.
+        - Existing-but-unrestored mission: zero new PendingApproval.
+        """
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        _ = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        runner2 = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        assert runner2.existing_mission_detected is True
+        assert runner2.is_execution_state_restored is False
+
+        # 1. Base seeding on unrestored runner: zero seeding writes
+        with pytest.raises(
+            KillerMissionIntegrityError, match="Cannot execute seeding for existing mission"
+        ):
+            KillerMissionSliceRunner.step_p13_01_seed(runner2)
+        assert runner2.total_writes == 0
+
+        # 2. Base tasks prep on unrestored runner: zero Tasks writes
+        with pytest.raises(
+            KillerMissionIntegrityError,
+            match="Cannot execute tasks preparation for existing mission",
+        ):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner2)
+        assert runner2.total_writes == 0
+
+        # 3. Base calendar pause on unrestored runner: zero new PendingApproval
+        with pytest.raises(
+            KillerMissionIntegrityError, match="Cannot execute calendar pause for existing mission"
+        ):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner2)
+        assert getattr(runner2, "pending_approval", None) is None
+        assert runner2.total_writes == 0
+
+    def test_base_class_invocation_live_seeding_without_validated_plan_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A3: Base seeding on live runner without validated candidate plan is blocked."""
+        from stilldone.killer_mission import (
+            CanonicalKillerPlanValidationError,
+            KillerMissionSliceRunner,
+        )
+
+        runner = _setup_live_runner(tmp_path, monkeypatch=monkeypatch)
+        runner.candidate_plan = None
+        runner.validated_candidate_plan = None
+
+        with pytest.raises(
+            CanonicalKillerPlanValidationError,
+            match="Live seeding cannot proceed without an independently validated",
+        ):
+            KillerMissionSliceRunner.step_p13_01_seed(runner)
+        assert runner.total_writes == 0
+
+    def test_base_class_invocation_live_without_satisfactory_preflight_blocked(
+        self, tmp_path: Path
+    ) -> None:
+        """A3: Base methods on live runner without satisfactory preflight are blocked."""
+        from stilldone.killer_mission import (
+            KillerMissionSliceRunner,
+            LivePreflightBlockedError,
+        )
+
+        runner = _setup_live_runner(tmp_path)
+
+        with pytest.raises(LivePreflightBlockedError, match="Live execution gate failed preflight"):
+            KillerMissionSliceRunner.step_p13_01_seed(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(LivePreflightBlockedError, match="Live execution gate failed preflight"):
+            KillerMissionSliceRunner.step_p13_03_tasks_prep(runner)
+        assert runner.total_writes == 0
+
+        with pytest.raises(LivePreflightBlockedError, match="Live execution gate failed preflight"):
+            KillerMissionSliceRunner.step_p13_04_calendar_pause(runner)
+        assert runner.total_writes == 0
 
 
 # ===========================================================================

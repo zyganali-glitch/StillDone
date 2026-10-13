@@ -1393,11 +1393,42 @@ class KillerMissionSliceRunner:
         self.action_cal = self.execution_contract.actions[2]
         self.validated_action_cal = validate_action_contract(self.action_cal)
 
+    def _require_shared_live_mutation_boundary(self, operation: str) -> None:
+        """Enforce live recovery and preflight prerequisites at shared mutation boundaries."""
+        if not self.live_mode:
+            return
+        if getattr(self, "_existing_mission_detected", False) and not getattr(
+            self, "_execution_state_restored", False
+        ):
+            raise KillerMissionIntegrityError(
+                f"Cannot execute {operation} for existing mission '{self.mission_id}': "
+                "an existing durable mission record was detected in persistent storage, "
+                "but full safe rehydration is not supported. "
+                "Use a new mission ID with fresh stable storage."
+            )
+        if hasattr(self, "_require_preflight"):
+            self._require_preflight()
+
     # -----------------------------------------------------------------------
     # Step 1: P-13.01 — Seed canonical disposable demo resources reproducibly
     # -----------------------------------------------------------------------
     def step_p13_01_seed(self) -> KillerMissionStepResult:
         """Seed initial pre-state: Leave for school at 07:45, no prep task."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("seeding")
+            cand = getattr(self, "candidate_plan", None)
+            val_cand = getattr(self, "validated_candidate_plan", None)
+            if cand is None or val_cand is None or cand is not val_cand:
+                raise CanonicalKillerPlanValidationError(
+                    "Live seeding cannot proceed without an independently validated "
+                    "canonical candidate plan."
+                )
+            validate_canonical_killer_mission_plan(
+                cand,
+                target_date=self.demo_date,
+                desired_start_time=self.desired_start_time,
+                scope=self.env.scope,
+            )
         seed_spec = create_canonical_event_spec(
             start_time=self.initial_start_time,
             end_time=self.initial_end_time,
@@ -1480,6 +1511,8 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_02_plan(self) -> KillerMissionStepResult:
         """Compile natural language proposal; assert zero model authority."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("planning")
         if self.live_mode and not self.operator_approved:
             res = KillerMissionStepResult(
                 task_id="P-13.02",
@@ -1595,6 +1628,8 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_03_tasks_prep(self) -> KillerMissionStepResult:
         """Execute task.create (REVERSIBLE_AUTO) and independently verify with task.read."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("tasks preparation")
         if self.live_mode and not self.operator_approved:
             res = KillerMissionStepResult(
                 task_id="P-13.03",
@@ -1734,6 +1769,16 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_04_calendar_pause(self) -> KillerMissionStepResult:
         """Evaluate calendar.update authority; pause fail-closed with PendingApproval."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("calendar pause")
+            if getattr(self.env, "is_ephemeral_storage", False) or not getattr(
+                self.env, "has_explicit_base_dir", True
+            ):
+                raise KillerMissionAuthorityError(
+                    "Stable durable storage boundary is required for operations relying on "
+                    "approval authority; ephemeral or unconfigured storage cannot guarantee "
+                    "restart replay protection."
+                )
         # Pre-execution authority gate evaluation: unapproved action MUST halt
         gate_decision = execute_gated_action(
             self.validated_action_cal,
@@ -1797,6 +1842,17 @@ class KillerMissionSliceRunner:
         """Grant bound approval, execute calendar update, and read back independently."""
         if not hasattr(self, "pending_approval"):
             raise KillerMissionSequenceError("Must run step_p13_04 first")
+
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("calendar approval")
+            if getattr(self.env, "is_ephemeral_storage", False) or not getattr(
+                self.env, "has_explicit_base_dir", True
+            ):
+                raise KillerMissionAuthorityError(
+                    "Stable durable storage boundary is required for operations relying on "
+                    "approval authority; ephemeral or unconfigured storage cannot guarantee "
+                    "restart replay protection."
+                )
 
         if self.live_mode and not self.operator_approved:
             res = KillerMissionStepResult(
@@ -1863,6 +1919,18 @@ class KillerMissionSliceRunner:
 
         # 2. If decision is REJECT: resolve via canonical P-11.03 path
         if eff_decision == ApprovalDecision.REJECT:
+            if self.live_mode:
+                pa_str = str(self.pending_approval.pending_approval_id)
+                if not (
+                    hasattr(self.env, "approval_ledger")
+                    and self.env.approval_ledger is not None
+                    and self.env.approval_ledger.is_rejected(pa_str)
+                ):
+                    raise KillerMissionAuthorityError(
+                        "Direct live rejection bypass prohibited: raw REJECT parameter or parent "
+                        "method invocation cannot establish durable terminal rejection without "
+                        "persisted canonical evidence in ApprovalLedger."
+                    )
             rejection_result = resolve_pending_approval(
                 self.pending_approval,
                 ApprovalDecision.REJECT,
@@ -2027,6 +2095,8 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_06_ready_receipt(self) -> KillerMissionStepResult:
         """Evaluate all predicates from actual provider observations; transition to READY."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("ready receipt generation")
         now = datetime.now(UTC)
 
         # Strictly require real observations captured from P-13.02, P-13.03, and P-13.05
@@ -2129,6 +2199,8 @@ class KillerMissionSliceRunner:
     # -----------------------------------------------------------------------
     def step_p13_07_mutate_and_drift(self) -> KillerMissionStepResult:
         """Induce external reality change; prove READY -> DRIFTED while receipt stays."""
+        if self.live_mode:
+            self._require_shared_live_mutation_boundary("drift reconciliation")
         if self.ready_receipt is None:
             raise KillerMissionSequenceError("Must produce READY receipt first")
         now = datetime.now(UTC)
@@ -2649,13 +2721,21 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                                             f"JSONL has '{jsonl_dec}', but canonical ledger record "
                                             f"has status '{l_rec.status.value}'"
                                         )
-                                if "pending_approval_id" in d and l_rec.approval_id:
-                                    if str(d["pending_approval_id"]) != str(l_rec.approval_id):
+                                if "pending_approval_id" in d:
+                                    if l_rec.approval_id:
+                                        if str(d["pending_approval_id"]) != str(l_rec.approval_id):
+                                            raise KillerMissionIntegrityError(
+                                                f"Contradictory pending_approval_id for decision "
+                                                f"'{did}' between JSONL "
+                                                f"('{d['pending_approval_id']}') and "
+                                                f"canonical ledger ('{l_rec.approval_id}')"
+                                            )
+                                    else:
                                         raise KillerMissionIntegrityError(
                                             f"Contradictory pending_approval_id for decision "
-                                            f"'{did}' between JSONL "
-                                            f"('{d['pending_approval_id']}') and "
-                                            f"canonical ledger ('{l_rec.approval_id}')"
+                                            f"'{did}': present in JSONL "
+                                            f"('{d['pending_approval_id']}') but absent in "
+                                            "canonical ledger"
                                         )
 
                     # 3. Discrepancy detection between decision log and canonical ledger (Repair A2)
@@ -2734,6 +2814,43 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 "Use a new mission ID with fresh stable storage."
             )
 
+        # Require that PendingApproval exists (cannot forge rejection before P-13.04)
+        if not hasattr(self, "pending_approval") or self.pending_approval is None:
+            raise KillerMissionSequenceError(
+                "Cannot persist consumed rejection before P-13.04 establishes PendingApproval"
+            )
+
+        # Require exact pending_approval_id binding
+        if (
+            not pending_approval_id
+            or not isinstance(pending_approval_id, str)
+            or not pending_approval_id.strip()
+        ):
+            raise KillerMissionAuthorityError(
+                "Cannot persist consumed rejection without exact pending_approval_id binding"
+            )
+
+        pa_str = pending_approval_id.strip()
+        expected_pa_str = str(self.pending_approval.pending_approval_id)
+        if pa_str != expected_pa_str:
+            raise KillerMissionAuthorityError(
+                f"Mismatched pending_approval_id '{pa_str}'; expected '{expected_pa_str}'"
+            )
+
+        expected_act_str = str(self.pending_approval.action_id)
+        if action_id is not None and str(action_id).strip() != expected_act_str:
+            raise KillerMissionAuthorityError(
+                f"Mismatched action_id '{action_id}'; expected '{expected_act_str}'"
+            )
+        act_str = expected_act_str
+
+        expected_mid_str = str(self.pending_approval.mission_id)
+        if mission_id is not None and str(mission_id).strip() != expected_mid_str:
+            raise KillerMissionAuthorityError(
+                f"Mismatched mission_id '{mission_id}'; expected '{expected_mid_str}'"
+            )
+        mid_str = expected_mid_str
+
         with self._consumed_decisions_lock:
             if getattr(self, "_persistence_failed", False):
                 raise KillerMissionIntegrityError(
@@ -2762,26 +2879,9 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                     ) from exc
 
             now_utc = datetime.now(UTC)
-            mid_str = str(mission_id) if mission_id else str(self.mission_id)
-            act_str = (
-                str(action_id)
-                if action_id
-                else (str(self.action_cal.action_id) if getattr(self, "action_cal", None) else None)
-            )
-            if not act_str:
-                self._persistence_failed = True
-                raise KillerMissionIntegrityError(
-                    "Cannot persist approval decision without action_id binding"
-                )
-
-            pa_str = str(pending_approval_id) if pending_approval_id else None
 
             # Check if pending_approval was already rejected/consumed in approval_ledger
-            if (
-                pa_str is not None
-                and hasattr(self.env, "approval_ledger")
-                and self.env.approval_ledger is not None
-            ):
+            if hasattr(self.env, "approval_ledger") and self.env.approval_ledger is not None:
                 if self.env.approval_ledger.is_rejected(pa_str):
                     raise KillerMissionAuthorityError(
                         f"Pending approval '{pa_str}' was already rejected; "
@@ -2822,9 +2922,8 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
                 "decision": dec_str,
                 "mission_id": mid_str,
                 "action_id": act_str,
+                "pending_approval_id": pa_str,
             }
-            if pa_str is not None:
-                rec["pending_approval_id"] = pa_str
 
             line = json.dumps(rec) + "\n"
 
@@ -3204,7 +3303,26 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
 
         # 2. Rejection via raw REJECT parameter
         if eff_decision == ApprovalDecision.REJECT or str(eff_decision).upper() == "REJECT":
-            return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+            res = KillerMissionStepResult(
+                task_id="P-13.05",
+                step_name="Approve, Execute & Verify Calendar Update",
+                status="BLOCKED_APPROVAL_CHANNEL",
+                provenance=self.env.provenance,
+                details=(
+                    "Live calendar mutation halted: raw REJECT parameter cannot establish durable "
+                    "terminal rejection authority without an authenticated, bound human decision "
+                    "channel. 0 calendar writes performed."
+                ),
+                writes_performed=0,
+                is_verified=False,
+                extra_metadata={
+                    "raw_negative_instruction": True,
+                    "durable_terminal_rejection": False,
+                    "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                },
+            )
+            self.step_results["P-13.05"] = res
+            return res
 
         # 3. Consult post_pending_decision_callback if decision is not supplied
         if eff_decision is None and self.post_pending_decision_callback is not None:
@@ -3212,7 +3330,28 @@ class LiveKillerMissionSliceRunner(KillerMissionSliceRunner):
             if cb_result is None:
                 return super().step_p13_05_calendar_approve(decision=None)
             if cb_result == ApprovalDecision.REJECT or str(cb_result).upper() == "REJECT":
-                return super().step_p13_05_calendar_approve(decision=ApprovalDecision.REJECT)
+                res = KillerMissionStepResult(
+                    task_id="P-13.05",
+                    step_name="Approve, Execute & Verify Calendar Update",
+                    status="BLOCKED_APPROVAL_CHANNEL",
+                    provenance=self.env.provenance,
+                    details=(
+                        "Live calendar mutation halted: callback returned raw REJECT, but raw "
+                        "callback return values cannot establish durable terminal rejection "
+                        "authority without an authenticated human decision channel. "
+                        "0 calendar writes performed."
+                    ),
+                    writes_performed=0,
+                    is_verified=False,
+                    extra_metadata={
+                        "raw_negative_instruction": True,
+                        "durable_terminal_rejection": False,
+                        "pending_approval_id": str(self.pending_approval.pending_approval_id),
+                        "unauthenticated_callback": True,
+                    },
+                )
+                self.step_results["P-13.05"] = res
+                return res
             if cb_result == ApprovalDecision.APPROVE or str(cb_result).upper() == "APPROVE":
                 # Remove raw APPROVE -> authorized decision auto-promotion.
                 # A callback return value is not independently authenticated human consent.
