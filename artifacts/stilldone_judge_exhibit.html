@@ -111,6 +111,14 @@
             border-color: var(--color-drifted);
             background-color: rgba(245, 158, 11, 0.08);
         }
+        .status-hero-bar.blocked {
+            border-color: var(--color-blocked);
+            background-color: rgba(239, 68, 68, 0.08);
+        }
+        .status-hero-bar.partial {
+            border-color: var(--color-partial);
+            background-color: rgba(56, 189, 248, 0.08);
+        }
         .status-title { font-size: 1.15rem; font-weight: 700; }
         .status-pill {
             padding: 0.35rem 0.85rem;
@@ -121,6 +129,8 @@
         }
         .status-pill.ready { background-color: var(--color-ready); color: #042f2e; }
         .status-pill.drifted { background-color: var(--color-drifted); color: #451a03; }
+        .status-pill.blocked { background-color: var(--color-blocked); color: #ffffff; }
+        .status-pill.partial { background-color: var(--color-partial); color: #082f49; }
 
         /* Layout Grid */
         .main-grid {
@@ -223,7 +233,7 @@
             margin-top: 0.4rem;
             font-size: 0.75rem;
             word-break: break-all;
-            color: #64748b;
+            color: #94a3b8;
         }
 
         /* Side Cards */
@@ -254,7 +264,7 @@
             border-radius: 4px;
             margin-bottom: 0.6rem;
         }
-        .fingerprint-label { font-size: 0.7rem; color: #64748b; display: block; }
+        .fingerprint-label { font-size: 0.7rem; color: #94a3b8; display: block; }
         .fingerprint-hash { font-size: 0.75rem; color: #38bdf8; }
         .auth-notice { font-size: 0.75rem; color: #94a3b8; display: block; }
 
@@ -265,7 +275,7 @@
             border-radius: 4px;
             margin-bottom: 0.75rem;
         }
-        .receipt-hash-block label { font-size: 0.7rem; color: #64748b; display: block; }
+        .receipt-hash-block label { font-size: 0.7rem; color: #94a3b8; display: block; }
         .receipt-hash-block code { font-size: 0.75rem; color: #34d399; word-break: break-all; }
         .receipt-meta-grid {
             display: grid;
@@ -275,6 +285,8 @@
         }
         .state-drifted { color: var(--color-drifted); }
         .state-ready { color: var(--color-ready); }
+        .state-blocked { color: #f87171; }
+        .state-partial { color: var(--color-partial); }
 
         .explanation-lead { font-size: 0.85rem; color: #f8fafc; margin-bottom: 0.35rem; }
         .explanation-text { font-size: 0.82rem; color: #cbd5e1; line-height: 1.45; }
@@ -329,7 +341,7 @@
                     Alexa+ Spoken Response (7.2s):
                 </div>
                 <p class="voice-speech">
-                    &ldquo;I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. Backpacks are packed and weather is checked.&rdquo;
+                    &ldquo;I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. I have added the backpack-packing task and confirmed it is on your list, and weather is checked.&rdquo;
                 </p>
             </div>
         </section>
@@ -545,9 +557,9 @@
             </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
-                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>40e662a2e32ce53726ba34518752a8c285eaefa0240a266a2a5f637428048346</code></td></tr></tbody>
+                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>1cdd90fa50c26943b3cfb6548a9e70946b6b655d281dcb84db2e83d4d1f793e7</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>40e662a2e32ce53726ba34518752a8c285eaefa0240a266a2a5f637428048346</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>1cdd90fa50c26943b3cfb6548a9e70946b6b655d281dcb84db2e83d4d1f793e7</code></p>
             </div>
         </details>
         
@@ -582,7 +594,7 @@
                 <table class="evidence-table">
                     <tbody><tr><th>observed_start</th><td><code>08:00:00 UTC</code></td></tr><tr><th>predicate_truth</th><td><code>False</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>40e662a2e32ce53726ba34518752a8c285eaefa0240a266a2a5f637428048346</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>1cdd90fa50c26943b3cfb6548a9e70946b6b655d281dcb84db2e83d4d1f793e7</code></p>
             </div>
         </details>
         
@@ -608,7 +620,8 @@
                 <p class="approval-proposal">Shift departure time from 07:45 AM to 07:30 AM</p>
                 <div class="fingerprint-box">
                     <span class="fingerprint-label">
-                        Tamper-Evident Binding Hash (Derived from Fixture Action Outcome):
+                        Fixture-Derived Explanatory Digest
+                        (Not an authenticated live approval grant):
                     </span>
                     <code class="fingerprint-hash">sha256:ae66d9bef060d7f47873c8599...</code>
                 </div>
@@ -628,12 +641,10 @@
             <span class="badge badge-ready">READY AT ISSUANCE</span>
         </header>
         <div class="receipt-body">
-            <p class="receipt-callout">
-                Receipt hash remains permanently unchanged even when reality later drifts.
-            </p>
+            <p class="receipt-callout">Receipt hash remains permanently unchanged even when reality later drifts.</p>
             <div class="receipt-hash-block">
                 <label>Canonical Receipt SHA-256:</label>
-                <code>40e662a2e32ce53726ba34518752a8c285eaefa0240a266a2a5f637428048346</code>
+                <code>1cdd90fa50c26943b3cfb6548a9e70946b6b655d281dcb84db2e83d4d1f793e7</code>
             </div>
             <div class="receipt-meta-grid">
                 <div>
@@ -720,7 +731,7 @@
         <footer>
             <p>
                 StillDone Hackathon Exhibit &bull; Zero Personal Spend ($0.00) &bull;
-                Verified Provenance &bull; Generated: 2026-10-14T17:04:15.643912+00:00
+                Verified Provenance &bull; Generated: 2026-10-14T18:01:23.254687+00:00
             </p>
         </footer>
     </div>

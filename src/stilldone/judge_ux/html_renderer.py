@@ -93,7 +93,16 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
     approval_html = ""
     if model.approval_card:
         card = model.approval_card
-        app_status = "APPROVED" if card.is_approved else "PENDING"
+        if card.rejection_reason:
+            app_status = "REJECTED"
+            badge_cls = "badge-drift_detected"
+        elif card.is_approved:
+            app_status = "APPROVED"
+            badge_cls = "badge-approved"
+        else:
+            app_status = "AWAITING_APPROVAL"
+            badge_cls = "badge-paused_approval"
+
         act_esc = html.escape(card.action_type)
         sys_esc = html.escape(card.target_system)
         desc_esc = html.escape(card.proposed_change_description)
@@ -103,7 +112,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         <section class="card approval-card" aria-labelledby="approval-title">
             <header class="card-header">
                 <h3 id="approval-title" class="card-title">Human Authorization Boundary</h3>
-                <span class="badge badge-approved">{app_status}</span>
+                <span class="badge {badge_cls}">{app_status}</span>
             </header>
             <div class="approval-body">
                 <p class="approval-desc">
@@ -113,7 +122,8 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                 <p class="approval-proposal">{desc_esc}</p>
                 <div class="fingerprint-box">
                     <span class="fingerprint-label">
-                        Tamper-Evident Binding Hash (Derived from Fixture Action Outcome):
+                        Fixture-Derived Explanatory Digest
+                        (Not an authenticated live approval grant):
                     </span>
                     <code class="fingerprint-hash">{fp_esc}...</code>
                 </div>
@@ -134,24 +144,42 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
     r_curr_cls = receipt.current_reconciled_state.value.lower()
     r_curr_val = receipt.current_reconciled_state.value
 
+    if receipt.state_at_issuance == "UNISSUED":
+        receipt_badge = '<span class="badge badge-drift_detected">UNISSUED</span>'
+        receipt_callout = (
+            '<p class="receipt-callout">'
+            "No READY receipt was issued because mission predicates were unverified, "
+            "blocked, or incomplete."
+            "</p>"
+        )
+        receipt_hash_label = "<label>Canonical Receipt Status:</label>"
+        predicates_val = f"<strong>{receipt.predicates_evaluated_count} Verified</strong>"
+    else:
+        receipt_badge = f'<span class="badge badge-ready">{r_issuance} AT ISSUANCE</span>'
+        receipt_callout = (
+            '<p class="receipt-callout">'
+            "Receipt hash remains permanently unchanged even when reality later drifts."
+            "</p>"
+        )
+        receipt_hash_label = "<label>Canonical Receipt SHA-256:</label>"
+        predicates_val = f"<strong>{receipt.predicates_evaluated_count} Verified</strong>"
+
     receipt_html = f"""
     <section class="card receipt-card" aria-labelledby="receipt-title">
         <header class="card-header">
             <h3 id="receipt-title" class="card-title">Immutable Historical Receipt</h3>
-            <span class="badge badge-ready">{r_issuance} AT ISSUANCE</span>
+            {receipt_badge}
         </header>
         <div class="receipt-body">
-            <p class="receipt-callout">
-                Receipt hash remains permanently unchanged even when reality later drifts.
-            </p>
+            {receipt_callout}
             <div class="receipt-hash-block">
-                <label>Canonical Receipt SHA-256:</label>
+                {receipt_hash_label}
                 <code>{r_hash}</code>
             </div>
             <div class="receipt-meta-grid">
                 <div>
                     <span>Predicates:</span>
-                    <strong>{receipt.predicates_evaluated_count} Verified</strong>
+                    {predicates_val}
                 </div>
                 <div>
                     <span>Current Reality:</span>
@@ -346,6 +374,14 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             border-color: var(--color-drifted);
             background-color: rgba(245, 158, 11, 0.08);
         }}
+        .status-hero-bar.blocked {{
+            border-color: var(--color-blocked);
+            background-color: rgba(239, 68, 68, 0.08);
+        }}
+        .status-hero-bar.partial {{
+            border-color: var(--color-partial);
+            background-color: rgba(56, 189, 248, 0.08);
+        }}
         .status-title {{ font-size: 1.15rem; font-weight: 700; }}
         .status-pill {{
             padding: 0.35rem 0.85rem;
@@ -356,6 +392,8 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         }}
         .status-pill.ready {{ background-color: var(--color-ready); color: #042f2e; }}
         .status-pill.drifted {{ background-color: var(--color-drifted); color: #451a03; }}
+        .status-pill.blocked {{ background-color: var(--color-blocked); color: #ffffff; }}
+        .status-pill.partial {{ background-color: var(--color-partial); color: #082f49; }}
 
         /* Layout Grid */
         .main-grid {{
@@ -458,7 +496,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             margin-top: 0.4rem;
             font-size: 0.75rem;
             word-break: break-all;
-            color: #64748b;
+            color: #94a3b8;
         }}
 
         /* Side Cards */
@@ -489,7 +527,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             border-radius: 4px;
             margin-bottom: 0.6rem;
         }}
-        .fingerprint-label {{ font-size: 0.7rem; color: #64748b; display: block; }}
+        .fingerprint-label {{ font-size: 0.7rem; color: #94a3b8; display: block; }}
         .fingerprint-hash {{ font-size: 0.75rem; color: #38bdf8; }}
         .auth-notice {{ font-size: 0.75rem; color: #94a3b8; display: block; }}
 
@@ -500,7 +538,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             border-radius: 4px;
             margin-bottom: 0.75rem;
         }}
-        .receipt-hash-block label {{ font-size: 0.7rem; color: #64748b; display: block; }}
+        .receipt-hash-block label {{ font-size: 0.7rem; color: #94a3b8; display: block; }}
         .receipt-hash-block code {{ font-size: 0.75rem; color: #34d399; word-break: break-all; }}
         .receipt-meta-grid {{
             display: grid;
@@ -510,6 +548,8 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         }}
         .state-drifted {{ color: var(--color-drifted); }}
         .state-ready {{ color: var(--color-ready); }}
+        .state-blocked {{ color: #f87171; }}
+        .state-partial {{ color: var(--color-partial); }}
 
         .explanation-lead {{ font-size: 0.85rem; color: #f8fafc; margin-bottom: 0.35rem; }}
         .explanation-text {{ font-size: 0.82rem; color: #cbd5e1; line-height: 1.45; }}

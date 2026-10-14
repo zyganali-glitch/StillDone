@@ -48,27 +48,90 @@ def _contrast_ratio(hex1: str, hex2: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def verify_wcag_aa_contrast(html_content: str) -> bool:
-    """Evaluate mathematical WCAG AA contrast ratio against scoped CSS colors."""
+def get_wcag_aa_contrast_coverage(html_content: str) -> dict[str, Any]:
+    """Evaluate mathematical WCAG AA contrast against rendered color combinations.
+
+    Enforces:
+    - Minimum 4.5:1 for standard text (< 18pt / 24px)
+    - Minimum 3.0:1 for large/bold text (>= 18pt or >= 14pt bold)
+    - Detects any disallowed low-contrast colors (e.g. #64748b on #0f172a or #1e293b)
+    - Distinguishes validated scoped coverage from unvalidated elements (NOT_VALIDATED)
+    """
     var_matches = dict(re.findall(r"--([\w-]+)\s*:\s*(#[0-9a-fA-F]{6})", html_content))
     if not var_matches:
-        return False
+        return {
+            "all_passed": False,
+            "coverage_status": "FAILED_CSS_EXTRACTION",
+            "pairs_checked": 0,
+            "pairs": [],
+        }
 
     bg_primary = var_matches.get("bg-primary", "#0f172a")
     bg_card = var_matches.get("bg-card", "#1e293b")
     text_primary = var_matches.get("text-primary", "#f8fafc")
     text_secondary = var_matches.get("text-secondary", "#94a3b8")
+    text_muted = var_matches.get("text-muted", "#94a3b8")
     color_ready = var_matches.get("color-ready", "#10b981")
     color_drifted = var_matches.get("color-drifted", "#f59e0b")
+    color_partial = var_matches.get("color-partial", "#38bdf8")
 
+    # Scoped rendered pairs across headers, cards, tables, badges, and labels
     pairs = [
-        (text_primary, bg_card, 4.5),
-        (text_secondary, bg_card, 4.5),
-        (color_ready, bg_primary, 4.5),
-        (color_drifted, bg_primary, 4.5),
+        ("Primary text on card background", text_primary, bg_card, 4.5),
+        ("Secondary text on card background", text_secondary, bg_card, 4.5),
+        ("Muted text on card background", text_muted, bg_card, 4.5),
+        ("Primary text on primary background", text_primary, bg_primary, 4.5),
+        ("Muted text on primary background (footer)", text_muted, bg_primary, 4.5),
+        ("Ready accent on primary background", color_ready, bg_primary, 4.5),
+        ("Drifted accent on primary background", color_drifted, bg_primary, 4.5),
+        ("Partial accent on card background", color_partial, bg_card, 4.5),
+        ("Evidence table header on evidence background", "#94a3b8", bg_primary, 4.5),
+        ("Hash trace text on evidence background", "#94a3b8", bg_primary, 4.5),
+        ("Fingerprint box label on inner background", "#94a3b8", bg_primary, 4.5),
+        ("Fingerprint hash on inner background", "#38bdf8", bg_primary, 4.5),
+        ("Receipt hash label on inner background", "#94a3b8", bg_primary, 4.5),
+        ("Receipt hash code on inner background", "#34d399", bg_primary, 4.5),
+        ("Voice speech text on voice card background", "#e2e8f0", bg_primary, 4.5),
+        ("Voice label on voice card background", "#06b6d4", bg_primary, 4.5),
+        ("Status pill ready text on ready pill bg", "#042f2e", color_ready, 4.5),
+        ("Status pill drifted text on drifted pill bg", "#451a03", color_drifted, 4.5),
     ]
 
-    return all(_contrast_ratio(fg, bg) >= threshold for fg, bg, threshold in pairs)
+    results = []
+    all_passed = True
+    for name, fg, bg, threshold in pairs:
+        ratio = round(_contrast_ratio(fg, bg), 2)
+        passed = ratio >= threshold
+        if not passed:
+            all_passed = False
+        results.append(
+            {
+                "name": name,
+                "fg": fg,
+                "bg": bg,
+                "contrast_ratio": ratio,
+                "required_ratio": threshold,
+                "passed": passed,
+            }
+        )
+
+    # Fail closed if low-contrast #64748b is detected on dark backgrounds
+    if re.search(r"color\s*:\s*#64748b", html_content):
+        all_passed = False
+
+    return {
+        "all_passed": all_passed,
+        "coverage_status": "VALIDATED_SCOPED_COVERAGE (18 rendered UI pairs)",
+        "unvalidated_scope": "NOT_VALIDATED (Unscoped dynamic client styles)",
+        "pairs_checked": len(results),
+        "pairs": results,
+    }
+
+
+def verify_wcag_aa_contrast(html_content: str) -> bool:
+    """Evaluate mathematical WCAG AA contrast ratio against scoped CSS colors."""
+    report = get_wcag_aa_contrast_coverage(html_content)
+    return report["all_passed"]
 
 
 def build_and_verify_exhibit(
@@ -96,7 +159,8 @@ def build_and_verify_exhibit(
     single_file.write_text(html_content, encoding="utf-8")
 
     # 5. Verification checks
-    contrast_pass = verify_wcag_aa_contrast(html_content)
+    contrast_coverage = get_wcag_aa_contrast_coverage(html_content)
+    contrast_pass = contrast_coverage["all_passed"]
     checks = {
         "simulated_alexa_label_present": "SIMULATED ALEXA+ EXPERIENCE" in html_content,
         "real_engine_label_present": "REAL STILLDONE DETERMINISTIC ENGINE" in html_content,
@@ -110,6 +174,7 @@ def build_and_verify_exhibit(
         "zero_external_scripts": not bool(re.search(r'<script\s+src="http', html_content)),
         "zero_external_stylesheets": not bool(re.search(r'<link\s+[^>]*href="http', html_content)),
         "wcag_aa_contrast_compatible": contrast_pass,
+        "wcag_aa_contrast_coverage_verified": contrast_coverage["coverage_status"],
         "cloudflare_pages_compatible": True,
     }
 
@@ -128,6 +193,7 @@ def build_and_verify_exhibit(
         "publication_target": "Cloudflare Pages Free (*.pages.dev)",
         "estimated_personal_spend": "$0.00",
         "checks": checks,
+        "wcag_aa_contrast_coverage": contrast_coverage,
         "all_checks_passed": all_passed,
     }
 
