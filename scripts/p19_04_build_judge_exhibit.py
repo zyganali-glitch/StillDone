@@ -19,9 +19,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from stilldone.domain.lifecycle import MissionState
 from stilldone.judge_ux.builder import build_judge_view_model
 from stilldone.judge_ux.html_renderer import render_judge_exhibit_html
-from stilldone.killer_mission import KillerMissionSliceRunner
+from stilldone.judge_ux.models import (
+    JudgeExhibitViewModel,
+    MissionVisualState,
+    StepExecutionState,
+)
+from stilldone.killer_mission import KillerMissionSliceOutcome, KillerMissionSliceRunner
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXHIBIT_DIR = REPO_ROOT / "artifacts" / "judge_exhibit"
@@ -134,33 +140,160 @@ def verify_wcag_aa_contrast(html_content: str) -> bool:
     return report["all_passed"]
 
 
+def verify_canonical_fixture_outcome(
+    outcome: KillerMissionSliceOutcome,
+    view_model: JudgeExhibitViewModel,
+) -> None:
+    """Verify complete canonical fixture outcome before static exhibit publication.
+
+    Enforces that only an authentic, complete, fully-verified 7-step fixture demonstration
+    with verified independent read-backs, authorized action, valid receipt issuance,
+    and truthful drift reconciliation can be promoted to the public static artifacts.
+    Fails closed with RuntimeError if outcome is partial, unverified, or contradictory.
+    """
+    if outcome.is_live:
+        raise RuntimeError(
+            "Publication exhibit must be canonical local fixture playback, not live execution."
+        )
+
+    if outcome.final_state != MissionState.DRIFTED:
+        raise RuntimeError(
+            f"Canonical fixture demonstration must conclude in DRIFTED, got {outcome.final_state}."
+        )
+
+    if outcome.ready_receipt_hash is None:
+        raise RuntimeError(
+            "Canonical fixture demonstration must have an authentic ready_receipt_hash."
+        )
+
+    if not outcome.historical_receipt_immutable:
+        raise RuntimeError(
+            "Canonical fixture demonstration must preserve historical receipt immutability."
+        )
+
+    expected_tasks = [
+        "P-13.01",
+        "P-13.02",
+        "P-13.03",
+        "P-13.04",
+        "P-13.05",
+        "P-13.06",
+        "P-13.07",
+    ]
+    for task_id in expected_tasks:
+        if task_id not in outcome.steps:
+            raise RuntimeError(f"Missing required canonical step {task_id} in outcome.")
+
+    s1 = outcome.steps["P-13.01"]
+    if s1.status != "PASS" or not s1.is_verified or s1.writes_performed != 1:
+        raise RuntimeError("Step P-13.01 evidence failed verification: pre-state seeding invalid.")
+
+    s2 = outcome.steps["P-13.02"]
+    if s2.status not in ("PASS", "OBSERVED") or s2.writes_performed != 0:
+        raise RuntimeError(
+            "Step P-13.02 evidence failed verification: plan & weather read-only failed."
+        )
+
+    s3 = outcome.steps["P-13.03"]
+    if s3.status not in ("PASS", "VERIFIED") or not s3.is_verified or s3.writes_performed != 1:
+        raise RuntimeError("Step P-13.03 evidence failed verification: task mutation unverified.")
+
+    s4 = outcome.steps["P-13.04"]
+    if s4.status not in ("PASS", "PAUSED_APPROVAL") or s4.writes_performed != 0:
+        raise RuntimeError(
+            "Step P-13.04 evidence failed verification: approval boundary pause invalid."
+        )
+
+    s5 = outcome.steps["P-13.05"]
+    if s5.status not in ("PASS", "APPROVED") or not s5.is_verified or s5.writes_performed != 1:
+        raise RuntimeError(
+            "Step P-13.05 evidence failed verification: calendar mutation unverified."
+        )
+
+    s6 = outcome.steps["P-13.06"]
+    if s6.status not in ("PASS", "VERIFIED") or not s6.is_verified or s6.writes_performed != 0:
+        raise RuntimeError(
+            "Step P-13.06 evidence failed verification: receipt issuance unverified."
+        )
+    if s6.receipt_hash is not None and s6.receipt_hash != outcome.ready_receipt_hash:
+        raise RuntimeError("Step P-13.06 receipt hash does not match outcome ready_receipt_hash.")
+
+    s7 = outcome.steps["P-13.07"]
+    if (
+        s7.status not in ("PASS", "DRIFT_DETECTED")
+        or not s7.is_verified
+        or s7.writes_performed != 0
+    ):
+        raise RuntimeError(
+            "Step P-13.07 evidence failed verification: drift reconciliation unverified."
+        )
+
+    # View model alignment
+    if view_model.current_state != MissionVisualState.DRIFTED:
+        raise RuntimeError(
+            f"View model visual state must be DRIFTED, got {view_model.current_state}."
+        )
+
+    if view_model.compact_receipt.state_at_issuance != "READY":
+        raise RuntimeError("Compact receipt state at issuance must be READY.")
+
+    if view_model.compact_receipt.receipt_hash != outcome.ready_receipt_hash:
+        raise RuntimeError("Compact receipt hash mismatch.")
+
+    if not view_model.compact_receipt.is_historically_preserved:
+        raise RuntimeError("Compact receipt must be marked historically preserved.")
+
+    if view_model.approval_card is None or not view_model.approval_card.is_approved:
+        raise RuntimeError("Approval card must be present and approved for full canonical exhibit.")
+
+    cards_by_id = {c.task_id: c for c in view_model.timeline_steps}
+    if cards_by_id["P-13.01"].state != StepExecutionState.VERIFIED:
+        raise RuntimeError("Card P-13.01 must be VERIFIED.")
+    if (
+        cards_by_id["P-13.03"].state != StepExecutionState.VERIFIED
+        or not cards_by_id["P-13.03"].independent_readback_verified
+    ):
+        raise RuntimeError("Card P-13.03 must be independently read-back VERIFIED.")
+    if (
+        cards_by_id["P-13.05"].state != StepExecutionState.APPROVED
+        or not cards_by_id["P-13.05"].independent_readback_verified
+    ):
+        raise RuntimeError("Card P-13.05 must be independently read-back VERIFIED.")
+    if cards_by_id["P-13.06"].state != StepExecutionState.VERIFIED:
+        raise RuntimeError("Card P-13.06 must be VERIFIED.")
+    if (
+        cards_by_id["P-13.07"].state != StepExecutionState.DRIFT_DETECTED
+        or not cards_by_id["P-13.07"].is_drifted
+    ):
+        raise RuntimeError("Card P-13.07 must be DRIFT_DETECTED.")
+
+
 def build_and_verify_exhibit(
     output_dir: Path = DEFAULT_EXHIBIT_DIR,
     single_file: Path = DEFAULT_SINGLE_FILE,
+    outcome: KillerMissionSliceOutcome | None = None,
 ) -> dict[str, Any]:
     """Generate and verify the static public judge exhibit."""
-    # 1. Run killer mission slice in deterministic regression mode
-    runner = KillerMissionSliceRunner()
-    outcome = runner.run_full_slice()
+    # 1. Run killer mission slice in deterministic regression mode if not provided
+    if outcome is None:
+        runner = KillerMissionSliceRunner()
+        outcome = runner.run_full_slice()
 
     # 2. Build judge view model
     view_model = build_judge_view_model(outcome)
 
-    # 3. Render HTML
+    # 3. Fail closed if the source outcome is incomplete, unverified, or contradictory
+    verify_canonical_fixture_outcome(outcome, view_model)
+
+    # 4. Render HTML
     html_content = render_judge_exhibit_html(view_model)
-
-    # 4. Write static directory index.html for Cloudflare Pages
-    output_dir.mkdir(parents=True, exist_ok=True)
-    index_file = output_dir / "index.html"
-    index_file.write_text(html_content, encoding="utf-8")
-
-    # Also sync the root artifacts/stilldone_judge_exhibit.html
-    single_file.parent.mkdir(parents=True, exist_ok=True)
-    single_file.write_text(html_content, encoding="utf-8")
 
     # 5. Verification checks
     contrast_coverage = get_wcag_aa_contrast_coverage(html_content)
     contrast_pass = contrast_coverage["all_passed"]
+    if not contrast_pass:
+        raise RuntimeError("Exhibit HTML failed mathematical WCAG AA contrast coverage checks.")
+
     checks = {
         "simulated_alexa_label_present": "SIMULATED ALEXA+ EXPERIENCE" in html_content,
         "real_engine_label_present": "REAL STILLDONE DETERMINISTIC ENGINE" in html_content,
@@ -179,6 +312,18 @@ def build_and_verify_exhibit(
     }
 
     all_passed = all(checks.values())
+    if not all_passed:
+        failed_checks = [k for k, v in checks.items() if not v]
+        raise RuntimeError(f"Exhibit static publication checks failed: {failed_checks}")
+
+    # 6. Only write artifacts after ALL verification checks pass
+    output_dir.mkdir(parents=True, exist_ok=True)
+    index_file = output_dir / "index.html"
+    index_file.write_text(html_content, encoding="utf-8")
+
+    # Also sync the root artifacts/stilldone_judge_exhibit.html
+    single_file.parent.mkdir(parents=True, exist_ok=True)
+    single_file.write_text(html_content, encoding="utf-8")
 
     return {
         "task": "P-19.04 — Publish read-only public judge exhibit without unmetered paid execution",

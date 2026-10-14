@@ -28,6 +28,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from stilldone.domain.lifecycle import MissionState
+from stilldone.judge_ux.models import StepExecutionState
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _build_script = REPO_ROOT / "scripts" / "p19_04_build_judge_exhibit.py"
@@ -462,3 +467,167 @@ def test_wcag_aa_contrast_full_coverage_and_no_low_contrast_colors() -> None:
 
     # Proves low-contrast #64748b is completely eliminated from the rendered CSS
     assert "#64748b" not in html_content
+
+
+@pytest.mark.parametrize(
+    (
+        "task_id",
+        "status",
+        "is_verified",
+        "writes",
+        "extra_meta",
+        "expected_card_state",
+        "expected_readback",
+    ),
+    [
+        # Step 1: status FAILED but is_verified True -> must be ERROR, UNVERIFIED
+        (
+            "P-13.01",
+            "FAILED",
+            True,
+            1,
+            {"seeded_event_established": True},
+            StepExecutionState.ERROR,
+            "UNVERIFIED",
+        ),
+        # Step 1: missing required provider/observation metadata -> must be ERROR, UNVERIFIED
+        ("P-13.01", "PASS", True, 1, {}, StepExecutionState.ERROR, "UNVERIFIED"),
+        # Step 2: unauthorized writes performed on read-only step -> must be ERROR, FAILED
+        ("P-13.02", "PASS", True, 1, {}, StepExecutionState.ERROR, "FAILED"),
+        # Step 3: positive verification with missing mutation evidence (writes=0) -> ERROR
+        ("P-13.03", "PASS", True, 0, {}, StepExecutionState.ERROR, "UNVERIFIED"),
+        # Step 4: unauthorized writes during approval pause boundary -> must be ERROR, FAILED
+        ("P-13.04", "PASS", False, 1, {}, StepExecutionState.ERROR, "FAILED"),
+        # Step 5: calendar shift claimed verified with 0 writes -> must be ERROR, UNVERIFIED
+        ("P-13.05", "PASS", True, 0, {}, StepExecutionState.ERROR, "UNVERIFIED"),
+        # Step 6: receipt step status PASS but is_verified False -> must be ERROR, FAILED
+        ("P-13.06", "PASS", False, 0, {}, StepExecutionState.ERROR, "FAILED"),
+        # Step 7: drift reconciliation step PASS but is_verified False -> must be ERROR, UNVERIFIED
+        ("P-13.07", "PASS", False, 0, {}, StepExecutionState.ERROR, "UNVERIFIED"),
+    ],
+)
+def test_adversarial_contradictory_step_evidence(
+    task_id: str,
+    status: str,
+    is_verified: bool,
+    writes: int,
+    extra_meta: dict[str, Any],
+    expected_card_state: StepExecutionState,
+    expected_readback: str,
+) -> None:
+    """16. Proves contradictory step evidence combinations are rejected fail-closed."""
+    from stilldone.judge_ux.builder import build_judge_view_model
+    from stilldone.judge_ux.html_renderer import render_judge_exhibit_html
+    from stilldone.judge_ux.models import MissionVisualState
+    from stilldone.killer_mission import KillerMissionSliceRunner, KillerMissionStepResult
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    tampered_steps = dict(outcome.steps)
+    orig = outcome.steps[task_id]
+    tampered_steps[task_id] = KillerMissionStepResult(
+        task_id=orig.task_id,
+        step_name=orig.step_name,
+        status=status,
+        provenance=orig.provenance,
+        details="Adversarial tampered step result",
+        writes_performed=writes,
+        is_verified=is_verified,
+        extra_metadata=extra_meta,
+    )
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, "steps", tampered_steps)
+
+    vm = build_judge_view_model(tampered_outcome)
+
+    # Contradictory steps must NEVER be promoted to overall DRIFTED or READY
+    assert vm.current_state != MissionVisualState.DRIFTED
+    assert vm.current_state != MissionVisualState.READY
+
+    step_cards = {s.task_id: s for s in vm.timeline_steps}
+    card = step_cards[task_id]
+    assert card.state == expected_card_state
+    assert card.readback_status == expected_readback
+    assert card.independent_readback_verified is False
+
+    # HTML verification: refuses false completion or verified status
+    html = render_judge_exhibit_html(vm)
+    if task_id == "P-13.06":
+        assert vm.compact_receipt.state_at_issuance == "UNISSUED"
+        assert "UNISSUED" in html
+    elif task_id == "P-13.07":
+        assert card.is_drifted is False
+
+
+def test_adversarial_tampered_receipt_hash_without_step6_issuance() -> None:
+    """17. Proves arbitrary receipt hash cannot fabricate READY receipt without step 6."""
+    from stilldone.judge_ux.builder import build_judge_view_model
+    from stilldone.judge_ux.html_renderer import render_judge_exhibit_html
+    from stilldone.judge_ux.models import MissionVisualState
+    from stilldone.killer_mission import KillerMissionSliceRunner, KillerMissionStepResult
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    tampered_steps = dict(outcome.steps)
+    tampered_steps["P-13.06"] = KillerMissionStepResult(
+        task_id="P-13.06",
+        step_name="Produce READY Mission Receipt",
+        status="FAILED",
+        provenance=outcome.provenance,
+        details="Receipt issuance predicate failed",
+        writes_performed=0,
+        is_verified=False,
+    )
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, "steps", tampered_steps)
+    object.__setattr__(tampered_outcome, "ready_receipt_hash", "fabricated_ready_hash_999")
+
+    vm = build_judge_view_model(tampered_outcome)
+    assert vm.current_state != MissionVisualState.READY
+    assert vm.current_state != MissionVisualState.DRIFTED
+    assert vm.compact_receipt.state_at_issuance == "UNISSUED"
+    assert vm.compact_receipt.receipt_hash == "UNISSUED / NO_READY_RECEIPT"
+    assert vm.compact_receipt.is_historically_preserved is False
+
+    html = render_judge_exhibit_html(vm)
+    assert "UNISSUED / NO_READY_RECEIPT" in html
+    assert "fabricated_ready_hash_999" not in html
+
+
+@pytest.mark.parametrize(
+    ("tamper_field", "tamper_val"),
+    [
+        ("ready_receipt_hash", None),
+        ("historical_receipt_immutable", False),
+        ("final_state", MissionState.READY),
+        ("is_live", True),
+    ],
+)
+def test_adversarial_static_builder_fails_closed_on_tampered_outcomes(
+    tmp_path: Path,
+    tamper_field: str,
+    tamper_val: Any,
+) -> None:
+    """18. Proves build_and_verify_exhibit raises RuntimeError on tampered outcomes."""
+    from stilldone.killer_mission import KillerMissionSliceRunner
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, tamper_field, tamper_val)
+
+    out_dir = tmp_path / "exhibit"
+    single = tmp_path / "exhibit.html"
+
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single,
+            outcome=tampered_outcome,
+        )
+
+    # Assert no files were created or promoted
+    assert not (out_dir / "index.html").exists()
+    assert not single.exists()
