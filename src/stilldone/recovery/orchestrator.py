@@ -33,6 +33,7 @@ from typing import Any
 
 from stilldone.domain.action import ActionContract, ActionId
 from stilldone.recovery.idempotency import (
+    DuplicateRiskClass,
     RecoveryError,
     assert_not_planner_for_recovery,
     derive_idempotency_key,
@@ -232,6 +233,57 @@ def evaluate_post_execution_recovery(
     strategy = get_idempotency_strategy(action)
     stable_key = derive_idempotency_key(action, attempt_number=attempt_number)
 
+    if provider_result is not None:
+        assert_not_planner_for_recovery(provider_result, parameter_name="provider_result")
+        if (
+            hasattr(provider_result, "action_type")
+            and provider_result.action_type != action.action_type
+        ):
+            raise RecoveryLineageError(
+                f"provider_result action_type {provider_result.action_type} "
+                f"does not match action {action.action_type}"
+            )
+        if getattr(provider_result, "success", False) is True and error is not None:
+            raise RecoveryOrchestratorError(
+                "provider_result reports success=True but error is not None"
+            )
+
+        is_unknown = (
+            getattr(provider_result, "writes_committed", None) == "UNKNOWN"
+            or getattr(provider_result, "writes_performed", None) is None
+        )
+        if error is None:
+            if strategy.duplicate_risk != DuplicateRiskClass.NONE and is_unknown:
+                eff_policy = policy if policy is not None else RetryPolicy()
+                effective_ceiling = min(eff_policy.max_attempts, strategy.max_attempt_ceiling)
+                if attempt_number >= effective_ceiling:
+                    reason = (
+                        f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling}); "
+                        "ambiguous mutation outcome requires independent verification to establish "
+                        "remote state (no further retries permitted)"
+                    )
+                else:
+                    reason = (
+                        "Ambiguous mutation outcome (UNKNOWN writes committed) requires "
+                        "independent verification before recovery; outcome cannot be assumed "
+                        "successful"
+                    )
+                return RecoveryDecision(
+                    action_type=RecoveryActionType.REQUIRES_VERIFICATION,
+                    action_id=action.action_id,
+                    attempt_number=attempt_number,
+                    delay_seconds=0.0,
+                    reason=reason,
+                    retry_classification=RetryClassification.AMBIGUOUS_TIMEOUT,
+                    idempotency_key=stable_key,
+                )
+
+            if getattr(provider_result, "success", True) is False:
+                err_msg = getattr(provider_result, "error_message", None) or getattr(
+                    provider_result, "status_name", "Provider reported execution failure"
+                )
+                error = RuntimeError(err_msg)
+
     if error is None:
         return RecoveryDecision(
             action_type=RecoveryActionType.DO_NOT_RETRY,
@@ -257,10 +309,7 @@ def evaluate_post_execution_recovery(
             action_id=action.action_id,
             attempt_number=attempt_number,
             delay_seconds=0.0,
-            reason=(
-                "Ambiguous timeout on mutation requires independent verification "
-                "before any retry decision"
-            ),
+            reason=retry_dec.reason,
             retry_classification=retry_dec.classification,
             idempotency_key=stable_key,
         )

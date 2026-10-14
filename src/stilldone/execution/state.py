@@ -112,14 +112,7 @@ class ProviderExecutionResult:
             if self.writes_performed is None:
                 object.__setattr__(self, "writes_committed", "UNKNOWN")
             elif self.writes_performed == 0:
-                if self.success and self.action_type in (
-                    ActionType.CALENDAR_UPDATE,
-                    ActionType.TASK_CREATE,
-                ):
-                    object.__setattr__(self, "writes_performed", 1)
-                    object.__setattr__(self, "writes_committed", "CONFIRMED")
-                else:
-                    object.__setattr__(self, "writes_committed", "NONE")
+                object.__setattr__(self, "writes_committed", "NONE")
             else:
                 object.__setattr__(self, "writes_committed", "CONFIRMED")
 

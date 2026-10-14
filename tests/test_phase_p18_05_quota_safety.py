@@ -1314,3 +1314,237 @@ class TestUnknownWriteSemanticsAndConsistency:
         # Ambiguous mutation must NEVER be retried blindly; requires independent verification first
         assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
         assert "requires independent verification" in rec_dec.reason.lower()
+
+    def test_provider_execution_result_never_synthesizes_writes_from_success(self) -> None:
+        """Requirement B1: ProviderExecutionResult must never invent a confirmed write.
+
+        Verifies that passing success=True on mutations with omitted or zero writes fails
+        closed with ExecutionContractValueError rather than synthesizing writes_performed=1
+        or writes_committed='CONFIRMED'.
+        """
+        from stilldone.execution.contracts import ExecutionContractValueError
+        from stilldone.execution.state import ProviderExecutionResult
+
+        # CALENDAR_UPDATE with omitted writes (defaults to 0 writes / 'NONE')
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(ActionType.CALENDAR_UPDATE, True, "UPDATED")
+
+        # CALENDAR_UPDATE with explicit writes_performed=0 and omitted writes_committed
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(ActionType.CALENDAR_UPDATE, True, "UPDATED", writes_performed=0)
+
+        # TASK_CREATE with omitted writes (defaults to writes_performed=0, writes_committed='NONE')
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(ActionType.TASK_CREATE, True, "CREATED")
+
+        # TASK_CREATE with explicit writes_performed=0 and omitted writes_committed
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(ActionType.TASK_CREATE, True, "CREATED", writes_performed=0)
+
+        # Valid confirmed mutations with explicitly observed positive writes are accepted
+        valid_cal = ProviderExecutionResult(
+            ActionType.CALENDAR_UPDATE,
+            True,
+            "UPDATED",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
+        )
+        assert valid_cal.writes_performed == 1
+        assert valid_cal.writes_committed == "CONFIRMED"
+
+        valid_task = ProviderExecutionResult(
+            ActionType.TASK_CREATE,
+            True,
+            "CREATED",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
+        )
+        assert valid_task.writes_performed == 1
+        assert valid_task.writes_committed == "CONFIRMED"
+
+    def test_recovery_boundary_requires_verification_on_unknown_outcome_when_error_is_none(
+        self,
+    ) -> None:
+        """Requirement B2: UNKNOWN mutation outcome never resolved because error text absent."""
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.execution.state import ProviderExecutionResult
+        from stilldone.recovery.orchestrator import (
+            RecoveryActionType,
+            evaluate_post_execution_recovery,
+        )
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_tasks", resource_kind=ResourceKind.TASK, resource_id="t-1"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters={"title": "Prepare Pack"},
+        )
+
+        # Provider result with UNKNOWN writes and None error
+        unknown_res = ProviderExecutionResult(
+            action_type=ActionType.TASK_CREATE,
+            success=False,
+            status_name="TransportDrop",
+            writes_performed=None,
+            writes_committed="UNKNOWN",
+        )
+
+        rec_dec = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error=None,  # Missing / absent error text
+            provider_result=unknown_res,
+        )
+
+        # Must NOT be resolved as DO_NOT_RETRY: Execution succeeded
+        assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert "cannot be assumed successful" in rec_dec.reason
+
+    def test_recovery_boundary_exhausted_ceiling_requires_verification_on_unknown_mutation(
+        self,
+    ) -> None:
+        """Requirement B2: Exhausted retry ceiling on ambiguous mutation requires verification.
+
+        Distinguishes 'no retry allowed' from 'remote outcome established.'
+        """
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.execution.state import ProviderExecutionResult
+        from stilldone.recovery.orchestrator import (
+            RecoveryActionType,
+            evaluate_post_execution_recovery,
+        )
+        from stilldone.recovery.retry import (
+            RetryClassification,
+            RetryPolicy,
+            evaluate_retry,
+        )
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar", resource_kind=ResourceKind.CALENDAR_EVENT, resource_id="evt-2"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=target,
+            parameters={"summary": "New Title"},
+        )
+
+        unknown_res = ProviderExecutionResult(
+            action_type=ActionType.CALENDAR_UPDATE,
+            success=False,
+            status_name="DeadlineExceeded",
+            writes_performed=None,
+            writes_committed="UNKNOWN",
+            error_message="Gateway timeout",
+        )
+
+        # Evaluate retry directly at attempt ceiling (3 of 3)
+        retry_dec = evaluate_retry(
+            action=action,
+            attempt_number=3,
+            error=unknown_res.error_message,
+            policy=RetryPolicy(max_attempts=3),
+            provider_result=unknown_res,
+        )
+        assert retry_dec.should_retry is False
+        assert retry_dec.requires_verification_before_retry is True
+        assert retry_dec.classification == RetryClassification.AMBIGUOUS_TIMEOUT
+        assert "no further retries permitted" in retry_dec.reason
+
+        # Post-execution recovery decision at ceiling must still require verification
+        rec_dec = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=3,
+            error=unknown_res.error_message,
+            policy=RetryPolicy(max_attempts=3),
+            provider_result=unknown_res,
+        )
+        assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert "no further retries permitted" in rec_dec.reason
+
+    def test_recovery_boundary_enforces_lineage_and_contradiction_guards(self) -> None:
+        """Requirement B2: Recovery rejects mismatched action types and contradictory facts."""
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.execution.state import ProviderExecutionResult
+        from stilldone.recovery.orchestrator import (
+            RecoveryLineageError,
+            RecoveryOrchestratorError,
+            evaluate_post_execution_recovery,
+        )
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar", resource_kind=ResourceKind.CALENDAR_EVENT, resource_id="evt-3"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=target,
+            parameters={"summary": "Title"},
+        )
+
+        # 1. Mismatched action_type between action and provider_result
+        mismatched_res = ProviderExecutionResult(
+            action_type=ActionType.TASK_CREATE,
+            success=False,
+            status_name="Error",
+            writes_performed=0,
+            writes_committed="NONE",
+        )
+        with pytest.raises(RecoveryLineageError, match="does not match action"):
+            evaluate_post_execution_recovery(
+                action=action,
+                attempt_number=1,
+                error=RuntimeError("Some error"),
+                provider_result=mismatched_res,
+            )
+
+        # 2. Contradictory success=True with error is not None
+        confirmed_res = ProviderExecutionResult(
+            action_type=ActionType.CALENDAR_UPDATE,
+            success=True,
+            status_name="UPDATED",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
+        )
+        with pytest.raises(
+            RecoveryOrchestratorError, match="reports success=True but error is not None"
+        ):
+            evaluate_post_execution_recovery(
+                action=action,
+                attempt_number=1,
+                error=RuntimeError("Contradictory error"),
+                provider_result=confirmed_res,
+            )

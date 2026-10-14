@@ -1823,20 +1823,24 @@ Acceptance:
 - Calendar 412 Precondition Failed yields `CONFLICT` with 0 writes.
 - Calendar idempotency deduplication yields `NOOP_ALREADY_APPLIED` with 0 writes.
 - Ambiguous mutation safety: transport failure after provider mutation never infers zero remote writes; readback required before retry.
+- Deterministic write facts: removed write synthesis; `ProviderExecutionResult` never converts `writes_performed=0` into `1` based on `success=True`.
+- Recovery respects unknown outcomes independently of error text: `UNKNOWN` mutation outcomes trigger `REQUIRES_VERIFICATION` regardless of whether error text is present; exhausted retry ceiling on ambiguous mutation forbids additional writes while requiring independent read-back verification.
 - Open-Meteo 429/timeout fails closed with coordinate sanitization.
 - Killer mission slice halts on provider throttling and never reaches READY.
-- Validated via 15 focused tests in `tests/test_phase_p18_05_quota_safety.py`.
+- Validated via 26 focused tests in `tests/test_phase_p18_05_quota_safety.py`.
 
 ### P-18.06 — Run bounded repeated-mission reliability test
 Status: DONE (Candidate for independent QA review — Repaired)
 
 Acceptance:
 - Strictly offline FIXTURE mode execution.
-- Validated finite iteration cap (1 to 1000) and actually enforced per-run execution timeout via real-time daemon thread watchdog.
-- Scenario hangs interrupted in real time within bounded deadline; fails closed as `EXECUTION_TIMEOUT`.
+- Validated finite iteration cap (1 to 1000) and actually enforced per-run execution timeout via isolated OS worker process (`multiprocessing.get_context("spawn")`) and wall-clock watchdog.
+- Unsafe CPython thread exception injection (`ctypes.pythonapi.PyThreadState_SetAsyncExc`) completely removed.
+- Scenario hangs terminated and reaped in real time; proved delayed filesystem or fixture mutations never execute post-timeout.
 - In scenarios expecting exceptions (`FAILED_READBACK`, `INTERRUPTED_PROVIDER_ERROR`), explicitly verifies expected exceptions; missing exceptions classified as `MISSING_EXPECTED_EXCEPTION`.
 - Unexpected exceptions caught and sanitized as `UNEXPECTED_EXCEPTION_{name}`, preventing harness crashes.
 - Qualification status strictly and unambiguously enforced (`QUALIFIED`, `PARTIAL_UNQUALIFIED` when scenarios are missing, `DISQUALIFIED` when any scenario or integrity check fails).
+- Failure/integrity violations strictly take precedence over partial coverage (reports `DISQUALIFIED`).
 - Clean per-run environment isolation and distinct mission identities.
 - Historical receipt integrity verified intact across READY -> DRIFTED (all 11 successful runs preserve hash).
 - Milestones (`reached_ready`, `reached_drifted`) and canonical predicates evaluated dynamically from actual runner state.
@@ -1845,7 +1849,7 @@ Acceptance:
 - Duplicate unintended mutation detected: False (writes match exact expectations).
 - False READY detected: False (no blocked/failed run ever achieved READY or generated receipt).
 - Latency measurements separated by provenance (strictly FIXTURE).
-- Validated via 20 focused tests in `tests/test_phase_p18_06_reliability.py`.
+- Validated via 24 focused tests in `tests/test_phase_p18_06_reliability.py`.
 
 ### P-18.07 — Verify judge-period availability plan and credit expiry
 Status: DONE (Candidate for independent QA review — Repaired)

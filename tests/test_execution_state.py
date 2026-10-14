@@ -482,7 +482,13 @@ class TestMonotonicExecutionStateMachine:
         with pytest.raises(ExecutionTransitionError):
             tracker.mark_in_progress(a1)
         # Cannot transition to EXECUTION_SUCCEEDED
-        res1 = ProviderExecutionResult(ActionType.TASK_CREATE, True, "OK")
+        res1 = ProviderExecutionResult(
+            ActionType.TASK_CREATE,
+            True,
+            "OK",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
+        )
         with pytest.raises(ExecutionTransitionError):
             tracker.record_success(a1, att1, res1)
         # Cannot transition to BLOCKED

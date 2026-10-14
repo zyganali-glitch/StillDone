@@ -256,7 +256,7 @@ def evaluate_retry(
     *,
     action: ActionContract | ActionType,
     attempt_number: int,
-    error: Exception | str | int,
+    error: Exception | str | int | None = None,
     policy: RetryPolicy | None = None,
     provider_result: Any | None = None,
 ) -> RetryDecision:
@@ -265,8 +265,9 @@ def evaluate_retry(
     Laws:
     - Bounded attempt ceiling strictly enforced.
     - If attempt_number >= max_attempts: returns should_retry=False.
-    - If error is AMBIGUOUS_TIMEOUT on a mutation action:
+    - If error is AMBIGUOUS_TIMEOUT or UNKNOWN writes on a mutation action:
       blind retry is FORBIDDEN (should_retry=False, requires_verification_before_retry=True).
+      Exhausted attempt ceiling still requires independent verification to establish remote state.
     - If error is AMBIGUOUS_TIMEOUT on a read-only action:
       retry is allowed with exponential backoff delay.
     - If error is RETRYABLE_TRANSIENT:
@@ -275,9 +276,20 @@ def evaluate_retry(
     - Model/planner proposals have ZERO authority.
     """
     assert_not_planner_for_recovery(action, parameter_name="action")
-    assert_not_planner_for_recovery(error, parameter_name="error")
+    if error is not None:
+        assert_not_planner_for_recovery(error, parameter_name="error")
     if policy is not None:
         assert_not_planner_for_recovery(policy, parameter_name="policy")
+    if provider_result is not None:
+        assert_not_planner_for_recovery(provider_result, parameter_name="provider_result")
+        target_type = action.action_type if isinstance(action, ActionContract) else action
+        if hasattr(provider_result, "action_type") and provider_result.action_type != target_type:
+            raise ValueError(
+                f"provider_result action_type {provider_result.action_type} "
+                f"does not match action {target_type}"
+            )
+        if getattr(provider_result, "success", False) is True and error is not None:
+            raise ValueError("provider_result reports success=True but error is not None")
 
     if isinstance(attempt_number, bool) or not isinstance(attempt_number, int):
         raise TypeError("attempt_number must be an integer")
@@ -290,9 +302,60 @@ def evaluate_retry(
     # Effective attempt ceiling is bounded by both policy and action strategy ceiling
     effective_ceiling = min(eff_policy.max_attempts, strategy.max_attempt_ceiling)
 
-    classification = classify_error(error)
+    is_unknown_mutation = (
+        provider_result is not None
+        and strategy.duplicate_risk != DuplicateRiskClass.NONE
+        and (
+            getattr(provider_result, "writes_committed", None) == "UNKNOWN"
+            or getattr(provider_result, "writes_performed", None) is None
+        )
+    )
 
-    # 1. Ceiling check
+    if error is not None:
+        classification = classify_error(error)
+    elif is_unknown_mutation:
+        classification = RetryClassification.AMBIGUOUS_TIMEOUT
+    elif provider_result is not None:
+        raw_msg = getattr(provider_result, "error_message", None) or getattr(
+            provider_result, "status_name", "Provider failure"
+        )
+        err_msg = str(raw_msg)
+        classification = classify_error(err_msg)
+    else:
+        raise TypeError("error must be Exception, str, or int when provider_result is absent")
+
+    is_ambiguous_mutation = strategy.duplicate_risk != DuplicateRiskClass.NONE and (
+        is_unknown_mutation or classification == RetryClassification.AMBIGUOUS_TIMEOUT
+    )
+
+    # 1. Ambiguous mutation handling (with or without ceiling exhaustion)
+    if is_ambiguous_mutation:
+        if attempt_number >= effective_ceiling:
+            return RetryDecision(
+                should_retry=False,
+                classification=RetryClassification.AMBIGUOUS_TIMEOUT,
+                attempt_number=attempt_number,
+                delay_seconds=0.0,
+                requires_verification_before_retry=True,
+                reason=(
+                    f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling}); "
+                    "ambiguous mutation outcome requires independent verification to establish "
+                    "remote state (no further retries permitted)"
+                ),
+            )
+        return RetryDecision(
+            should_retry=False,
+            classification=RetryClassification.AMBIGUOUS_TIMEOUT,
+            attempt_number=attempt_number,
+            delay_seconds=0.0,
+            requires_verification_before_retry=True,
+            reason=(
+                "Ambiguous mutation outcome forbids blind retry; requires "
+                "independent verification before recovery"
+            ),
+        )
+
+    # 2. Ceiling check for non-ambiguous mutation or read-only failures
     if attempt_number >= effective_ceiling:
         return RetryDecision(
             should_retry=False,
@@ -303,40 +366,8 @@ def evaluate_retry(
             reason=f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling})",
         )
 
-    # 1b. Unknown writes on mutation check (ambiguous write outcome)
-    if provider_result is not None and (
-        getattr(provider_result, "writes_committed", None) == "UNKNOWN"
-        or getattr(provider_result, "writes_performed", None) is None
-    ):
-        if strategy.duplicate_risk != DuplicateRiskClass.NONE:
-            return RetryDecision(
-                should_retry=False,
-                classification=RetryClassification.AMBIGUOUS_TIMEOUT,
-                attempt_number=attempt_number,
-                delay_seconds=0.0,
-                requires_verification_before_retry=True,
-                reason=(
-                    "Ambiguous mutation outcome (UNKNOWN writes committed) forbids blind "
-                    "retry; requires independent read-back verification before recovery"
-                ),
-            )
-
-    # 2. Ambiguous timeout handling
+    # 3. Read action ambiguous timeout is safe to retry
     if classification == RetryClassification.AMBIGUOUS_TIMEOUT:
-        if strategy.duplicate_risk != DuplicateRiskClass.NONE:
-            # Core Law: Mutation ambiguous timeout forbids blind retry!
-            return RetryDecision(
-                should_retry=False,
-                classification=classification,
-                attempt_number=attempt_number,
-                delay_seconds=0.0,
-                requires_verification_before_retry=True,
-                reason=(
-                    "Ambiguous timeout on mutation forbids blind retry; requires "
-                    "independent read-back verification before recovery"
-                ),
-            )
-        # Read action ambiguous timeout is safe to retry
         delay = min(
             eff_policy.base_delay_seconds * (eff_policy.backoff_multiplier ** (attempt_number - 1)),
             eff_policy.max_delay_seconds,

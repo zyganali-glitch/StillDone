@@ -79,9 +79,9 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-18.05 / P-18.06 / P-18.07 SURGICAL FINAL REPAIR
+Active task: STILLDONE — P-18.05 + P-18.06 FINAL SAFE-CLOSURE REPAIR
 
-Starting Remote SHA: `637cf606cab3ab713159082623f806c567ce5838`
+Starting Remote SHA: `97ed73332e8c42e0e279c0c549e18f00225ae7ea`
 Last Independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce`
 
 Status:
@@ -97,24 +97,23 @@ Status:
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18.01–P-18.03: COMPLETED (Candidate for independent QA review)
 - P-18.04: PRESERVED (QA PASS baseline preserved; do not reopen)
-- P-18.05: REPAIRED (Unknown-write semantics completed across record_provider_exception, router, gate, and recovery boundary; ProviderExecutionResult consistency strictly enforced; candidate for independent QA review)
-  - Exceptions caught after dispatch of CALENDAR_UPDATE or TASK_CREATE do not assume zero remote writes without positive evidence (writes_performed=None, writes_committed="UNKNOWN").
-  - Enforced strict consistency between writes_performed, writes_committed, and success state in ProviderExecutionResult with typed errors.
-  - Recovery boundary (evaluate_retry) forbids blind retries on ambiguous mutations, requiring independent read-back verification.
-  - Validated via 22 passing tests in `tests/test_phase_p18_05_quota_safety.py`.
-- P-18.06: REPAIRED (Killable isolated execution boundary and qualification precedence; candidate for independent QA review)
-  - Replaced soft timeout with genuinely killable worker boundary via CPython asynchronous SystemExit injection (`PyThreadState_SetAsyncExc`) and worker reaping.
-  - Delayed mutations after timeout are strictly prevented and proven never to execute.
+- P-18.05: REPAIRED (Deterministic write and recovery facts; candidate for independent QA review)
+  - Removed write synthesis in `ProviderExecutionResult`: never synthesizes or increases `writes_performed` based on `success`. Mutations with `success=True` and `writes_committed="NONE"` fail closed with typed `ExecutionContractValueError`.
+  - Recovery boundary respects unknown provider outcomes independently of error text: `evaluate_post_execution_recovery` detects `UNKNOWN` mutation outcome even with `error=None` and requires independent verification (`REQUIRES_VERIFICATION`).
+  - Exhausted retry ceiling on ambiguous mutation returns `should_retry=False`, `classification=AMBIGUOUS_TIMEOUT`, and `requires_verification_before_retry=True`, forbidding additional writes while requiring independent read-back verification to establish remote state.
+  - Validated via 26 passing tests in `tests/test_phase_p18_05_quota_safety.py`.
+- P-18.06: REPAIRED (OS-process isolated timeout and qualification precedence; candidate for independent QA review)
+  - Completely removed unsafe CPython thread exception injection (`ctypes.pythonapi.PyThreadState_SetAsyncExc`) and daemon threads.
+  - Implemented top-level, importable worker `_reliability_scenario_worker` executed in isolated OS process via `multiprocessing.get_context("spawn")` and `Pipe`.
+  - Windows spawn-safe and Linux CI-compatible; wall-clock watchdog terminates, joins, and kills worker process on timeout; fails closed if worker cannot be reaped.
+  - Added adversarial tests proving timed-out worker process is dead and delayed filesystem/fixture mutations never occur post-timeout.
   - Qualification computation enforces failure/integrity precedence over partial coverage (`DISQUALIFIED` when any scenario fails, even if untested scenarios remain; `PARTIAL_UNQUALIFIED` preserved for clean partial coverage).
   - Validated via 24 passing tests in `tests/test_phase_p18_06_reliability.py`.
-- P-18.07: REPAIRED (Availability plan runtime limits truth correction; candidate for independent QA review)
-  - Removed unsupported `60 req/min` claim; documented configured AgentCore profile default `max_requests_per_window=10` per 60s window, with general `MCPServerConfig` rate protection optional unless explicitly configured.
-  - Removed misleading `token bucket` descriptions in scoped P-18 evidence/plan passages, accurately documenting fixed-window counter.
-  - Validated via 11 passing tests in `tests/test_phase_p18_07_availability_plan.py`.
+- P-18.07: PRESERVED (QA PASS baseline preserved; do not reopen)
 - P-19+: PENDING / NOT_RUN (strictly STOPPED before P-19)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-18.05, P-18.06, P-18.07 Surgical Final Repair
+Next exact task: Independent QA Review of P-18.05 + P-18.06 Final Safe-Closure Repair
 (P-19 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
