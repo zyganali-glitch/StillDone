@@ -364,3 +364,138 @@ def test_run_cli_arg_parsing_sets_runtime_arn_and_session_id() -> None:
 
         assert proxy_module.AGENT_RUNTIME_ARN == test_arn
         assert proxy_module._active_session_id == test_session
+
+
+def test_post_mcp_rejects_mismatched_client_session_id(proxy_server: tuple[str, int]) -> None:
+    """11. Inbound Mcp-Session-Id header mismatching active proxy session fails closed.
+
+    Fails closed with HTTP 400.
+    """
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    # Pre-seed session ID
+    proxy_module._active_session_id = "preseeded-session-12345"
+
+    subprocess_called = False
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        nonlocal subprocess_called
+        subprocess_called = True
+        return MagicMock(returncode=0, stdout="{}", stderr="")
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {
+                "Content-Type": "application/json",
+                "Mcp-Session-Id": "hostile-mismatched-session-99999",
+            }
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            body = resp.read()
+
+            assert resp.status == 400
+            data = json.loads(body.decode("utf-8"))
+            assert data["error"] == "Session Mismatch"
+            assert "hostile-mismatched-session-99999" not in body.decode("utf-8")
+            assert "preseeded-session-12345" not in body.decode("utf-8")
+
+            # Upstream invocation must NOT be executed on session mismatch
+            assert subprocess_called is False
+    finally:
+        conn.close()
+
+
+def test_log_message_sanitizes_query_strings_and_session_ids(
+    proxy_server: tuple[str, int],
+) -> None:
+    """12. Path logging strips query strings and session/credential query parameters."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    secret_in_query = "SESSION_TOKEN_SECRET_98765"
+    raw_path_with_query = f"/mcp?session_id={secret_in_query}&auth=supersecret"
+
+    stderr_capture = io.StringIO()
+
+    try:
+        with patch("sys.stderr", stderr_capture):
+            conn.request("GET", raw_path_with_query)
+            resp = conn.getresponse()
+            resp.read()
+
+        logged = stderr_capture.getvalue()
+        assert secret_in_query not in logged
+        assert "supersecret" not in logged
+        assert "?session_id=" not in logged
+        assert "[Proxy] GET /mcp\n" in logged
+    finally:
+        conn.close()
+
+
+def test_unexpected_upstream_session_identity_fails_closed(
+    proxy_server: tuple[str, int],
+) -> None:
+    """13. Upstream returning an unexpected session identity fails closed (HTTP 502)."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    proxy_module._active_session_id = "preseeded-session-12345"
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b"event: message\r\ndata: {}\r\n\r\n")
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = json.dumps({"runtimeSessionId": "unexpected-foreign-session-666"})
+        mock_res.stderr = ""
+        return mock_res
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {"Content-Type": "application/json"}
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            body = resp.read()
+
+            assert resp.status == 502
+            data = json.loads(body.decode("utf-8"))
+            assert data["error"] == "Upstream Session Mismatch"
+            assert "unexpected-foreign-session-666" not in body.decode("utf-8")
+            assert "preseeded-session-12345" not in body.decode("utf-8")
+    finally:
+        conn.close()
+
+
+def test_startup_message_does_not_print_raw_session_id() -> None:
+    """14. run() startup output does not leak raw session ID strings."""
+    test_arn = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-rt"
+    test_session = "secret-session-id-token-abcxyz"
+
+    stdout_buf = io.StringIO()
+
+    with (
+        patch("sys.argv", ["sigv4_proxy.py", test_arn, "--session-id", test_session]),
+        patch.object(proxy_module, "HTTPServer") as mock_server,
+        patch("sys.stdout", stdout_buf),
+    ):
+        mock_instance = MagicMock()
+        mock_server.return_value = mock_instance
+        mock_instance.serve_forever.return_value = None
+
+        proxy_module.run()
+
+        output = stdout_buf.getvalue()
+        assert test_session not in output
+        assert "[session-bound]" in output

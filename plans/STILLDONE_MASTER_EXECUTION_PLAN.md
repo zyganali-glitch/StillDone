@@ -1918,31 +1918,63 @@ Acceptance:
 - Validated via 61 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 
 ### P-19.03 — Deploy final remote MCP/runtime path
-Status: COMPLETED (Local Preparation & Preflight Gate; Awaiting Operator Authorization / QA Review)
+Status: COMPLETED (Local Preparation & Preflight Gate; Deployment Gate BLOCKED / OPERATOR_DECISION_RECORDED)
 
 Acceptance:
 - Local packaging audit passed: `Dockerfile` linux/arm64, non-root `USER stilldone`, `EXPOSE 8000`, `CMD ["python", "-m", "stilldone", "--profile", "agentcore"]`.
 - AgentCore server configuration factory verified (`create_agentcore_config`): host `0.0.0.0`, port 8000, path `/mcp`, ping_path `/ping`, active SQLite rate limiter, `live_paid_path_enabled=False`.
 - Tool interface strictly bounded: exactly 2 tools (`mission_start` DRAFT, `mission_status`), zero live paid Bedrock inference tools, zero Google Calendar/Tasks mutation tools exposed over MCP.
-- Session reuse & anti-duplicate mechanism: `scripts/sigv4_proxy.py` updated with `--session-id` and `AGENT_RUNTIME_SESSION_ID` support to prevent accidental dual AgentCore microVM provisioning.
-- Account preflight evaluated fail-closed: credentials `NOT_OBSERVED` in execution environment; zero charge-capable cloud mutations executed; $0.00 personal spend maintained.
-- Conservative cost-risk bounds computed: single session ceiling $0.021217 USD; two-session campaign ceiling $0.047603 USD (< $0.05 USD operator limit).
-- Nonexistent `docs/P13_KILLER_MISSION_EVIDENCE.md` references corrected to `docs/P13_KILLER_MISSION_AUDIT.md` (FIXTURE / BLOCKED_LIVE) and `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` (RECORDED_LIVE).
-- Preflight script created at `scripts/p19_03_preflight.py` and evidence documented in `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`.
-- Operator decision outcome: `BLOCKED / OPERATOR_DECISION_REQUIRED`.
-- Verified via 8 focused tests in `tests/test_phase_p19_03_remote_mcp_deployment.py` and 10 focused tests in `tests/test_sigv4_proxy.py`.
+- Fail-closed session boundary hardened in `scripts/sigv4_proxy.py`: rejects mismatched client `Mcp-Session-Id` with HTTP 400; fails closed on unexpected upstream session identity shifts with HTTP 502; strips query strings and credentials from path logs; hides session ID string from server startup message.
+- Operator AWS console observations permanently recorded (October 14, 2026) in `docs/P19_03_OPERATOR_AWS_OBSERVATIONS_2026-10-14.md`: 4 active credits ($285.66 estimated remaining, including $150.00 hackathon promotional credit expiring August 31, 2028), TRY 0.00 currently due, 0 active Bedrock AgentCore runtimes, 1 ECR repository with 0 images, 1 CloudFormation stack `CDKToolkit` (UPDATE_COMPLETE, 11 bootstrap resources).
+- Operator binding decision recorded: NO new permanent AWS access keys (specifically no root keys), NO cloud deployment, charge-capable API calls, or cloud resource deletion yet, NO automatic paid fallback, Cloudflare Pages Free static exhibit authorized for safe preparation.
+- Credential safety corrected: future temporary access, if needed, must use existing AWS-supported short-lived browser-backed authentication, without permanent root credentials.
+- Cost and availability truth corrected: $0.047603 is a scenario-specific calculation, NOT a guaranteed total campaign cost bound; 12 days of availability is NOT automatically 12 days of continuously billed compute; no software-only hard stop guarantees $0.00 AWS personal expenditure; historical published pricing cannot establish current pricing without fresh official verification.
+- Disposition truth: LOCAL PREFLIGHT performed; OPERATOR AWS CONSOLE OBSERVATIONS dated and recorded; ACTUAL REMOTE DEPLOYMENT is `BLOCKED / NOT_RUN`; FULL LIVE KILLER MISSION is `BLOCKED_LIVE / NOT_RUN`; P-19.03 overall is NOT independently closed as deployed.
+- Preflight script at `scripts/p19_03_preflight.py` and evidence documented in `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`.
+- Verified via 8 focused tests in `tests/test_phase_p19_03_remote_mcp_deployment.py` and 14 focused tests in `tests/test_sigv4_proxy.py`.
 
 ### P-19.04 — Publish read-only public judge exhibit without unmetered paid execution
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Static exhibit bundle prepared and verified at `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html`.
+- Polished, accessible, 100% self-contained HTML compatible with Cloudflare Pages Free (`*.pages.dev`).
+- Prominently displays `SIMULATED ALEXA+ EXPERIENCE` label and backend engine disclosure.
+- Explicitly separates `RECORDED_LIVE` (AWS Bedrock Nova Micro, AgentCore microVM, Google mutations) from `FIXTURE / SIMULATION` execution.
+- Displays full 7-step desired-state timeline from seed to drift reconciliation.
+- Human authorization boundary (single-use grant) displayed with target action and cryptographic fingerprint.
+- Explains Drift Law: why current state is `DRIFTED` while receipt was `READY`, preserving immutable receipt hash.
+- Zero secrets, zero external script dependencies, zero unmetered endpoints, strictly $0.00 personal spend.
+- Publication status truthfully recorded as `NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`; step-by-step Turkish operator guidance provided in `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`.
+- Verified via `scripts/p19_04_build_judge_exhibit.py` and 4 focused tests in `tests/test_phase_p19_04_public_judge_exhibit.py`.
 
 ### P-19.05 — Write no-install judge path and full reproduction path
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- No-install browser review path prominently documented in `docs/REPRODUCTION.md` and `README.md`.
+- Direct links provided to `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` (zero setup, zero dependencies review).
+- Truth matrix accurately documents: `RECORDED_LIVE` (AWS Bedrock Nova Micro, AgentCore microVM, Google Calendar/Tasks, Open-Meteo), `FIXTURE / LOCAL_EXECUTION` (in-memory killer mission slice), and `BLOCKED / NOT_RUN` (current 24/7 remote MCP microVM and unapproved live mutations).
+- Separation of immutable `ReceiptProjection` (`is_historical=True`) from fresh authoritative `CurrentStateProjection` (`is_historical=False`) and the Drift Law invariant clearly explained.
+- Two-runtime isolated dependency architecture documented with pinned lockfiles (`uv.lock` and `runtimes/strands_planner/uv.lock`); PyPI open-source setup downloads explicitly separated from 0 external cloud calls.
+- Document link integrity verified: 100% of relative markdown links in `docs/REPRODUCTION.md`, `README.md`, and `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md` resolve to existing files; zero machine-specific local developer paths leaked.
+- Verified via 6 focused tests in `tests/test_phase_p19_05_judge_reproduction_routes.py`.
 
 ### P-19.06 — Fresh-environment reproduction and evidence capture
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Genuine isolated clean-checkout reproduction executed from a pristine temporary working directory omitting pre-existing `.venv`, compiled bytecode, and caches.
+- Environment & tool versions authentically recorded: Windows 11 (`win32`), Python 3.13.16, Astral uv 0.12.23, source SHA.
+- Exact commands (`python scripts/reproduce.py`), exit code 0, duration (11.66s), and test counts (507 smoke tests: 269 Core, 238 Planner, wheel smoke contract True) recorded.
+- Dual-runtime isolation verified: Core environment (`mcp == 2.2.0`) and Strands Planner environment (`strands-agents == 1.57.2`, transitive `mcp == 2.1.1`) constructed independently without resolver overrides.
+- Offline fixture verification verified: Exactly 0 external cloud calls, 0 credentials required, $0.00 personal spend.
+- Truth matrix distinguishes Local Fresh Reproduction (`FIXTURE / LOCAL_EXECUTION`), CI Automated Validation (Ubuntu `ubuntu-latest`), Historical Recorded Live (Bedrock, AgentCore, Google in `docs/`), and Currently Deployed Live services (`BLOCKED_LIVE / NOT_RUN`).
+- Dedicated automation script created at `scripts/p19_06_capture_fresh_evidence.py` and evidence documented in `docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md`.
+- Verified via 4 focused tests in `tests/test_phase_p19_06_fresh_environment_evidence.py`.
 
 Phase exit:
-judges can understand and reproduce the supported boundary.
+Judges can understand and reproduce the supported boundary via no-install browser exhibits and automated clean-checkout reproduction (Batch P-19 completed; awaiting independent QA).
 
 ---
 

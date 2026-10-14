@@ -97,10 +97,17 @@ Forbidden without explicit operator approval:
 - automatic paid fallback;
 - unmetered public endpoints that can drain credits.
 
-See:
-- `docs/REPRODUCTION.md` (Clean-checkout judge reproduction guide)
-- `docs/COST_AND_ACCESS_POLICY.md`
-- `docs/OPERATOR_REQUIREMENTS.md`
+## Judge & Evaluator Quick Start
+
+Judges have two evaluation paths:
+- **No-Install Browser Review Path (< 2 minutes)**: Open [`artifacts/judge_exhibit/index.html`](artifacts/judge_exhibit/index.html) (or [`artifacts/stilldone_judge_exhibit.html`](artifacts/stilldone_judge_exhibit.html)) directly in any web browser to inspect the full desired-state timeline, simulated Alexa+ voice responses, single-use human authorization boundary, and immutable receipts vs live drift.
+- **Single-Command Local Reproduction (~10 seconds)**: Run `python scripts/reproduce.py` from a fresh clone for 100% offline test execution across dual isolated Python runtimes (0 credentials, 0 cloud calls, $0.00 personal spend).
+
+See complete guide:
+- [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md) (Full judge reproduction guide, truth matrix & environment isolation)
+- [`docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`](docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md) (Public exhibit specification and operator guidance)
+- [`docs/COST_AND_ACCESS_POLICY.md`](docs/COST_AND_ACCESS_POLICY.md)
+- [`docs/OPERATOR_REQUIREMENTS.md`](docs/OPERATOR_REQUIREMENTS.md)
 
 ## Current status
 

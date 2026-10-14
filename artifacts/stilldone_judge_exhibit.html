@@ -11,7 +11,7 @@
             --bg-card: #1e293b;
             --text-primary: #f8fafc;
             --text-secondary: #94a3b8;
-            --text-muted: #64748b;
+            --text-muted: #94a3b8;
             --border-color: #334155;
             --color-ready: #10b981;
             --color-drifted: #f59e0b;
@@ -21,14 +21,15 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.5;
             padding: 1.5rem 1rem;
         }
         .container { max-width: 1040px; margin: 0 auto; }
-        
+
         /* Banner Header */
         .header-banner {
             background: linear-gradient(135deg, #0c4a6e 0%, #1e293b 100%);
@@ -62,9 +63,19 @@
             margin-bottom: 1.5rem;
         }
         .intent-block { margin-bottom: 1rem; }
-        .intent-label { font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
-        .intent-text { font-size: 1.35rem; font-weight: 600; color: #ffffff; margin-top: 0.25rem; }
-        
+        .intent-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+        .intent-text {
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: #ffffff;
+            margin-top: 0.25rem;
+        }
+
         /* Voice Card */
         .voice-card {
             background-color: #0f172a;
@@ -72,7 +83,13 @@
             padding: 0.85rem 1rem;
             border-radius: 0 6px 6px 0;
         }
-        .voice-label { font-size: 0.75rem; text-transform: uppercase; color: var(--accent-alexa); font-weight: 700; margin-bottom: 0.25rem; }
+        .voice-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--accent-alexa);
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
         .voice-speech { font-size: 1rem; color: #e2e8f0; font-style: italic; }
 
         /* Status Visual Hierarchy */
@@ -86,8 +103,14 @@
             padding: 0.85rem 1.25rem;
             margin-bottom: 1.5rem;
         }
-        .status-hero-bar.ready { border-color: var(--color-ready); background-color: rgba(16, 185, 129, 0.08); }
-        .status-hero-bar.drifted { border-color: var(--color-drifted); background-color: rgba(245, 158, 11, 0.08); }
+        .status-hero-bar.ready {
+            border-color: var(--color-ready);
+            background-color: rgba(16, 185, 129, 0.08);
+        }
+        .status-hero-bar.drifted {
+            border-color: var(--color-drifted);
+            background-color: rgba(245, 158, 11, 0.08);
+        }
         .status-title { font-size: 1.15rem; font-weight: 700; }
         .status-pill {
             padding: 0.35rem 0.85rem;
@@ -143,13 +166,29 @@
             margin-bottom: 0.35rem;
         }
         .timeline-title-row { display: flex; align-items: center; gap: 0.5rem; }
-        .task-tag { font-size: 0.75rem; color: #94a3b8; font-weight: 700; font-family: monospace; }
+        .task-tag {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            font-weight: 700;
+            font-family: monospace;
+        }
         .step-title { font-size: 1rem; font-weight: 600; color: #ffffff; }
         .timeline-desc { font-size: 0.88rem; color: #cbd5e1; margin-bottom: 0.5rem; }
-        .timeline-meta { font-size: 0.78rem; color: var(--text-muted); display: flex; gap: 1rem; margin-bottom: 0.5rem; }
-        
+        .timeline-meta {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
         /* Badges */
-        .badge { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 4px; }
+        .badge {
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
         .badge-verified { background-color: rgba(16, 185, 129, 0.2); color: #34d399; }
         .badge-paused_approval { background-color: rgba(245, 158, 11, 0.2); color: #fbbf24; }
         .badge-approved { background-color: rgba(56, 189, 248, 0.2); color: #38bdf8; }
@@ -160,7 +199,12 @@
 
         /* Expandable Evidence */
         .evidence-details { margin-top: 0.4rem; font-size: 0.82rem; }
-        .evidence-summary { color: #38bdf8; cursor: pointer; user-select: none; font-weight: 600; }
+        .evidence-summary {
+            color: #38bdf8;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 600;
+        }
         .evidence-content {
             background-color: #0f172a;
             border: 1px solid #334155;
@@ -169,9 +213,18 @@
             margin-top: 0.35rem;
         }
         .evidence-table { width: 100%; border-collapse: collapse; }
-        .evidence-table th, .evidence-table td { padding: 0.25rem 0.5rem; text-align: left; border-bottom: 1px solid #1e293b; }
+        .evidence-table th, .evidence-table td {
+            padding: 0.25rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #1e293b;
+        }
         .evidence-table th { color: #94a3b8; width: 40%; font-weight: 500; }
-        .hash-trace { margin-top: 0.4rem; font-size: 0.75rem; word-break: break-all; color: #64748b; }
+        .hash-trace {
+            margin-top: 0.4rem;
+            font-size: 0.75rem;
+            word-break: break-all;
+            color: #64748b;
+        }
 
         /* Side Cards */
         .sidebar { display: flex; flex-direction: column; gap: 1.25rem; }
@@ -181,24 +234,60 @@
             border-radius: 8px;
             padding: 1.15rem;
         }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
         .card-title { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
         .approval-desc { font-size: 0.85rem; color: #cbd5e1; margin-bottom: 0.4rem; }
-        .approval-proposal { font-size: 0.92rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.75rem; }
-        .fingerprint-box { background-color: #0f172a; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.6rem; }
+        .approval-proposal {
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: #f8fafc;
+            margin-bottom: 0.75rem;
+        }
+        .fingerprint-box {
+            background-color: #0f172a;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 0.6rem;
+        }
         .fingerprint-label { font-size: 0.7rem; color: #64748b; display: block; }
         .fingerprint-hash { font-size: 0.75rem; color: #38bdf8; }
         .auth-notice { font-size: 0.75rem; color: #94a3b8; display: block; }
-        
+
         .receipt-callout { font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.6rem; }
-        .receipt-hash-block { background-color: #0f172a; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.75rem; }
+        .receipt-hash-block {
+            background-color: #0f172a;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+        }
         .receipt-hash-block label { font-size: 0.7rem; color: #64748b; display: block; }
         .receipt-hash-block code { font-size: 0.75rem; color: #34d399; word-break: break-all; }
-        .receipt-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.8rem; }
+        .receipt-meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+        }
         .state-drifted { color: var(--color-drifted); }
         .state-ready { color: var(--color-ready); }
 
-        footer { margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--text-muted); border-top: 1px solid #1e293b; padding-top: 1rem; }
+        .explanation-lead { font-size: 0.85rem; color: #f8fafc; margin-bottom: 0.35rem; }
+        .explanation-text { font-size: 0.82rem; color: #cbd5e1; line-height: 1.45; }
+        .prov-item { font-size: 0.8rem; color: #cbd5e1; }
+
+        footer {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            border-top: 1px solid #1e293b;
+            padding-top: 1rem;
+        }
     </style>
 </head>
 <body>
@@ -216,8 +305,12 @@
                 <h1 id="intent-title" class="intent-text">&ldquo;Get my family ready for tomorrow morning. We need to leave by 7:30.&rdquo;</h1>
             </div>
             <div class="voice-card">
-                <div class="voice-label">Alexa+ Spoken Response (7.2s):</div>
-                <p class="voice-speech">&ldquo;I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. Backpacks are packed and weather is checked.&rdquo;</p>
+                <div class="voice-label">
+                    Alexa+ Spoken Response (7.2s):
+                </div>
+                <p class="voice-speech">
+                    &ldquo;I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. Backpacks are packed and weather is checked.&rdquo;
+                </p>
             </div>
         </section>
 
@@ -252,7 +345,9 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>start_time</th><td><code>07:45:00 UTC</code></td></tr><tr><th>prep_task_absent</th><td><code>True</code></td></tr></tbody>
@@ -285,7 +380,9 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>weather</th><td><code>mild/rainy</code></td></tr><tr><th>model_authority</th><td><code>ZERO</code></td></tr></tbody>
@@ -318,7 +415,9 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>task_title</th><td><code>Pack backpacks</code></td></tr><tr><th>status</th><td><code>needsAction</code></td></tr></tbody>
@@ -351,7 +450,9 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>approval_required</th><td><code>True</code></td></tr><tr><th>calendar_writes</th><td><code>0</code></td></tr></tbody>
@@ -384,7 +485,9 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>start_time</th><td><code>07:30:00 UTC</code></td></tr><tr><th>writes_performed</th><td><code>1</code></td></tr></tbody>
@@ -417,12 +520,14 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
-                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>a1d5c3757c8bb76f4032ca6f011b0a196774348adda8de154f74835577f10513</code></td></tr></tbody>
+                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>a1d5c3757c8bb76f4032ca6f011b0a196774348adda8de154f74835577f10513</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></p>
             </div>
         </details>
         
@@ -450,12 +555,14 @@
                 </div>
                 
         <details class="evidence-details">
-            <summary class="evidence-summary">Inspect Evidence &amp; Read-back Facts (2 properties)</summary>
+            <summary class="evidence-summary">
+                Inspect Evidence &amp; Read-back Facts (2 properties)
+            </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
                     <tbody><tr><th>observed_start</th><td><code>08:00:00 UTC</code></td></tr><tr><th>predicate_truth</th><td><code>False</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>a1d5c3757c8bb76f4032ca6f011b0a196774348adda8de154f74835577f10513</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></p>
             </div>
         </details>
         
@@ -464,7 +571,8 @@
         
             </section>
 
-            <!-- Sidebar Cards: P-15.04 Approval Card & P-15.01 Compact Receipt -->
+            <!-- Sidebar Cards: P-15.04 Approval Card, P-15.01 Compact Receipt -->
+            <!-- Drift Explanation & Evidence Provenance Breakdown -->
             <aside class="sidebar">
                 
         <section class="card approval-card" aria-labelledby="approval-title">
@@ -473,14 +581,20 @@
                 <span class="badge badge-approved">APPROVED</span>
             </header>
             <div class="approval-body">
-                <p class="approval-desc"><strong>Target Action:</strong> <code>calendar.update</code> on <strong>Google Calendar</strong></p>
+                <p class="approval-desc">
+                    <strong>Target Action:</strong>
+                    <code>calendar.update</code> on <strong>Google Calendar</strong>
+                </p>
                 <p class="approval-proposal">Shift departure time from 07:45 AM to 07:30 AM</p>
                 <div class="fingerprint-box">
                     <span class="fingerprint-label">Tamper-Evident Fingerprint:</span>
                     <code class="fingerprint-hash">sha256:295709cb401006549714956ef...</code>
                 </div>
                 <div class="approval-footer">
-                    <span class="auth-notice">Single-Use Grant bound to target and payload hash. Replays strictly rejected.</span>
+                    <span class="auth-notice">
+                        Single-Use Grant bound to target and payload hash.
+                        Replays strictly rejected.
+                    </span>
                 </div>
             </div>
         </section>
@@ -492,14 +606,88 @@
             <span class="badge badge-ready">READY AT ISSUANCE</span>
         </header>
         <div class="receipt-body">
-            <p class="receipt-callout">Receipt hash remains permanently unchanged even when reality later drifts.</p>
+            <p class="receipt-callout">
+                Receipt hash remains permanently unchanged even when reality later drifts.
+            </p>
             <div class="receipt-hash-block">
                 <label>Canonical Receipt SHA-256:</label>
-                <code>a1d5c3757c8bb76f4032ca6f011b0a196774348adda8de154f74835577f10513</code>
+                <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code>
             </div>
             <div class="receipt-meta-grid">
-                <div><span>Predicates:</span> <strong>3 Verified</strong></div>
-                <div><span>Current Reality:</span> <strong class="state-drifted">DRIFTED</strong></div>
+                <div>
+                    <span>Predicates:</span>
+                    <strong>3 Verified</strong>
+                </div>
+                <div>
+                    <span>Current Reality:</span>
+                    <strong class="state-drifted">DRIFTED</strong>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+                
+    <section class="card explanation-card" aria-labelledby="drift-title">
+        <header class="card-header">
+            <h3 id="drift-title" class="card-title">Drift Law &amp; State Invariant</h3>
+            <span class="badge badge-drift_detected">RECONCILED</span>
+        </header>
+        <div class="card-body">
+            <p class="explanation-lead">
+                <strong>Why is current truth DRIFTED while the receipt was READY?</strong>
+            </p>
+            <p class="explanation-text">
+                In Step 6, all required predicates matched (7:30 departure, backpacks task
+                needsAction, mild weather). The mission was deterministically promoted
+                to <code>READY</code> and issued an immutable receipt hash.
+            </p>
+            <p class="explanation-text" style="margin-top: 0.5rem;">
+                In Step 7, an external change moved the calendar departure to 08:00 AM.
+                StillDone detected the contradiction during independent read-back and
+                downgraded the mission to <code>DRIFTED</code>.
+            </p>
+            <div class="receipt-callout" style="margin-top: 0.6rem;">
+                <strong>Core Invariant:</strong> Historical receipts remain permanently unchanged
+                as audit history, but current system-of-record state reflects live observed truth.
+            </div>
+        </div>
+    </section>
+    
+                
+    <section class="card provenance-card" aria-labelledby="prov-title">
+        <header class="card-header">
+            <h3 id="prov-title" class="card-title">Evidence Provenance Breakdown</h3>
+            <span class="badge badge-prov">TRANSPARENT</span>
+        </header>
+        <div class="card-body">
+            <div class="prov-item">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    RECORDED_LIVE
+                </span>
+                <p class="explanation-text">
+                    Real AWS Bedrock Nova Micro reasoning (P-01/P-07), real AgentCore Streamable
+                    HTTP microVM (P-05), and Google Calendar/Tasks OAuth mutations were exercised
+                    in bounded live sessions and preserved in <code>docs/</code>.
+                </p>
+            </div>
+            <div class="prov-item" style="margin-top: 0.6rem;">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    FIXTURE / SIMULATION
+                </span>
+                <p class="explanation-text">
+                    This interactive exhibit replays the canonical mission in deterministic
+                    fixture mode. Zero external credentials, zero AWS API charges, and strictly
+                    $0.00 personal spend.
+                </p>
+            </div>
+            <div class="prov-item" style="margin-top: 0.6rem;">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    STATIC EXHIBIT
+                </span>
+                <p class="explanation-text">
+                    Compatible with Cloudflare Pages Free (<code>*.pages.dev</code>).
+                    No public unmetered execution endpoints.
+                </p>
             </div>
         </div>
     </section>
@@ -508,7 +696,10 @@
         </main>
 
         <footer>
-            <p>StillDone Hackathon Exhibit &bull; Zero Personal Spend ($0.00) &bull; Verified Provenance &bull; Generated: 2026-10-11T12:19:21.852164+00:00</p>
+            <p>
+                StillDone Hackathon Exhibit &bull; Zero Personal Spend ($0.00) &bull;
+                Verified Provenance &bull; Generated: 2026-10-14T14:05:53.527549+00:00
+            </p>
         </footer>
     </div>
 </body>

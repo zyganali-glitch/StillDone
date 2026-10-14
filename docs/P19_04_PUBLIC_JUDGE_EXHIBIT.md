@@ -1,0 +1,109 @@
+# P-19.04 — Public Read-Only Judge Exhibit Specification & Operator Guidance
+
+**Document ID**: `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`  
+**Task**: `P-19.04 — Publish read-only public judge exhibit without unmetered paid execution`  
+**Status**: `PREPARED_LOCALLY / NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`  
+**Target Platform**: Cloudflare Pages Free Tier (`*.pages.dev`)  
+**Personal Spend Bound**: Strictly `$0.00` (Zero domain purchase, zero paid hosting)  
+**Governing Authority**: `AGENTS.md` § 1–24; Zero Personal Spend Law (§ 12); Live-First Law (§ 9); Evidence Provenance (§ 10); Operator Guidance (§ 22)  
+
+---
+
+## 1. Executive Summary & Delivery Invariants
+
+This document establishes the verified static public judge exhibit for StillDone, designed for zero-risk, zero-spend inspection during the Amazon Developer Hackathon evaluation period (November 9–20, 2026).
+
+### 1.1 Architectural Separation
+StillDone decouples public evaluation from cloud execution:
+- **Surface 1: Public Read-Only Exhibit**: A 100% self-contained static HTML5 bundle deployed on Cloudflare Pages Free (`*.pages.dev`). Public visitors can inspect the complete desired-state lifecycle, read-back evidence records, and cryptographic receipt hashes with **zero** capability to invoke paid AWS Bedrock inference or execute Google mutations.
+- **Surface 2: Authenticated Operator Runtime**: Dedicated AgentCore MCP server and Bedrock planner exercised exclusively under supervised, bounded evaluation windows with immediate teardown.
+
+### 1.2 Publication Status Truth
+- **Local Static Artifact**: **`BUILT AND VERIFIED`** at `artifacts/judge_exhibit/index.html` (and mirrored at `artifacts/stilldone_judge_exhibit.html`).
+- **Public URL**: **`NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`**. In strict adherence to `AGENTS.md` § 12 and § 22, the automated executor does NOT possess operator Cloudflare credentials and will NOT fabricate a published URL. Public deployment requires operator authorization and execution via the Cloudflare dashboard.
+
+---
+
+## 2. Exhibit Content & Verification Boundary
+
+The generated exhibit at `artifacts/judge_exhibit/index.html` enforces:
+
+1. **Prominent Disclosure of Simulated Alexa+ Surface**:
+   - Explicit top banner: `SIMULATED ALEXA+ EXPERIENCE | BACKEND: REAL STILLDONE DETERMINISTIC ENGINE`.
+   - Distinguishes voice conversational presentation from deterministic backend fact evaluation.
+2. **Explicit Provenance Breakdown**:
+   - `RECORDED_LIVE`: Recorded authentic live executions (AWS Bedrock Nova Micro reasoning in P-01/P-07, AgentCore serverless microVM in P-05, Google Calendar & Tasks API mutations and independent read-backs).
+   - `FIXTURE / SIMULATION`: Deterministic offline execution of the canonical killer mission on this exhibit page, proving state machine transitions and audit trails with zero live cloud costs.
+3. **Full 7-Step Desired-State Timeline**:
+   - Step 1: Seed pre-state verification.
+   - Step 2: Intent planning & weather observation.
+   - Step 3: Prep task creation & read-back verification.
+   - Step 4: Pause at calendar approval boundary (0 writes performed).
+   - Step 5: Operator grant consumed, calendar shift executed, and read back independently.
+   - Step 6: Predicates satisfied, mission promoted to `READY`, immutable receipt hash issued.
+   - Step 7: External calendar mutation detected (departure moved to 08:00), mission reconciled to `DRIFTED`.
+4. **Human Authorization Boundary**:
+   - Bounded approval card displaying target system (`Google Calendar`), target action (`calendar.update`), proposed change, and single-use cryptographic fingerprint.
+5. **Drift Law & Immutable Historical Receipt**:
+   - Explicitly explains why current truth is `DRIFTED` while the historical receipt remains `READY`.
+   - Core Invariant: Historical receipts never change or rewrite history; current system-of-record state reflects live observed truth.
+6. **Technical & Privacy Standards**:
+   - Zero external scripts (`<script src="...">`) or remote stylesheets (`<link href="...">`).
+   - Zero secrets, API tokens, AWS keys, or personal email addresses.
+   - WCAG AA contrast compliant (all text ratios $\ge 4.5:1$).
+   - Fully responsive across mobile (375px) and desktop ($\ge 1200px$) viewports.
+
+---
+
+## 3. Operator Guidance (Türkçe Ekran Ekran Kurulum Kılavuzu)
+
+Operatör için Cloudflare Pages Free üzerinde bu statik sergiyi güvenle yayınlama adımları:
+
+> [!IMPORTANT]
+> **Sıfır Harcama Güvencesi ($0.00)**:
+> Cloudflare Pages Free katmanı sınırsız bant genişliği ve ücretsiz `*.pages.dev` alt alan adı sunar. Özel alan adı (domain) satın almayın. Kredi kartı bilgisi girilse dahi Paid/Pro plana geçmeyin.
+
+### Adım 1: Cloudflare Paneline Giriş
+1. Tarayıcınızda [https://dash.cloudflare.com/](https://dash.cloudflare.com/) adresine gidin.
+2. Hesabınız yoksa ücretsiz bir hesap oluşturun ("Sign Up"); varsa giriş yapın.
+
+### Adım 2: Workers & Pages Bölümüne Gitme
+1. Sol menü çubuğundan **"Compute (Workers)"** veya **"Workers & Pages"** sekmesine tıklayın.
+2. Sağ üstteki mavi **"Create application"** butonuna tıklayın.
+3. Açılan sayfada **"Pages"** sekmesini seçin.
+
+### Adım 3: Doğrudan Dosya Yükleme (Direct Upload)
+1. Seçenekler arasından **"Upload assets"** (Varlıkları yükle) seçeneğini tıklayın.
+2. **Project name** (Proje adı) alanına: `stilldone-judge-exhibit` yazın (veya istediğiniz bir isim).
+3. **"Create project"** butonuna tıklayın.
+
+### Adım 4: Statik Klasörü Yükleme
+1. Proje oluşturulduğunda dosya yükleme alanı görünecektir.
+2. Bilgisayarınızdaki StillDone proje dizininden şu klasörü sürükleyip bırakın:
+   `c:\Users\Dell 24 one Plus\Projects\StillDone\artifacts\judge_exhibit`
+   *(Klasör içinde `index.html` dosyasının bulunduğundan emin olun).*
+3. Yükleme tamamlandığında **"Deploy site"** (Siteyi yayınla) butonuna tıklayın.
+
+### Adım 5: Yayınlanan Bağlantıyı Doğrulama
+1. Dağıtım birkaç saniye içinde tamamlanacak ve size `https://stilldone-judge-exhibit.pages.dev` şeklinde bir adres verecektir.
+2. Bağlantıyı yeni sekmede açın ve sayfanın başarıyla görüntülendiğini doğrulayın:
+   - "SIMULATED ALEXA+ EXPERIENCE" başlığı görünüyor mu?
+   - 7 adımlı zaman çizelgesi ve DRIFTED uyarı kartı mevcut mu?
+   - Harici hiçbir hata veya bozuk görsel var mı?
+3. Bu adresi Devpost hackathon gönderim formundaki demo linki alanına ekleyebilirsiniz.
+
+---
+
+## 4. Local Build & Verification Command
+
+Statik paketi yeniden üretmek veya doğrulamak için:
+
+```bash
+uv run python scripts/p19_04_build_judge_exhibit.py
+```
+
+JSON formatında doğrulama raporu almak için:
+
+```bash
+uv run python scripts/p19_04_build_judge_exhibit.py --json
+```

@@ -160,6 +160,76 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
     </section>
     """
 
+    # Drift explanation HTML
+    drift_expl_html = """
+    <section class="card explanation-card" aria-labelledby="drift-title">
+        <header class="card-header">
+            <h3 id="drift-title" class="card-title">Drift Law &amp; State Invariant</h3>
+            <span class="badge badge-drift_detected">RECONCILED</span>
+        </header>
+        <div class="card-body">
+            <p class="explanation-lead">
+                <strong>Why is current truth DRIFTED while the receipt was READY?</strong>
+            </p>
+            <p class="explanation-text">
+                In Step 6, all required predicates matched (7:30 departure, backpacks task
+                needsAction, mild weather). The mission was deterministically promoted
+                to <code>READY</code> and issued an immutable receipt hash.
+            </p>
+            <p class="explanation-text" style="margin-top: 0.5rem;">
+                In Step 7, an external change moved the calendar departure to 08:00 AM.
+                StillDone detected the contradiction during independent read-back and
+                downgraded the mission to <code>DRIFTED</code>.
+            </p>
+            <div class="receipt-callout" style="margin-top: 0.6rem;">
+                <strong>Core Invariant:</strong> Historical receipts remain permanently unchanged
+                as audit history, but current system-of-record state reflects live observed truth.
+            </div>
+        </div>
+    </section>
+    """
+
+    # Provenance breakdown HTML
+    provenance_html = """
+    <section class="card provenance-card" aria-labelledby="prov-title">
+        <header class="card-header">
+            <h3 id="prov-title" class="card-title">Evidence Provenance Breakdown</h3>
+            <span class="badge badge-prov">TRANSPARENT</span>
+        </header>
+        <div class="card-body">
+            <div class="prov-item">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    RECORDED_LIVE
+                </span>
+                <p class="explanation-text">
+                    Real AWS Bedrock Nova Micro reasoning (P-01/P-07), real AgentCore Streamable
+                    HTTP microVM (P-05), and Google Calendar/Tasks OAuth mutations were exercised
+                    in bounded live sessions and preserved in <code>docs/</code>.
+                </p>
+            </div>
+            <div class="prov-item" style="margin-top: 0.6rem;">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    FIXTURE / SIMULATION
+                </span>
+                <p class="explanation-text">
+                    This interactive exhibit replays the canonical mission in deterministic
+                    fixture mode. Zero external credentials, zero AWS API charges, and strictly
+                    $0.00 personal spend.
+                </p>
+            </div>
+            <div class="prov-item" style="margin-top: 0.6rem;">
+                <span class="badge badge-prov" style="display:inline-block; margin-bottom:0.2rem;">
+                    STATIC EXHIBIT
+                </span>
+                <p class="explanation-text">
+                    Compatible with Cloudflare Pages Free (<code>*.pages.dev</code>).
+                    No public unmetered execution endpoints.
+                </p>
+            </div>
+        </div>
+    </section>
+    """
+
     # Assemble complete page
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -439,6 +509,10 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         .state-drifted {{ color: var(--color-drifted); }}
         .state-ready {{ color: var(--color-ready); }}
 
+        .explanation-lead {{ font-size: 0.85rem; color: #f8fafc; margin-bottom: 0.35rem; }}
+        .explanation-text {{ font-size: 0.82rem; color: #cbd5e1; line-height: 1.45; }}
+        .prov-item {{ font-size: 0.8rem; color: #cbd5e1; }}
+
         footer {{
             margin-top: 2rem;
             text-align: center;
@@ -486,10 +560,13 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                 {timeline_html}
             </section>
 
-            <!-- Sidebar Cards: P-15.04 Approval Card & P-15.01 Compact Receipt -->
+            <!-- Sidebar Cards: P-15.04 Approval Card, P-15.01 Compact Receipt -->
+            <!-- Drift Explanation & Evidence Provenance Breakdown -->
             <aside class="sidebar">
                 {approval_html}
                 {receipt_html}
+                {drift_expl_html}
+                {provenance_html}
             </aside>
         </main>
 

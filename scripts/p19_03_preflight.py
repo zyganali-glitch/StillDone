@@ -355,8 +355,8 @@ def generate_preflight_report(
         "However, cloud mutation is strictly stopped. Zero personal spend cannot be "
         "guaranteed without\n"
         "an active promotional credit observation and operator supervision during judging.\n"
-        "If deployment is desired, run the bounded single-session campaign with explicit "
-        "credentials."
+        "No permanent root or IAM access keys should be created. Future temporary access, "
+        "if needed, must use existing AWS-supported short-lived browser-backed authentication."
     )
 
     return PreflightReport(

@@ -10,6 +10,8 @@ Strict Invariants:
 3. Acquires AWS credentials solely from the active short-lived profile.
 4. Never logs, persists, or exposes credentials, tokens, Authorization values, ARNs, or session IDs.
 5. Does not fabricate remote health checks or synthetic success responses.
+6. Fail-closed session-identity boundary: rejects client session ID mismatches, handles
+   upstream session identity anomalies without blind retry, and never leaks session IDs.
 """
 
 from __future__ import annotations
@@ -36,8 +38,9 @@ _active_session_id: str | None = (
 
 class SigV4ProxyHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
-        # Sanitize log output: log only method and path, never headers, tokens, or auth
-        sys.stderr.write(f"[Proxy] {self.command} {self.path}\n")
+        # Sanitize log: method and path without query strings, never headers or tokens
+        clean_path = self.path.split("?")[0].split("#")[0] if self.path else ""
+        sys.stderr.write(f"[Proxy] {self.command} {clean_path}\n")
 
     def do_GET(self) -> None:
         self.send_response(405)
@@ -56,7 +59,24 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
 
         # Check if incoming request specified a session ID
         req_session = self.headers.get("mcp-session-id") or self.headers.get("Mcp-Session-Id")
-        target_session = req_session or _active_session_id
+
+        # Fail-closed session identity check: reject client session ID mismatch
+        if req_session and _active_session_id and req_session != _active_session_id:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            err_payload = json.dumps(
+                {
+                    "error": "Session Mismatch",
+                    "message": (
+                        "Inbound Mcp-Session-Id does not match active proxy session identity"
+                    ),
+                }
+            )
+            self.wfile.write(err_payload.encode("utf-8"))
+            return
+
+        target_session = _active_session_id or req_session
 
         with tempfile.NamedTemporaryFile("wb", delete=False, suffix=".json") as req_f:
             req_f.write(body)
@@ -110,13 +130,29 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             # Parse stdout JSON to capture returned session IDs
+            ret_session = None
             try:
                 meta = json.loads(res.stdout)
                 ret_session = meta.get("runtimeSessionId") or meta.get("mcpSessionId")
-                if ret_session:
-                    _active_session_id = ret_session
             except Exception:
                 pass
+
+            # Fail-closed upstream session identity check: reject unexpected upstream session shift
+            if _active_session_id and ret_session and ret_session != _active_session_id:
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                err_payload = json.dumps(
+                    {
+                        "error": "Upstream Session Mismatch",
+                        "message": "Upstream returned unexpected session identity",
+                    }
+                )
+                self.wfile.write(err_payload.encode("utf-8"))
+                return
+
+            if ret_session and not _active_session_id:
+                _active_session_id = ret_session
 
             with open(out_path, "rb") as f:
                 resp_data = f.read()
@@ -159,7 +195,7 @@ def run() -> None:
         sys.exit(1)
 
     server = HTTPServer(("127.0.0.1", PORT), SigV4ProxyHandler)
-    session_info = f" [session-bound: {_active_session_id}]" if _active_session_id else ""
+    session_info = " [session-bound]" if _active_session_id else ""
     print(f"SigV4 Signing Proxy listening on http://127.0.0.1:{PORT}/mcp{session_info}")
     server.serve_forever()
 

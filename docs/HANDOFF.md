@@ -9,10 +9,10 @@ Current repository state: **P-00 through P-17: CLOSED (independent QA PASS ✅) 
 Last independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5` |
 P-18 Batch (P-18.01 → P-18.07): CLOSED (independent QA PASS ✅) |
 P-19.01 & P-19.02: CLOSED (independent QA PASS ✅) |
-P-19.03: COMPLETED (Local Prep & Preflight Gate; Decision: BLOCKED / OPERATOR_DECISION_REQUIRED) |
+P-19 Batch (P-19.03 → P-19.06): COMPLETED (Candidate for independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-Next phase (P-19.04+): PENDING / NOT_RUN (Strictly stopped before P-19.04)**
+Phase P-20+: PENDING / NOT AUTHORIZED**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -81,9 +81,9 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-19.03 DEPLOY FINAL REMOTE MCP/RUNTIME PATH (PREFLIGHT GATE)
+Active task: STILLDONE — P-19 OPERATOR EVIDENCE CONSOLIDATION + SAFE JUDGE-DELIVERY BATCH (P-19.03 → P-19.06)
 
-Starting Remote SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`
+Starting Remote SHA: `d5fdcff60cf21c1e96b2f4fe27df0af9da7bfb67`
 Last Independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`
 
 Status:
@@ -100,20 +100,43 @@ Status:
 - P-18: P-18.01–P-18.07 CLOSED — independent QA PASS ✅ (SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`)
 - P-19.01: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
 - P-19.02: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
-- P-19.03: COMPLETED (Local Preparation & Preflight Gate; Decision: BLOCKED / OPERATOR_DECISION_REQUIRED)
-  - Completed local container packaging and profile audit (`Dockerfile` arm64, non-root user `stilldone`, port 8000, `--profile agentcore`).
+- P-19.03: CONSOLIDATED & DEPLOYMENT GATE BLOCKED / OPERATOR_DECISION_RECORDED
+  - Local container packaging and profile audit verified (`Dockerfile` arm64, non-root user `stilldone`, port 8000, `--profile agentcore`).
   - Verified `create_agentcore_config()` factory binding non-loopback `0.0.0.0:8000` with active SQLite rate limiter and health endpoints.
   - Interface separation verified: MCP server exposes strictly `mission_start` (DRAFT) and `mission_status`; zero live Bedrock inference tools and zero Google Calendar/Tasks mutation tools exposed over MCP.
-  - Hardened `scripts/sigv4_proxy.py` with session ID pre-seeding via CLI `--session-id` and env `AGENT_RUNTIME_SESSION_ID` / `STILLDONE_AGENTCORE_SESSION_ID`, preventing the unintended additional AgentCore microVM session observed in historical P-05 evidence.
-  - Evaluated AWS account preflight: credentials `NOT_OBSERVED` in execution environment; zero cloud mutations executed; $0.00 personal spend maintained.
-  - Calculated conservative cost-risk ceiling: single 5m session $0.021217 USD; two-session campaign $0.047603 USD (< $0.05 USD operator threshold).
-  - Corrected nonexistent `docs/P13_KILLER_MISSION_EVIDENCE.md` references in `docs/REPRODUCTION.md` and `scripts/reproduce.py` to point to `docs/P13_KILLER_MISSION_AUDIT.md` (FIXTURE / BLOCKED_LIVE) and `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` (RECORDED_LIVE).
-  - Created standalone CLI tool `scripts/p19_03_preflight.py` and evidence doc `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`.
-  - Validated via 8 focused tests in `tests/test_phase_p19_03_remote_mcp_deployment.py` and 10 focused tests in `tests/test_sigv4_proxy.py`.
-- P-19.04+: PENDING / NOT_RUN (strictly STOPPED before P-19.04; operator decision / independent QA review required)
+  - Fail-closed session-identity boundary hardened in `scripts/sigv4_proxy.py`: rejects mismatched client `Mcp-Session-Id` (HTTP 400); fails closed on unexpected upstream session identity shifts (HTTP 502); strips query strings and credentials from path logs; hides session ID string from server startup message. Validated by 14 focused tests in `tests/test_sigv4_proxy.py`.
+  - Operator AWS console observations permanently recorded (October 14, 2026) in `docs/P19_03_OPERATOR_AWS_OBSERVATIONS_2026-10-14.md`: 4 active credits ($285.66 estimated remaining, including $150.00 hackathon promotional credit expiring August 31, 2028), TRY 0.00 currently due, 0 active Bedrock AgentCore runtimes, 1 ECR repository with 0 images, 1 CloudFormation stack `CDKToolkit` (UPDATE_COMPLETE, 11 bootstrap resources).
+  - Operator binding decision recorded: NO new permanent AWS access keys (specifically no root keys), NO cloud deployment, charge-capable API calls, or cloud resource deletion yet, NO automatic paid fallback, Cloudflare Pages Free static exhibit authorized for safe preparation.
+  - Credential safety corrected: future temporary access, if needed, must use existing AWS-supported short-lived browser-backed authentication, without permanent root credentials.
+  - Cost and availability truth corrected: $0.047603 is a scenario-specific calculation, NOT a guaranteed total campaign cost bound; 12 days of availability is NOT automatically 12 days of continuously billed compute; no software-only hard stop guarantees $0.00 AWS personal expenditure; historical published pricing cannot establish current pricing without fresh official verification.
+  - Disposition truth: LOCAL PREFLIGHT performed; OPERATOR AWS CONSOLE OBSERVATIONS dated and recorded; ACTUAL REMOTE DEPLOYMENT is `BLOCKED / NOT_RUN`; FULL LIVE KILLER MISSION is `BLOCKED_LIVE / NOT_RUN`; P-19.03 overall is NOT independently closed as deployed.
+- P-19.04: COMPLETED (Public Judge Exhibit Preparation)
+  - Static exhibit bundle prepared and verified at `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html`.
+  - Self-contained, accessible HTML compatible with Cloudflare Pages Free (`*.pages.dev`).
+  - Prominent `SIMULATED ALEXA+ EXPERIENCE` label and backend engine disclosure.
+  - Clear separation of `RECORDED_LIVE` authentic integrations from `FIXTURE / SIMULATION` execution.
+  - 7-step desired-state timeline, single-use human authorization boundary, and Drift Law explanation.
+  - Zero secrets, zero external scripts, zero unmetered endpoints, strictly $0.00 personal spend.
+  - Publication status recorded as `NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`; Turkish operator guidance documented in `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`.
+  - Validated via `scripts/p19_04_build_judge_exhibit.py` and 4 focused tests in `tests/test_phase_p19_04_public_judge_exhibit.py`.
+- P-19.05: COMPLETED (Judge Reproduction Routes)
+  - No-install browser review path prominently documented in `docs/REPRODUCTION.md` and `README.md`.
+  - Direct links provided to `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` (zero setup, zero dependencies review).
+  - Truth matrix accurately documents: `RECORDED_LIVE` (AWS Bedrock Nova Micro, AgentCore microVM, Google Calendar/Tasks, Open-Meteo), `FIXTURE / LOCAL_EXECUTION` (in-memory killer mission slice), and `BLOCKED / NOT_RUN` (current 24/7 remote MCP microVM and unapproved live mutations).
+  - Separation of immutable `ReceiptProjection` (`is_historical=True`) from fresh authoritative `CurrentStateProjection` (`is_historical=False`) and the Drift Law invariant clearly explained.
+  - Two-runtime isolated dependency architecture documented with pinned lockfiles (`uv.lock` and `runtimes/strands_planner/uv.lock`); PyPI open-source setup downloads explicitly separated from 0 external cloud calls.
+  - Document link integrity verified: 100% of relative markdown links in `docs/REPRODUCTION.md`, `README.md`, and `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md` resolve to existing files; zero machine-specific local developer paths leaked.
+- P-19.06: COMPLETED (Fresh Environment Evidence Capture)
+  - Genuine isolated clean-checkout reproduction executed in pristine temporary directory without pre-existing `.venv` or caches.
+  - Environment & tool versions authentically recorded: Windows 11 (`win32`), Python 3.13.16, Astral uv 0.12.23, source SHA.
+  - Exit code 0, 11.66s duration, 507 smoke tests passing (269 Core, 238 Planner), wheel smoke contract True.
+  - Offline fixture verification verified: 0 external cloud calls, 0 credentials, $0.00 personal spend.
+  - Execution matrix distinguishes Local Fresh Reproduction, CI Automated Validation, Historical Recorded Live, and Currently Deployed Live services (`BLOCKED_LIVE / NOT_RUN`).
+  - Automated capture script created at `scripts/p19_06_capture_fresh_evidence.py` and evidence documented in `docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md`.
+  - Validated via 4 focused tests in `tests/test_phase_p19_06_fresh_environment_evidence.py`.
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Operator Decision on P-19.03 or proceed to P-19.04 (Public Judge Exhibit)
+Next exact task: Independent QA Review of Batch P-19 (P-19.03 → P-19.06) (Phase P-20 remains strictly PENDING / NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
