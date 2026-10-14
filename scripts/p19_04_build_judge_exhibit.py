@@ -302,6 +302,9 @@ def build_and_verify_exhibit(
         raise RuntimeError("Exhibit HTML failed mathematical WCAG AA contrast coverage checks.")
 
     checks = {
+        "product_headline_present": "StillDone &mdash; Done, and still true." in html_content,
+        "departure_story_present": "07:45 AM &rarr; 07:30 AM &rarr; 08:00 AM" in html_content,
+        "github_links_present": "https://github.com/zyganali-glitch/StillDone" in html_content,
         "simulated_alexa_label_present": "SIMULATED ALEXA+ EXPERIENCE" in html_content,
         "real_engine_label_present": "REAL STILLDONE DETERMINISTIC ENGINE" in html_content,
         "recorded_live_distinguished": "RECORDED_LIVE" in html_content,
@@ -341,7 +344,12 @@ def build_and_verify_exhibit(
         "index_file": str(index_file),
         "single_file": str(single_file),
         "html_bytes": len(html_content.encode("utf-8")),
-        "publication_status": "NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED",
+        "publication_status": (
+            "OPERATOR_CONFIRMED_PUBLISHED "
+            "(https://stilldone-judge-exhibit.pages.dev; refresh requires operator reupload)"
+        ),
+        "published_production_url": "https://stilldone-judge-exhibit.pages.dev",
+        "published_deployment_hostname": "a10846ac.stilldone-judge-exhibit.pages.dev",
         "publication_target": "Cloudflare Pages Free (*.pages.dev)",
         "estimated_personal_spend": "$0.00",
         "checks": checks,

@@ -211,6 +211,13 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                 StillDone detected the contradiction during independent read-back and
                 downgraded the mission to <code>DRIFTED</code>.
             </p>
+            <p class="explanation-text" style="margin-top: 0.5rem;">
+                <strong>Reconciliation Truth:</strong> This displayed <code>DRIFTED</code> state
+                is the canonical fixture's reconciled state (demonstrating StillDone's Drift Law
+                and deterministic predicate re-evaluation), not a new current-live Google
+                observation triggered in your browser. Live external mutations remain bounded
+                to dedicated evaluation sessions recorded in <code>docs/</code>.
+            </p>
             <div class="receipt-callout" style="margin-top: 0.6rem;">
                 <strong>Core Invariant:</strong> Historical receipts remain permanently unchanged
                 as audit history, but current system-of-record state reflects live observed truth.
@@ -256,6 +263,69 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                     No public unmetered execution endpoints.
                 </p>
             </div>
+            <div class="prov-links"
+                 style="margin-top: 0.85rem; border-top: 1px solid #334155; padding-top: 0.65rem;">
+                <span class="fingerprint-label"
+                      style="margin-bottom: 0.35rem; font-weight: 700; color: #f8fafc;">
+                    Durable Evidence &amp; Reproduction Links:
+                </span>
+                <ul style="list-style: none; padding: 0; font-size: 0.78rem;
+                           display: flex; flex-direction: column; gap: 0.35rem;">
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Recorded Live: Bedrock Nova Micro &amp; Strands Reasoning</a></li>
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Recorded Live: AgentCore MicroVM Streamable HTTP MCP</a></li>
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Recorded Live: Google Calendar Verified Mutation</a></li>
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Recorded Live: Google Tasks Verified Mutation</a></li>
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/REPRODUCTION.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Reproduction Guide for Hackathon Judges</a></li>
+                    <li>&bull; <a href="https://github.com/zyganali-glitch/StillDone/blob/main/docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md"
+                                  target="_blank" rel="noopener"
+                                  style="color: #38bdf8; text-decoration: underline;">
+                        Fresh Clean-Checkout Reproduction Evidence</a></li>
+                </ul>
+            </div>
+        </div>
+    </section>
+    """
+
+    # Canonical Departure Story Tracker
+    departure_story_html = """
+    <section class="card departure-story-card" aria-label="Departure Timeline Evolution">
+        <div class="departure-story-header">
+            <span class="departure-label">Canonical Departure Lifecycle:</span>
+            <span class="departure-highlight">07:45 AM &rarr; 07:30 AM &rarr; 08:00 AM</span>
+        </div>
+        <div class="departure-track">
+            <div class="departure-node initial">
+                <span class="node-badge">1. Initial State</span>
+                <span class="node-time">07:45 AM</span>
+                <span class="node-desc">Seeded on family calendar</span>
+            </div>
+            <div class="departure-arrow" aria-hidden="true">&rarr;</div>
+            <div class="departure-node target">
+                <span class="node-badge">2. Target Verified (READY)</span>
+                <span class="node-time">07:30 AM</span>
+                <span class="node-desc">Approved update + prep task + receipt</span>
+            </div>
+            <div class="departure-arrow" aria-hidden="true">&rarr;</div>
+            <div class="departure-node drift">
+                <span class="node-badge">3. External Drift (DRIFTED)</span>
+                <span class="node-time">08:00 AM</span>
+                <span class="node-desc">Moved externally &rarr; Ready revoked</span>
+            </div>
         </div>
     </section>
     """
@@ -291,14 +361,29 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             line-height: 1.5;
             padding: 1.5rem 1rem;
         }}
-        .container {{ max-width: 1040px; margin: 0 auto; }}
+        .container {{ max-width: 1200px; margin: 0 auto; width: 100%; }}
+
+        /* Product Brand Header */
+        .brand-header {{ margin-bottom: 1.25rem; }}
+        .brand-title {{
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: -0.02em;
+            line-height: 1.25;
+        }}
+        .brand-subtitle {{
+            font-size: 0.95rem;
+            color: #94a3b8;
+            margin-top: 0.25rem;
+        }}
 
         /* Banner Header */
         .header-banner {{
             background: linear-gradient(135deg, #0c4a6e 0%, #1e293b 100%);
             border: 1px solid #0284c7;
             border-radius: 8px;
-            padding: 0.75rem 1rem;
+            padding: 0.85rem 1.15rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -306,14 +391,31 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             gap: 0.5rem;
             margin-bottom: 1.5rem;
         }}
+        .banner-badge-group {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }}
         .badge-simulated {{
             background-color: #0284c7;
             color: #ffffff;
-            font-weight: 700;
+            font-weight: 800;
             font-size: 0.85rem;
-            padding: 0.25rem 0.65rem;
+            padding: 0.35rem 0.75rem;
             border-radius: 4px;
             letter-spacing: 0.05em;
+            border: 1px solid #38bdf8;
+        }}
+        .badge-fixture {{
+            background-color: #0369a1;
+            color: #ffffff;
+            font-weight: 800;
+            padding: 0.35rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+            border: 1px solid #7dd3fc;
         }}
         .backend-label {{ font-size: 0.85rem; color: #bae6fd; font-weight: 600; }}
 
@@ -395,14 +497,111 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         .status-pill.blocked {{ background-color: var(--color-blocked); color: #ffffff; }}
         .status-pill.partial {{ background-color: var(--color-partial); color: #082f49; }}
 
+        /* Departure Story Card */
+        .departure-story-card {{
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.5rem;
+        }}
+        .departure-story-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.85rem;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 0.5rem;
+        }}
+        .departure-label {{
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #f8fafc;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        .departure-highlight {{
+            font-size: 0.85rem;
+            font-weight: 700;
+            font-family: monospace;
+            color: #38bdf8;
+        }}
+        .departure-track {{
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }}
+        .departure-node {{
+            flex: 1;
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }}
+        .departure-node.initial {{ border-left: 4px solid #94a3b8; }}
+        .departure-node.target {{ border-left: 4px solid var(--color-ready); }}
+        .departure-node.drift {{ border-left: 4px solid var(--color-drifted); }}
+        .node-badge {{
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #94a3b8;
+        }}
+        .node-time {{
+            font-size: 1.2rem;
+            font-weight: 800;
+            color: #ffffff;
+        }}
+        .departure-node.target .node-time {{ color: #34d399; }}
+        .departure-node.drift .node-time {{ color: #fbbf24; }}
+        .node-desc {{
+            font-size: 0.78rem;
+            color: #cbd5e1;
+        }}
+        .departure-arrow {{
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: #94a3b8;
+            user-select: none;
+            align-self: center;
+            flex-shrink: 0;
+        }}
+
         /* Layout Grid */
         .main-grid {{
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 1.8fr 1.2fr;
             gap: 1.5rem;
         }}
-        @media (max-width: 820px) {{
+
+        /* Responsive Media Queries */
+        @media (max-width: 860px) {{
             .main-grid {{ grid-template-columns: 1fr; }}
+        }}
+        @media (max-width: 640px) {{
+            body {{ padding: 1rem 0.5rem; }}
+            .container {{ width: 100%; max-width: 100%; }}
+            .brand-title {{ font-size: 1.35rem; }}
+            .brand-subtitle {{ font-size: 0.85rem; }}
+            .header-banner {{ flex-direction: column; align-items: flex-start; gap: 0.6rem; }}
+            .status-hero-bar {{ flex-direction: column; align-items: flex-start; gap: 0.5rem; }}
+            .departure-track {{ flex-direction: column; align-items: stretch; gap: 0.5rem; }}
+            .departure-arrow {{
+                text-align: center;
+                transform: rotate(90deg);
+                margin: 0.15rem 0;
+                align-self: center;
+            }}
+            .timeline-item {{ padding: 0.85rem; gap: 0.65rem; }}
+            .timeline-meta {{ flex-direction: column; gap: 0.25rem; }}
+            .receipt-meta-grid {{ grid-template-columns: 1fr; gap: 0.5rem; }}
+            .intent-text {{ font-size: 1.15rem; }}
         }}
 
         /* Timeline */
@@ -567,13 +766,19 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
 </head>
 <body>
     <div class="container">
+        <!-- Product Brand Header -->
+        <header class="brand-header" aria-label="Product Identity">
+            <h1 class="brand-title">StillDone &mdash; Done, and still true.</h1>
+            <p class="brand-subtitle">
+                Autonomous outcome verification &amp; drift reconciliation for Alexa+
+            </p>
+        </header>
+
         <!-- P-15.02 Surface Disclosure Banner -->
         <aside class="header-banner" aria-label="Surface Disclosure">
-            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <div class="banner-badge-group">
                 <span class="badge-simulated">SIMULATED ALEXA+ EXPERIENCE</span>
-                <span class="badge badge-prov"
-                      style="background:#0369a1; color:#ffffff; font-weight:700;
-                             padding:0.25rem 0.65rem; border-radius:4px; font-size:0.85rem;">
+                <span class="badge badge-prov badge-fixture">
                     FIXTURE PLAYBACK
                 </span>
             </div>
@@ -583,13 +788,16 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         <!-- Evaluation Provenance Notice -->
         <div class="fixture-notice"
              style="background:var(--bg-secondary); border-left:4px solid var(--accent-alexa);
-                    padding:0.75rem 1rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
-                    font-size:0.85rem; color:#cbd5e1;">
-            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit displays
-            deterministic <strong>FIXTURE / SIMULATION</strong> playback of the canonical killer
-            mission. It executes offline with zero live Google Calendar/Tasks mutations, zero AWS
-            Bedrock/AgentCore API calls, and zero credentials required. Authentic historical live
-            integration executions are preserved separately in the <code>docs/</code> ledger
+                    padding:0.85rem 1.15rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
+                    font-size:0.88rem; color:#cbd5e1; line-height:1.5;">
+            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit was
+            generated directly by StillDone's genuine deterministic engine
+            (<code>stilldone.judge_ux.builder</code> and <code>stilldone.killer_mission</code>)
+            evaluating canonical execution evidence. It is a 100% self-contained static HTML
+            exhibit ($0.00 spend). <strong>No backend code or cloud API executes for visitors
+            viewing this page.</strong> This page replays the canonical mission in deterministic
+            <strong>FIXTURE / SIMULATION</strong> playback. Authentic historical live integration
+            executions are preserved separately in the <code>docs/</code> ledger
             (marked <code>RECORDED_LIVE</code>).
         </div>
 
@@ -597,7 +805,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         <section class="hero-section" aria-labelledby="intent-title">
             <div class="intent-block">
                 <span class="intent-label">Canonical Intent (Mission {mission_id_short}):</span>
-                <h1 id="intent-title" class="intent-text">&ldquo;{intent_escaped}&rdquo;</h1>
+                <h2 id="intent-title" class="intent-text">&ldquo;{intent_escaped}&rdquo;</h2>
             </div>
             <div class="voice-card">
                 <div class="voice-label">
@@ -614,6 +822,9 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
             <div class="status-title">Current System-of-Record Truth:</div>
             <div class="status-pill {status_class}">{model.current_state.value}</div>
         </section>
+
+        <!-- Canonical Departure Story Tracker -->
+        {departure_story_html}
 
         <!-- Main Workspace -->
         <main class="main-grid">
@@ -633,9 +844,16 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
         </main>
 
         <footer>
-            <p>
-                StillDone Hackathon Exhibit &bull; Zero Personal Spend ($0.00) &bull;
-                Verified Provenance &bull; Generated: {model.generated_at_iso}
+            <p style="margin-bottom: 0.35rem;">
+                <strong>StillDone</strong> &bull; Done, and still true. &bull;
+                <a href="https://github.com/zyganali-glitch/StillDone" target="_blank"
+                   rel="noopener" style="color: #38bdf8; text-decoration: underline;">
+                    GitHub: zyganali-glitch/StillDone</a> &bull;
+                Zero Personal Spend ($0.00) &bull; Verified Provenance
+            </p>
+            <p style="font-size: 0.75rem; color: #94a3b8;">
+                Static Exhibit generated: {model.generated_at_iso} &bull;
+                No unmetered cloud endpoints &bull; 100% Self-contained
             </p>
         </footer>
     </div>

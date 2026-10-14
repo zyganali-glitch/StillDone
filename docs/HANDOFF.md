@@ -5,14 +5,13 @@
 Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
-Current repository state: **P-00 through P-17: CLOSED (independent QA PASS ✅) |
-Last independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5` |
-P-18 Batch (P-18.01 → P-18.07): CLOSED (independent QA PASS ✅) |
-P-19.01 & P-19.02: CLOSED (independent QA PASS ✅) |
-P-19 Batch (P-19.03 → P-19.06): COMPLETED (Candidate for independent QA review) |
+Current repository state: **P-00 through P-18: CLOSED (independent QA PASS ✅) |
+Last independently QA-PASS SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3` |
+P-19 Batch (P-19.01 → P-19.06): COMPLETED (Candidate for independent QA review; P-19.04 Operator Published at https://stilldone-judge-exhibit.pages.dev) |
+P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-Phase P-20+: PENDING / NOT AUTHORIZED**
+Phase P-21+: PENDING / NOT AUTHORIZED**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -81,46 +80,29 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-19.03 → P-19.06 CONSOLIDATED PUBLIC-PROOF INTEGRITY REPAIR
+Active task: STILLDONE — PUBLIC RELEASE RECORD + P-20 COMPETITION EVIDENCE CLOSURE BATCH
 
-Starting Remote SHA: `fb2bb79a2d247ceda2a7bca57e413e6aa7c9a10b`
-Last Independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`
+Starting Remote SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3`
+Last Independently QA-PASS SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3`
 
 Status:
-- P-00 through P-12: CLOSED — independent QA PASS ✅
-  (Verified closure SHA: `05fd91d767360cbea21573d804bd429ed116ca9c`)
-- P-13: Execution-Contract Repair CLOSED — independent QA PASS ✅
-  (Verified repair SHA: `797dd01d45157c46da1e562e5c2c05ce6bffeed7`)
-  (Live mutation path remains BLOCKED_LIVE / NOT_RUN; fixture regression mode green)
-- P-14: P-14.01–P-14.08 COMPLETED (fail-closed runtime ownership verified under python -O)
-- P-15: P-15.01–P-15.07 COMPLETED (including headless browser responsive & WCAG AA validation)
-- P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
-  P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
-- P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18: P-18.01–P-18.07 CLOSED — independent QA PASS ✅ (SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`)
-- P-19.01: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
-- P-19.02: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
-- P-19.03: CONSOLIDATED & REPAIRED (Deployment Gate BLOCKED / OPERATOR_DECISION_RECORDED)
-  - Preserved authentic operator console observations (dated 2026-10-14): 4 active credits ($285.75 displayed, $285.66 estimated remaining, including $150.00 Hackathon credit), $0.09 estimated credit usage, TRY 0.00 outstanding/due, zero AgentCore runtimes in us-east-1, 1 ECR bootstrap repository with 0 images, 1 CDKToolkit stack (UPDATE_COMPLETE, 11 bootstrap resources).
-  - Corrected unsupported extrapolations: TRY 0.00 due is payment snapshot status, not full-history spend proof; $0.09 estimated credit usage is account-level credit metric, not definitively attributed to AgentCore without itemized billing; zero listed runtimes is snapshot absence, not deletion reconstruction.
-  - In `scripts/sigv4_proxy.py`: Hardened fail-closed single-session boundary rejecting unbound client session adoption (HTTP 400), rejecting session mismatch (HTTP 400), stripped query strings/credentials from path logs, and documented local test boundary vs cloud session reuse. Validated by 16 focused tests in `tests/test_sigv4_proxy.py`. Actual remote deployment remains `BLOCKED / NOT_RUN`.
-- P-19.04: CONSOLIDATED & REPAIRED (Public Judge Exhibit Truth, Accessibility & Contradictory-Evidence Closure)
-  - Unified fail-closed evidence predicates: In `src/stilldone/judge_ux/builder.py`, unified evidence evaluation across P-13.01 through P-13.07. Rejects contradictory combinations fail-closed (e.g. status FAILED with is_verified=True, status PASS with is_verified=False, unauthorized writes on read-only/pause steps, missing provider metadata, or missing mutation evidence).
-  - Receipt lineage and immutability lock: Historical READY receipt cannot be displayed as issued or historically immutable unless step 6 execution is verified (`is_step6_valid`); fabricated outcome receipt hashes fail closed to `state_at_issuance="UNISSUED"` and `receipt_hash="UNISSUED / NO_READY_RECEIPT"`.
-  - Fail-closed static artifact publication: In `scripts/p19_04_build_judge_exhibit.py`, added `verify_canonical_fixture_outcome()`. Prohibits writing or replacing `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` if the source outcome is incomplete, blocked, unverified, or contradictory.
-  - Truthful voice summaries & WCAG AA: Preserved backpack task creation wording (`needsAction`), explanatory digest labeling for approval grant, and mathematical WCAG AA contrast coverage (18 rendered UI pairs >= 4.5:1, #64748b eliminated).
-  - Regenerated `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` with byte-for-byte parity (32,686 bytes). Publication status remains `NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`.
-  - Regression coverage: Validated by 28 focused tests in `tests/test_phase_p19_04_public_judge_exhibit.py` (including parametrized contradictory evidence and builder fail-closed tests) and 8 P-15 UX tests. Both runtimes verified green across 2667 core and 1155 planner tests.
-- P-19.05: CONSOLIDATED & REPAIRED (Judge Reproduction Routes)
-  - Corrected milestone mapping in `docs/REPRODUCTION.md` (Calendar: P-01.05/P-06.08/P-11.06, Tasks: P-06.07, Weather: P-01.06/P-06.06, Bedrock: P-01.02/P-07.06, Strands: P-01.03/P-07.06, AgentCore: P-01.04/P-05.06; P-13 is explicitly cited as FIXTURE slice, not live mutation proof).
-  - Removed absolute Windows machine paths from `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md` (using portable `artifacts/judge_exhibit/`).
-  - Extended path/privacy tests across all public P-19 guides; clarified PyPI setup downloads vs offline `--check-only`, removed universal 10s promise. Validated by 7 focused tests in `tests/test_phase_p19_05_judge_reproduction_routes.py`.
-- P-19.06: CONSOLIDATED & REPAIRED (Fresh Environment Evidence Capture)
-  - In `scripts/p19_06_capture_fresh_evidence.py`, bound execution to exact committed SHA (`ffaf48daab86effbc9e5adc08b8788f688613571`) extracted via `git archive`; blocked credential discovery by setting `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `GOOGLE_APPLICATION_CREDENTIALS` to `os.devnull` and stripping credential environment variables.
-  - Dynamically derived host OS; executed 507 smoke tests (269 Core, 238 Planner) with exit code 0 in 14.61s; wheel smoke contract True; recorded in `docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md`. Validated by 6 focused tests in `tests/test_phase_p19_06_fresh_environment_evidence.py`.
+- P-00 through P-18: CLOSED — independent QA PASS ✅
+- P-19.01–P-19.03, P-19.05, P-19.06: COMPLETED (Candidate for independent QA review)
+- P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED
+  - Operator confirmed publication on Cloudflare Pages (`https://stilldone-judge-exhibit.pages.dev`, deployment `a10846ac.stilldone-judge-exhibit.pages.dev`, source SHA `ccf79f6f87a1b5616308e279eed70369d30b37c3`, Direct Upload) as `OPERATOR_OBSERVED / SCREENSHOT`.
+  - Static exhibit polished: added brand headline (`StillDone — Done, and still true.`), departure evolution tracker (`07:45 AM → 07:30 AM → 08:00 AM`), responsive mobile layout (<640px single-column layout without overflow), zero visitor backend execution notice, truthful compilation copy (`Canonical proposal compiled 3 actions (0 model authority)`), and verified privacy-safe GitHub links.
+  - Byte-for-byte parity preserved between `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` (41,995 bytes). Note: future refreshes require operator Direct Upload. Remote MCP remains `BLOCKED / NOT_RUN`.
+- P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review)
+  - P-20.01: Consolidated factual product feedback in `docs/P20_01_AWS_PRODUCT_FEEDBACK.md` covering Amazon Bedrock Nova Micro, Strands Agents SDK, Bedrock AgentCore Runtime, AWS CLI v2, and Alexa+ Streamable HTTP MCP (latencies, token costs, architecture trade-offs, developer friction, zero secrets).
+  - P-20.02: Consolidated all 11 chronological friction logs in `docs/COMPETITION_FEEDBACK_LOG.md` (Strands MCP pinning F-20261005-01, AgentCore SigV4 proxy session isolation F-20261014-01, Cloudflare Pages Direct Upload DNS DoH F-20261014-02).
+  - P-20.03: Claim-by-claim evidence manifest in `docs/P20_03_EVIDENCE_MANIFEST.md` covering C-01 through C-13, with positive code/test bindings and explicit negative bounds.
+  - P-20.04: Judging criteria map in `docs/P20_04_JUDGING_CRITERIA_MAP.md` mapping all 4 official Devpost criteria (25% each) and mini-challenges.
+  - P-20.05: Evidence provenance disclosure in `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md` defining all 8 provenance classes, Truth Laws, and explicit simulation disclosures.
+  - P-20.06: Clean-room donor audit in `docs/DONOR_PROVENANCE.md` (Section 7) proving strictly 0 foreign code lines, permissive licenses, and authentic competition build period.
+  - Validated via `tests/test_phase_p20_claim_audit.py` (6 passed).
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of Batch P-19 (P-19.03 → P-19.06) (Phase P-20 remains strictly PENDING / NOT AUTHORIZED)
+Next exact task: Independent QA Review of Batch P-20 (Phase P-21 remains strictly PENDING / NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

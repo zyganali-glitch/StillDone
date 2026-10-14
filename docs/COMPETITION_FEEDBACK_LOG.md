@@ -184,5 +184,63 @@ Do not invent entries.
 - Would we build with it again? `YES`
 - Secrets/PII check: `CLEAN`
 
+---
+
+### F-20261005-01 — Upstream Strands Agents MCP Dependency Pinning Conflict
+
+- Date/time: 2026-10-05T14:20:00Z
+- Exact task: Architecture Boundary Validation / Dual Runtime Setup
+- Tool/API/SDK: Python package dependencies: `strands-agents==1.57.2`, `mcp>=2.2.0`, Astral `uv` resolver
+- Version/region/account mode: Python 3.13 / uv 0.11.28
+- Attempt: Installing both `strands-agents` and modern canonical `mcp` in a single project environment
+- Expected: Seamless dependency resolution or compatible version intersection
+- Actual: `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. However, StillDone's production Streamable HTTP MCP server requires `mcp>=2.2.0` for latest protocol standards. These version sets do not intersect. Running `uv sync` in a single environment failed dependency resolution.
+- Severity: `HIGH`
+- Workaround: Architected two strictly isolated dependency environments within the repository (`pyproject.toml` for Core/MCP with `mcp==2.2.0` and `runtimes/strands_planner/pyproject.toml` for Strands Planner with `strands-agents==1.57.2` and transitive `mcp==2.1.1`). Prohibited `override-dependencies` and verified both environments independently via dual-runtime CI (`scripts/validate.py`).
+- Evidence: `docs/HANDOFF.md` § Architecture Truth — Dependency Isolation; `.github/workflows/ci.yml`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? Upstream package dependency pinning conflict
+- Actionable suggestion: Strands Agents SDK maintainers should relax the `mcp` upper bound from `<2.2` to `<3.0` or make `mcp` an optional extra (`strands-agents[mcp]`) so builders can use modern Streamable HTTP MCP server versions alongside Strands agents without requiring dual-environment isolation.
+- Would we build with it again? `YES` (with multi-runtime isolation)
+- Secrets/PII check: `CLEAN`
+
+---
+
+### F-20261014-01 — Bedrock AgentCore SigV4 Proxy Session Isolation Boundary
+
+- Date/time: 2026-10-14T18:15:00Z
+- Exact task: P-19.03 — Remote MCP deployment preflight & SigV4 signing proxy hardening
+- Tool/API/SDK: `scripts/sigv4_proxy.py`, AWS SigV4 signing bridge, Bedrock AgentCore data plane
+- Version/region/account mode: us-east-1 / SigV4 proxy / local bridge
+- Attempt: Connecting multiple client sessions through a local SigV4 signing bridge to Bedrock AgentCore
+- Expected: Proxy isolates client sessions and prevents cross-session token adoption
+- Actual: Initial signing proxy implementation did not fail closed on unbound client session adoption or session mismatch, creating a potential risk of multi-session cross-talk or token leakage. Additionally, query strings and credential parameters could appear in default path logs.
+- Severity: `MEDIUM`
+- Workaround: Hardened `scripts/sigv4_proxy.py` to enforce a strict fail-closed single-session boundary. Unbound client session adoption is rejected (HTTP 400), session mismatch is rejected (HTTP 400), and all query strings and credentials are stripped from path logs. Validated with 16 focused unit tests in `tests/test_sigv4_proxy.py`.
+- Evidence: `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`, `tests/test_sigv4_proxy.py`
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? Architecture / session security boundary
+- Actionable suggestion: AWS Bedrock AgentCore should provide an official reference SigV4 signing proxy with built-in session isolation semantics for local developer testing with standard MCP clients.
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
+---
+
+### F-20261014-02 — Cloudflare Pages Direct Upload DNS Resolution on Residential ISPs
+
+- Date/time: 2026-10-14T22:30:00+03:00
+- Exact task: P-19.04 — Public judge exhibit deployment & verification
+- Tool/API/SDK: Cloudflare Pages Direct Upload, DNS resolution over ISP DNS
+- Version/region/account mode: `https://stilldone-judge-exhibit.pages.dev`
+- Attempt: Opening the deployed static judge exhibit on desktop browser via home Wi-Fi/ISP connection
+- Expected: Domain `*.pages.dev` resolves instantly and displays the exhibit
+- Actual: Initial connection timed out on desktop home Wi-Fi due to local ISP DNS filtering / resolution latency on newly created `*.pages.dev` subdomains. The site opened immediately on mobile phone over cellular mobile data.
+- Severity: `LOW`
+- Workaround: Configured Chrome Secure DNS (DNS-over-HTTPS / DoH) on desktop, after which `https://stilldone-judge-exhibit.pages.dev` loaded instantly with green production status.
+- Evidence: `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md` § 1.2
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? ISP DNS propagation / resolution limitation
+- Actionable suggestion: In hackathon operator guidance for Cloudflare Pages, note that newly deployed `*.pages.dev` subdomains may experience brief initial DNS resolution delays on some residential ISPs, and recommend testing on cellular data or enabling Secure DNS (DoH).
+- Would we build with it again? `YES`
+- Secrets/PII check: `CLEAN`
+
+
 
 

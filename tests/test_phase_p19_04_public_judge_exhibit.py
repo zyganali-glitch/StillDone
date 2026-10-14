@@ -49,7 +49,8 @@ def test_build_judge_exhibit_generates_valid_files() -> None:
     assert summary["all_checks_passed"] is True
     assert "P-19.04" in summary["task"]
     assert "Publish read-only public judge exhibit" in summary["task"]
-    assert summary["publication_status"] == "NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED"
+    assert "OPERATOR_CONFIRMED_PUBLISHED" in summary["publication_status"]
+    assert summary["published_production_url"] == "https://stilldone-judge-exhibit.pages.dev"
     assert summary["publication_target"] == "Cloudflare Pages Free (*.pages.dev)"
     assert summary["estimated_personal_spend"] == "$0.00"
 
@@ -69,15 +70,18 @@ def test_exhibit_html_content_and_presentation_invariants() -> None:
     index_path = Path(summary["index_file"])
     html_content = index_path.read_text(encoding="utf-8")
 
-    # A. Simulated Alexa+ disclosure
+    # A. Simulated Alexa+ disclosure & Product Branding
+    assert "StillDone &mdash; Done, and still true." in html_content
     assert "SIMULATED ALEXA+ EXPERIENCE" in html_content
     assert "BACKEND: REAL STILLDONE DETERMINISTIC ENGINE" in html_content
+    assert "07:45 AM &rarr; 07:30 AM &rarr; 08:00 AM" in html_content
 
-    # B. Provenance distinction
+    # B. Provenance distinction & Verified GitHub links
     assert "Evidence Provenance Breakdown" in html_content
     assert "RECORDED_LIVE" in html_content
     assert "FIXTURE / SIMULATION" in html_content
     assert "STATIC EXHIBIT" in html_content
+    assert "https://github.com/zyganali-glitch/StillDone" in html_content
 
     # C. 7 canonical timeline steps
     for step_num in range(1, 8):
@@ -93,6 +97,7 @@ def test_exhibit_html_content_and_presentation_invariants() -> None:
     assert "Immutable Historical Receipt" in html_content
     assert summary["receipt_hash"] in html_content
     assert "Why is current truth DRIFTED while the receipt was READY?" in html_content
+    assert "Reconciliation Truth:" in html_content
 
 
 def test_exhibit_security_privacy_and_zero_spend_guards() -> None:
@@ -127,7 +132,7 @@ def test_exhibit_cli_execution_standard_and_json() -> None:
     )
     assert "STILLDONE P-19.04 PUBLIC JUDGE EXHIBIT BUILD REPORT" in res_text.stdout
     assert "Cloudflare Pages Free (*.pages.dev)" in res_text.stdout
-    assert "NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED" in res_text.stdout
+    assert "OPERATOR_CONFIRMED_PUBLISHED" in res_text.stdout
     assert "[PASS] simulated_alexa_label_present" in res_text.stdout
 
     # JSON mode
@@ -141,7 +146,7 @@ def test_exhibit_cli_execution_standard_and_json() -> None:
     assert "P-19.04" in data["task"]
     assert "Publish read-only public judge exhibit" in data["task"]
     assert data["all_checks_passed"] is True
-    assert data["publication_status"] == "NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED"
+    assert "OPERATOR_CONFIRMED_PUBLISHED" in data["publication_status"]
 
 
 def test_adversarial_readback_promotion_prevention() -> None:

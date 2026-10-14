@@ -1949,7 +1949,7 @@ Acceptance:
 - Human authorization boundary (single-use grant) displayed with target action and cryptographic fingerprint.
 - Explains Drift Law: why current state is `DRIFTED` while receipt was `READY`, preserving immutable receipt hash.
 - Zero secrets, zero external script dependencies, zero unmetered endpoints, strictly $0.00 personal spend.
-- Publication status truthfully recorded as `NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED`; step-by-step Turkish operator guidance provided in `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`.
+- Publication status operator-confirmed published (October 14, 2026) at `https://stilldone-judge-exhibit.pages.dev` (deployment `a10846ac.stilldone-judge-exhibit.pages.dev`; provenance: `OPERATOR_OBSERVED / SCREENSHOT`). Static exhibit polished with brand headline (`StillDone — Done, and still true.`), clear departure evolution (`07:45 AM → 07:30 AM → 08:00 AM`), mobile responsiveness (<640px single-column layout without overflow), explicit zero visitor backend execution notice, and verified GitHub links to evidence. Future refreshes require operator Direct Upload reupload. Remote MCP deployment remains `BLOCKED / NOT_RUN`.
 - Verified via `scripts/p19_04_build_judge_exhibit.py` and 7 focused tests in `tests/test_phase_p19_04_public_judge_exhibit.py`.
 
 ### P-19.05 — Write no-install judge path and full reproduction path
@@ -1990,25 +1990,60 @@ Goal:
 bind every submission claim to proof.
 
 ### P-20.01 — Consolidate factual product feedback for every Amazon/AWS tool used
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Consolidated factual product feedback in `docs/P20_01_AWS_PRODUCT_FEEDBACK.md` covering Amazon Bedrock Nova Micro (`amazon.nova-micro-v1:0`), Strands Agents SDK (`strands-agents 1.57.2`), Bedrock AgentCore Runtime (`@aws/agentcore 0.1.1`), AWS CLI v2, and Alexa+ Streamable HTTP MCP server architecture.
+- Documented observed strengths, empirical invocation latencies (Bedrock live 3.463s, AgentCore microVM 1.256s), token costs ($0.000140 total per live invocation), and architectural trade-offs.
+- Provided concrete developer friction points and actionable improvements for the AWS product and engineering teams.
+- Validated strictly 0 secrets, access keys, or sensitive account identifiers.
 
 ### P-20.02 — Consolidate friction logs and actionable suggestions
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Consolidated all 11 chronological engineering friction events in `docs/COMPETITION_FEEDBACK_LOG.md` spanning the competition lifecycle.
+- Captured Strands MCP dependency pinning conflict (`mcp<2.2` vs `mcp>=2.2.0`) in entry `F-20261005-01`, AgentCore SigV4 proxy session isolation boundary in entry `F-20261014-01`, and Cloudflare Pages Direct Upload DNS DoH resolution behavior in entry `F-20261014-02`.
+- Formatted with exact task attempted, expected vs actual behavior, severity, robust workarounds, and actionable suggestions.
 
 ### P-20.03 — Build claim-by-claim evidence manifest
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Constructed claim-by-claim evidence manifest in `docs/P20_03_EVIDENCE_MANIFEST.md` covering all 13 primary competition claims (C-01 through C-13).
+- Explicitly bound every affirmative product claim to verified source file paths, passing automated test suites, and authentic durable evidence records.
+- Formally recorded explicit negative boundaries for each claim (what is NOT claimed), preventing false extrapolations.
+- Enforced 100% path verification against disk in `tests/test_phase_p20_claim_audit.py`.
 
 ### P-20.04 — Build judging-criteria map
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Mapped StillDone evidence and architecture directly to the official 4 Devpost judging criteria (25% each: Technological Implementation, Design, Potential Impact, Quality of the Idea) in `docs/P20_04_JUDGING_CRITERIA_MAP.md`.
+- Mapped secondary mini-challenges: AWS Builder Mini Challenge (Amazon Bedrock Nova Micro, Strands Agents SDK, Bedrock AgentCore runtime) and Open Source Mini Challenge (permissive Apache-2.0, dual-runtime lockfiles, clean-room implementation).
+- Cited exact source files, evidence logs, and architectural invariants for every criterion.
 
 ### P-20.05 — Build live/recorded/fixture/simulated disclosure
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Created system-wide evidence provenance disclosure in `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md`.
+- Formally defined and bounded all 8 provenance classes: `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`, `FIXTURE`, `LOCAL_EXECUTION`, `SIMULATED`, and `NOT_RUN`.
+- Established StillDone Truth Laws: execute success != verification; model prose cannot promote evidence; historical recorded != current live; no silent live-to-fixture fallback; zero personal spend ($0.00).
+- Explicitly documented simulation boundaries: Alexa+ client surface is simulated (`SIMULATED ALEXA+ EXPERIENCE`), while underlying MCP server, adapters, verifiers, and reconciliation engines are genuine deterministic production code.
 
 ### P-20.06 — Audit donor/license/build-period truth
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Conducted exhaustive donor, license, and build-period audit documented in Section 7 of `docs/DONOR_PROVENANCE.md`.
+- Confirmed clean-room implementation with strictly 0 lines of foreign donor code imported into `zyganali-glitch/StillDone`.
+- Verified all donor concepts derive from user-authored open-source repositories under permissive MIT / Apache-2.0 licenses.
+- Verified build-period truth: all development occurred strictly within the hackathon window (October 1, 2026 – October 15, 2026).
+- Validated via `tests/test_phase_p20_claim_audit.py`.
 
 Phase exit:
-no unsupported competition claim remains.
+No unsupported competition claim remains; all claims bound to proven evidence, transparent disclosures, and clean-room provenance (Batch P-20 completed; awaiting independent QA).
 
 ---
 

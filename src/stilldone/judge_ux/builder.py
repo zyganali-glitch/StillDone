@@ -325,7 +325,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             task_id="P-13.02",
             title="Plan Intent & Observe Weather",
             summary=(
-                "AWS planner compiled 3 actions (0 model authority). "
+                "Canonical proposal compiled 3 actions (0 model authority). "
                 "Weather observed with 0 writes."
             ),
             state=StepExecutionState.OBSERVED,
