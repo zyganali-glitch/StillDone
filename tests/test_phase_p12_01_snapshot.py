@@ -989,8 +989,9 @@ def test_legitimate_verifying_to_ready_transition_with_verification_evidence(
         provider_result=ProviderExecutionResult(
             action_type=sample_action.action_type,
             success=True,
-            status_name="READ_OK",
-            writes_performed=0,
+            status_name="UPDATED",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
             captured_at=now,
         ),
     )
@@ -1326,8 +1327,9 @@ def test_snapshot_crash_recovery_from_ledger_durable_transition(
         provider_result=ProviderExecutionResult(
             action_type=sample_action.action_type,
             success=True,
-            status_name="READ_OK",
-            writes_performed=0,
+            status_name="UPDATED",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
             captured_at=now,
         ),
     )
@@ -1419,6 +1421,7 @@ def _make_test_ready_snapshot(
         attempt_number=1,
         started_at=now,
     )
+    is_mutation = action.action_type in (ActionType.CALENDAR_UPDATE, ActionType.TASK_CREATE)
     step_rec = StepExecutionRecord(
         action_id=action.action_id,
         status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
@@ -1426,8 +1429,9 @@ def _make_test_ready_snapshot(
         provider_result=ProviderExecutionResult(
             action_type=action.action_type,
             success=True,
-            status_name="READ_OK",
-            writes_performed=0,
+            status_name="UPDATED" if is_mutation else "READ_OK",
+            writes_performed=1 if is_mutation else 0,
+            writes_committed="CONFIRMED" if is_mutation else "NONE",
             captured_at=now,
         ),
     )
@@ -1844,6 +1848,7 @@ def _make_full_ready_snapshot(
             started_at=now,
         )
         attempt_list.append(att)
+        is_mut = act.action_type in (ActionType.CALENDAR_UPDATE, ActionType.TASK_CREATE)
         step_records[act.action_id] = StepExecutionRecord(
             action_id=act.action_id,
             status=ActionExecutionStatus.EXECUTION_SUCCEEDED,
@@ -1851,8 +1856,9 @@ def _make_full_ready_snapshot(
             provider_result=ProviderExecutionResult(
                 action_type=act.action_type,
                 success=True,
-                status_name="READ_OK",
-                writes_performed=0,
+                status_name="UPDATED" if is_mut else "READ_OK",
+                writes_performed=1 if is_mut else 0,
+                writes_committed="CONFIRMED" if is_mut else "NONE",
                 captured_at=now,
             ),
         )

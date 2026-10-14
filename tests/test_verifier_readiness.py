@@ -224,10 +224,13 @@ def _make_execution_record(
             tracker.mark_in_progress(aid)
             attempt = create_execution_attempt(aid, started_at=T0)
             if succeeds:
+                is_mut = action.action_type in (ActionType.CALENDAR_UPDATE, ActionType.TASK_CREATE)
                 pres = ProviderExecutionResult(
                     action_type=action.action_type,
                     success=True,
-                    status_name="SUCCESS",
+                    status_name="UPDATED" if is_mut else "SUCCESS",
+                    writes_performed=1 if is_mut else 0,
+                    writes_committed="CONFIRMED" if is_mut else "NONE",
                 )
                 tracker.record_success(aid, attempt=attempt, provider_result=pres)
             else:
@@ -624,6 +627,8 @@ class TestReadinessModelPlannerRejection:
             action_type=ActionType.CALENDAR_UPDATE,
             success=True,
             status_name="SUCCESS",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
         )
         with pytest.raises(
             ExecutionPayloadSubstitutionError, match="cannot substitute for verification"

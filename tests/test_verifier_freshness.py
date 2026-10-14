@@ -253,6 +253,8 @@ class TestFreshnessObservationIndependence:
             action_type=ActionType.TASK_CREATE,
             success=True,
             status_name="SUCCESS",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
         )
         contract = FreshnessContract.max_age(60)
         t_eval = datetime(2026, 10, 6, 7, 30, 0, tzinfo=UTC)

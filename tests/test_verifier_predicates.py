@@ -433,6 +433,8 @@ class TestStrictIndependenceInPredicates:
             action_type=ActionType.TASK_CREATE,
             success=True,
             status_name="SUCCESS",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
         )
         # Structural guarantee: exec_result cannot evaluate against predicates
         with pytest.raises(ExecutionPayloadSubstitutionError):

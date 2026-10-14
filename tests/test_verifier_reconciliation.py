@@ -806,6 +806,8 @@ class TestAdversarialReadbackReconciliation:
             action_type=ActionType.CALENDAR_UPDATE,
             success=True,
             status_name="SUCCESS",
+            writes_performed=1,
+            writes_committed="CONFIRMED",
         )
         with pytest.raises(ExecutionPayloadSubstitutionError):
             reconcile_mission_state(
