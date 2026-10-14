@@ -83,7 +83,7 @@ def test_evidence_document_content_and_matrix() -> None:
     assert "$0.00" in content
 
     # Environment metrics
-    assert ("win32" in content or "Linux" in content or "Darwin" in content)
+    assert "win32" in content or "Linux" in content or "Darwin" in content
     assert "Operating System" in content
     assert "Core / MCP Environment" in content
     assert "Strands Planner Environment" in content

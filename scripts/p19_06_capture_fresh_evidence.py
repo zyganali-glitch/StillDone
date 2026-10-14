@@ -278,7 +278,8 @@ def format_markdown_report(data: dict[str, Any]) -> str:
         "| **Historical Recorded Live** | AWS `us-east-1`, Google Calendar/Tasks | "
         "Real Bedrock Nova Micro, AgentCore Streamable HTTP microVM, Google OAuth mutations | "
         "Temporary operator session credentials | "
-        "Promotional credits ($0.09 estimated account credit usage, $0.00 personal spend) | `RECORDED_LIVE` |\n"
+        "Promotional credits ($0.09 estimated account credit usage, "
+        "$0.00 personal spend) | `RECORDED_LIVE` |\n"
     )
     row_blocked = (
         "| **Currently Deployed Live Services** | NONE | "

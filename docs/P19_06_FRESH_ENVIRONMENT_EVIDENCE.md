@@ -1,20 +1,27 @@
 # P-19.06 — Fresh-Environment Reproduction & Evidence Capture
 
-**Document ID**: `docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md`  
-**Task**: `P-19.06 — Fresh-environment reproduction and evidence capture`  
-**Execution Provenance**: `FIXTURE / LOCAL_EXECUTION`  
-**Source SHA**: `d5fdcff60cf21c1e96b2f4fe27df0af9da7bfb67`  
-**Reproduction Verdict**: `SUCCESS (PASS Candidate)`  
-**Personal Spend**: `$0.00`  
-**Governing Authority**: `AGENTS.md` § 1–24; Zero Personal Spend Law (§ 12); Live-First Law (§ 9); Evidence Provenance (§ 10); Closure Contract (§ 3)  
+**Document ID**: `docs/P19_06_FRESH_ENVIRONMENT_EVIDENCE.md`<br>
+**Task**: `P-19.06 — Fresh-environment reproduction and evidence capture`<br>
+**Execution Provenance**: `FIXTURE / LOCAL_EXECUTION`<br>
+**Source SHA**: `ffaf48daab86effbc9e5adc08b8788f688613571`<br>
+**Reproduction Verdict**: `SUCCESS (PASS Candidate)`<br>
+**Personal Spend**: `$0.00`<br>
+**Governing Authority**: `AGENTS.md` § 1–24; Zero Personal Spend Law (§ 12); Live-First Law (§ 9);
+Evidence Provenance (§ 10); Closure Contract (§ 3)
 
 ---
 
 ## 1. Executive Summary & Verification Context
 
-In compliance with Phase P-19.06, StillDone was executed from a pristine source tree in an isolated temporary working directory completely devoid of pre-existing virtual environments (`.venv`), compiled byte-code (`__pycache__`, `*.pyc`), test caches (`.pytest_cache`), or type-checker caches (`.mypy_cache`).
+In compliance with Phase P-19.06, StillDone was executed from a pristine source tree
+in an isolated temporary working directory completely devoid of pre-existing virtual
+environments (`.venv`), compiled byte-code (`__pycache__`, `*.pyc`), test caches
+(`.pytest_cache`), or type-checker caches (`.mypy_cache`).
 
-The reproduction script (`scripts/reproduce.py`) constructed the dual isolated Python environments from pinned lockfiles, verified MCP dependency boundaries without resolver overrides, executed the complete smoke test suite across both runtimes, and validated standalone package building and out-of-tree installation for `mcp-verify`.
+The reproduction script (`scripts/reproduce.py`) constructed the dual isolated Python
+environments from pinned lockfiles, verified MCP dependency boundaries without resolver
+overrides, executed the complete smoke test suite across both runtimes, and validated
+standalone package building and out-of-tree installation for `mcp-verify`.
 
 ---
 
@@ -22,10 +29,10 @@ The reproduction script (`scripts/reproduce.py`) constructed the dual isolated P
 
 | Dimension | Exact Tool / Version | Notes |
 | :--- | :--- | :--- |
-| **Operating System** | `Windows 11 (win32)` | Local developer & test environment (Windows win32) |
-| **Host Python** | `Python 3.13.16 (CPython)` | Host runtime initiating orchestration |
-| **Package Manager** | `uv 0.12.23 (46b84fd0b 2026-10-03 x86_64-pc-windows-msvc)` | Astral uv for bit-for-bit lockfile synchronization |
-| **Source Commit SHA** | `d5fdcff60cf21c1e96b2f4fe27df0af9da7bfb67` | Canonical Git commit evaluated |
+| **Operating System** | `Windows 10 (win32)` | Local developer & test environment |
+| **Host Python** | `Python 3.13.5 (CPython)` | Host runtime initiating orchestration |
+| **Package Manager** | `uv 0.11.28 (ebf0f43d7 2026-07-07 x86_64-pc-windows-msvc)` | Astral uv for bit-for-bit lockfile sync |
+| **Source Commit SHA** | `ffaf48daab86effbc9e5adc08b8788f688613571` | Canonical Git commit evaluated |
 
 ---
 
@@ -33,41 +40,62 @@ The reproduction script (`scripts/reproduce.py`) constructed the dual isolated P
 
 - **Reproduction Command**: `python scripts/reproduce.py`
 - **Exit Code**: `0`
-- **Execution Wall-Clock Duration**: `11.66s`
+- **Execution Wall-Clock Duration**: `14.61s`
 - **Isolated Virtual Environments Created**: `True`
   - Core / MCP Environment: Pinned via root `uv.lock` (`mcp == 2.2.0`)
-  - Strands Planner Environment: Pinned via `runtimes/strands_planner/uv.lock` (`strands-agents == 1.57.2`, transitive `mcp == 2.1.1`)
+  - Strands Planner Environment: Pinned via `runtimes/strands_planner/uv.lock`
+    (`strands-agents == 1.57.2`, transitive `mcp == 2.1.1`)
 - **Smoke Tests Executed & Passed**:
-  - Core Smoke Suite: `269` tests passed (Domain contracts, demo isolation, receipts, redaction, action policies, authority policies)
-  - Strands Planner Smoke Suite: `238` tests passed (Planning contracts, domain mission, domain action)
-  - Standalone `mcp-verify` Wheel Smoke: `True` (wheel built, isolated venv created, verified outside source tree)
+  - Core Smoke Suite: `269` tests passed (Domain contracts,
+    demo isolation, receipts, redaction, action policies, authority policies)
+  - Strands Planner Smoke Suite: `238` tests passed
+    (Planning contracts, domain mission, domain action)
+  - Standalone `mcp-verify` Wheel Smoke: `True`
+    (wheel built, isolated venv created, verified outside source tree)
   - **Total Tests Passed in Fresh Environment**: `507` tests
 
 ---
 
 ## 4. Execution Matrix — Differences Between Environments
 
-StillDone strictly separates what was executed locally, what is validated in CI, what was recorded live, and what is currently deployed:
+StillDone strictly separates what was executed locally, what is validated in CI,
+what was recorded live, and what is currently deployed:
 
 | Execution Context | Target Platform | Integrations Exercised | Credentials Used | Billing Impact | Provenance Classification |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Local Fresh Reproduction** | Windows 11 (`win32`) | In-memory test doubles, deterministic verifiers | NONE | $0.00 | `FIXTURE / LOCAL_EXECUTION` |
+| **Local Fresh Reproduction** | Windows 10 (win32) | In-memory test doubles, deterministic verifiers | NONE (ambient discovery blocked) | $0.00 | `FIXTURE / LOCAL_EXECUTION` |
 | **CI Automated Validation** | Ubuntu 24.04 (`ubuntu-latest`) | Dual environment matrix, full 2,500+ unit & adversarial tests, Ruff, Mypy | NONE | $0.00 | `FIXTURE / LOCAL_EXECUTION` |
-| **Historical Recorded Live** | AWS `us-east-1`, Google Calendar/Tasks | Real Bedrock Nova Micro, AgentCore Streamable HTTP microVM, Google OAuth mutations | Temporary operator session credentials | Promotional credits ($0.09 consumed, $0.00 personal spend) | `RECORDED_LIVE` |
+| **Historical Recorded Live** | AWS `us-east-1`, Google Calendar/Tasks | Real Bedrock Nova Micro, AgentCore Streamable HTTP microVM, Google OAuth mutations | Temporary operator session credentials | Promotional credits ($0.09 estimated account credit usage, $0.00 personal spend) | `RECORDED_LIVE` |
 | **Currently Deployed Live Services** | NONE | Intentionally blocked fail-closed at preflight (`P-19.03`) | NONE | $0.00 (Zero unmetered endpoints) | `BLOCKED_LIVE / NOT_RUN` |
 
 > [!NOTE]
-> **Claim Integrity**: StillDone only claims platforms and providers that were actually exercised. Local reproduction was performed on `Windows 11 (win32)`. CI execution is performed on Ubuntu Linux (`ubuntu-latest`). No macOS or mobile native platforms are falsely claimed as directly exercised.
+> **Claim Integrity**: StillDone only claims platforms and providers that were actually
+> exercised. Local reproduction was performed on `Windows 10 (win32)`. CI execution
+> is performed on Ubuntu Linux (`ubuntu-latest`). No macOS or mobile native platforms are
+> falsely claimed as directly exercised.
 
 ---
 
 ## 5. Offline Fixture Invariant & Zero-Spend Bound
 
-- **External Cloud API Calls**: Exactly **0** (0 AWS Bedrock, 0 AWS AgentCore, 0 Google Calendar, 0 Google Tasks, 0 Open-Meteo).
+- **External Cloud API Calls**: Exactly **0** (0 AWS Bedrock, 0 AWS AgentCore,
+  0 Google Calendar, 0 Google Tasks, 0 Open-Meteo).
 - **Cloud Credentials Required**: **NONE**.
+- **Isolation Controls Enforcing the Boundary**:
+  1. Subprocess environment explicitly strips all credential-bearing variables
+     (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.).
+  2. Ambient credential discovery is actively blocked by pointing `AWS_CONFIG_FILE`,
+     `AWS_SHARED_CREDENTIALS_FILE`, and `GOOGLE_APPLICATION_CREDENTIALS` to `os.devnull`.
+  3. All test adapters in the smoke suite instantiate in-memory test doubles
+     (`FakeGoogleCalendarTransport`, `FakeGoogleTasksTransport`, `FakeOpenMeteoTransport`)
+     rather than network sockets.
 - **Personal Spend Delta**: **$0.00** personal expenditure.
-- **PyPI Setup Downloads Separation**: Initial package manager downloads during `uv sync --frozen` download open-source wheels from PyPI to construct local `.venv` environments. These standard package management operations are strictly separated from live cloud provider calls.
-- **Under `--check-only`**: All operations (including wheel build, isolated venv creation, and test smoke) are strictly guaranteed 100% offline (`--no-sync --offline UV_OFFLINE=1`).
+- **PyPI Setup Downloads Separation**: Initial package manager downloads during
+  `uv sync --frozen` download open-source wheels from PyPI to construct local `.venv`
+  environments. These standard package management operations are strictly separated
+  from live cloud provider calls.
+- **Under `--check-only`**: All operations (including wheel build, isolated venv creation,
+  and test smoke) are strictly guaranteed 100% offline (`--no-sync --offline UV_OFFLINE=1`).
 
 ---
 
