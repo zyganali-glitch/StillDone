@@ -12,6 +12,7 @@ Proves:
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -20,7 +21,12 @@ import tempfile
 from pathlib import Path
 
 
-def smoke_mcp_verify_wheel() -> None:
+def smoke_mcp_verify_wheel(*, offline: bool = False) -> None:
+    is_offline = (
+        offline
+        or "--offline" in sys.argv
+        or os.environ.get("UV_OFFLINE", "").strip().lower() in ("1", "true", "yes")
+    )
     root_dir = Path(__file__).resolve().parent.parent
     pkg_dir = root_dir / "packages" / "mcp_verify"
 
@@ -33,13 +39,25 @@ def smoke_mcp_verify_wheel() -> None:
         dist_dir = tmp_path / "dist"
         venv_dir = tmp_path / "venv"
 
-        print(f"[1/5] Building wheel from {pkg_dir} into {dist_dir}...")
-        # Use uv build --wheel
         uv_exe = shutil.which("uv") or "uv"
+        sub_env = os.environ.copy()
+        if is_offline:
+            sub_env["UV_OFFLINE"] = "1"
+
+        print(
+            f"[1/5] Building wheel from {pkg_dir} into {dist_dir}"
+            f"{' (offline mode)' if is_offline else ''}..."
+        )
+        build_cmd = [uv_exe, "build", "--wheel"]
+        if is_offline:
+            build_cmd.append("--offline")
+        build_cmd.extend([str(pkg_dir), "-o", str(dist_dir)])
+
         build_res = subprocess.run(
-            [uv_exe, "build", "--wheel", str(pkg_dir), "-o", str(dist_dir)],
+            build_cmd,
             capture_output=True,
             text=True,
+            env=sub_env,
         )
         if build_res.returncode != 0:
             print(
@@ -55,11 +73,20 @@ def smoke_mcp_verify_wheel() -> None:
         built_wheel = wheels[0]
         print(f"Built wheel: {built_wheel.name} ({built_wheel.stat().st_size} bytes)")
 
-        print(f"[2/5] Creating isolated venv at {venv_dir}...")
+        print(
+            f"[2/5] Creating isolated venv at {venv_dir}"
+            f"{' (offline mode)' if is_offline else ''}..."
+        )
+        venv_cmd = [uv_exe, "venv"]
+        if is_offline:
+            venv_cmd.append("--offline")
+        venv_cmd.append(str(venv_dir))
+
         venv_res = subprocess.run(
-            [uv_exe, "venv", str(venv_dir)],
+            venv_cmd,
             capture_output=True,
             text=True,
+            env=sub_env,
         )
         if venv_res.returncode != 0:
             print(f"ERROR: venv creation failed:\n{venv_res.stderr}", file=sys.stderr)
@@ -74,11 +101,20 @@ def smoke_mcp_verify_wheel() -> None:
             print(f"ERROR: venv python binary not found at {venv_python}", file=sys.stderr)
             sys.exit(1)
 
-        print(f"[3/5] Installing built wheel {built_wheel.name} into isolated venv...")
+        print(
+            f"[3/5] Installing built wheel {built_wheel.name} into isolated venv"
+            f"{' (offline mode)' if is_offline else ''}..."
+        )
+        install_cmd = [uv_exe, "pip", "install"]
+        if is_offline:
+            install_cmd.append("--offline")
+        install_cmd.extend(["--python", str(venv_python), str(built_wheel)])
+
         install_res = subprocess.run(
-            [uv_exe, "pip", "install", "--python", str(venv_python), str(built_wheel)],
+            install_cmd,
             capture_output=True,
             text=True,
+            env=sub_env,
         )
         if install_res.returncode != 0:
             print(f"ERROR: Wheel installation failed:\n{install_res.stderr}", file=sys.stderr)
@@ -130,4 +166,14 @@ def smoke_mcp_verify_wheel() -> None:
 
 
 if __name__ == "__main__":
-    smoke_mcp_verify_wheel()
+    parser = argparse.ArgumentParser(
+        description="mcp-verify wheel package smoke check",
+        prog="python scripts/smoke_mcp_verify_wheel.py",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enforce strictly offline mode for all uv build, venv, and install operations",
+    )
+    args, _ = parser.parse_known_args()
+    smoke_mcp_verify_wheel(offline=args.offline)

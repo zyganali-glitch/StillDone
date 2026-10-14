@@ -84,6 +84,22 @@ def sanitize_tooling_text(text: str | None) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class DemoResourceOwnershipRecord:
+    """Proven ownership record for a disposable demo resource.
+
+    Binds a specific resource ID to its dedicated parent scope, resource kind,
+    and verified provenance evidence.
+    """
+
+    resource_id: str
+    resource_kind: str  # "task" or "event"
+    scope_id: str  # matches DemoResourceScope.task_list_id or calendar_id
+    provenance: EvidenceProvenance = EvidenceProvenance.FIXTURE
+    created_by: str = "StillDone:DemoTooling"
+    evidence_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class DemoArtifactManifest:
     """Explicit ownership and provenance manifest for disposable demo artifacts.
 
@@ -91,29 +107,52 @@ class DemoArtifactManifest:
     - Destructive operations strictly require proven ownership of specific resource IDs.
     - Matching title or container display name alone NEVER confers deletion authority.
     - Preserves unrelated user-created tasks or calendar events sharing the same title.
+    - Bound to dedicated demo scope (calendar_id and task_list_id).
+    - CLI-provided IDs alone never confer deletion authority on live transports.
     """
 
+    calendar_id: str | None = None
+    task_list_id: str | None = None
     owned_task_ids: frozenset[str] = field(default_factory=frozenset)
     owned_event_ids: frozenset[str] = field(default_factory=frozenset)
     canonical_event_id: str | None = None
+    records: tuple[DemoResourceOwnershipRecord, ...] = field(default_factory=tuple)
+    is_cli_untrusted: bool = False
 
     def __init__(
         self,
         owned_task_ids: Sequence[str] | set[str] | frozenset[str] | None = None,
         owned_event_ids: Sequence[str] | set[str] | frozenset[str] | None = None,
         canonical_event_id: str | None = None,
+        scope: DemoResourceScope | None = None,
+        records: Sequence[DemoResourceOwnershipRecord] | None = None,
+        is_cli_untrusted: bool = False,
+        calendar_id: str | None = None,
+        task_list_id: str | None = None,
     ) -> None:
-        object.__setattr__(
-            self,
-            "owned_task_ids",
-            frozenset(owned_task_ids) if owned_task_ids is not None else frozenset(),
+        rec_list = list(records) if records is not None else []
+        task_ids = set(owned_task_ids) if owned_task_ids is not None else set()
+        event_ids = set(owned_event_ids) if owned_event_ids is not None else set()
+
+        # If records provided, extract resource IDs
+        for r in rec_list:
+            if r.resource_kind.lower() == "task":
+                task_ids.add(r.resource_id)
+            elif r.resource_kind.lower() == "event":
+                event_ids.add(r.resource_id)
+
+        cal_id = calendar_id if calendar_id is not None else (scope.calendar_id if scope else None)
+        tl_id = (
+            task_list_id if task_list_id is not None else (scope.task_list_id if scope else None)
         )
-        object.__setattr__(
-            self,
-            "owned_event_ids",
-            frozenset(owned_event_ids) if owned_event_ids is not None else frozenset(),
-        )
+
+        object.__setattr__(self, "calendar_id", cal_id)
+        object.__setattr__(self, "task_list_id", tl_id)
+        object.__setattr__(self, "owned_task_ids", frozenset(task_ids))
+        object.__setattr__(self, "owned_event_ids", frozenset(event_ids))
         object.__setattr__(self, "canonical_event_id", canonical_event_id)
+        object.__setattr__(self, "records", tuple(rec_list))
+        object.__setattr__(self, "is_cli_untrusted", is_cli_untrusted)
 
 
 # ===========================================================================
@@ -161,6 +200,7 @@ class DemoToolingResult:
     - Zero raw external IDs or credentials leaked in str() or repr().
     - Details and error messages are rigorously sanitized against emails, tokens, and paths.
     - Accurately tracks writes_performed and readback_verified.
+    - Distinguishes unresolved deletion attempts as AMBIGUOUS/UNKNOWN rather than 0 writes.
     """
 
     mode: DemoOperationMode
@@ -176,6 +216,9 @@ class DemoToolingResult:
     items_inspected: int = 0
     items_modified: int = 0
     items_deleted: int = 0
+    is_ambiguous_outcome: bool = False
+    unresolved_attempts: int = 0
+    known_resource_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         sanitized_details = sanitize_tooling_text(self.details)
@@ -183,6 +226,9 @@ class DemoToolingResult:
             sanitized_details = sanitized_details.replace(self.calendar_id, "[REDACTED]")
         if self.task_list_id and self.task_list_id in sanitized_details:
             sanitized_details = sanitized_details.replace(self.task_list_id, "[REDACTED]")
+        for rid in self.known_resource_ids:
+            if rid and rid in sanitized_details:
+                sanitized_details = sanitized_details.replace(rid, "[REDACTED]")
         object.__setattr__(self, "details", sanitized_details)
 
         if self.error_message:
@@ -191,6 +237,9 @@ class DemoToolingResult:
                 sanitized_err = sanitized_err.replace(self.calendar_id, "[REDACTED]")
             if self.task_list_id and self.task_list_id in sanitized_err:
                 sanitized_err = sanitized_err.replace(self.task_list_id, "[REDACTED]")
+            for rid in self.known_resource_ids:
+                if rid and rid in sanitized_err:
+                    sanitized_err = sanitized_err.replace(rid, "[REDACTED]")
             object.__setattr__(self, "error_message", sanitized_err)
 
     def __repr__(self) -> str:
@@ -207,7 +256,8 @@ class DemoToolingResult:
             f"is_success={self.is_success}, "
             f"items_inspected={self.items_inspected}, "
             f"items_modified={self.items_modified}, "
-            f"items_deleted={self.items_deleted})"
+            f"items_deleted={self.items_deleted}, "
+            f"is_ambiguous_outcome={self.is_ambiguous_outcome})"
         )
 
     def __str__(self) -> str:
@@ -229,6 +279,8 @@ class DemoToolingResult:
             "items_inspected": self.items_inspected,
             "items_modified": self.items_modified,
             "items_deleted": self.items_deleted,
+            "is_ambiguous_outcome": self.is_ambiguous_outcome,
+            "unresolved_attempts": self.unresolved_attempts,
         }
 
 
@@ -791,6 +843,61 @@ def _execute_teardown(
     manifest: DemoArtifactManifest | None = None,
 ) -> DemoToolingResult:
     """Safely tear down disposable demo run artifacts with exact confirmation and ownership."""
+    # 0. Scope & Provenance Authority Checks (B1)
+    if manifest is not None:
+        if manifest.calendar_id and manifest.calendar_id != scope.calendar_id:
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.WRONG_TARGET_REJECTED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=0,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Manifest calendar scope does not match target demo scope; "
+                    "rejected fail-closed."
+                ),
+                error_message="MISMATCHED_MANIFEST_SCOPE",
+            )
+        if manifest.task_list_id and manifest.task_list_id != scope.task_list_id:
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.WRONG_TARGET_REJECTED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=0,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Manifest task list scope does not match target demo scope; "
+                    "rejected fail-closed."
+                ),
+                error_message="MISMATCHED_MANIFEST_SCOPE",
+            )
+        if manifest.is_cli_untrusted and provenance in (
+            EvidenceProvenance.LIVE_GOOGLE,
+            EvidenceProvenance.LIVE_AWS,
+            EvidenceProvenance.LIVE_EXTERNAL,
+        ):
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.BLOCKED_UNAUTHORIZED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=0,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "CLI-provided IDs alone cannot authorize destructive deletion "
+                    "on live transport."
+                ),
+                error_message="CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE",
+            )
+
     # 1. Discover demo artifacts to clean up
     # Task list discovery
     try:
@@ -827,6 +934,22 @@ def _execute_teardown(
             details=f"Calendar listing failed during teardown scan: {sanitized}",
             error_message=sanitized,
         )
+
+    # Collect known resource IDs to sanitize in all result outputs (B4)
+    known_ids: set[str] = set()
+    if manifest:
+        if manifest.canonical_event_id:
+            known_ids.add(manifest.canonical_event_id)
+        known_ids.update(manifest.owned_task_ids)
+        known_ids.update(manifest.owned_event_ids)
+        for r in manifest.records:
+            known_ids.add(r.resource_id)
+    for t in tasks:
+        tid = t.get("id")
+        if tid:
+            known_ids.add(tid)
+    for ev in events:
+        known_ids.add(ev.id)
 
     # 2. Deterministic Canonical Event Selection (do NOT infer canonical event from list ordering)
     canonical_event: CalendarTransportEvent | None = None
@@ -865,8 +988,10 @@ def _execute_teardown(
             if len(candidates) == 1:
                 canonical_event = candidates[0]
 
-    # Verify canonical event exists when events or event operations are involved
-    if manifest and manifest.canonical_event_id and canonical_event is None:
+    # B2 INVARIANT: Canonical event MUST exist and pass verification.
+    # Missing, corrupted, ambiguous, or mismatched canonical event fails closed (0 writes).
+    # Missing canonical event CANNOT report ALREADY_CLEAN.
+    if canonical_event is None:
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
             status=DemoToolingStatus.CONTRADICTORY_STATE,
@@ -877,30 +1002,37 @@ def _execute_teardown(
             readback_verified=False,
             is_success=False,
             details=(
-                f"Canonical demo event ID '{manifest.canonical_event_id}' could not be "
-                f"deterministically verified on demo calendar."
+                "Canonical demo event could not be deterministically verified on demo calendar."
             ),
             error_message="CANONICAL_EVENT_CORRUPTED_OR_MISSING",
             items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
         )
 
-    if len(events) > 0 and canonical_event is None:
-        return DemoToolingResult(
-            mode=DemoOperationMode.TEARDOWN,
-            status=DemoToolingStatus.CONTRADICTORY_STATE,
-            provenance=provenance,
-            calendar_id=scope.calendar_id,
-            task_list_id=scope.task_list_id,
-            writes_performed=0,
-            readback_verified=False,
-            is_success=False,
-            details=(
-                f"Canonical demo event '{event_spec.title}' at start time {event_spec.start_time} "
-                f"could not be deterministically identified among {len(events)} candidate events."
-            ),
-            error_message="CANONICAL_EVENT_CORRUPTED_OR_MISSING",
-            items_inspected=len(tasks) + len(events),
-        )
+    # B1 INVARIANT: Check for contradictory claimed tasks on provider
+    # If any task on the provider is claimed by manifest, but its title does not match
+    # the StillDone demo prep task, it is an unrelated user task falsely claimed as demo artifact:
+    if manifest and manifest.owned_task_ids:
+        for claimed_tid in manifest.owned_task_ids:
+            found_task = next((t for t in tasks if t.get("id") == claimed_tid), None)
+            if found_task is not None and found_task.get("title") != DEFAULT_PREPARATION_TASK_TITLE:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.CONTRADICTORY_STATE,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=0,
+                    readback_verified=False,
+                    is_success=False,
+                    details=(
+                        "Claimed owned task does not match StillDone preparation task "
+                        "specification; teardown rejected fail-closed."
+                    ),
+                    error_message="CONTRADICTORY_OWNERSHIP_RECORD",
+                    items_inspected=len(tasks) + len(events),
+                    known_resource_ids=tuple(known_ids),
+                )
 
     # 3. Candidate Discovery
     tasks_matching_title = [
@@ -908,11 +1040,11 @@ def _execute_teardown(
         for t in tasks
         if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
     ]
-    extra_events = [ev for ev in events if ev.id != canonical_event.id] if canonical_event else []
+    extra_events = [ev for ev in events if ev.id != canonical_event.id]
 
     total_candidates = len(tasks_matching_title) + len(extra_events)
 
-    # 4. If already completely clean:
+    # 4. If already completely clean (with verified canonical event present):
     if total_candidates == 0:
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
@@ -925,11 +1057,13 @@ def _execute_teardown(
             is_success=True,
             details=(
                 "Demo resources are already clean and in canonical pre-state "
-                "(0 matching demo artifacts to remove). 0 writes performed."
+                "(canonical event verified, 0 matching demo artifacts to remove). "
+                "0 writes performed."
             ),
             items_inspected=len(tasks) + len(events),
             items_modified=0,
             items_deleted=0,
+            known_resource_ids=tuple(known_ids),
         )
 
     # 5. Check mutation authorization (default is DRY RUN)
@@ -950,6 +1084,7 @@ def _execute_teardown(
             ),
             error_message="MUTATION_UNAUTHORIZED",
             items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
         )
 
     # 6. Exact Target-Bound Confirmation Enforcement
@@ -975,9 +1110,93 @@ def _execute_teardown(
             ),
             error_message="CONFIRMATION_REQUIRED",
             items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
         )
 
-    # 7. Ownership / Provenance Partitioning (Never delete by title alone)
+    # 7. Deep Ownership & Provenance Verification Before Destructive Writes (B1)
+    # A. Validate claimed owned task IDs: must exist on provider and match prep task title
+    if manifest and manifest.owned_task_ids:
+        for claimed_tid in manifest.owned_task_ids:
+            found_task = next((t for t in tasks if t.get("id") == claimed_tid), None)
+            if found_task is None:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.CONTRADICTORY_STATE,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=0,
+                    readback_verified=False,
+                    is_success=False,
+                    details=(
+                        "Claimed owned task is absent or stale on provider; "
+                        "teardown rejected fail-closed."
+                    ),
+                    error_message="STALE_OR_ABSENT_OWNERSHIP_RECORD",
+                    items_inspected=len(tasks) + len(events),
+                    known_resource_ids=tuple(known_ids),
+                )
+            if found_task.get("title") != DEFAULT_PREPARATION_TASK_TITLE:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.CONTRADICTORY_STATE,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=0,
+                    readback_verified=False,
+                    is_success=False,
+                    details=(
+                        "Claimed owned task does not match StillDone preparation task "
+                        "specification; teardown rejected fail-closed."
+                    ),
+                    error_message="CONTRADICTORY_OWNERSHIP_RECORD",
+                    items_inspected=len(tasks) + len(events),
+                    known_resource_ids=tuple(known_ids),
+                )
+
+    # B. Validate claimed owned extra event IDs: must exist and not be the canonical event
+    if manifest and manifest.owned_event_ids:
+        for claimed_eid in manifest.owned_event_ids:
+            if claimed_eid == canonical_event.id:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.CONTRADICTORY_STATE,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=0,
+                    readback_verified=False,
+                    is_success=False,
+                    details=(
+                        "Claimed owned extra event contradicts canonical event identity; "
+                        "teardown rejected fail-closed."
+                    ),
+                    error_message="CONTRADICTORY_OWNERSHIP_RECORD",
+                    items_inspected=len(tasks) + len(events),
+                    known_resource_ids=tuple(known_ids),
+                )
+            found_event = next((e for e in events if e.id == claimed_eid), None)
+            if found_event is None:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.CONTRADICTORY_STATE,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=0,
+                    readback_verified=False,
+                    is_success=False,
+                    details=(
+                        "Claimed owned event is absent or stale on provider; "
+                        "teardown rejected fail-closed."
+                    ),
+                    error_message="STALE_OR_ABSENT_OWNERSHIP_RECORD",
+                    items_inspected=len(tasks) + len(events),
+                    known_resource_ids=tuple(known_ids),
+                )
+
+    # C. Preserve unowned candidate tasks
     owned_tasks_to_delete: list[dict[str, Any]] = []
     unowned_tasks: list[dict[str, Any]] = []
     for t in tasks_matching_title:
@@ -1005,8 +1224,10 @@ def _execute_teardown(
             ),
             error_message="UNPROVEN_RESOURCE_OWNERSHIP",
             items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
         )
 
+    # D. Preserve unowned extra events
     owned_events_to_delete: list[CalendarTransportEvent] = []
     unowned_extra_events: list[CalendarTransportEvent] = []
     for ev in extra_events:
@@ -1033,9 +1254,10 @@ def _execute_teardown(
             ),
             error_message="UNPROVEN_RESOURCE_OWNERSHIP",
             items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
         )
 
-    # 8. Execute Deletions with Bounded Per-Operation Handling (Stop on Ambiguous Writes)
+    # 8. Execute Deletions with Bounded Ambiguity Handling (B3 & B4)
     writes_count = 0
     deleted_task_ids: list[str] = []
     deleted_event_ids: list[str] = []
@@ -1050,32 +1272,60 @@ def _execute_teardown(
             writes_count += 1
             deleted_task_ids.append(task_id)
         except Exception as exc:
-            # Ambiguous write probe: did the delete commit despite exception/timeout?
+            # Ambiguous write probe: did delete commit despite exception/timeout?
+            probe_failed = False
             try:
                 post_probe = tasks_transport.list_tasks(scope.task_list_id)
                 if not any(t.get("id") == task_id for t in post_probe):
                     writes_count += 1
                     deleted_task_ids.append(task_id)
             except Exception:
-                pass
-            sanitized = sanitize_error_message(exc)
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.VERIFICATION_FAILED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=writes_count,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    "Teardown halted after task deletion failure "
-                    f"({writes_count} write(s) performed): {sanitized}"
-                ),
-                error_message="PARTIAL_MUTATION_FAILURE",
-                items_inspected=len(tasks) + len(events),
-                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
-            )
+                probe_failed = True
+
+            if probe_failed:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.VERIFICATION_FAILED,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=writes_count,
+                    readback_verified=False,
+                    is_success=False,
+                    is_ambiguous_outcome=True,
+                    unresolved_attempts=1,
+                    details=(
+                        "Teardown halted: delete outcome is AMBIGUOUS/UNKNOWN "
+                        f"(acknowledgment lost and read-back probe unavailable; "
+                        f"{writes_count} confirmed write(s)). "
+                        "Halting without blind retry."
+                    ),
+                    error_message="AMBIGUOUS_DELETION_OUTCOME",
+                    items_inspected=len(tasks) + len(events),
+                    items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+                    known_resource_ids=tuple(known_ids),
+                )
+            else:
+                sanitized = sanitize_error_message(exc)
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.VERIFICATION_FAILED,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=writes_count,
+                    readback_verified=False,
+                    is_success=False,
+                    is_ambiguous_outcome=False,
+                    details=(
+                        "Teardown halted after task deletion failure "
+                        f"({writes_count} confirmed write(s) performed): {sanitized}"
+                    ),
+                    error_message="PARTIAL_MUTATION_FAILURE",
+                    items_inspected=len(tasks) + len(events),
+                    items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+                    known_resource_ids=tuple(known_ids),
+                )
 
     # B: Delete owned duplicate events
     for ev in owned_events_to_delete:
@@ -1084,34 +1334,62 @@ def _execute_teardown(
             writes_count += 1
             deleted_event_ids.append(ev.id)
         except Exception as exc:
-            # Ambiguous write probe: did the delete commit despite exception/timeout?
+            # Ambiguous write probe: did delete commit despite exception/timeout?
+            probe_failed = False
             try:
                 post_ev = calendar_transport.get_event(scope.calendar_id, ev.id)
                 if post_ev is None or post_ev.status == "cancelled":
                     writes_count += 1
                     deleted_event_ids.append(ev.id)
             except Exception:
-                pass
-            sanitized = sanitize_error_message(exc)
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.VERIFICATION_FAILED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=writes_count,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    "Teardown halted after event deletion failure "
-                    f"({writes_count} write(s) performed): {sanitized}"
-                ),
-                error_message="PARTIAL_MUTATION_FAILURE",
-                items_inspected=len(tasks) + len(events),
-                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
-            )
+                probe_failed = True
 
-    # 9. INDEPENDENT READ-BACK VERIFICATION
+            if probe_failed:
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.VERIFICATION_FAILED,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=writes_count,
+                    readback_verified=False,
+                    is_success=False,
+                    is_ambiguous_outcome=True,
+                    unresolved_attempts=1,
+                    details=(
+                        "Teardown halted: delete outcome is AMBIGUOUS/UNKNOWN "
+                        f"(acknowledgment lost and read-back probe unavailable; "
+                        f"{writes_count} confirmed write(s)). "
+                        "Halting without blind retry."
+                    ),
+                    error_message="AMBIGUOUS_DELETION_OUTCOME",
+                    items_inspected=len(tasks) + len(events),
+                    items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+                    known_resource_ids=tuple(known_ids),
+                )
+            else:
+                sanitized = sanitize_error_message(exc)
+                return DemoToolingResult(
+                    mode=DemoOperationMode.TEARDOWN,
+                    status=DemoToolingStatus.VERIFICATION_FAILED,
+                    provenance=provenance,
+                    calendar_id=scope.calendar_id,
+                    task_list_id=scope.task_list_id,
+                    writes_performed=writes_count,
+                    readback_verified=False,
+                    is_success=False,
+                    is_ambiguous_outcome=False,
+                    details=(
+                        "Teardown halted after event deletion failure "
+                        f"({writes_count} confirmed write(s) performed): {sanitized}"
+                    ),
+                    error_message="PARTIAL_MUTATION_FAILURE",
+                    items_inspected=len(tasks) + len(events),
+                    items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+                    known_resource_ids=tuple(known_ids),
+                )
+
+    # 9. INDEPENDENT READ-BACK VERIFICATION (B2)
     # Verify task list state: deleted tasks absent, prep task absent
     try:
         post_tasks = tasks_transport.list_tasks(scope.task_list_id)
@@ -1129,6 +1407,7 @@ def _execute_teardown(
             details=f"Read-back task verification failed after teardown writes: {sanitized}",
             error_message="READBACK_PROBE_FAILED",
             items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
         )
 
     if any(t.get("id") in deleted_task_ids for t in post_tasks) or any(
@@ -1144,12 +1423,13 @@ def _execute_teardown(
             writes_performed=writes_count,
             readback_verified=False,
             is_success=False,
-            details=("Teardown read-back mismatch: demo prep task is still observed on provider."),
+            details="Teardown read-back mismatch: demo prep task is still observed on provider.",
             error_message="TEARDOWN_READBACK_TASK_STILL_PRESENT",
             items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
         )
 
-    # Verify calendar state: deleted events absent, canonical event intact, 1 matching event
+    # Verify calendar state: deleted events absent, canonical event intact, exactly 1 matching event
     try:
         post_events = calendar_transport.list_events_by_title(scope.calendar_id, event_spec.title)
     except Exception as exc:
@@ -1166,6 +1446,7 @@ def _execute_teardown(
             details=f"Read-back calendar verification failed after teardown writes: {sanitized}",
             error_message="READBACK_PROBE_FAILED",
             items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
         )
 
     if any(e.id in deleted_event_ids for e in post_events):
@@ -1184,68 +1465,51 @@ def _execute_teardown(
             ),
             error_message="TEARDOWN_READBACK_DUPLICATE_EVENTS_REMAIN",
             items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
         )
 
-    if canonical_event is not None:
-        if len(post_events) != 1:
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.VERIFICATION_FAILED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=writes_count,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    "Teardown read-back mismatch: expected exactly 1 canonical event, "
-                    f"found {len(post_events)}."
-                ),
-                error_message="TEARDOWN_READBACK_COUNT_MISMATCH",
-                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
-            )
+    if len(post_events) != 1:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.VERIFICATION_FAILED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=writes_count,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                "Teardown read-back mismatch: expected exactly 1 canonical event, "
+                f"found {len(post_events)}."
+            ),
+            error_message="TEARDOWN_READBACK_COUNT_MISMATCH",
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
+        )
 
-        remaining_ev = post_events[0]
-        if (
-            remaining_ev.id != canonical_event.id
-            or not are_datetimes_equal(remaining_ev.start_time, event_spec.start_time)
-            or not are_datetimes_equal(remaining_ev.end_time, event_spec.end_time)
-            or remaining_ev.status != "confirmed"
-            or remaining_ev.all_day
-            or remaining_ev.summary != event_spec.title
-        ):
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.VERIFICATION_FAILED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=writes_count,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    "Teardown read-back mismatch: remaining event does not match canonical spec."
-                ),
-                error_message="TEARDOWN_READBACK_CANONICAL_EVENT_INVALID",
-                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
-            )
-    else:
-        if len(post_events) != 0:
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.VERIFICATION_FAILED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=writes_count,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    f"Teardown read-back mismatch: expected 0 events, found {len(post_events)}."
-                ),
-                error_message="TEARDOWN_READBACK_COUNT_MISMATCH",
-                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
-            )
+    remaining_ev = post_events[0]
+    if (
+        remaining_ev.id != canonical_event.id
+        or not are_datetimes_equal(remaining_ev.start_time, event_spec.start_time)
+        or not are_datetimes_equal(remaining_ev.end_time, event_spec.end_time)
+        or remaining_ev.status != "confirmed"
+        or remaining_ev.all_day
+        or remaining_ev.summary != event_spec.title
+    ):
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.VERIFICATION_FAILED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=writes_count,
+            readback_verified=False,
+            is_success=False,
+            details="Teardown read-back mismatch: remaining event does not match canonical spec.",
+            error_message="TEARDOWN_READBACK_CANONICAL_EVENT_INVALID",
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            known_resource_ids=tuple(known_ids),
+        )
 
     return DemoToolingResult(
         mode=DemoOperationMode.TEARDOWN,
@@ -1258,14 +1522,10 @@ def _execute_teardown(
         is_success=True,
         details=(
             f"Teardown completed and verified. Deleted {len(deleted_task_ids)} demo task(s) "
-            f"and {len(deleted_event_ids)} duplicate event(s)."
-            + (
-                f" Canonical event verified at {remaining_ev.start_time}."
-                if canonical_event
-                else ""
-            )
+            f"and {len(deleted_event_ids)} duplicate event(s). Canonical event verified."
         ),
         items_inspected=len(tasks) + len(events),
         items_modified=0,
         items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+        known_resource_ids=tuple(known_ids),
     )

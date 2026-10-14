@@ -491,5 +491,23 @@ Task P-01.08 successfully closed the Phase P-01 Live Feasibility gate:
 - Executed broad P-Ω phase-boundary audit across 14 governance and technical dimensions, including surgical repair of 3 documentation-parity findings (cost table separation, two-tier auth contract parity, and deferred P-03 persistence clarification); zero phase-blocking defects remain; `docs/P_OMEGA_AUDIT_REPORT.md` updated.
 - Issued deterministic decision: **`LIVE FEASIBILITY GO`**. Phase P-01 is complete and closed with independent QA PASS.
 
+### Phase P-19.01 & P-19.02 Safety-Closure Repair Summary
+Phase P-19.01 and P-19.02 repaired and completed as candidate for independent QA review:
+- **P-19.01 (Clean-Checkout Setup Path):**
+  - Fully offline check-only boundary enforced: `--offline` and `UV_OFFLINE=1` propagated to nested wheel smoke subprocesses (`smoke_mcp_verify_wheel.py`); missing cached build dependencies fail closed without downloading anything.
+  - Prerequisite verification hardened: non-zero or unparseable `uv --version` output immediately fails closed.
+  - Setup downloads vs. cloud calls separation: clearly documented that PyPI open-source wheel setup downloads are distinct from zero live cloud provider calls.
+  - Validated via 11 focused tests in `tests/test_phase_p19_01_clean_checkout.py` including a network-denying subprocess harness.
+- **P-19.02 (Sanitized Demo-Resource Setup/Teardown Commands):**
+  - B1 (Verified Ownership): `DemoArtifactManifest` bound to dedicated scope and `DemoResourceOwnershipRecord`; untrusted CLI IDs rejected on live transports (`CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE`); forged, absent, stale, or contradictory ownership claims fail closed before any destructive write.
+  - B2 (Canonical Event Pre-state): Teardown strictly requires canonical event present and valid; missing/corrupted canonical event fails closed (`CANONICAL_EVENT_CORRUPTED_OR_MISSING`, 0 writes) and NEVER reports `ALREADY_CLEAN` or succeeds teardown.
+  - B3 (Ambiguous Outcomes): When delete acknowledgment is lost and readback probe is unavailable, outcome is explicitly marked `is_ambiguous_outcome=True` with `AMBIGUOUS_DELETION_OUTCOME`, halting without blind retry and preserving confirmed writes count.
+  - B4 (Private ID Leak Prevention): Zero raw external IDs interpolated in errors/details/repr/JSON; non-secret-looking but private IDs strictly sanitized.
+  - Validated via 52 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+- **Global Invariants Preserved:**
+  - Zero live cloud mutations executed ($0.00 personal spend maintained).
+  - Next phases (P-19.03+) remain strictly `PENDING / NOT_RUN`.
+
+
 
 

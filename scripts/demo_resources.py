@@ -153,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
         owned_task_ids=args.owned_task_id,
         owned_event_ids=args.owned_event_id,
         canonical_event_id=args.canonical_event_id,
+        scope=scope,
+        is_cli_untrusted=True,
     )
 
     result = execute_demo_resource_operation(

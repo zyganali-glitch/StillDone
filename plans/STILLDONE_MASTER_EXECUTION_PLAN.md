@@ -1888,9 +1888,10 @@ Acceptance:
 - Minimum Python requirement (>= 3.11) and package manager (`uv >= 0.11.28`) enforced with strict regex validation and clear, platform-specific install guidance for missing prerequisites (Windows PowerShell, Linux/macOS curl, pip).
 - Zero credentials, zero external API calls, and strictly $0.00 personal spend required for default reproduction.
 - Distinction between offline fixture reproduction (`FIXTURE / LOCAL_EXECUTION`) and historical live evidence (`RECORDED_LIVE` in `docs/`) explicitly reported in console and documented in `docs/REPRODUCTION.md`.
-- Comprehensive judge reproduction guide documented in `docs/REPRODUCTION.md` (all repository-relative links, corrected Ubuntu-only CI scope) and linked in `README.md`.
+- Comprehensive judge reproduction guide documented in `docs/REPRODUCTION.md` (all repository-relative links, corrected Ubuntu-only CI scope, and clear PyPI wheel setup downloads vs zero live cloud calls notice) and linked in `README.md`.
 - Proven in an actual clean isolated temporary working directory without pre-existing virtual environments or caches (`test_reproduction_clean_checkout_fresh_installation`).
-- Validated via 8 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
+- Full offline check-only boundary enforced: `--offline` and `UV_OFFLINE=1` propagated to nested wheel smoke build/install; missing cache fail-closed without network; non-zero/unparseable `uv --version` fail-closed prerequisite check; verified via network-denying harness.
+- Validated via 11 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
 
 ### P-19.02 — Create sanitized demo-resource setup/teardown commands
 Status: REPAIRED (Candidate for independent QA review)
@@ -1904,13 +1905,14 @@ Acceptance:
 - Container title verification enforced: calendar must match "StillDone Demo" and task list must match "StillDone Demo".
 - Idempotency enforced: running setup twice on canonical pre-state executes 0 writes (`VERIFIED_EXISTING`); running teardown twice on clean state executes 0 writes (`ALREADY_CLEAN`).
 - Exact target-bound confirmation token: bare `CONFIRM_TEARDOWN` strictly rejected; requires `CONFIRM_TEARDOWN:<cal_id>:<tl_id>`; mismatched scope or empty confirmation fails closed (`CONFIRMATION_REQUIRED`, 0 writes).
-- Never delete by title alone: exact per-object ownership/provenance proof via `DemoArtifactManifest`; title matching or container name alone NEVER confers deletion authority; unowned tasks titled "Pack backpacks" and unowned extra events are strictly preserved, failing closed with `UNPROVEN_RESOURCE_OWNERSHIP` and 0 writes.
-- Deterministic canonical event selection: explicit manifest ID or unique canonical spec match; list ordering `[0]` never assumed; canonical event absent/corrupted detected fail-closed; read-back verifies canonical event remains intact at exact canonical spec and count == 1.
-- Bounded per-operation delete handling with ambiguous write probes detecting committed deletes on transport exceptions/timeouts, accurately tracking `writes_performed`.
-- Sanitization & privacy: raw external IDs, tokens, AWS keys, emails, and filesystem paths are redacted across details, error_message, `repr()`, and JSON outputs.
+- Never delete by title alone: exact per-object ownership/provenance proof via `DemoArtifactManifest` and `DemoResourceOwnershipRecord`; title matching or container name alone NEVER confers deletion authority; unowned tasks titled "Pack backpacks" and unowned extra events are strictly preserved, failing closed with `UNPROVEN_RESOURCE_OWNERSHIP` and 0 writes.
+- Forged, mismatched-scope, stale, absent, or contradictory ownership records rejected fail-closed before destructive write; untrusted CLI manifests rejected on live transports (`CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE`).
+- Deterministic canonical event selection: explicit manifest ID or unique canonical spec match; list ordering `[0]` never assumed; canonical event absent/corrupted detected fail-closed (`CANONICAL_EVENT_CORRUPTED_OR_MISSING`, 0 writes); missing canonical event can NEVER report `ALREADY_CLEAN` or succeed teardown; read-back verifies canonical event remains intact at exact canonical spec and count == 1.
+- Bounded per-operation delete handling with ambiguous write probes: when delete acknowledgment is lost and readback probe is unavailable, outcome is explicitly reported as `is_ambiguous_outcome=True` with `AMBIGUOUS_DELETION_OUTCOME`, halting without blind retry and preserving confirmed writes count.
+- Sanitization & privacy: raw external IDs, tokens, AWS keys, emails, and filesystem paths are redacted across details, error_message, `repr()`, and JSON outputs; non-secret-looking but private IDs are strictly sanitized.
 - Fixture transparency: prominent ephemeral in-memory fixture warning displayed in text mode and `"ephemeral_fixture_notice": True` in JSON mode, clearly documenting that CLI fixture runs do not persist across runs and do not mutate Google.
 - All live mutating commands remain disabled in this batch; no unapproved live mutations executed; $0.00 personal spend maintained.
-- Validated via 40 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+- Validated via 52 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 
 ### P-19.03 — Deploy final remote MCP/runtime path
 Status: PENDING

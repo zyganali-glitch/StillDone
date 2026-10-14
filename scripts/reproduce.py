@@ -91,22 +91,41 @@ def check_prerequisites(repo_root: Path) -> str:
     # Validate declared minimum uv version
     try:
         proc = subprocess.run([uv_path, "--version"], capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            print_banner("PREREQUISITE ERROR: 'uv --version' failed", file=sys.stderr)
+            print(
+                f"ERROR: Execution of '{uv_path} --version' exited with code {proc.returncode}:\n"
+                f"{proc.stderr.strip()}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         m = re.search(r"uv\s+(\d+)\.(\d+)\.(\d+)", proc.stdout)
-        if m:
-            uv_ver = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            if uv_ver < MIN_UV_VERSION:
-                min_str = ".".join(str(p) for p in MIN_UV_VERSION)
-                current_str = f"{uv_ver[0]}.{uv_ver[1]}.{uv_ver[2]}"
-                print_banner("PREREQUISITE OUTDATED: Astral 'uv' package manager", file=sys.stderr)
-                print(
-                    f"StillDone requires uv >= {min_str}, but found uv {current_str}.\n"
-                    "Please upgrade uv to a supported version using:\n\n"
-                    "  uv self update\n",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+        if not m:
+            print_banner("PREREQUISITE UNPARSEABLE: Astral 'uv' version output", file=sys.stderr)
+            print(
+                f"ERROR: Could not parse uv version from stdout:\n{proc.stdout.strip()!r}\n"
+                "Please verify that 'uv' is a valid Astral uv binary.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        uv_ver = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        if uv_ver < MIN_UV_VERSION:
+            min_str = ".".join(str(p) for p in MIN_UV_VERSION)
+            current_str = f"{uv_ver[0]}.{uv_ver[1]}.{uv_ver[2]}"
+            print_banner("PREREQUISITE OUTDATED: Astral 'uv' package manager", file=sys.stderr)
+            print(
+                f"StillDone requires uv >= {min_str}, but found uv {current_str}.\n"
+                "Please upgrade uv to a supported version using:\n\n"
+                "  uv self update\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     except Exception as exc:
-        print(f"WARNING: Error while checking uv version: {exc}", file=sys.stderr)
+        print_banner("PREREQUISITE CHECK FAILED", file=sys.stderr)
+        print(f"ERROR: Error while checking uv version: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # Verify lockfiles exist
     core_lock = repo_root / "uv.lock"
@@ -361,9 +380,21 @@ def run_tests(uv_path: str, repo_root: Path, full: bool, *, check_only: bool = F
 
         # 3. mcp-verify standalone package smoke
         print("Executing standalone mcp-verify package smoke...")
+        wheel_smoke_cmd = [
+            uv_path,
+            "run",
+            *run_flags,
+            "python",
+            "scripts/smoke_mcp_verify_wheel.py",
+        ]
+        wheel_env = os.environ.copy()
+        if check_only:
+            wheel_smoke_cmd.append("--offline")
+            wheel_env["UV_OFFLINE"] = "1"
         run_command(
-            [uv_path, "run", *run_flags, "python", "scripts/smoke_mcp_verify_wheel.py"],
+            wheel_smoke_cmd,
             cwd=repo_root,
+            env=wheel_env,
             step_name="mcp-verify wheel package smoke",
         )
     else:
@@ -409,9 +440,21 @@ def run_tests(uv_path: str, repo_root: Path, full: bool, *, check_only: bool = F
 
         # 3. mcp-verify standalone package smoke
         print("Executing standalone mcp-verify package smoke...")
+        wheel_smoke_cmd = [
+            uv_path,
+            "run",
+            *run_flags,
+            "python",
+            "scripts/smoke_mcp_verify_wheel.py",
+        ]
+        wheel_env = os.environ.copy()
+        if check_only:
+            wheel_smoke_cmd.append("--offline")
+            wheel_env["UV_OFFLINE"] = "1"
         run_command(
-            [uv_path, "run", *run_flags, "python", "scripts/smoke_mcp_verify_wheel.py"],
+            wheel_smoke_cmd,
             cwd=repo_root,
+            env=wheel_env,
             step_name="mcp-verify wheel package smoke",
         )
 
@@ -435,10 +478,19 @@ def print_reproduction_summary(full: bool) -> None:
         f"Historical Live Evidence:    Preserved in docs/ (marked RECORDED_LIVE)\n"
     )
     print(
-        "Note: Historical live Google Calendar/Tasks and AWS Bedrock/AgentCore proofs\n"
-        "are preserved as RECORDED_LIVE in docs/ (e.g. docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md,\n"
-        "docs/P13_KILLER_MISSION_EVIDENCE.md). Clean-checkout reproduction evaluates the full\n"
-        "deterministic core using verified in-memory fakes and contract assertions.\n"
+        "Important Architecture & Network Boundary Clarification:\n"
+        "- Initial setup (default clean reproduction) downloads public, open-source Python\n"
+        "  wheels from PyPI via 'uv sync --frozen' to populate isolated local environments.\n"
+        "- These standard package manager downloads are STRICTLY DISTINCT from live cloud\n"
+        "  provider calls. Zero AWS Bedrock, AWS AgentCore, Google Calendar, Google Tasks,\n"
+        "  or Open-Meteo live API calls are ever made during setup or verification.\n"
+        "- Under '--check-only', every descendant package-management operation (including\n"
+        "  wheel build, isolated virtual environment creation, and smoke installation) is\n"
+        "  strictly guaranteed 100% offline (--no-sync --offline UV_OFFLINE=1).\n"
+        "- Historical live Google Calendar/Tasks and AWS Bedrock/AgentCore proofs\n"
+        "  are preserved as RECORDED_LIVE in docs/ (e.g. docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md,\n"
+        "  docs/P13_KILLER_MISSION_EVIDENCE.md). Clean-checkout reproduction evaluates the full\n"
+        "  deterministic core using verified in-memory fakes and contract assertions.\n"
     )
 
 

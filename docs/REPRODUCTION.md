@@ -13,6 +13,11 @@ This guide provides the official instructions to reproduce and verify StillDone 
 
 All reproducible test suites execute deterministically under `FIXTURE` and `LOCAL_EXECUTION` provenance using isolated in-memory fakes and strict contract assertions.
 
+> [!IMPORTANT]
+> **Initial Setup vs. Cloud Provider Network Separation:**
+> Initial repository setup (`python scripts/reproduce.py`) downloads public, open-source Python wheels from PyPI via `uv sync --frozen` to construct the two local isolated virtual environments. These package-manager downloads are **strictly distinct** from live cloud provider calls. StillDone requires **zero** cloud credentials and executes **zero** live AWS Bedrock, AWS AgentCore, Google Calendar, Google Tasks, or Open-Meteo calls during setup, testing, or judge reproduction.
+> When `--check-only` is passed, **every descendant package-management operation** (including wheel build, isolated venv creation, and test smoke installation) is strictly guaranteed 100% offline.
+
 > [!NOTE]
 > Historical live AWS Bedrock/AgentCore and Google Calendar/Tasks execution evidence is recorded and preserved in `docs/` (e.g. [`P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) and [`P13_KILLER_MISSION_EVIDENCE.md`](P13_KILLER_MISSION_EVIDENCE.md)) under `RECORDED_LIVE` provenance.
 
