@@ -1994,8 +1994,9 @@ Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
 - Consolidated factual product feedback in `docs/P20_01_AWS_PRODUCT_FEEDBACK.md` covering Amazon Bedrock Nova Micro (`amazon.nova-micro-v1:0`), Strands Agents SDK (`strands-agents 1.57.2`), Bedrock AgentCore Runtime (`@aws/agentcore 0.1.1`), AWS CLI v2, and Alexa+ Streamable HTTP MCP server architecture.
-- Documented observed strengths, empirical invocation latencies (Bedrock live 3.463s, AgentCore microVM 1.256s), token costs ($0.000140 total per live invocation), and architectural trade-offs.
-- Provided concrete developer friction points and actionable improvements for the AWS product and engineering teams.
+- Accurately distinguished recorded execution traces (P-07.06 single live 3.463s inference, P-01.07 61.26ms remote echo round-trip) from formal latency benchmarks.
+- Bound Bedrock pricing to official September 2026 snapshot ($0.035/1M input, $0.140/1M output tokens); bound token usage to authentic P-01.02 receipt facts (8 in, 3 out, ~7e-7 USD); noted P-07.06 streaming cost was not deterministically returned.
+- Documented StillDone's project architecture choice (`mcp>=2.2.0`) vs universal protocol requirements; documented temporary credentials as mitigating long-lived key exposure rather than eliminating all operational risk.
 - Validated strictly 0 secrets, access keys, or sensitive account identifiers.
 
 ### P-20.02 — Consolidate friction logs and actionable suggestions
@@ -2003,7 +2004,8 @@ Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
 - Consolidated all 11 chronological engineering friction events in `docs/COMPETITION_FEEDBACK_LOG.md` spanning the competition lifecycle.
-- Captured Strands MCP dependency pinning conflict (`mcp<2.2` vs `mcp>=2.2.0`) in entry `F-20261005-01`, AgentCore SigV4 proxy session isolation boundary in entry `F-20261014-01`, and Cloudflare Pages Direct Upload DNS DoH resolution behavior in entry `F-20261014-02`.
+- Captured Strands MCP dependency pinning conflict (`mcp<2.2` vs `mcp>=2.2.0`) in entry `F-20261005-01` and AgentCore SigV4 proxy session isolation boundary in entry `F-20261014-01`.
+- In entry `F-20261014-02`, accurately recorded observed Cloudflare Pages connectivity facts (Wi-Fi timeout, mobile cellular success, Chrome DoH success) while classifying root cause as `UNKNOWN / SUSPECTED DNS OR NETWORK PATH` (ISP filtering / propagation unconfirmed).
 - Formatted with exact task attempted, expected vs actual behavior, severity, robust workarounds, and actionable suggestions.
 
 ### P-20.03 — Build claim-by-claim evidence manifest
@@ -2011,35 +2013,36 @@ Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
 - Constructed claim-by-claim evidence manifest in `docs/P20_03_EVIDENCE_MANIFEST.md` covering all 13 primary competition claims (C-01 through C-13).
-- Explicitly bound every affirmative product claim to verified source file paths, passing automated test suites, and authentic durable evidence records.
-- Formally recorded explicit negative boundaries for each claim (what is NOT claimed), preventing false extrapolations.
+- Structured provenance taxonomy around exactly six canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`), distinguishing presentation disclosures and execution statuses.
+- Accurately bound C-02 (complete READY->DRIFTED chain) to `FIXTURE` & `LOCAL_EXECUTION`; bound C-05 to operator zero-personal-spend policy and billing snapshot observation; corrected C-07 execution date to `2026-10-05`; distinguished C-10 deployed Cloudflare artifact (`ccf79f6...`) from refreshed local exhibit; bounded C-12/C-13 to automated regex scans, environment stripping, and clean-room file audits.
 - Enforced 100% path verification against disk in `tests/test_phase_p20_claim_audit.py`.
 
 ### P-20.04 — Build judging-criteria map
 Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
-- Mapped StillDone evidence and architecture directly to the official 4 Devpost judging criteria (25% each: Technological Implementation, Design, Potential Impact, Quality of the Idea) in `docs/P20_04_JUDGING_CRITERIA_MAP.md`.
-- Mapped secondary mini-challenges: AWS Builder Mini Challenge (Amazon Bedrock Nova Micro, Strands Agents SDK, Bedrock AgentCore runtime) and Open Source Mini Challenge (permissive Apache-2.0, dual-runtime lockfiles, clean-room implementation).
-- Cited exact source files, evidence logs, and architectural invariants for every criterion.
+- Mapped StillDone evidence and architecture directly to the official Devpost evaluation model: Stage 1 eligibility gate, up-to-10% developer feedback / friction log bonus, and the 4 equally weighted Stage 2 criteria (25% each: Technological Implementation, Design, Potential Impact, Quality of the Idea) in `docs/P20_04_JUDGING_CRITERIA_MAP.md`.
+- Mapped AWS Builder Mini Challenge to authentic live Bedrock and AgentCore proofs.
+- Mapped Open Source Mini Challenge accurately: documented standalone `mcp-verify` subproject in `packages/mcp_verify/`; classified external publication `P-17.05` as `BLOCKED_EXTERNAL / NOT_RUN`; classified eligibility as `ELIGIBILITY_UNCONFIRMED / OPERATOR_ACTION_REQUIRED`; avoided conflating root repository open-sourcing with the additional-project mini challenge requirement.
 
 ### P-20.05 — Build live/recorded/fixture/simulated disclosure
 Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
 - Created system-wide evidence provenance disclosure in `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md`.
-- Formally defined and bounded all 8 provenance classes: `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`, `FIXTURE`, `LOCAL_EXECUTION`, `SIMULATED`, and `NOT_RUN`.
-- Established StillDone Truth Laws: execute success != verification; model prose cannot promote evidence; historical recorded != current live; no silent live-to-fixture fallback; zero personal spend ($0.00).
-- Explicitly documented simulation boundaries: Alexa+ client surface is simulated (`SIMULATED ALEXA+ EXPERIENCE`), while underlying MCP server, adapters, verifiers, and reconciliation engines are genuine deterministic production code.
+- Formally defined and bounded the exactly six canonical execution provenance values: `FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`.
+- Separated presentation disclosures (`SIMULATED ALEXA+ EXPERIENCE`, `STATIC READ-ONLY EXHIBIT`), operational execution statuses (`NOT_RUN`, `BLOCKED`, `BLOCKED_LIVE`), and evidence observation classifications (`OPERATOR_OBSERVED / SCREENSHOT`).
+- Bound operational reality to authentic scripts (`scripts/demo_resources.py`) and recorded evidence logs.
 
 ### P-20.06 — Audit donor/license/build-period truth
 Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
-- Conducted exhaustive donor, license, and build-period audit documented in Section 7 of `docs/DONOR_PROVENANCE.md`.
-- Confirmed clean-room implementation with strictly 0 lines of foreign donor code imported into `zyganali-glitch/StillDone`.
-- Verified all donor concepts derive from user-authored open-source repositories under permissive MIT / Apache-2.0 licenses.
-- Verified build-period truth: all development occurred strictly within the hackathon window (October 1, 2026 – October 15, 2026).
+- Conducted scoped donor, direct dependency license, and build-period audit documented in Section 7 of `docs/DONOR_PROVENANCE.md`.
+- Re-confirmed clean-room implementation with strictly 0 lines of foreign donor code imported; all 9 donors remain classified as `CONCEPT_ONLY`.
+- Audited direct runtime dependencies (MIT / Apache-2.0 / BSD); formally classified deep transitive closure as `NOT_AUDITED_TRANSITIVE_CLOSURE`.
+- Separated Open-Meteo CC BY 4.0 data terms from GPLv3 server code; documented that the static judge exhibit uses offline synthetic fixture data (`FakeOpenMeteoTransport`, `FIXTURE`), while the live adapter enforces CC BY 4.0 provider attribution.
+- Verified build-period truth (September 27, 2026 bootstrap commit onwards).
 - Validated via `tests/test_phase_p20_claim_audit.py`.
 
 Phase exit:

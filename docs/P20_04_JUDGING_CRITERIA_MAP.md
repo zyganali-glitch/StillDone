@@ -4,7 +4,10 @@
 **Task**: `P-20.04 — Build judging-criteria map`  
 **Competition**: *Build, Ship, Shape: Amazon Developer Hackathon* (Official Devpost Rules, Snapshot: 2026-10-01)  
 **Track Alignment**: Primary: **Alexa+ Track**; Secondary: **AWS Builder Mini Challenge**, **Open Source Mini Challenge**  
-**Evaluation Model**: 4 Equally Weighted Canonical Criteria (25% Each)  
+**Evaluation Structure**:
+- **Stage 1**: Eligibility Gate (Public repository, video link, required submission responses, zero unverified claims).
+- **Friction-Log Bonus**: Up to 10% bonus evaluation based on high-quality, actionable product feedback and friction logging for Amazon/AWS tools.
+- **Stage 2**: 4 Equally Weighted Canonical Criteria (25% Each: Technological Implementation, Design, Potential Impact, Quality of the Idea).
 
 ---
 
@@ -107,7 +110,25 @@
 - **Reference**: `docs/AWS_BUILDER_MAP.md`.
 
 ### 5.2 Open Source Mini Challenge
-- **Evidence**: Released under an open-source license, implementing open standards (Model Context Protocol 2025-11-25 Streamable HTTP, RFC 9728 Protected Resource Metadata, RFC 6750 OAuth Resource Server), with 100% clean-room reimplementation (0 donor lines) and zero proprietary vendor lock-in.
+- **Official Rule Requirement**: Devpost rules require a NEW ADDITIONAL open-source project or
+  a qualifying external open-source contribution alongside the primary track submission,
+  accompanied by a public repository / contribution URL.
+- **Subproject Status (`packages/mcp_verify/`)**:
+  - StillDone engineered a standalone open-source library, `mcp-verify`, located in
+    `packages/mcp_verify/` with independent `pyproject.toml`, MIT license, standalone CLI,
+    and wheel package smoke verification (`P-17.01` through `P-17.04`).
+- **External Publication Status**:
+  - `P-17.05 — Publish contribution URL/repo/fork/PR during hackathon window` remains
+    **`BLOCKED_EXTERNAL / NOT_RUN`**.
+  - As no separate repository fork, PR, or external package publication has been performed,
+    Open Source Mini Challenge eligibility is classified as:
+    **`ELIGIBILITY_UNCONFIRMED / OPERATOR_ACTION_REQUIRED`**.
+- **Important Non-Conflation**:
+  - StillDone's root repository is open source under Apache-2.0, but root project open-sourcing
+    alone is NOT automatically equated with fulfilling the mini challenge's additional-project /
+    contribution requirement.
+  - Zero repositories, forks, PRs, or URLs have been fabricated. External publication requires an
+    explicit operator authorization gate.
 - **Reference**: `docs/OPEN_SOURCE_MINI_CHALLENGE.md`.
 
 ---

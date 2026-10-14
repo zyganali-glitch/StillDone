@@ -265,20 +265,27 @@ Executed under **P-20.06 — Audit donor/license/build-period truth** on October
 - Every domain model, contract, verifier, state machine, receipt projection, authority gate, recovery ledger, and MCP server implementation was written clean-room in the `zyganali-glitch/StillDone` repository.
 - All 9 listed donor repositories remain classified as **`CONCEPT_ONLY`**.
 
-### 7.2 Third-Party Dependency License Audit
-A comprehensive audit of all direct and transitive runtime dependencies was performed against their official SPDX license declarations:
-- **`mcp` (v2.2.0)**: MIT License (Anthropic PBC). Permissive open standard.
-- **`strands-agents` (v1.57.2)**: Apache-2.0 License (Amazon Web Services). Permissive open source.
-- **`boto3` & `botocore`**: Apache-2.0 License (Amazon Web Services). Permissive open source.
-- **`pydantic` & `pydantic-core`**: MIT License. Permissive open source.
-- **`fastapi`, `starlette`, `uvicorn`**: MIT & BSD-3-Clause Licenses. Permissive open source.
-- **Open-Meteo Forecast API**: Creative Commons Attribution 4.0 International (CC BY 4.0). Requires explicit display attribution, which StillDone enforces in `src/stilldone/adapters/weather.py` and rendered UI.
-- **Encumbrance Verdict**: **`ZERO COPYLEFT / ZERO PROPRIETARY RESTRICTIONS`**. The StillDone codebase contains zero GPL, AGPL, SSPL, or commercial proprietary dependencies.
+### 7.2 Third-Party Dependency & Service Licensing Audit
+
+An audit of StillDone's direct runtime dependencies and external service terms was conducted:
+- **Direct Runtime Dependencies (Core/MCP & Strands Planner)**:
+  - `mcp` (v2.2.0): MIT License (Anthropic PBC). Permissive open standard.
+  - `strands-agents` (v1.57.2): Apache-2.0 License (Amazon Web Services). Permissive open source.
+  - `boto3` & `botocore` (>=1.35): Apache-2.0 License (Amazon Web Services). Permissive open source.
+  - `pydantic` (>=2.10): MIT License. Permissive open source.
+  - `anyio` (>=4.0): MIT License. Permissive open source.
+- **Transitive Audit Limitation**:
+  - Direct project dependencies strictly use permissive open-source licenses (MIT, Apache-2.0).
+  - An exhaustive, automated SBOM analysis of all transitive sub-dependencies has not been executed; deep transitive closure is therefore classified as `NOT_AUDITED_TRANSITIVE_CLOSURE`. No copyleft packages are present in direct dependencies.
+- **Open-Meteo Weather Licensing & Exhibit Data Truth**:
+  - *Server Source vs Client API*: The Open-Meteo server backend is licensed under GPL v3. StillDone does **not** vendor, bundle, or run Open-Meteo server source code; StillDone functions solely as a client calling public REST endpoints.
+  - *Data Attribution Terms*: Real Open-Meteo weather data is provided under Creative Commons Attribution 4.0 International (CC BY 4.0) for free non-commercial use below daily rate limits. The live weather adapter (`src/stilldone/adapters/weather.py`) enforces structured provider attribution (`ProviderAttribution`).
+  - *Exhibit Data Distinction*: The public static judge exhibit (`artifacts/judge_exhibit/index.html`) uses an **offline synthetic fixture** (`FakeOpenMeteoTransport`, provenance `FIXTURE`), containing independently generated synthetic test data rather than live provider data. Live weather API calls are documented separately as historical traces in `docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md` (`RECORDED_LIVE` / `LIVE_EXTERNAL`).
 
 ### 7.3 Build-Period & Commit Chronology Truth
 - **Official Competition Build Period**: September 2026 – November 2026.
-- **Initial Bootstrap Commit**: September 2026 (`P-00.01`).
-- **Commit Lineage**: Strictly monotonic and chronological, verified against Git remote log on branch `main`.
-- **Pre-Existing Code**: Zero pre-built product code existed before the competition kickoff. All development is recorded step-by-step in the Master Plan and durable evidence logs.
+- **Initial Bootstrap Commit**: September 27, 2026 (`P-00.01`).
+- **Commit Lineage**: Strictly monotonic and chronological, verified against Git remote history on branch `main`.
+- **Pre-Existing Code**: Zero pre-built product code existed in this repository before the bootstrap commit. All architecture, contracts, verifiers, test suites, and documentation were created chronologically within the hackathon window.
 
 *Audited and confirmed under P-20.06.*

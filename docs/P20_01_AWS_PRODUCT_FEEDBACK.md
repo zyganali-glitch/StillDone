@@ -20,80 +20,142 @@ Every entry in this feedback report represents an authentic technical observatio
 
 ### 2.1 Amazon Bedrock Runtime (`amazon.nova-micro-v1:0` in `us-east-1`)
 
-- **Role in StillDone**: Primary reasoning model evaluated for natural language mission planning and proposal generation (P-01.02, P-07.06).
-- **Observed Metrics**:
-  - Cold-start invocation latency: 3.463s (observed in P-07.06).
-  - Token consumption: 8 input tokens, 3 output tokens for minimal verification; 214 input tokens, 142 output tokens for multi-step proposal compilation.
-  - Cost efficiency: Billed at $0.00008 / 1K input tokens, $0.00032 / 1K output tokens. Gross estimate for P-01/P-07 cycles $\ll \$0.01$, covered by active hackathon promotional credits ($0.00 personal spend).
+- **Role in StillDone**: Primary reasoning model evaluated for natural language mission planning
+  and proposal generation (P-01.02, P-07.06).
+- **Observed Metrics (Distinguishing Recorded Traces from Benchmarks)**:
+  - *Observed Single Live Inference Duration*: 3.463s in P-07.06 (dated 2026-10-05, Commit C).
+    This was an observed single live execution duration through the Strands planning pipeline,
+    NOT a formal cold-start latency benchmark across multiple controlled runs.
+  - *Verified Token Consumption & Cost (P-01.02 Cycle 3)*: In the minimal live Converse API call
+    (`docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`), AWS returned `inputTokens=8`, `outputTokens=3`,
+    `totalTokens=11`, and `metrics.latencyMs=7259`.
+  - *P-07.06 Streaming Planning Metrics*: In P-07.06, token metrics were not returned by the
+    streaming client and were recorded as `underlying_service_cost: NOT_DETERMINISTICALLY_OBSERVED`
+    by the proof script (`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`).
+  - *Pricing Truth (September 2026 Official Snapshot)*: Documented in
+    `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`: $0.035 per 1,000,000 input tokens ($0.000035 / 1K)
+    and $0.140 per 1,000,000 output tokens ($0.000140 / 1K). For P-01.02 (8 in, 3 out),
+    estimated gross request cost was $\approx \$0.00000070$ ($7 \times 10^{-7}$ USD), well below
+    the $0.01 threshold, fully covered by hackathon credits ($0.00 personal spend).
 - **Strengths**:
-  1. The Converse API (`aws bedrock-runtime converse`) provides a clean, normalized JSON interface that eliminates model-specific payload idiosyncrasies.
-  2. Ultra-low token pricing makes Nova Micro ideal for deterministic agent verification architectures where LLMs propose plans but execute zero unconstrained mutations.
+  1. The Converse API (`aws bedrock-runtime converse`) provides a clean, normalized JSON interface
+     that eliminates model-specific payload idiosyncrasies.
+  2. Ultra-low token pricing makes Nova Micro ideal for deterministic agent verification
+     architectures where LLMs propose plans but execute zero unconstrained mutations.
   3. Stable latency profiles once account verification and entitlement holds are cleared.
 - **Friction Points & Actionable Suggestions**:
   1. **New Account Verification Hold (`F-20260927-02`)**:
-     - *Observation*: Initial runtime call raised `AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours...`
-     - *Suggestion*: Surface account verification lifecycle states prominently on the AWS Management Console Bedrock overview dashboard so developers do not diagnose access policies when the account is simply in an onboarding hold.
+     - *Observation*: Initial runtime call raised `AccessDeniedException: Your account is currently
+       being verified. Verification normally takes less than 2 hours...`
+     - *Suggestion*: Surface account verification lifecycle states prominently on the AWS Management
+       Console Bedrock overview dashboard so developers do not diagnose access policies when the
+       account is simply in an onboarding hold.
   2. **Model Authorization vs. Entitlement Confusion (`F-20260927-03`)**:
-     - *Observation*: `get-foundation-model-availability` reported `agreementStatus = AVAILABLE`, `entitlementAvailability = AVAILABLE`, and `regionAvailability = AVAILABLE`, but `authorizationStatus = NOT_AUTHORIZED`. The runtime raised a generic `ValidationException: Operation not allowed` without detailing the missing prerequisite.
-     - *Suggestion*: Enhance error payloads for `ValidationException` during Bedrock inference to include the specific prerequisite or policy needed (e.g., `"missing model authorization grant for account"`).
+     - *Observation*: `get-foundation-model-availability` reported `agreementStatus = AVAILABLE`,
+       `entitlementAvailability = AVAILABLE`, and `regionAvailability = AVAILABLE`, but
+       `authorizationStatus = NOT_AUTHORIZED`. The runtime raised a generic `ValidationException:
+       Operation not allowed` without detailing the missing prerequisite.
+     - *Suggestion*: Enhance error payloads for `ValidationException` during Bedrock inference to
+       include the specific prerequisite or policy needed (e.g., `"missing model authorization
+       grant for account"`).
 
 ---
 
 ### 2.2 Strands Agents SDK (`strands-agents 1.57.2`)
 
-- **Role in StillDone**: Python agent framework used to orchestrate Bedrock Nova Micro planning calls and parse candidate plan structures (P-01.03, P-07.03–P-07.06).
+- **Role in StillDone**: Python agent framework used to orchestrate Bedrock Nova Micro planning
+  calls and parse candidate plan structures (P-01.03, P-07.03–P-07.06).
 - **Observed Metrics**:
   - Single-step proposal generation without tool execution (`agent.tools = []`).
-  - Strict contract boundary: Model proposals pass through `parse_candidate_plan_for_input` before any action is accepted.
+  - Strict contract boundary: Model proposals pass through `parse_candidate_plan_for_input`
+    before any action is accepted.
 - **Strengths**:
-  1. Lightweight, idiomatic Python agent abstractions that integrate directly with Boto3 sessions and Bedrock models.
+  1. Lightweight, idiomatic Python agent abstractions that integrate directly with Boto3 sessions
+     and Bedrock models.
   2. Clean separation between agent conversation history and final response messages.
 - **Friction Points & Actionable Suggestions**:
   1. **Upstream MCP Version Dependency Pinning Conflict (`F-20261005-01`)**:
-     - *Observation*: `strands-agents 1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. However, modern Streamable HTTP MCP servers (and official MCP Python SDK `2.2.0+`) require `mcp>=2.2.0`. These package sets do not intersect in a single Python virtual environment.
-     - *Workaround*: StillDone engineered a dual-runtime architecture (`pyproject.toml` for Core/MCP vs. `runtimes/strands_planner/pyproject.toml` for Strands Planner) with zero resolver overrides (`override-dependencies` prohibited).
-     - *Suggestion*: Decouple or loosen the upper bound on the `mcp` dependency in `strands-agents` (`<2.2` -> `<3.0` or optional extra) so agent runtimes can coexist with modern MCP servers in single-environment workflows.
+     - *Observation*: `strands-agents 1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`.
+       StillDone's project architecture chose `mcp>=2.2.0` for its core runtime to leverage
+       updated Streamable HTTP transport patterns. This is an explicit StillDone
+       project constraint (not an assertion that all Streamable HTTP MCP servers universally require
+       SDK 2.2+). However, because these two requirements do not intersect in a single environment,
+       installing both in one virtualenv failed dependency resolution.
+     - *Workaround*: StillDone engineered a dual-runtime architecture (`pyproject.toml` for
+       Core/MCP vs. `runtimes/strands_planner/pyproject.toml` for Strands Planner) with zero
+       resolver overrides (`override-dependencies` prohibited).
+     - *Suggestion*: Decouple or loosen the upper bound on the `mcp` dependency in `strands-agents`
+       (`<2.2` -> `<3.0` or optional extra) so agent runtimes can coexist with modern MCP servers
+       in single-environment workflows.
   2. **AWS Login Credential Provider Requires `botocore[crt]` (`F-20260928-01`)**:
-     - *Observation*: Initial instantiation of `BedrockModel` using a Boto3 session from `aws login` raised `MissingDependencyException: Using the login credential provider requires an additional dependency. You will need to pip install "botocore[crt]"`.
-     - *Suggestion*: Document prominently in Strands and Boto3 quickstart guides that consuming session credentials generated by `aws login` requires `botocore[crt]` (`awscrt`).
+     - *Observation*: Initial instantiation of `BedrockModel` using a Boto3 session from `aws login`
+       raised `MissingDependencyException: Using the login credential provider requires an additional
+       dependency. You will need to pip install "botocore[crt]"`.
+     - *Suggestion*: Document prominently in Strands and Boto3 quickstart guides that consuming
+       session credentials generated by `aws login` requires `botocore[crt]` (`awscrt`).
 
 ---
 
 ### 2.3 Amazon Bedrock AgentCore Runtime (`@aws/agentcore` v0.30.0 / CodeZip Serverless MicroVM)
 
-- **Role in StillDone**: Evaluated for serverless containerized / CodeZip hosting of the StillDone Streamable HTTP MCP server (P-01.04, P-05.06).
+- **Role in StillDone**: Evaluated for serverless containerized / CodeZip hosting of the StillDone
+  Streamable HTTP MCP server (P-01.04, P-05.06).
 - **Observed Metrics**:
-  - Spin-up latency: ~61ms remote echo response over Server-Sent Events / Streamable HTTP on port 8000.
-  - Teardown reliability: Clean zero-resource state achieved with `agentcore remove all -y`.
+  - *Observed Remote Echo Latency*: 61.26ms single remote echo response over Streamable HTTP on
+    port 8000 (observed in P-01.07). This was a single round-trip echo measurement,
+    NOT an AgentCore microVM spin-up or cold-start benchmark.
+  - *Teardown Reliability*: Clean zero-resource state achieved with `agentcore remove all -y`.
 - **Strengths**:
-  1. CodeZip and containerized serverless microVM execution eliminates persistent server management while providing sub-second MCP tool execution.
+  1. CodeZip and containerized serverless microVM execution eliminates persistent server
+     management while providing sub-second MCP tool execution.
   2. Native integration with AWS Bedrock infrastructure.
 - **Friction Points & Actionable Suggestions**:
   1. **Accept Header Requirement for Streaming MCP Runtimes (`F-20261001-01`)**:
-     - *Observation*: Invoking containerized MCP runtimes configured for Server-Sent Events via `aws bedrock-agentcore invoke-agent-runtime` failed with `ValidationException: 406 Not Acceptable` when using `--accept "application/json"`. The runtime strictly required `--accept "application/json, text/event-stream"`.
-     - *Suggestion*: Document the mandatory `text/event-stream` Accept header requirement clearly in AgentCore documentation for SSE/Streamable HTTP runtimes.
+     - *Observation*: Invoking containerized MCP runtimes configured for Server-Sent Events via
+       `aws bedrock-agentcore invoke-agent-runtime` failed with `ValidationException: 406 Not
+       Acceptable` when using `--accept "application/json"`. The runtime strictly required
+       `--accept "application/json, text/event-stream"`.
+     - *Suggestion*: Document the mandatory `text/event-stream` Accept header requirement clearly
+       in AgentCore documentation for SSE/Streamable HTTP runtimes.
   2. **Windows Shell Argument Quoting Friction (`F-20260928-02`)**:
-     - *Observation*: On Windows PowerShell, the Node.js CLI unquoted JSON arguments (`agentcore invoke --prompt '{"prompt": "PING"}'` became `"{prompt: PING}"`), causing entrypoint parse errors.
-     - *Suggestion*: Provide a `--payload-file` or `--payload-json` parameter to bypass shell-specific quoting idiosyncrasies.
+     - *Observation*: On Windows PowerShell, the Node.js CLI unquoted JSON arguments
+       (`agentcore invoke --prompt '{"prompt": "PING"}'` became `"{prompt: PING}"`), causing
+       entrypoint parse errors.
+     - *Suggestion*: Provide a `--payload-file` or `--payload-json` parameter to bypass shell-specific
+       quoting idiosyncrasies.
   3. **Local Tooling SigV4 Ingress Bridge (`F-20261014-01`)**:
-     - *Observation*: AgentCore runtimes enforce SigV4 IAM authentication at the ingress gateway. Standard developer tools (such as `@modelcontextprotocol/inspector` or browser clients) do not natively sign HTTP requests with AWS SigV4, requiring developers to write custom proxy bridges.
-     - *Suggestion*: Release an official lightweight local SigV4 proxy / signing bridge utility as part of `@aws/agentcore` to enable zero-friction developer inspection.
+     - *Observation*: AgentCore runtimes enforce SigV4 IAM authentication at the ingress gateway.
+       Standard developer tools (such as `@modelcontextprotocol/inspector` or browser clients) do
+       not natively sign HTTP requests with AWS SigV4, requiring developers to write custom proxy
+       bridges.
+     - *Suggestion*: Release an official lightweight local SigV4 proxy / signing bridge utility as
+       part of `@aws/agentcore` to enable zero-friction developer inspection.
 
 ---
 
 ### 2.4 AWS CLI v2 & Identity Flows (`aws login`)
 
-- **Role in StillDone**: Operator workstation authentication and preflight verification across all AWS tasks.
-- **Observed Metrics**:
+- **Role in StillDone**: Operator workstation authentication and preflight verification across
+  all AWS tasks.
+- **Observed Metrics & Security Truth**:
   - Temporary session credentials issued with positive `ASIA...` prefix and automatic expiration.
-  - Zero static access keys committed or needed ($0.00 risk of long-lived credential leakage).
+  - Zero static access keys committed or persisted.
+  - *Security Limitation*: While short-lived temporary session credentials eliminate the risk
+    of long-lived static key leakage, they mitigate rather than completely eliminate all
+    operational security risks (e.g., active session hijacking or unauthorized in-session calls
+    remain possible during the temporary credential validity window).
 - **Strengths**:
-  1. Short-lived session credentials eliminate the security hazard of permanent long-lived IAM user access keys.
+  1. Short-lived session credentials eliminate the security hazard of permanent long-lived IAM
+     user access keys.
   2. Bounded permission boundaries align with hackathon safety requirements.
 - **Friction Points & Actionable Suggestions**:
   1. **Remote Redirect Friction (`F-20261001-02`)**:
-     - *Observation*: Using `aws login --remote` requires copying a multi-line base64 redirect string from the browser back to the terminal. Any terminal line wrapping or trailing whitespace causes an invalid grant error.
-     - *Suggestion*: Recommend standard loopback `aws login` (without `--remote`) as the primary path in documentation, reserving `--remote` strictly for headless servers with improved terminal whitespace stripping.
+     - *Observation*: Using `aws login --remote` requires copying a multi-line base64 redirect
+       string from the browser back to the terminal. Any terminal line wrapping or trailing
+       whitespace causes an invalid grant error.
+     - *Suggestion*: Recommend standard loopback `aws login` (without `--remote`) as the primary
+       path in documentation, reserving `--remote` strictly for headless servers with improved
+       terminal whitespace stripping.
 
 ---
 

@@ -1,12 +1,12 @@
 """Tests for Phase P-20 Competition Evidence, Feedback & Claim Audit.
 
 Validates:
-- P-20.01: Consolidated factual product feedback for every Amazon/AWS tool used.
-- P-20.02: Consolidated friction logs and actionable suggestions without secrets.
-- P-20.03: Claim-by-claim evidence manifest where all mapped files and tests exist on disk.
-- P-20.04: Authoritative judging-criteria map (4 criteria at 25% each + mini challenges).
-- P-20.05: Comprehensive evidence provenance disclosure (LIVE, RECORDED_LIVE, etc.).
-- P-20.06: Clean-room donor audit, license verification, and chronological build-period truth.
+- P-20.01: Consolidated factual product feedback for Amazon/AWS tools with verified metrics.
+- P-20.02: Consolidated friction logs with causal uncertainty for network incidents.
+- P-20.03: Claim-by-claim manifest with 6 canonical provenance values and bounded limits.
+- P-20.04: Devpost judging criteria, friction bonus, and Open Source Mini Challenge bounds.
+- P-20.05: Comprehensive provenance disclosure with distinct surface and status categories.
+- P-20.06: Scoped clean-room donor audit, transitive license bounds, and Open-Meteo truth.
 """
 
 from __future__ import annotations
@@ -18,11 +18,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_p20_01_aws_product_feedback_integrity() -> None:
-    """P-20.01: Verifies factual product feedback document for all Amazon/AWS tools."""
+    """P-20.01: Verifies factual product feedback, pricing, and latency claims."""
     doc_path = REPO_ROOT / "docs" / "P20_01_AWS_PRODUCT_FEEDBACK.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
     content = doc_path.read_text(encoding="utf-8")
+    norm_content = " ".join(content.split())
     assert "P-20.01" in content
     assert "Amazon Bedrock Runtime" in content
     assert "amazon.nova-micro-v1:0" in content
@@ -33,6 +34,33 @@ def test_p20_01_aws_product_feedback_integrity() -> None:
     assert "AWS CLI v2" in content
     assert "Amazon Alexa+ MCP Integration Surface" in content
 
+    # Substantive latency assertions: distinguish recorded traces from benchmarks
+    assert "Observed Single Live Inference Duration" in content
+    assert "NOT a formal cold-start latency benchmark" in norm_content
+    assert "Observed Remote Echo Latency" in content
+    assert "NOT an AgentCore microVM spin-up or cold-start benchmark" in norm_content
+
+    # Pricing assertions: bound to official September 2026 snapshot
+    assert "$0.035 per 1,000,000 input tokens" in content
+    assert "$0.140 per 1,000,000 output tokens" in content
+
+    # Token consumption assertions: verified P-01.02 receipt facts vs P-07.06 streaming facts
+    assert "inputTokens=8" in content
+    assert "outputTokens=3" in content
+    assert "totalTokens=11" in content
+    assert "NOT_DETERMINISTICALLY_OBSERVED" in content
+    assert "214 input tokens" not in content
+    assert "142 output tokens" not in content
+    assert "$0.00008 / 1K" not in content
+
+    # Architecture constraint truth
+    assert "project architecture choice" in norm_content or "project constraint" in norm_content
+
+    # Security truth: temporary credentials mitigate rather than eliminate all operational risk
+    assert (
+        "mitigate rather than completely eliminate all operational security risks" in norm_content
+    )
+
     # Zero secrets verification
     assert "AKIA" not in content
     assert "ya29." not in content
@@ -41,13 +69,13 @@ def test_p20_01_aws_product_feedback_integrity() -> None:
 
 
 def test_p20_02_competition_friction_log_consolidation() -> None:
-    """P-20.02: Verifies consolidated friction logs and actionable suggestions."""
+    """P-20.02: Verifies consolidated friction logs and DNS incident causal uncertainty."""
     doc_path = REPO_ROOT / "docs" / "COMPETITION_FEEDBACK_LOG.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
     content = doc_path.read_text(encoding="utf-8")
 
-    # Verify all chronological entries exist
+    # Verify all 11 chronological entries exist
     expected_entries = [
         "F-20260927-01",
         "F-20260927-02",
@@ -64,11 +92,9 @@ def test_p20_02_competition_friction_log_consolidation() -> None:
     for entry in expected_entries:
         assert entry in content, f"Missing friction log entry: {entry}"
 
-    # Actionable suggestions check
-    assert "Actionable suggestion:" in content
-    assert "Upstream Strands Agents MCP Dependency Pinning Conflict" in content
-    assert "Bedrock AgentCore SigV4 Proxy Session Isolation Boundary" in content
-    assert "Cloudflare Pages Direct Upload DNS Resolution on Residential ISPs" in content
+    # F-20261014-02 causal uncertainty assertions
+    assert "UNKNOWN / SUSPECTED DNS OR NETWORK PATH" in content
+    assert "NOT independently established" in content or "unconfirmed" in content
 
     # Zero secrets check
     assert "AKIA" not in content
@@ -77,7 +103,7 @@ def test_p20_02_competition_friction_log_consolidation() -> None:
 
 
 def test_p20_03_claim_manifest_and_file_existence() -> None:
-    """P-20.03: Verifies claim manifest and proves every cited path exists on disk."""
+    """P-20.03: Verifies claim manifest, exact provenance classes, and disk references."""
     doc_path = REPO_ROOT / "docs" / "P20_03_EVIDENCE_MANIFEST.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
@@ -90,12 +116,28 @@ def test_p20_03_claim_manifest_and_file_existence() -> None:
         claim_id = f"C-{claim_num:02d}"
         assert claim_id in content, f"Missing claim: {claim_id}"
 
-    # Verify negative bounds / non-capabilities are explicitly disclosed
-    assert "Negative Claims & Explicit Non-Capabilities" in content
-    assert "No Live Backend on Public Exhibit" in content
-    assert "Alexa+ Partner Access is NOT_ESTABLISHED" in content
-    assert "Current Remote Deployment is BLOCKED / NOT_RUN" in content
-    assert "Complete 7-Step Killer Demo in Exhibit is FIXTURE Playback" in content
+    # Six canonical execution provenance values
+    assert "six canonical execution provenance values" in content
+
+    # C-02 must be FIXTURE & LOCAL_EXECUTION, not RECORDED_LIVE
+    c02_line = [line for line in content.splitlines() if "**C-02**" in line][0]
+    assert "FIXTURE" in c02_line
+    assert "LOCAL_EXECUTION" in c02_line
+    assert "RECORDED_LIVE" not in c02_line.split("|")[3]  # Provenance column check
+
+    # C-05: operator zero-spend policy & snapshot, not global guarantee
+    c05_line = [line for line in content.splitlines() if "**C-05**" in line][0]
+    assert "Zero Personal Spend ($0.00)" in c05_line
+    assert "snapshot" in c05_line.lower()
+
+    # C-07: execution date must be 2026-10-05
+    c07_line = [line for line in content.splitlines() if "**C-07**" in line][0]
+    assert "2026-10-05" in c07_line
+    assert "2026-10-06" not in c07_line
+
+    # C-10: deployed SHA ccf79f6 distinguished from refreshed exhibit
+    c10_line = [line for line in content.splitlines() if "**C-10**" in line][0]
+    assert "ccf79f6" in c10_line
 
     # Extract backtick paths like `src/...`, `tests/...`, `docs/...`, `scripts/...`
     cited_paths = set(re.findall(r"`((?:src|tests|docs|scripts)/[^`]+)`", content))
@@ -108,12 +150,14 @@ def test_p20_03_claim_manifest_and_file_existence() -> None:
 
 
 def test_p20_04_judging_criteria_mapping_completeness() -> None:
-    """P-20.04: Verifies judging-criteria map against official Devpost criteria."""
+    """P-20.04: Verifies judging-criteria map, bonus, and Open Source Mini Challenge bounds."""
     doc_path = REPO_ROOT / "docs" / "P20_04_JUDGING_CRITERIA_MAP.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
     content = doc_path.read_text(encoding="utf-8")
     assert "P-20.04" in content
+    assert "Stage 1" in content
+    assert "Friction-Log Bonus" in content or "10% bonus" in content
     assert "Technological Implementation (25%)" in content
     assert "Design (25%)" in content
     assert "Potential Impact (25%)" in content
@@ -121,28 +165,39 @@ def test_p20_04_judging_criteria_mapping_completeness() -> None:
     assert "AWS Builder Mini Challenge" in content
     assert "Open Source Mini Challenge" in content
 
+    # Open Source Mini Challenge eligibility assertions
+    assert "packages/mcp_verify/" in content
+    assert "BLOCKED_EXTERNAL / NOT_RUN" in content
+    assert "ELIGIBILITY_UNCONFIRMED / OPERATOR_ACTION_REQUIRED" in content
+
 
 def test_p20_05_provenance_and_simulation_disclosure() -> None:
-    """P-20.05: Verifies complete live/recorded/fixture/simulated disclosure."""
+    """P-20.05: Verifies complete taxonomy separation and verified script references."""
     doc_path = REPO_ROOT / "docs" / "P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
     content = doc_path.read_text(encoding="utf-8")
     assert "P-20.05" in content
+    assert "six canonical execution provenance values" in content
     assert "LIVE_AWS" in content
     assert "LIVE_GOOGLE" in content
     assert "RECORDED_LIVE" in content
     assert "FIXTURE" in content
-    assert "SIMULATED ALEXA+ EXPERIENCE" in content
-    assert "NOT_RUN / BLOCKED" in content
+    assert "LOCAL_EXECUTION" in content
+    assert "LIVE_EXTERNAL" in content
 
-    # Verifies explicit 7-step fixture distinction
-    assert "Complete 7-Step Exhibit Status" in content
-    assert "FIXTURE playback" in content
+    # Separation of distinct categories
+    assert "SIMULATED ALEXA+ EXPERIENCE" in content
+    assert "NOT_RUN" in content
+    assert "OPERATOR_OBSERVED" in content
+
+    # Verified script references
+    assert "scripts/demo_resources.py" in content
+    assert "scripts/p19_02_demo_tooling.py" not in content
 
 
 def test_p20_06_donor_license_and_clean_room_audit() -> None:
-    """P-20.06: Verifies clean-room audit (0 donor code lines imported) and licenses."""
+    """P-20.06: Verifies clean-room audit, scoped dependency licenses, and Open-Meteo terms."""
     doc_path = REPO_ROOT / "docs" / "DONOR_PROVENANCE.md"
     assert doc_path.is_file(), f"Missing required document: {doc_path}"
 
@@ -151,12 +206,16 @@ def test_p20_06_donor_license_and_clean_room_audit() -> None:
     assert "P-20.06" in content
     assert "STRICTLY ZERO (0) LINES" in content
     assert "CONCEPT_ONLY" in content
-    assert "ZERO COPYLEFT / ZERO PROPRIETARY RESTRICTIONS" in content
 
-    # Check third-party permissive licenses
-    assert "MIT License" in content
-    assert "Apache-2.0 License" in content
-    assert "Creative Commons Attribution 4.0 International" in content
+    # Scoped dependency licensing and transitive closure limitation
+    assert "NOT_AUDITED_TRANSITIVE_CLOSURE" in content
+    assert "ZERO COPYLEFT / ZERO PROPRIETARY RESTRICTIONS" not in content
+
+    # Open-Meteo licensing vs exhibit fixture data truth
+    assert "GPL v3" in content or "GPL" in content
+    assert "CC BY 4.0" in content
+    assert "FakeOpenMeteoTransport" in content
+    assert "offline synthetic fixture" in content
 
     # Verify no donor source directories exist in src/
     src_dir = REPO_ROOT / "src"

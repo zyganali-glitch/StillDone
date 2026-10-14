@@ -9,26 +9,34 @@
 
 ## 1. System-Wide Provenance Taxonomy
 
-StillDone categorizes every execution, test result, exhibit element, and architectural milestone into one of six canonical, mutually exclusive provenance tiers:
+StillDone categorizes every execution, test result, exhibit element, and architectural milestone into one of exactly **six canonical execution provenance values** (`AGENTS.md` § 10):
 
-- **`LIVE_AWS`**: Real, unsimulated execution against Amazon Bedrock or Bedrock AgentCore Runtime.
-- **`LIVE_GOOGLE`**: Real, unsimulated execution against Google Calendar v3 or Google Tasks v1 APIs under operator OAuth authorization.
-- **`LIVE_EXTERNAL`**: Real HTTP API call to external public endpoints (e.g., Open-Meteo weather API).
-- **`RECORDED_LIVE`**: Authentic, dated historical execution records with exact timestamps, raw provider responses, and hashes committed in `docs/`. Never promoted to fresh current-live calls.
-- **`FIXTURE`**: Deterministic, offline execution using local simulated providers or pre-seeded test fixtures with zero network calls and zero credentials.
-- **`LOCAL_EXECUTION`**: Deterministic execution of pure domain, verification, cryptographic, or ledger algorithms on the local workstation / CI runner.
-- **`SIMULATED` (`SIMULATED ALEXA+ EXPERIENCE`)**: Explicitly labeled simulated conversational client surface.
-- **`NOT_RUN` / `BLOCKED`**: Operations deliberately unexecuted to prevent unmetered billing or unauthorized cloud mutations.
+1. **`FIXTURE`**: Deterministic, offline execution using local simulated providers or pre-seeded test fixtures with zero network calls and zero credentials.
+2. **`LOCAL_EXECUTION`**: Deterministic execution of pure domain, verification, cryptographic, or ledger algorithms on the local workstation / CI runner.
+3. **`LIVE_AWS`**: Real, unsimulated execution against Amazon Bedrock Nova Micro or Bedrock AgentCore Runtime.
+4. **`LIVE_GOOGLE`**: Real, unsimulated execution against Google Calendar v3 or Google Tasks v1 APIs under operator OAuth authorization.
+5. **`LIVE_EXTERNAL`**: Real HTTP API call to external public endpoints (e.g., Open-Meteo weather API).
+6. **`RECORDED_LIVE`**: Authentic, dated historical execution records with exact timestamps, raw provider responses, and hashes committed in `docs/`. Never promoted to fresh current-live calls.
+
+### Distinct Presentation, Execution, and Observation Categories:
+- **Client / Surface Disclosure**: `SIMULATED ALEXA+ EXPERIENCE` is a user-facing interface presentation disclosure, not an execution provenance enum.
+- **Execution Statuses**: `NOT_RUN`, `BLOCKED`, `BLOCKED_LIVE`, and `BLOCKED_EXTERNAL` are operational execution states, not provenance values.
+- **Evidence Observation Classification**: `OPERATOR_OBSERVED / SCREENSHOT` is a human observation classification for external platform deployments, not a runtime provenance enum.
 
 ```mermaid
 flowchart TD
-    subgraph Execution Tiers
-        L["LIVE Execution: LIVE_AWS / LIVE_GOOGLE / LIVE_EXTERNAL"]
-        RL["RECORDED_LIVE (Historical Immutable Proof)"]
-        F["FIXTURE / REGRESSION (Deterministic Offline)"]
-        S["SIMULATED SURFACE (Labeled Client Experience)"]
+    subgraph Execution Provenance (Canonical Enums)
+        F["FIXTURE (Deterministic Offline)"]
         LE["LOCAL_EXECUTION (Pure Algorithms / CI)"]
-        NR["NOT_RUN / BLOCKED (Enforced Safety Boundaries)"]
+        LA["LIVE_AWS (Real Bedrock / AgentCore)"]
+        LG["LIVE_GOOGLE (Real Calendar / Tasks)"]
+        LX["LIVE_EXTERNAL (Real Weather API)"]
+        RL["RECORDED_LIVE (Historical Immutable Records)"]
+    end
+    subgraph Distinct Disclosures & Statuses
+        S["SIMULATED ALEXA+ EXPERIENCE (Client Surface Disclosure)"]
+        NR["NOT_RUN / BLOCKED (Operational Safety Statuses)"]
+        OO["OPERATOR_OBSERVED (External Platform Observation)"]
     end
 ```
 
@@ -40,7 +48,7 @@ flowchart TD
 
 | Sub-Component | Provenance Tier | Operational Reality | Evidence Link / Log |
 |---|---|---|---|
-| **Bedrock Converse API (`amazon.nova-micro-v1:0`)** | `RECORDED_LIVE` | Executed live against real AWS Bedrock in `us-east-1` under operator credentials (`ASIA...`). Proved model reasoning and candidate plan output. Cold latency: 3.463s. | `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md` `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` |
+| **Bedrock Converse API (`amazon.nova-micro-v1:0`)** | `RECORDED_LIVE` | Executed live against real AWS Bedrock in `us-east-1` under operator credentials (`ASIA...`). Proved model reasoning and candidate plan output. Observed single live inference duration: 3.463s (in P-07.06 end-to-end execution, not a multi-run cold-start benchmark). | `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md` `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` |
 | **Strands Agents SDK (1.57.2)** | `RECORDED_LIVE` & `LOCAL_EXECUTION` | Executed live with Bedrock Nova Micro. Evaluated in dual-runtime isolated environment with 1,155 automated tests. | `tests/planning/test_strands_agent.py` `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md` |
 | **Bedrock AgentCore Serverless MicroVM** | `RECORDED_LIVE` | Deployed live to AWS Bedrock AgentCore Runtime (port 8000, CodeZip / container). Executed remote MCP `initialize`, `tools/list`, and `mission_status`. Torn down cleanly with `agentcore remove all -y`. | `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md` `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md` |
 | **Current Live Remote AWS Endpoints** | `NOT_RUN` / `BLOCKED_LIVE` | Deliberately **not running** as an unmetered public cloud endpoint. Maintaining an active remote microVM would consume finite promotional credits and violate the Zero Personal Spend Law ($0.00). | `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md` |
@@ -54,7 +62,7 @@ flowchart TD
 | **Google Calendar API v3 Event Read** | `RECORDED_LIVE` | Real OAuth 2.0 read executed against dedicated disposable StillDone demo calendar. Verified pre-state departure at 07:45 AM. | `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md` `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` |
 | **Google Calendar API v3 Event Mutation** | `RECORDED_LIVE` | Real OAuth 2.0 update executed after operator grant consumption. Moved departure to 07:30 AM. Independently read back and verified. | `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md` `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` |
 | **Google Tasks API v1 Task Creation** | `RECORDED_LIVE` | Real OAuth 2.0 task creation on dedicated StillDone demo task list. Created "Pack children backpacks". Read back and verified (`status=needsAction`). | `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md` |
-| **Current Live Google Mutations** | `NOT_RUN` / `BLOCKED_LIVE` | Live Google mutations are only executed during supervised, operator-authorized recording sessions. The public exhibit and CI test suites execute 0 live Google writes. | `scripts/p19_02_demo_tooling.py` `docs/KILLER_DEMO_CONTRACT.md` |
+| **Current Live Google Mutations** | `NOT_RUN` / `BLOCKED_LIVE` | Live Google mutations are only executed during supervised, operator-authorized recording sessions. The public exhibit and CI test suites execute 0 live Google writes. | `scripts/demo_resources.py` `docs/KILLER_DEMO_CONTRACT.md` |
 
 ---
 

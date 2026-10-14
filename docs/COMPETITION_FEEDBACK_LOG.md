@@ -224,20 +224,21 @@ Do not invent entries.
 
 ---
 
-### F-20261014-02 — Cloudflare Pages Direct Upload DNS Resolution on Residential ISPs
+### F-20261014-02 — Cloudflare Pages Direct Upload DNS Resolution & Network Path Uncertainty
 
 - Date/time: 2026-10-14T22:30:00+03:00
 - Exact task: P-19.04 — Public judge exhibit deployment & verification
-- Tool/API/SDK: Cloudflare Pages Direct Upload, DNS resolution over ISP DNS
+- Tool/API/SDK: Cloudflare Pages Direct Upload, DNS resolution over default ISP resolver
 - Version/region/account mode: `https://stilldone-judge-exhibit.pages.dev`
 - Attempt: Opening the deployed static judge exhibit on desktop browser via home Wi-Fi/ISP connection
-- Expected: Domain `*.pages.dev` resolves instantly and displays the exhibit
-- Actual: Initial connection timed out on desktop home Wi-Fi due to local ISP DNS filtering / resolution latency on newly created `*.pages.dev` subdomains. The site opened immediately on mobile phone over cellular mobile data.
+- Expected: Domain `*.pages.dev` resolves and displays the exhibit
+- Actual: Initial connection timed out on desktop home Wi-Fi. The site opened successfully on mobile phone over cellular mobile data, and subsequently loaded on desktop Chrome after configuring Secure DNS (DNS-over-HTTPS / DoH).
+- Causality & Diagnostics Truth: Root cause classified as `UNKNOWN / SUSPECTED DNS OR NETWORK PATH`. ISP filtering and DNS propagation delays were suspected by the operator but were NOT independently established (no packet captures, resolver traces, or network path diagnostics were recorded).
 - Severity: `LOW`
 - Workaround: Configured Chrome Secure DNS (DNS-over-HTTPS / DoH) on desktop, after which `https://stilldone-judge-exhibit.pages.dev` loaded instantly with green production status.
 - Evidence: `docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md` § 1.2
-- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? ISP DNS propagation / resolution limitation
-- Actionable suggestion: In hackathon operator guidance for Cloudflare Pages, note that newly deployed `*.pages.dev` subdomains may experience brief initial DNS resolution delays on some residential ISPs, and recommend testing on cellular data or enabling Secure DNS (DoH).
+- Was this operator error, StillDone bug, docs friction, platform bug, limitation, or unknown? UNKNOWN / SUSPECTED DNS OR NETWORK PATH (unconfirmed ISP/resolver latency)
+- Actionable suggestion: In hackathon operator guidance for Cloudflare Pages, note that newly deployed `*.pages.dev` subdomains may experience connectivity delays on some home network paths; testing over cellular data or enabling Secure DNS (DoH) provides an effective diagnostic workaround.
 - Would we build with it again? `YES`
 - Secrets/PII check: `CLEAN`
 
