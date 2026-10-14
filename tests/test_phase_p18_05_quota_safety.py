@@ -920,3 +920,397 @@ class TestAmbiguousMutationSafety:
         assert ratio < 0.00001
         # Preserves zero personal spend policy
         assert "personal spend" in spec.usage_based_billing_exposure.lower()
+
+
+class TestUnknownWriteSemanticsAndConsistency:
+    """Adversarial regression tests for P-18.05: Unknown-write semantics, router, and gate."""
+
+    def test_provider_execution_result_rejects_contradictory_classifications(self) -> None:
+        """Verify ProviderExecutionResult rejects contradictory writes/committed/success states."""
+        from stilldone.execution.contracts import (
+            ExecutionContractTypeError,
+            ExecutionContractValueError,
+        )
+        from stilldone.execution.state import ProviderExecutionResult
+
+        # 1. Invalid writes_committed type or value
+        with pytest.raises(ExecutionContractTypeError, match="writes_committed must be a string"):
+            ProviderExecutionResult(ActionType.CALENDAR_READ, True, "OK", writes_committed=123)  # type: ignore[arg-type]
+
+        with pytest.raises(
+            ExecutionContractValueError, match="must be one of 'CONFIRMED', 'NONE', 'UNKNOWN'"
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_READ, True, "OK", writes_committed="INVALID"
+            )
+
+        # 2. writes_committed='UNKNOWN' but writes_performed is not None
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="writes_performed must be None when writes_committed is 'UNKNOWN'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                False,
+                "ERR",
+                writes_performed=0,
+                writes_committed="UNKNOWN",
+            )
+
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="writes_performed must be None when writes_committed is 'UNKNOWN'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                False,
+                "ERR",
+                writes_performed=1,
+                writes_committed="UNKNOWN",
+            )
+
+        # 3. writes_committed='UNKNOWN' with success=True
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="success cannot be True when writes_committed is 'UNKNOWN'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                True,
+                "OK",
+                writes_performed=None,
+                writes_committed="UNKNOWN",
+            )
+
+        # 4. writes_performed=None but writes_committed != 'UNKNOWN'
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="writes_committed must be 'UNKNOWN' when writes_performed is None",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                False,
+                "ERR",
+                writes_performed=None,
+                writes_committed="NONE",
+            )
+
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="writes_committed must be 'UNKNOWN' when writes_performed is None",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                False,
+                "ERR",
+                writes_performed=None,
+                writes_committed="CONFIRMED",
+            )
+
+        # 5. writes_committed='NONE' but writes_performed != 0
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="writes_performed must be 0 when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                False,
+                "ERR",
+                writes_performed=1,
+                writes_committed="NONE",
+            )
+
+        # 6. writes_committed='NONE' and success=True on mutation
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE, True, "OK", writes_performed=0, writes_committed="NONE"
+            )
+
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="cannot have success=True when writes_committed is 'NONE'",
+        ):
+            ProviderExecutionResult(
+                ActionType.TASK_CREATE, True, "OK", writes_performed=0, writes_committed="NONE"
+            )
+
+        # 7. writes_committed='CONFIRMED' with writes_performed <= 0 or None
+        with pytest.raises(
+            ExecutionContractValueError,
+            match="must be strictly positive when writes_committed is 'CONFIRMED'",
+        ):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_UPDATE,
+                True,
+                "OK",
+                writes_performed=0,
+                writes_committed="CONFIRMED",
+            )
+
+        # 8. Read-only actions cannot write or have CONFIRMED
+        with pytest.raises(ExecutionContractValueError, match="cannot perform writes"):
+            ProviderExecutionResult(
+                ActionType.CALENDAR_READ,
+                True,
+                "OK",
+                writes_performed=1,
+                writes_committed="CONFIRMED",
+            )
+
+        with pytest.raises(ExecutionContractValueError, match="must have writes_committed='NONE'"):
+            ProviderExecutionResult(
+                ActionType.TASK_READ, True, "OK", writes_performed=0, writes_committed="CONFIRMED"
+            )
+
+    def test_record_provider_exception_read_actions_zero_writes(self) -> None:
+        """Verify read-only actions always produce 0 writes and NONE committed on exception."""
+        from stilldone.execution.attempts import record_provider_exception
+
+        for r_act in (ActionType.CALENDAR_READ, ActionType.TASK_READ, ActionType.WEATHER_READ):
+            res = record_provider_exception(r_act, RuntimeError("Random socket crash"))
+            assert res.writes_performed == 0
+            assert res.writes_committed == "NONE"
+            assert res.success is False
+
+    def test_record_provider_exception_preserves_zero_writes_on_proven_rejections(self) -> None:
+        """Verify proven pre-dispatch and definitive provider rejections record 0 writes / NONE."""
+        from stilldone.adapters.calendar import CalendarAuthenticationError, CalendarRateLimitError
+        from stilldone.adapters.tasks import TaskAuthenticationError, TaskRateLimitError
+        from stilldone.execution.attempts import record_provider_exception
+        from stilldone.execution.router import ActionAuthorityError
+
+        # Rate limits
+        res1 = record_provider_exception(ActionType.CALENDAR_UPDATE, CalendarRateLimitError("429"))
+        assert res1.writes_performed == 0
+        assert res1.writes_committed == "NONE"
+
+        res2 = record_provider_exception(ActionType.TASK_CREATE, TaskRateLimitError("429"))
+        assert res2.writes_performed == 0
+        assert res2.writes_committed == "NONE"
+
+        # Authentication rejections
+        res3 = record_provider_exception(
+            ActionType.CALENDAR_UPDATE, CalendarAuthenticationError("401")
+        )
+        assert res3.writes_performed == 0
+        assert res3.writes_committed == "NONE"
+
+        res4 = record_provider_exception(ActionType.TASK_CREATE, TaskAuthenticationError("403"))
+        assert res4.writes_performed == 0
+        assert res4.writes_committed == "NONE"
+
+        # Pre-dispatch authority denial
+        res5 = record_provider_exception(
+            ActionType.CALENDAR_UPDATE, ActionAuthorityError("No approval grant")
+        )
+        assert res5.writes_performed == 0
+        assert res5.writes_committed == "NONE"
+
+    def test_record_provider_exception_unknown_on_unexpected_mutation_exceptions(self) -> None:
+        """Verify unexpected exceptions after attempted mutation do NOT assume zero writes."""
+        from stilldone.adapters.calendar import CalendarTransportError
+        from stilldone.execution.attempts import record_provider_exception
+
+        # Generic RuntimeError after dispatch
+        res1 = record_provider_exception(
+            ActionType.CALENDAR_UPDATE, RuntimeError("Connection reset by peer")
+        )
+        assert res1.writes_performed is None
+        assert res1.writes_committed == "UNKNOWN"
+        assert res1.to_dict()["writes_performed"] == "UNKNOWN"
+        assert res1.to_dict()["writes_committed"] == "UNKNOWN"
+
+        # TimeoutError during task create
+        res2 = record_provider_exception(
+            ActionType.TASK_CREATE, TimeoutError("Timeout waiting for write response")
+        )
+        assert res2.writes_performed is None
+        assert res2.writes_committed == "UNKNOWN"
+
+        # CalendarTransportError without 4xx status
+        res3 = record_provider_exception(
+            ActionType.CALENDAR_UPDATE, CalendarTransportError("Broken pipe")
+        )
+        assert res3.writes_performed is None
+        assert res3.writes_committed == "UNKNOWN"
+
+    def test_router_level_adversarial_unexpected_exception_preserves_unknown(self) -> None:
+        """Verify router handlers return UNKNOWN when adapter raises unexpected exceptions."""
+        from unittest.mock import MagicMock
+
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.domain.authority import ApprovalGrant, AuthorityClass
+        from stilldone.domain.execution import ExecutionAttempt, IdempotencyKey
+        from stilldone.execution.router import CalendarUpdateHandler, TasksCreateHandler
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar", resource_kind=ResourceKind.CALENDAR_EVENT, resource_id="evt-1"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=target,
+            parameters={"summary": "New Title"},
+        )
+        attempt = ExecutionAttempt.create(
+            action_id=action.action_id, idempotency_key=IdempotencyKey.generate()
+        )
+
+        now = datetime.now(UTC)
+        grant = ApprovalGrant(
+            action=action,
+            authority_class=AuthorityClass.REVERSIBLE_APPROVAL_REQUIRED,
+            issued_at=now - timedelta(minutes=1),
+            expires_at=now + timedelta(minutes=10),
+        )
+
+        scope = DemoResourceScope(calendar_id="evt-1", task_list_id="tl-1")
+
+        from stilldone.action_policy import validate_action_contract
+
+        # 1. CalendarUpdateHandler with crashing adapter
+        mock_cal_adapter = GoogleCalendarUpdateAdapter(scope=scope, transport=MagicMock())
+        mock_cal_adapter.update_event = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("Kernel socket reset mid-write")
+        )
+        handler_cal = CalendarUpdateHandler(mock_cal_adapter)
+
+        res_cal = handler_cal.execute(
+            validate_action_contract(action), attempt=attempt, approval=grant
+        )
+        assert res_cal.writes_performed is None
+        assert res_cal.writes_committed == "UNKNOWN"
+        assert res_cal.success is False
+
+        # 2. TasksCreateHandler with timing-out adapter
+        mock_tasks_adapter = GoogleTasksCreateAdapter(scope=scope, transport=MagicMock())
+        mock_tasks_adapter.create_task = MagicMock(  # type: ignore[method-assign]
+            side_effect=TimeoutError("Socket dropped awaiting Tasks API ACK")
+        )
+        handler_tasks = TasksCreateHandler(mock_tasks_adapter)
+
+        tasks_target = TargetIdentity(
+            system="google_tasks", resource_kind=ResourceKind.TASK_LIST, resource_id="tl-1"
+        )
+        tasks_action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=tasks_target,
+            parameters={"title": "Pack bags"},
+        )
+        tasks_attempt = ExecutionAttempt.create(
+            action_id=tasks_action.action_id, idempotency_key=IdempotencyKey.generate()
+        )
+
+        res_tasks = handler_tasks.execute(
+            validate_action_contract(tasks_action), attempt=tasks_attempt
+        )
+        assert res_tasks.writes_performed is None
+        assert res_tasks.writes_committed == "UNKNOWN"
+        assert res_tasks.success is False
+
+    def test_gate_level_adversarial_unexpected_exception_preserves_unknown_in_tracker(
+        self,
+    ) -> None:
+        """Verify execution gate records UNKNOWN writes in tracker on unexpected router failure."""
+        from unittest.mock import MagicMock
+
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.execution.contracts import MissionExecutionContract
+        from stilldone.execution.gate import execute_gated_action
+        from stilldone.execution.scheduler import schedule_execution
+        from stilldone.execution.state import ActionExecutionStatus, ExecutionStateTracker
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_tasks", resource_kind=ResourceKind.TASK_LIST, resource_id="tl-1"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.TASK_CREATE,
+            target=target,
+            parameters={"title": "Pack bags"},
+        )
+        contract = MissionExecutionContract(
+            mission_id=mid,
+            actions=(action,),
+            dependencies={},
+        )
+        schedule = schedule_execution(contract)
+        tracker = ExecutionStateTracker(contract, schedule)
+
+        mock_router = MagicMock()
+        mock_router.execute.side_effect = RuntimeError(
+            "Transport drop after dispatching task create"
+        )
+
+        with pytest.raises(RuntimeError, match="Transport drop after dispatching task create"):
+            execute_gated_action(action, mock_router, tracker=tracker)
+
+        snapshot = tracker.snapshot()
+        rec = snapshot.step_records[action.action_id]
+        assert rec.status == ActionExecutionStatus.EXECUTION_FAILED
+        assert rec.provider_result is not None
+        assert rec.provider_result.writes_performed is None
+        assert rec.provider_result.writes_committed == "UNKNOWN"
+
+    def test_recovery_boundary_requires_verification_on_unknown_mutation_outcome(self) -> None:
+        """Verify evaluate_post_execution_recovery requires verification for UNKNOWN writes."""
+        from stilldone.domain.action import (
+            ActionContract,
+            ActionType,
+            ResourceKind,
+            TargetIdentity,
+        )
+        from stilldone.execution.state import ProviderExecutionResult
+        from stilldone.recovery.orchestrator import (
+            RecoveryActionType,
+            evaluate_post_execution_recovery,
+        )
+        from stilldone.recovery.retry import RetryPolicy
+
+        mid = MissionId.generate()
+        target = TargetIdentity(
+            system="google_calendar", resource_kind=ResourceKind.CALENDAR_EVENT, resource_id="evt-1"
+        )
+        action = ActionContract.create(
+            mission_id=mid,
+            action_type=ActionType.CALENDAR_UPDATE,
+            target=target,
+            parameters={"summary": "New Title"},
+        )
+
+        unknown_prov_res = ProviderExecutionResult(
+            action_type=ActionType.CALENDAR_UPDATE,
+            success=False,
+            status_name="RuntimeError",
+            writes_performed=None,
+            writes_committed="UNKNOWN",
+            error_message="Network partition mid-mutation",
+        )
+
+        rec_dec = evaluate_post_execution_recovery(
+            action=action,
+            attempt_number=1,
+            error=unknown_prov_res.error_message,
+            policy=RetryPolicy(max_attempts=3),
+            provider_result=unknown_prov_res,
+        )
+
+        # Ambiguous mutation must NEVER be retried blindly; requires independent verification first
+        assert rec_dec.action_type == RecoveryActionType.REQUIRES_VERIFICATION
+        assert "requires independent verification" in rec_dec.reason.lower()

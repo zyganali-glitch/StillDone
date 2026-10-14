@@ -159,7 +159,7 @@ In accordance with `AGENTS.md` § 11–12 and task acceptance criteria:
 - **Operator-Controlled Kill-Switch**: The admission gate evaluates `live_paid_path_enabled`. When `False` (default), all paid-capable invocation requests fail closed with `HTTP 403 Forbidden`.
 - **Budget Snapshot Fail-Closed**: Missing, expired, or corrupted budget snapshots immediately deny execution. Stale data never permits execution.
 - **Pre-Mutation Rate Limit Denial**: Rate-limit exhaustion returns `HTTP 429 Too Many Requests` *before* initiating any provider mutation or downstream model execution.
-- **Atomic Persistent Concurrency Safety**: The SQLite token bucket tracker operates under WAL mode with `BEGIN IMMEDIATE` transactions, ensuring atomic token reservation across concurrent callers.
+- **Atomic Persistent Concurrency Safety**: The SQLite fixed-window counter operates under WAL mode with `BEGIN IMMEDIATE` transactions, ensuring atomic request reservation across concurrent callers.
 - **Cost Ceiling != AWS Billing Cap**: Internal estimated cost limits are strictly modeled as application-level admission thresholds and explicitly documented as distinct from guaranteed AWS billing hard stops.
 - **Evidence Provenance**: `LOCAL_EXECUTION` (21 focused adversarial tests in `tests/test_phase_p18_04_budget_rate_limits.py`). Zero live AWS calls executed.
 

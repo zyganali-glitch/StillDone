@@ -17,6 +17,7 @@ Constitutional Invariants:
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import json
 import logging
 import math
@@ -1574,16 +1575,47 @@ class MissionReliabilityTestResult:
         return json.dumps(self.to_dict(), indent=indent)
 
 
+def _terminate_worker_thread(thread: threading.Thread, grace_period_seconds: float = 0.05) -> bool:
+    """Terminate and reap a stuck worker thread using CPython asynchronous exception.
+
+    Injects SystemExit into the target thread's execution context, unwinding stack frames
+    and executing finally blocks, then joins until the worker is reaped.
+    Returns True if the thread was successfully terminated and reaped; False if still terminating.
+    """
+    if not thread.is_alive() or thread.ident is None:
+        return True
+
+    thread_id = thread.ident
+    fn = ctypes.pythonapi.PyThreadState_SetAsyncExc
+    fn.argtypes = [ctypes.c_ulong, ctypes.py_object]
+    fn.restype = ctypes.c_int
+
+    ret = fn(ctypes.c_ulong(thread_id), ctypes.py_object(SystemExit))
+    if ret == 0:
+        # Thread already completed/exited before the exception was dispatched
+        thread.join(timeout=grace_period_seconds)
+        return not thread.is_alive()
+    elif ret > 1:
+        # Multiple thread states affected; clear immediately
+        fn(ctypes.c_ulong(thread_id), None)
+        return False
+
+    thread.join(timeout=grace_period_seconds)
+    return not thread.is_alive()
+
+
 def _run_with_bounded_timeout(
     target_fn: Callable[..., Any],
     timeout_seconds: float,
     timer: Callable[[], int],
     *args: Any,
 ) -> tuple[bool, Any, int]:
-    """Execute target_fn in a daemon thread bounded by timeout_seconds.
+    """Execute target_fn in a killable isolated worker thread bounded by timeout_seconds.
 
     Returns (completed, result_or_exc, elapsed_ns).
-    - If timed out: completed is False, result_or_exc is None.
+    - If timed out: completed is False, result_or_exc is None. The worker thread is actively
+      terminated via asynchronous SystemExit and reaped so that post-timeout execution and
+      fixture mutation are strictly prevented.
     - If exception raised: completed is True, result_or_exc is the caught exception.
     - If succeeded: completed is True, result_or_exc is the return value of target_fn.
     """
@@ -1593,8 +1625,10 @@ def _run_with_bounded_timeout(
     def worker() -> None:
         try:
             res_container[0] = target_fn(*args)
-        except BaseException as ex:
+        except Exception as ex:
             exc_container[0] = ex
+        except (SystemExit, BaseException):
+            pass
 
     thread = threading.Thread(target=worker, daemon=True)
     t0 = timer()
@@ -1604,6 +1638,7 @@ def _run_with_bounded_timeout(
     elapsed_ns = t1 - t0
 
     if thread.is_alive():
+        _terminate_worker_thread(thread, grace_period_seconds=min(0.05, timeout_seconds))
         return False, None, elapsed_ns
 
     if exc_container[0] is not None:
@@ -2210,40 +2245,43 @@ def run_repeated_mission_reliability_test(
         exercised_scenarios = {r.scenario for r in runs}
         untested = tuple(s for s in ALL_REPRESENTATIVE_SCENARIOS if s not in exercised_scenarios)
 
-        if len(untested) > 0:
+        any_scenario_failed = False
+        for r in runs:
+            if r.scenario == "SUCCESSFUL_LIFECYCLE":
+                if r.status != "PASS" or r.error_category is not None:
+                    any_scenario_failed = True
+                    break
+            elif r.scenario in ("BLOCKED_APPROVAL", "BLOCKED_PREFLIGHT"):
+                if r.status != "BLOCKED" or r.error_category is not None:
+                    any_scenario_failed = True
+                    break
+            elif r.scenario == "FAILED_READBACK":
+                if r.status != "FAILED" or r.error_category != "READBACK_CONTRADICTION":
+                    any_scenario_failed = True
+                    break
+            elif r.scenario == "INTERRUPTED_PROVIDER_ERROR":
+                if r.status != "FAILED" or r.error_category != "PROVIDER_429_THROTTLED":
+                    any_scenario_failed = True
+                    break
+            else:
+                if r.status != "PASS":
+                    any_scenario_failed = True
+                    break
+
+        integrity_failed = (
+            contamination_detected
+            or duplicate_mutation_detected
+            or false_ready_detected
+            or not historical_receipt_intact_all
+            or not predicate_correctness_all
+        )
+
+        if any_scenario_failed or integrity_failed:
+            qualification_status = "DISQUALIFIED"
+        elif len(untested) > 0:
             qualification_status = "PARTIAL_UNQUALIFIED"
         else:
-            all_scenarios_passed = True
-            for r in runs:
-                if r.scenario == "SUCCESSFUL_LIFECYCLE":
-                    if r.status != "PASS" or r.error_category is not None:
-                        all_scenarios_passed = False
-                        break
-                elif r.scenario in ("BLOCKED_APPROVAL", "BLOCKED_PREFLIGHT"):
-                    if r.status != "BLOCKED" or r.error_category is not None:
-                        all_scenarios_passed = False
-                        break
-                elif r.scenario == "FAILED_READBACK":
-                    if r.status != "FAILED" or r.error_category != "READBACK_CONTRADICTION":
-                        all_scenarios_passed = False
-                        break
-                elif r.scenario == "INTERRUPTED_PROVIDER_ERROR":
-                    if r.status != "FAILED" or r.error_category != "PROVIDER_429_THROTTLED":
-                        all_scenarios_passed = False
-                        break
-
-            integrity_passed = (
-                not contamination_detected
-                and not duplicate_mutation_detected
-                and not false_ready_detected
-                and historical_receipt_intact_all
-                and predicate_correctness_all
-            )
-
-            if all_scenarios_passed and integrity_passed:
-                qualification_status = "QUALIFIED"
-            else:
-                qualification_status = "DISQUALIFIED"
+            qualification_status = "QUALIFIED"
 
         successful_count = sum(1 for r in runs if r.status == "PASS")
         blocked_count = sum(1 for r in runs if r.status == "BLOCKED")

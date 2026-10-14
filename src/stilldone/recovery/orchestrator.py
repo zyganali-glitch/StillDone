@@ -203,6 +203,7 @@ def evaluate_post_execution_recovery(
     attempt_number: int,
     error: Exception | str | int | None,
     policy: RetryPolicy | None = None,
+    provider_result: Any | None = None,
 ) -> RecoveryDecision:
     """Evaluate recovery requirement immediately following an execution attempt.
 
@@ -246,6 +247,7 @@ def evaluate_post_execution_recovery(
         attempt_number=attempt_number,
         error=error,
         policy=policy,
+        provider_result=provider_result,
     )
 
     # 1. Ambiguous timeout on mutation requires independent verification

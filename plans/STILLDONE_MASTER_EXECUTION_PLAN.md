@@ -1806,7 +1806,7 @@ Acceptance:
 - Explicit operator authorization mandatory for paid-capable paths (`live_paid_path_enabled=False` fails closed).
 - Missing, stale, or corrupt budget snapshots fail closed.
 - Rate-limit exhaustion denies execution before paid operations or provider mutations (`HTTP 429 Too Many Requests`).
-- Persistent SQLite token bucket remains atomic and correct under concurrency (`BEGIN IMMEDIATE` WAL transactions).
+- Persistent SQLite fixed-window counter remains atomic and correct under concurrency (`BEGIN IMMEDIATE` WAL transactions).
 - Retries, replays, and process restarts cannot bypass rate limits.
 - Estimated internal cost ceiling never represented as a guaranteed AWS billing hard cap.
 - No silent fallback from blocked live execution to fixture execution.

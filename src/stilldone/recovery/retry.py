@@ -258,6 +258,7 @@ def evaluate_retry(
     attempt_number: int,
     error: Exception | str | int,
     policy: RetryPolicy | None = None,
+    provider_result: Any | None = None,
 ) -> RetryDecision:
     """Evaluate whether an action failure is eligible for retry and compute delay.
 
@@ -301,6 +302,24 @@ def evaluate_retry(
             requires_verification_before_retry=False,
             reason=f"Attempt ceiling reached ({attempt_number} >= {effective_ceiling})",
         )
+
+    # 1b. Unknown writes on mutation check (ambiguous write outcome)
+    if provider_result is not None and (
+        getattr(provider_result, "writes_committed", None) == "UNKNOWN"
+        or getattr(provider_result, "writes_performed", None) is None
+    ):
+        if strategy.duplicate_risk != DuplicateRiskClass.NONE:
+            return RetryDecision(
+                should_retry=False,
+                classification=RetryClassification.AMBIGUOUS_TIMEOUT,
+                attempt_number=attempt_number,
+                delay_seconds=0.0,
+                requires_verification_before_retry=True,
+                reason=(
+                    "Ambiguous mutation outcome (UNKNOWN writes committed) forbids blind "
+                    "retry; requires independent read-back verification before recovery"
+                ),
+            )
 
     # 2. Ambiguous timeout handling
     if classification == RetryClassification.AMBIGUOUS_TIMEOUT:

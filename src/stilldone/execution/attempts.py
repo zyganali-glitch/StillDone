@@ -112,6 +112,7 @@ def record_calendar_read_result(result: CalendarReadResult) -> ProviderExecution
         success=success,
         status_name=result.status.value,
         writes_performed=0,
+        writes_committed="NONE",
         captured_at=result.read_at,
         details=details,
         error_message=err,
@@ -216,30 +217,148 @@ def record_weather_read_result(result: WeatherReadResult) -> ProviderExecutionRe
         success=success,
         status_name=result.status.value,
         writes_performed=0,
+        writes_committed="NONE",
         captured_at=result.observed_at,
         details=details,
         error_message=err,
     )
 
 
+def _has_positive_evidence_of_zero_writes(exc: Exception) -> bool:
+    """Determine whether an exception carries positive evidence that 0 remote writes occurred.
+
+    Positive evidence exists for:
+    - Proven pre-dispatch denials (authority / permission / contract validation errors)
+    - Definitive provider rejections (rate-limits, 401/403 auth, 404 not found, 409 conflict,
+      412 precondition)
+    - Exceptions explicitly declaring 0 writes performed and NONE committed.
+
+    Without positive evidence (e.g. transport drop, socket timeout, unclassified runtime error),
+    zero remote writes MUST NOT be assumed.
+    """
+    from stilldone.adapters.calendar import (
+        CalendarAuthenticationError,
+        CalendarEventNotFoundError,
+        CalendarPreconditionFailedError,
+        CalendarRateLimitError,
+        CalendarScopeError,
+        CalendarTargetError,
+    )
+    from stilldone.adapters.tasks import (
+        TaskAuthenticationError,
+        TaskDueFormatError,
+        TaskNotFoundError,
+        TaskRateLimitError,
+        TaskScopeError,
+        TaskTargetError,
+    )
+    from stilldone.execution.router import ActionAuthorityError
+    from stilldone.pending_approval import PendingApprovalError
+
+    # 1. Explicitly recorded write facts on exception
+    if (
+        getattr(exc, "writes_performed", None) == 0
+        and getattr(exc, "writes_committed", None) == "NONE"
+    ):
+        return True
+
+    # 2. Known pre-dispatch validation / authority errors
+    if isinstance(
+        exc,
+        (
+            ActionAuthorityError,
+            PendingApprovalError,
+            ExecutionContractTypeError,
+            ExecutionContractValueError,
+            CalendarScopeError,
+            CalendarTargetError,
+            TaskScopeError,
+            TaskTargetError,
+            TaskDueFormatError,
+            PermissionError,
+        ),
+    ):
+        return True
+
+    # 3. Known definitive provider rejections
+    if isinstance(
+        exc,
+        (
+            CalendarRateLimitError,
+            TaskRateLimitError,
+            CalendarAuthenticationError,
+            TaskAuthenticationError,
+            CalendarEventNotFoundError,
+            CalendarPreconditionFailedError,
+            TaskNotFoundError,
+        ),
+    ):
+        return True
+
+    # 4. HTTP status codes indicating definitive rejection before write
+    status_code = getattr(exc, "status_code", None)
+    if status_code in (400, 401, 403, 404, 409, 412, 429):
+        return True
+
+    return False
+
+
 def record_provider_exception(
     action_type: ActionType,
     exc: Exception,
+    *,
+    writes_performed: int | None = None,
+    writes_committed: str | None = None,
 ) -> ProviderExecutionResult:
-    """Record a caught provider exception as a sanitized ProviderExecutionResult."""
+    """Record a caught provider exception as a sanitized ProviderExecutionResult.
+
+    Laws:
+    - Read-only action exceptions always record zero writes (writes_performed=0,
+      writes_committed="NONE").
+    - Mutation action exceptions (CALENDAR_UPDATE, TASK_CREATE) do NOT assume zero remote writes
+      without positive evidence:
+      - Proven pre-dispatch denials and definitive provider rejections record 0 writes / "NONE".
+      - Ambiguous outcomes (transport drops, timeouts, unexpected exceptions) record
+        writes_performed=None, writes_committed="UNKNOWN".
+    - Consistency between writes_performed, writes_committed, and success state is strictly
+      enforced.
+    """
     if not isinstance(action_type, ActionType):
         raise ExecutionContractTypeError("action_type must be an ActionType")
     if not isinstance(exc, Exception):
         raise ExecutionContractTypeError("exc must be an Exception instance")
 
+    if action_type in (ActionType.CALENDAR_READ, ActionType.TASK_READ, ActionType.WEATHER_READ):
+        effective_writes = 0 if writes_performed is None else writes_performed
+        effective_committed = "NONE" if writes_committed is None else writes_committed
+    elif action_type in (ActionType.CALENDAR_UPDATE, ActionType.TASK_CREATE):
+        if writes_performed is not None and writes_committed is not None:
+            effective_writes = writes_performed
+            effective_committed = writes_committed
+        elif _has_positive_evidence_of_zero_writes(exc):
+            effective_writes = 0
+            effective_committed = "NONE"
+        else:
+            effective_writes = None
+            effective_committed = "UNKNOWN"
+    else:
+        effective_writes = writes_performed
+        effective_committed = writes_committed or "NONE"
+
     sanitized_err = redact_text(str(exc))
+    details: dict[str, Any] = {
+        "exception_type": type(exc).__name__,
+        "writes_performed": (effective_writes if effective_writes is not None else "UNKNOWN"),
+        "writes_committed": effective_committed,
+    }
     return ProviderExecutionResult(
         action_type=action_type,
         success=False,
         status_name=type(exc).__name__,
-        writes_performed=0,
+        writes_performed=effective_writes,
+        writes_committed=effective_committed,
         captured_at=datetime.now(UTC),
-        details={"exception_type": type(exc).__name__},
+        details=details,
         error_message=sanitized_err,
     )
 

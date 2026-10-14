@@ -453,3 +453,107 @@ class TestReliabilityAdversarialIntegrity:
             assert result.runs[0].status == "FAILED"
             assert result.runs[0].error_category == "LIFECYCLE_VERIFICATION_MISMATCH"
             assert result.qualification_status == "DISQUALIFIED"
+
+
+class TestKillableTimeoutAndPrecedenceQualification:
+    """Adversarial regression tests for P-18.06 killable timeout and qualification precedence."""
+
+    def test_killable_timeout_prevents_delayed_mutation_after_timeout(self) -> None:
+        """Requirement 5: Prove a delayed mutation never occurs after timeout.
+
+        Verifies that when a worker exceeds timeout, it is genuinely terminated via
+        asynchronous SystemExit and reaped. Waiting well past the worker's original
+        sleep duration proves that no mutation occurs after timeout.
+        """
+        import time
+
+        from stilldone.benchmarks import _run_with_bounded_timeout
+
+        state = {"mutated": False, "post_timeout_executed": False}
+
+        def slow_worker() -> None:
+            time.sleep(0.3)
+            state["mutated"] = True
+            state["post_timeout_executed"] = True
+
+        t0 = time.perf_counter()
+        completed, res, elapsed_ns = _run_with_bounded_timeout(
+            slow_worker,
+            0.05,
+            time.perf_counter_ns,
+        )
+        t_return = time.perf_counter()
+
+        # Completed is False, result is None
+        assert completed is False
+        assert res is None
+        # Caller returns promptly bounded by timeout + small reap grace period
+        assert t_return - t0 < 0.25
+        assert state["mutated"] is False
+
+        # Wait well beyond the 0.3s worker sleep to prove no delayed mutation ever occurs
+        time.sleep(0.4)
+        assert state["mutated"] is False
+        assert state["post_timeout_executed"] is False
+
+    def test_delayed_fixture_mutation_never_occurs_after_scenario_timeout(self) -> None:
+        """Harness level: prove delayed fixture mutation never occurs after scenario timeout."""
+        import time
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        mutation_occurred = False
+
+        def delayed_seed_mutation(self: Any) -> Any:
+            time.sleep(0.3)
+            nonlocal mutation_occurred
+            mutation_occurred = True
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_01_seed", delayed_seed_mutation):
+            res = run_repeated_mission_reliability_test(
+                iteration_cap=1,
+                timeout_per_run_seconds=0.05,
+            )
+
+        assert res.runs[0].status == "FAILED"
+        assert res.runs[0].error_category == "EXECUTION_TIMEOUT"
+        # Qualification is DISQUALIFIED due to failure
+        assert res.qualification_status == "DISQUALIFIED"
+
+        # Wait past the worker sleep duration to confirm mutation never executed
+        time.sleep(0.4)
+        assert mutation_occurred is False
+
+    def test_partial_run_with_failure_reports_disqualified_not_partial_unqualified(self) -> None:
+        """Requirement 7: Failure/integrity checks take precedence over partial scenario coverage.
+
+        If a tested scenario fails unexpectedly, report DISQUALIFIED, even when other
+        scenarios remain untested (e.g. iteration_cap=2 < 15).
+        """
+        from unittest.mock import patch
+
+        from stilldone.killer_mission import KillerMissionSliceRunner
+
+        def failing_seed(self: Any) -> Any:
+            raise RuntimeError("Immediate failure in partial run")
+
+        with patch.object(KillerMissionSliceRunner, "step_p13_01_seed", failing_seed):
+            result = run_repeated_mission_reliability_test(iteration_cap=2)
+
+        # Scenarios remain untested because iteration_cap < 15
+        assert len(result.untested_scenarios) > 0
+        assert result.failed_runs >= 1
+        # Precedence rule: MUST be DISQUALIFIED, NOT PARTIAL_UNQUALIFIED
+        assert result.qualification_status == "DISQUALIFIED"
+
+    def test_clean_partial_run_preserves_partial_unqualified(self) -> None:
+        """Requirement 8: Preserve PARTIAL_UNQUALIFIED for clean partial coverage."""
+        clean_partial = run_repeated_mission_reliability_test(iteration_cap=3)
+
+        assert clean_partial.failed_runs == 0
+        assert clean_partial.cross_run_contamination_detected is False
+        assert clean_partial.duplicate_unintended_mutation_detected is False
+        assert clean_partial.false_ready_detected is False
+        assert len(clean_partial.untested_scenarios) > 0
+        assert clean_partial.qualification_status == "PARTIAL_UNQUALIFIED"

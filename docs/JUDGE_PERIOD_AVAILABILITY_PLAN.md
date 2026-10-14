@@ -123,7 +123,7 @@ StillDone separates public evaluation from live execution across two distinct su
 - **Transport**: Streamable HTTP MCP server.
 - **Admission Protection** (Enforced in `P-18.04`):
   - Current MCP tools are non-paid `mission_start` and `mission_status`.
-  - Rate limits: Persistent SQLite fixed-window rate limiter (`RateLimitMiddleware`, `SqliteRateLimitStore`, default 60 req/min bucket fail-closed).
+  - Rate limits: Persistent SQLite fixed-window rate limiter (`RateLimitMiddleware`, `SqliteRateLimitStore`, configured profile default: `max_requests_per_window=10` per 60-second window fail-closed; general `MCPServerConfig` rate protection is optional unless explicitly configured).
   - Incoming requests are evaluated as `NO_PAID_CAPABILITY / PUBLIC_UNTRUSTED`.
   - Paid-capable admission contracts are tested, but actual paid runtime wiring remains `NOT_INTEGRATED / NOT_AUTHORIZED`.
   - No AWS billing hard cap is provided by these internal rate-limiting admission controls.

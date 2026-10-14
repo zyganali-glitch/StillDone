@@ -82,7 +82,7 @@ class ProviderExecutionResult:
     captured_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     details: Mapping[str, Any] = field(default_factory=dict)
     error_message: str | None = None
-    writes_committed: str = "CONFIRMED"
+    writes_committed: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.action_type, ActionType):
@@ -106,6 +106,91 @@ class ProviderExecutionResult:
             raise ExecutionContractValueError("captured_at must be timezone-aware")
         if self.captured_at.tzinfo != UTC:
             object.__setattr__(self, "captured_at", self.captured_at.astimezone(UTC))
+
+        # Default writes_committed and writes_performed resolution if not explicitly set
+        if self.writes_committed is None:
+            if self.writes_performed is None:
+                object.__setattr__(self, "writes_committed", "UNKNOWN")
+            elif self.writes_performed == 0:
+                if self.success and self.action_type in (
+                    ActionType.CALENDAR_UPDATE,
+                    ActionType.TASK_CREATE,
+                ):
+                    object.__setattr__(self, "writes_performed", 1)
+                    object.__setattr__(self, "writes_committed", "CONFIRMED")
+                else:
+                    object.__setattr__(self, "writes_committed", "NONE")
+            else:
+                object.__setattr__(self, "writes_committed", "CONFIRMED")
+
+        if not isinstance(self.writes_committed, str):
+            raise ExecutionContractTypeError("writes_committed must be a string")
+        if self.writes_committed not in ("CONFIRMED", "NONE", "UNKNOWN"):
+            raise ExecutionContractValueError(
+                f"writes_committed must be one of 'CONFIRMED', 'NONE', 'UNKNOWN', "
+                f"got '{self.writes_committed}'"
+            )
+
+        # Read-only actions cannot write or commit writes
+        if self.action_type in (
+            ActionType.CALENDAR_READ,
+            ActionType.TASK_READ,
+            ActionType.WEATHER_READ,
+        ):
+            if self.writes_performed != 0:
+                raise ExecutionContractValueError(
+                    f"Read-only action {self.action_type.value} cannot perform writes, "
+                    f"got {self.writes_performed}"
+                )
+            if self.writes_committed != "NONE":
+                raise ExecutionContractValueError(
+                    f"Read-only action {self.action_type.value} must have writes_committed='NONE', "
+                    f"got '{self.writes_committed}'"
+                )
+
+        # Enforce consistency between writes_performed, writes_committed, and success
+        if self.writes_committed == "UNKNOWN":
+            if self.writes_performed is not None:
+                raise ExecutionContractValueError(
+                    "writes_performed must be None when writes_committed is 'UNKNOWN'"
+                )
+            if self.success:
+                raise ExecutionContractValueError(
+                    "success cannot be True when writes_committed is 'UNKNOWN'"
+                )
+
+        if self.writes_performed is None:
+            if self.writes_committed != "UNKNOWN":
+                raise ExecutionContractValueError(
+                    f"writes_committed must be 'UNKNOWN' when writes_performed is None, "
+                    f"got '{self.writes_committed}'"
+                )
+            if self.success:
+                raise ExecutionContractValueError(
+                    "success cannot be True when writes_performed is None"
+                )
+
+        if self.writes_committed == "NONE":
+            if self.writes_performed != 0:
+                raise ExecutionContractValueError(
+                    f"writes_performed must be 0 when writes_committed is 'NONE', "
+                    f"got {self.writes_performed}"
+                )
+            if (
+                self.action_type in (ActionType.CALENDAR_UPDATE, ActionType.TASK_CREATE)
+                and self.success
+            ):
+                raise ExecutionContractValueError(
+                    f"Mutation action {self.action_type.value} cannot have success=True "
+                    f"when writes_committed is 'NONE'"
+                )
+
+        if self.writes_committed == "CONFIRMED":
+            if self.writes_performed is None or self.writes_performed <= 0:
+                raise ExecutionContractValueError(
+                    "writes_performed must be strictly positive when writes_committed is "
+                    f"'CONFIRMED', got {self.writes_performed}"
+                )
 
         # Sanitize error_message if provided
         if self.error_message is not None:

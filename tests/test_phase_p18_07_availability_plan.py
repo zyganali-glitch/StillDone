@@ -124,3 +124,9 @@ def test_plan_documents_rate_limiter_and_judge_interaction_model() -> None:
     # Confirm burst 20 / max 2 concurrent claims were removed
     assert "burst 20" not in content
     assert "2 concurrent" not in content
+    # Confirm 60 req/min and token bucket claims were removed and profile defaults documented
+    assert "60 req/min" not in content
+    assert "token bucket" not in content.lower()
+    assert "max_requests_per_window=10" in content
+    assert "60-second window" in content
+    assert "optional" in content.lower()
