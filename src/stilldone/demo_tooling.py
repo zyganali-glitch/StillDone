@@ -21,10 +21,13 @@ Governing Laws:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from stilldone.adapters.calendar import CalendarTransportEvent
 from stilldone.demo_isolation import (
     DemoResourceScope,
     DemoScopeTypeError,
@@ -47,11 +50,70 @@ from stilldone.demo_seeding import (
     seed_canonical_demo_resources,
 )
 from stilldone.domain.provenance import EvidenceProvenance
+from stilldone.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
-# Canonical confirmation string for teardown
+# Canonical confirmation string prefix for teardown
 CANONICAL_TEARDOWN_CONFIRMATION: str = "CONFIRM_TEARDOWN"
+
+
+def make_scope_bound_teardown_confirmation(calendar_id: str, task_list_id: str) -> str:
+    """Format required target-bound confirmation token for teardown mutations."""
+    return f"{CANONICAL_TEARDOWN_CONFIRMATION}:{calendar_id.strip()}:{task_list_id.strip()}"
+
+
+def sanitize_tooling_text(text: str | None) -> str:
+    """Sanitize provider-supplied text, removing emails, tokens, IDs, and filesystem paths."""
+    if not text:
+        return ""
+    # 1. Redact standard secrets, tokens, emails, identifiers via StillDone redaction engine
+    redacted = redact_text(text)
+    # 2. Redact Windows absolute filesystem paths (e.g. C:\Users\... or C:/...)
+    redacted = re.sub(r"[a-zA-Z]:[\\/][^\s\"'<>|]+", "[REDACTED_PATH]", redacted)
+    # 3. Redact POSIX absolute filesystem paths
+    redacted = re.sub(
+        r"/(?:Users|home|root|var|tmp|etc|opt)/[^\s\"'<>|]+", "[REDACTED_PATH]", redacted
+    )
+    return redacted
+
+
+# ===========================================================================
+# Ownership & Provenance Manifest
+# ===========================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class DemoArtifactManifest:
+    """Explicit ownership and provenance manifest for disposable demo artifacts.
+
+    Guarantees:
+    - Destructive operations strictly require proven ownership of specific resource IDs.
+    - Matching title or container display name alone NEVER confers deletion authority.
+    - Preserves unrelated user-created tasks or calendar events sharing the same title.
+    """
+
+    owned_task_ids: frozenset[str] = field(default_factory=frozenset)
+    owned_event_ids: frozenset[str] = field(default_factory=frozenset)
+    canonical_event_id: str | None = None
+
+    def __init__(
+        self,
+        owned_task_ids: Sequence[str] | set[str] | frozenset[str] | None = None,
+        owned_event_ids: Sequence[str] | set[str] | frozenset[str] | None = None,
+        canonical_event_id: str | None = None,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "owned_task_ids",
+            frozenset(owned_task_ids) if owned_task_ids is not None else frozenset(),
+        )
+        object.__setattr__(
+            self,
+            "owned_event_ids",
+            frozenset(owned_event_ids) if owned_event_ids is not None else frozenset(),
+        )
+        object.__setattr__(self, "canonical_event_id", canonical_event_id)
 
 
 # ===========================================================================
@@ -97,6 +159,7 @@ class DemoToolingResult:
 
     Guarantees:
     - Zero raw external IDs or credentials leaked in str() or repr().
+    - Details and error messages are rigorously sanitized against emails, tokens, and paths.
     - Accurately tracks writes_performed and readback_verified.
     """
 
@@ -113,6 +176,22 @@ class DemoToolingResult:
     items_inspected: int = 0
     items_modified: int = 0
     items_deleted: int = 0
+
+    def __post_init__(self) -> None:
+        sanitized_details = sanitize_tooling_text(self.details)
+        if self.calendar_id and self.calendar_id in sanitized_details:
+            sanitized_details = sanitized_details.replace(self.calendar_id, "[REDACTED]")
+        if self.task_list_id and self.task_list_id in sanitized_details:
+            sanitized_details = sanitized_details.replace(self.task_list_id, "[REDACTED]")
+        object.__setattr__(self, "details", sanitized_details)
+
+        if self.error_message:
+            sanitized_err = sanitize_tooling_text(self.error_message)
+            if self.calendar_id and self.calendar_id in sanitized_err:
+                sanitized_err = sanitized_err.replace(self.calendar_id, "[REDACTED]")
+            if self.task_list_id and self.task_list_id in sanitized_err:
+                sanitized_err = sanitized_err.replace(self.task_list_id, "[REDACTED]")
+            object.__setattr__(self, "error_message", sanitized_err)
 
     def __repr__(self) -> str:
         cal_masked = "***" if self.calendar_id else None
@@ -168,6 +247,7 @@ def execute_demo_resource_operation(
     teardown_confirmation: str | None = None,
     event_spec: CanonicalEventSpec | None = None,
     provenance: EvidenceProvenance = EvidenceProvenance.FIXTURE,
+    manifest: DemoArtifactManifest | None = None,
 ) -> DemoToolingResult:
     """Execute a safe, scoped operator operation on dedicated demo resources.
 
@@ -370,6 +450,7 @@ def execute_demo_resource_operation(
             permit_mutation,
             teardown_confirmation,
             provenance,
+            manifest=manifest,
         )
 
     raise ValueError(f"Unsupported operation mode: {mode}")
@@ -707,10 +788,11 @@ def _execute_teardown(
     permit_mutation: bool,
     teardown_confirmation: str | None,
     provenance: EvidenceProvenance,
+    manifest: DemoArtifactManifest | None = None,
 ) -> DemoToolingResult:
-    """Safely tear down disposable demo run artifacts with exact confirmation."""
+    """Safely tear down disposable demo run artifacts with exact confirmation and ownership."""
     # 1. Discover demo artifacts to clean up
-    # Task list: tasks titled DEFAULT_PREPARATION_TASK_TITLE
+    # Task list discovery
     try:
         tasks = tasks_transport.list_tasks(scope.task_list_id)
     except Exception as exc:
@@ -728,13 +810,7 @@ def _execute_teardown(
             error_message=sanitized,
         )
 
-    tasks_to_delete = [
-        t
-        for t in tasks
-        if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
-    ]
-
-    # Calendar: duplicate events titled event_spec.title
+    # Calendar discovery
     try:
         events = calendar_transport.list_events_by_title(scope.calendar_id, event_spec.title)
     except Exception as exc:
@@ -752,13 +828,92 @@ def _execute_teardown(
             error_message=sanitized,
         )
 
-    # If there are duplicates, extra events should be removed
-    extra_events_to_delete = events[1:] if len(events) > 1 else []
+    # 2. Deterministic Canonical Event Selection (do NOT infer canonical event from list ordering)
+    canonical_event: CalendarTransportEvent | None = None
+    if manifest and manifest.canonical_event_id:
+        for ev in events:
+            if ev.id == manifest.canonical_event_id:
+                if (
+                    are_datetimes_equal(ev.start_time, event_spec.start_time)
+                    and are_datetimes_equal(ev.end_time, event_spec.end_time)
+                    and ev.status == "confirmed"
+                    and not ev.all_day
+                    and ev.summary == event_spec.title
+                ):
+                    canonical_event = ev
+                break
+    else:
+        # Search for unique event matching canonical pre-state spec
+        matching_spec_events = [
+            ev
+            for ev in events
+            if (
+                are_datetimes_equal(ev.start_time, event_spec.start_time)
+                and are_datetimes_equal(ev.end_time, event_spec.end_time)
+                and ev.status == "confirmed"
+                and not ev.all_day
+                and ev.summary == event_spec.title
+            )
+        ]
+        if len(matching_spec_events) == 1:
+            canonical_event = matching_spec_events[0]
+        elif len(matching_spec_events) > 1 and manifest:
+            # Disambiguate if extra events are explicitly declared in owned_event_ids
+            candidates = [
+                ev for ev in matching_spec_events if ev.id not in manifest.owned_event_ids
+            ]
+            if len(candidates) == 1:
+                canonical_event = candidates[0]
 
-    total_items_to_clean = len(tasks_to_delete) + len(extra_events_to_delete)
+    # Verify canonical event exists when events or event operations are involved
+    if manifest and manifest.canonical_event_id and canonical_event is None:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.CONTRADICTORY_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                f"Canonical demo event ID '{manifest.canonical_event_id}' could not be "
+                f"deterministically verified on demo calendar."
+            ),
+            error_message="CANONICAL_EVENT_CORRUPTED_OR_MISSING",
+            items_inspected=len(tasks) + len(events),
+        )
 
-    # If already completely clean:
-    if total_items_to_clean == 0:
+    if len(events) > 0 and canonical_event is None:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.CONTRADICTORY_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                f"Canonical demo event '{event_spec.title}' at start time {event_spec.start_time} "
+                f"could not be deterministically identified among {len(events)} candidate events."
+            ),
+            error_message="CANONICAL_EVENT_CORRUPTED_OR_MISSING",
+            items_inspected=len(tasks) + len(events),
+        )
+
+    # 3. Candidate Discovery
+    tasks_matching_title = [
+        t
+        for t in tasks
+        if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
+    ]
+    extra_events = [ev for ev in events if ev.id != canonical_event.id] if canonical_event else []
+
+    total_candidates = len(tasks_matching_title) + len(extra_events)
+
+    # 4. If already completely clean:
+    if total_candidates == 0:
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
             status=DemoToolingStatus.ALREADY_CLEAN,
@@ -769,15 +924,15 @@ def _execute_teardown(
             readback_verified=True,
             is_success=True,
             details=(
-                "Demo resources are already clean (0 matching demo artifacts to remove). "
-                "0 writes performed."
+                "Demo resources are already clean and in canonical pre-state "
+                "(0 matching demo artifacts to remove). 0 writes performed."
             ),
             items_inspected=len(tasks) + len(events),
             items_modified=0,
             items_deleted=0,
         )
 
-    # 2. Check mutation authorization (default is DRY RUN)
+    # 5. Check mutation authorization (default is DRY RUN)
     if not permit_mutation:
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
@@ -789,21 +944,20 @@ def _execute_teardown(
             readback_verified=False,
             is_success=False,
             details=(
-                f"DRY RUN: Found {len(tasks_to_delete)} demo task(s) and "
-                f"{len(extra_events_to_delete)} extra event(s) to clean. "
+                f"DRY RUN: Found {len(tasks_matching_title)} demo task(s) and "
+                f"{len(extra_events)} extra event(s) to clean. "
                 "No mutations executed (permit_mutation=False, 0 writes performed)."
             ),
             error_message="MUTATION_UNAUTHORIZED",
             items_inspected=len(tasks) + len(events),
         )
 
-    # 3. Check exact target-bound confirmation token
-    # Requires CANONICAL_TEARDOWN_CONFIRMATION or exact scope confirmation string
-    valid_confirmations = {
-        CANONICAL_TEARDOWN_CONFIRMATION,
-        f"{CANONICAL_TEARDOWN_CONFIRMATION}:{scope.calendar_id}:{scope.task_list_id}",
-    }
-    if not teardown_confirmation or teardown_confirmation.strip() not in valid_confirmations:
+    # 6. Exact Target-Bound Confirmation Enforcement
+    # Bare 'CONFIRM_TEARDOWN' is strictly rejected; exact scope-bound token mandatory
+    expected_confirmation = make_scope_bound_teardown_confirmation(
+        scope.calendar_id, scope.task_list_id
+    )
+    if not teardown_confirmation or teardown_confirmation.strip() != expected_confirmation:
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
             status=DemoToolingStatus.CONFIRMATION_REQUIRED,
@@ -814,32 +968,151 @@ def _execute_teardown(
             readback_verified=False,
             is_success=False,
             details=(
-                "Teardown mutation requires exact confirmation token ('CONFIRM_TEARDOWN'). "
-                "Execution halted fail-closed (0 writes performed)."
+                "Teardown mutation requires exact scope-bound confirmation token "
+                "('CONFIRM_TEARDOWN:***:***'). "
+                "Unbound 'CONFIRM_TEARDOWN' or mismatched scope confirmation is "
+                "rejected fail-closed (0 writes performed)."
             ),
             error_message="CONFIRMATION_REQUIRED",
             items_inspected=len(tasks) + len(events),
         )
 
-    # 4. Execute deletion of demo tasks
+    # 7. Ownership / Provenance Partitioning (Never delete by title alone)
+    owned_tasks_to_delete: list[dict[str, Any]] = []
+    unowned_tasks: list[dict[str, Any]] = []
+    for t in tasks_matching_title:
+        tid = t.get("id")
+        if tid and manifest and tid in manifest.owned_task_ids:
+            owned_tasks_to_delete.append(t)
+        else:
+            unowned_tasks.append(t)
+
+    # If unowned tasks with the demo title exist, preserve them and fail closed (0 writes)
+    if unowned_tasks:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.CONTRADICTORY_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                f"Unproven ownership: found {len(unowned_tasks)} task(s) titled "
+                f"'{DEFAULT_PREPARATION_TASK_TITLE}' without explicit demo ownership manifest. "
+                "Refusing destructive deletion of potential user data (0 writes performed)."
+            ),
+            error_message="UNPROVEN_RESOURCE_OWNERSHIP",
+            items_inspected=len(tasks) + len(events),
+        )
+
+    owned_events_to_delete: list[CalendarTransportEvent] = []
+    unowned_extra_events: list[CalendarTransportEvent] = []
+    for ev in extra_events:
+        if manifest and ev.id in manifest.owned_event_ids:
+            owned_events_to_delete.append(ev)
+        else:
+            unowned_extra_events.append(ev)
+
+    # If unowned events with the demo title exist, preserve them and fail closed (0 writes)
+    if unowned_extra_events:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.CONTRADICTORY_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                f"Unproven ownership: found {len(unowned_extra_events)} extra event(s) sharing "
+                "demo title without explicit demo ownership manifest. Refusing destructive "
+                "deletion of potential user data (0 writes performed)."
+            ),
+            error_message="UNPROVEN_RESOURCE_OWNERSHIP",
+            items_inspected=len(tasks) + len(events),
+        )
+
+    # 8. Execute Deletions with Bounded Per-Operation Handling (Stop on Ambiguous Writes)
     writes_count = 0
-    deleted_tasks_count = 0
-    for task in tasks_to_delete:
+    deleted_task_ids: list[str] = []
+    deleted_event_ids: list[str] = []
+
+    # A: Delete owned demo tasks
+    for task in owned_tasks_to_delete:
         task_id = task.get("id")
-        if task_id:
+        if not task_id:
+            continue
+        try:
             tasks_transport.delete_task(scope.task_list_id, task_id)
             writes_count += 1
-            deleted_tasks_count += 1
+            deleted_task_ids.append(task_id)
+        except Exception as exc:
+            # Ambiguous write probe: did the delete commit despite exception/timeout?
+            try:
+                post_probe = tasks_transport.list_tasks(scope.task_list_id)
+                if not any(t.get("id") == task_id for t in post_probe):
+                    writes_count += 1
+                    deleted_task_ids.append(task_id)
+            except Exception:
+                pass
+            sanitized = sanitize_error_message(exc)
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.VERIFICATION_FAILED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=writes_count,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Teardown halted after task deletion failure "
+                    f"({writes_count} write(s) performed): {sanitized}"
+                ),
+                error_message="PARTIAL_MUTATION_FAILURE",
+                items_inspected=len(tasks) + len(events),
+                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            )
 
-    # 5. Execute deletion of extra duplicate events
-    deleted_events_count = 0
-    for ev in extra_events_to_delete:
-        calendar_transport.delete_event(scope.calendar_id, ev.id)
-        writes_count += 1
-        deleted_events_count += 1
+    # B: Delete owned duplicate events
+    for ev in owned_events_to_delete:
+        try:
+            calendar_transport.delete_event(scope.calendar_id, ev.id)
+            writes_count += 1
+            deleted_event_ids.append(ev.id)
+        except Exception as exc:
+            # Ambiguous write probe: did the delete commit despite exception/timeout?
+            try:
+                post_ev = calendar_transport.get_event(scope.calendar_id, ev.id)
+                if post_ev is None or post_ev.status == "cancelled":
+                    writes_count += 1
+                    deleted_event_ids.append(ev.id)
+            except Exception:
+                pass
+            sanitized = sanitize_error_message(exc)
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.VERIFICATION_FAILED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=writes_count,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Teardown halted after event deletion failure "
+                    f"({writes_count} write(s) performed): {sanitized}"
+                ),
+                error_message="PARTIAL_MUTATION_FAILURE",
+                items_inspected=len(tasks) + len(events),
+                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            )
 
-    # 6. INDEPENDENT READ-BACK VERIFICATION
-    # Verify tasks are no longer present on task list
+    # 9. INDEPENDENT READ-BACK VERIFICATION
+    # Verify task list state: deleted tasks absent, prep task absent
     try:
         post_tasks = tasks_transport.list_tasks(scope.task_list_id)
     except Exception as exc:
@@ -855,15 +1128,13 @@ def _execute_teardown(
             is_success=False,
             details=f"Read-back task verification failed after teardown writes: {sanitized}",
             error_message="READBACK_PROBE_FAILED",
-            items_deleted=deleted_tasks_count + deleted_events_count,
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
         )
 
-    still_present_tasks = [
-        t
+    if any(t.get("id") in deleted_task_ids for t in post_tasks) or any(
+        t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
         for t in post_tasks
-        if t.get("title") == DEFAULT_PREPARATION_TASK_TITLE and t.get("status") != "completed"
-    ]
-    if still_present_tasks:
+    ):
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
             status=DemoToolingStatus.VERIFICATION_FAILED,
@@ -873,12 +1144,12 @@ def _execute_teardown(
             writes_performed=writes_count,
             readback_verified=False,
             is_success=False,
-            details="Teardown read-back mismatch: demo prep task is still observed on provider.",
+            details=("Teardown read-back mismatch: demo prep task is still observed on provider."),
             error_message="TEARDOWN_READBACK_TASK_STILL_PRESENT",
-            items_deleted=deleted_tasks_count + deleted_events_count,
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
         )
 
-    # Verify duplicate events are no longer present
+    # Verify calendar state: deleted events absent, canonical event intact, 1 matching event
     try:
         post_events = calendar_transport.list_events_by_title(scope.calendar_id, event_spec.title)
     except Exception as exc:
@@ -894,10 +1165,10 @@ def _execute_teardown(
             is_success=False,
             details=f"Read-back calendar verification failed after teardown writes: {sanitized}",
             error_message="READBACK_PROBE_FAILED",
-            items_deleted=deleted_tasks_count + deleted_events_count,
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
         )
 
-    if len(post_events) > 1:
+    if any(e.id in deleted_event_ids for e in post_events):
         return DemoToolingResult(
             mode=DemoOperationMode.TEARDOWN,
             status=DemoToolingStatus.VERIFICATION_FAILED,
@@ -907,10 +1178,74 @@ def _execute_teardown(
             writes_performed=writes_count,
             readback_verified=False,
             is_success=False,
-            details="Teardown read-back mismatch: duplicate events still observed on provider.",
+            details=(
+                "Teardown read-back mismatch: deleted duplicate event is still "
+                "observed on provider."
+            ),
             error_message="TEARDOWN_READBACK_DUPLICATE_EVENTS_REMAIN",
-            items_deleted=deleted_tasks_count + deleted_events_count,
+            items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
         )
+
+    if canonical_event is not None:
+        if len(post_events) != 1:
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.VERIFICATION_FAILED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=writes_count,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Teardown read-back mismatch: expected exactly 1 canonical event, "
+                    f"found {len(post_events)}."
+                ),
+                error_message="TEARDOWN_READBACK_COUNT_MISMATCH",
+                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            )
+
+        remaining_ev = post_events[0]
+        if (
+            remaining_ev.id != canonical_event.id
+            or not are_datetimes_equal(remaining_ev.start_time, event_spec.start_time)
+            or not are_datetimes_equal(remaining_ev.end_time, event_spec.end_time)
+            or remaining_ev.status != "confirmed"
+            or remaining_ev.all_day
+            or remaining_ev.summary != event_spec.title
+        ):
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.VERIFICATION_FAILED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=writes_count,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    "Teardown read-back mismatch: remaining event does not match canonical spec."
+                ),
+                error_message="TEARDOWN_READBACK_CANONICAL_EVENT_INVALID",
+                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            )
+    else:
+        if len(post_events) != 0:
+            return DemoToolingResult(
+                mode=DemoOperationMode.TEARDOWN,
+                status=DemoToolingStatus.VERIFICATION_FAILED,
+                provenance=provenance,
+                calendar_id=scope.calendar_id,
+                task_list_id=scope.task_list_id,
+                writes_performed=writes_count,
+                readback_verified=False,
+                is_success=False,
+                details=(
+                    f"Teardown read-back mismatch: expected 0 events, found {len(post_events)}."
+                ),
+                error_message="TEARDOWN_READBACK_COUNT_MISMATCH",
+                items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
+            )
 
     return DemoToolingResult(
         mode=DemoOperationMode.TEARDOWN,
@@ -922,10 +1257,15 @@ def _execute_teardown(
         readback_verified=True,
         is_success=True,
         details=(
-            f"Teardown completed and verified. Deleted {deleted_tasks_count} demo task(s) "
-            f"and {deleted_events_count} extra event(s). Writes: {writes_count}."
+            f"Teardown completed and verified. Deleted {len(deleted_task_ids)} demo task(s) "
+            f"and {len(deleted_event_ids)} duplicate event(s)."
+            + (
+                f" Canonical event verified at {remaining_ev.start_time}."
+                if canonical_event
+                else ""
+            )
         ),
         items_inspected=len(tasks) + len(events),
         items_modified=0,
-        items_deleted=deleted_tasks_count + deleted_events_count,
+        items_deleted=len(deleted_task_ids) + len(deleted_event_ids),
     )

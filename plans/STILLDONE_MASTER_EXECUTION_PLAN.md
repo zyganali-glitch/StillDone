@@ -1878,21 +1878,22 @@ Goal:
 make the project inspectable without hiding behind the developer machine.
 
 ### P-19.01 — Create clean-checkout setup path
-Status: DONE (Candidate for independent QA review)
+Status: REPAIRED (Candidate for independent QA review)
 
 Acceptance:
 - Truly reproducible setup script created in `scripts/reproduce.py`.
+- Truthful `--check-only`: passes `--no-sync` and `--offline` to all `uv run` invocations, failing closed with exit code 1 if `.venv` or `runtimes/strands_planner/.venv` is missing, performing zero implicit lockfile changes, zero environment creation, and zero network downloads.
 - Two isolated dependency environments strictly preserved: Core/MCP (`mcp >= 2.2.0`) and Strands Planner (`strands-agents == 1.57.2`, transitive `mcp < 2.2.0`).
 - Both environments synchronized independently from their pinned lockfiles (`uv.lock` and `runtimes/strands_planner/uv.lock`); dependency resolution is never overridden or merged.
-- Minimum Python requirement (>= 3.11) and package manager (`uv >= 0.11.28`) enforced with clear, platform-specific install guidance for missing prerequisites (Windows PowerShell, Linux/macOS curl, pip).
+- Minimum Python requirement (>= 3.11) and package manager (`uv >= 0.11.28`) enforced with strict regex validation and clear, platform-specific install guidance for missing prerequisites (Windows PowerShell, Linux/macOS curl, pip).
 - Zero credentials, zero external API calls, and strictly $0.00 personal spend required for default reproduction.
 - Distinction between offline fixture reproduction (`FIXTURE / LOCAL_EXECUTION`) and historical live evidence (`RECORDED_LIVE` in `docs/`) explicitly reported in console and documented in `docs/REPRODUCTION.md`.
-- Comprehensive judge reproduction guide documented in `docs/REPRODUCTION.md` and linked in `README.md`.
-- Proven in an actual clean isolated temporary working directory without pre-existing virtual environments or caches (`test_reproduction_isolated_clean_checkout_simulation`).
-- Validated via 6 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
+- Comprehensive judge reproduction guide documented in `docs/REPRODUCTION.md` (all repository-relative links, corrected Ubuntu-only CI scope) and linked in `README.md`.
+- Proven in an actual clean isolated temporary working directory without pre-existing virtual environments or caches (`test_reproduction_clean_checkout_fresh_installation`).
+- Validated via 8 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
 
 ### P-19.02 — Create sanitized demo-resource setup/teardown commands
-Status: DONE (Candidate for independent QA review)
+Status: REPAIRED (Candidate for independent QA review)
 
 Acceptance:
 - Narrowly scoped, idempotent operator tooling implemented in `src/stilldone/demo_tooling.py` and CLI script in `scripts/demo_resources.py`.
@@ -1902,12 +1903,14 @@ Acceptance:
 - Container creation and container deletion are strictly forbidden.
 - Container title verification enforced: calendar must match "StillDone Demo" and task list must match "StillDone Demo".
 - Idempotency enforced: running setup twice on canonical pre-state executes 0 writes (`VERIFIED_EXISTING`); running teardown twice on clean state executes 0 writes (`ALREADY_CLEAN`).
-- Narrow teardown scope: removes demo mission artifacts (tasks titled "Pack backpacks" and duplicate demo events); never deletes unrelated resources.
-- Teardown mutation safety: requires exact target-bound confirmation token (`CONFIRM_TEARDOWN` or `CONFIRM_TEARDOWN:<cal_id>:<tl_id>`); fails closed if confirmation is missing or invalid (`CONFIRMATION_REQUIRED`, 0 writes).
-- Independent read-back required for every mutation: write success alone cannot promote; read-back verification confirms state change before declaring success.
-- Privacy & sanitization: raw external IDs, tokens, and secrets are masked with `***` in `str()`/`repr()` and `[REDACTED]` in `to_sanitized_dict()` and CLI output.
+- Exact target-bound confirmation token: bare `CONFIRM_TEARDOWN` strictly rejected; requires `CONFIRM_TEARDOWN:<cal_id>:<tl_id>`; mismatched scope or empty confirmation fails closed (`CONFIRMATION_REQUIRED`, 0 writes).
+- Never delete by title alone: exact per-object ownership/provenance proof via `DemoArtifactManifest`; title matching or container name alone NEVER confers deletion authority; unowned tasks titled "Pack backpacks" and unowned extra events are strictly preserved, failing closed with `UNPROVEN_RESOURCE_OWNERSHIP` and 0 writes.
+- Deterministic canonical event selection: explicit manifest ID or unique canonical spec match; list ordering `[0]` never assumed; canonical event absent/corrupted detected fail-closed; read-back verifies canonical event remains intact at exact canonical spec and count == 1.
+- Bounded per-operation delete handling with ambiguous write probes detecting committed deletes on transport exceptions/timeouts, accurately tracking `writes_performed`.
+- Sanitization & privacy: raw external IDs, tokens, AWS keys, emails, and filesystem paths are redacted across details, error_message, `repr()`, and JSON outputs.
+- Fixture transparency: prominent ephemeral in-memory fixture warning displayed in text mode and `"ephemeral_fixture_notice": True` in JSON mode, clearly documenting that CLI fixture runs do not persist across runs and do not mutate Google.
 - All live mutating commands remain disabled in this batch; no unapproved live mutations executed; $0.00 personal spend maintained.
-- Validated via 29 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+- Validated via 40 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 
 ### P-19.03 — Deploy final remote MCP/runtime path
 Status: PENDING

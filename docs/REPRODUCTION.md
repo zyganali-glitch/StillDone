@@ -14,7 +14,7 @@ This guide provides the official instructions to reproduce and verify StillDone 
 All reproducible test suites execute deterministically under `FIXTURE` and `LOCAL_EXECUTION` provenance using isolated in-memory fakes and strict contract assertions.
 
 > [!NOTE]
-> Historical live AWS Bedrock/AgentCore and Google Calendar/Tasks execution evidence is recorded and preserved in `docs/` (e.g. [`P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](file:///c:/Users/Dell%2024%20one%20Plus/Projects/StillDone/docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) and [`P13_KILLER_MISSION_EVIDENCE.md`](file:///c:/Users/Dell%2024%20one%20Plus/Projects/StillDone/docs/P13_KILLER_MISSION_EVIDENCE.md)) under `RECORDED_LIVE` provenance.
+> Historical live AWS Bedrock/AgentCore and Google Calendar/Tasks execution evidence is recorded and preserved in `docs/` (e.g. [`P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) and [`P13_KILLER_MISSION_EVIDENCE.md`](P13_KILLER_MISSION_EVIDENCE.md)) under `RECORDED_LIVE` provenance.
 
 ---
 
@@ -22,7 +22,7 @@ All reproducible test suites execute deterministically under `FIXTURE` and `LOCA
 
 | Component | Supported Version Range | CI Tested Version |
 | :--- | :--- | :--- |
-| **Operating System** | Windows 10/11, Ubuntu 22.04/24.04, macOS 13+ | Ubuntu Linux (`ubuntu-latest`) & Windows 11 |
+| **Operating System** | Windows 10/11, Ubuntu 22.04/24.04, macOS 13+ | Ubuntu Linux (`ubuntu-latest`) |
 | **Package Manager** | `uv >= 0.11.28` | `0.11.28` / `0.12.23` |
 | **Core / MCP Python** | Python `3.11`, `3.12`, `3.13` | `3.13` (`.python-version: 3.13`) |
 | **Strands Planner Python** | Python `3.11`, `3.12` | `3.12` |
@@ -48,10 +48,10 @@ StillDone strictly isolates two distinct runtime environments:
 
 1. **StillDone Core / MCP Runtime** (`pyproject.toml` at repo root):
    - Requires `mcp >= 2.2.0` for the modern Streamable HTTP MCP server spine.
-   - Pinned by root [`uv.lock`](file:///c:/Users/Dell%2024%20one%20Plus/Projects/StillDone/uv.lock).
+   - Pinned by root [`uv.lock`](../uv.lock).
 2. **Strands Planner Runtime** (`runtimes/strands_planner/pyproject.toml`):
    - Requires `strands-agents == 1.57.2`, which upstream pins `mcp >= 1.23.0, < 2.2.0`.
-   - Pinned by [`runtimes/strands_planner/uv.lock`](file:///c:/Users/Dell%2024%20one%20Plus/Projects/StillDone/runtimes/strands_planner/uv.lock).
+   - Pinned by [`runtimes/strands_planner/uv.lock`](../runtimes/strands_planner/uv.lock).
 
 **Architectural Law:** The two environments have non-intersecting MCP SDK dependency requirements. They must **never** be merged or forced into a single global environment.
 

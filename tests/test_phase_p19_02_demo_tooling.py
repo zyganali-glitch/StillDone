@@ -41,10 +41,12 @@ from stilldone.demo_seeding import (
 )
 from stilldone.demo_tooling import (
     CANONICAL_TEARDOWN_CONFIRMATION,
+    DemoArtifactManifest,
     DemoOperationMode,
     DemoToolingResult,
     DemoToolingStatus,
     execute_demo_resource_operation,
+    make_scope_bound_teardown_confirmation,
 )
 from stilldone.domain.provenance import EvidenceProvenance
 
@@ -370,7 +372,7 @@ def test_teardown_missing_confirmation_fails_closed(
     cal_t, tasks_t = seeded_transports
     tasks_t.add_task(valid_scope.task_list_id, "t_101", DEFAULT_PREPARATION_TASK_TITLE)
 
-    # permit_mutation=True but NO teardown_confirmation
+    # permit_mutation=True but NO teardown_confirmation (None)
     result = execute_demo_resource_operation(
         scope=valid_scope,
         calendar_transport=cal_t,
@@ -378,6 +380,7 @@ def test_teardown_missing_confirmation_fails_closed(
         mode=DemoOperationMode.TEARDOWN,
         permit_mutation=True,
         teardown_confirmation=None,
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
     )
 
     assert result.status == DemoToolingStatus.CONFIRMATION_REQUIRED
@@ -386,10 +389,11 @@ def test_teardown_missing_confirmation_fails_closed(
     assert tasks_t.writes_count == 0
 
 
-def test_teardown_wrong_confirmation_token_fails_closed(
+def test_teardown_bare_confirmation_token_rejected_fail_closed(
     valid_scope: DemoResourceScope,
     seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
 ) -> None:
+    """Bare CONFIRM_TEARDOWN without scope binding MUST be rejected fail-closed (B1)."""
     cal_t, tasks_t = seeded_transports
     tasks_t.add_task(valid_scope.task_list_id, "t_101", DEFAULT_PREPARATION_TASK_TITLE)
 
@@ -399,7 +403,8 @@ def test_teardown_wrong_confirmation_token_fails_closed(
         tasks_transport=tasks_t,
         mode=DemoOperationMode.TEARDOWN,
         permit_mutation=True,
-        teardown_confirmation="WRONG_TOKEN",
+        teardown_confirmation=CANONICAL_TEARDOWN_CONFIRMATION,  # Bare unbound token!
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
     )
 
     assert result.status == DemoToolingStatus.CONFIRMATION_REQUIRED
@@ -408,12 +413,65 @@ def test_teardown_wrong_confirmation_token_fails_closed(
     assert tasks_t.writes_count == 0
 
 
-def test_authorized_teardown_deletes_prep_task_and_verifies(
+def test_teardown_mismatched_scope_confirmation_fails_closed(
     valid_scope: DemoResourceScope,
     seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
 ) -> None:
+    """Mismatched calendar or task list ID in confirmation token must fail closed (B1)."""
     cal_t, tasks_t = seeded_transports
     tasks_t.add_task(valid_scope.task_list_id, "t_101", DEFAULT_PREPARATION_TASK_TITLE)
+
+    # 1. Mismatched calendar
+    r1 = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=f"CONFIRM_TEARDOWN:wrong_cal:{valid_scope.task_list_id}",
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
+    )
+    assert r1.status == DemoToolingStatus.CONFIRMATION_REQUIRED
+    assert r1.writes_performed == 0
+
+    # 2. Mismatched task list
+    r2 = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=f"CONFIRM_TEARDOWN:{valid_scope.calendar_id}:wrong_tl",
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
+    )
+    assert r2.status == DemoToolingStatus.CONFIRMATION_REQUIRED
+    assert r2.writes_performed == 0
+
+    # 3. Empty string
+    r3 = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation="",
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
+    )
+    assert r3.status == DemoToolingStatus.CONFIRMATION_REQUIRED
+    assert r3.writes_performed == 0
+
+
+def test_authorized_teardown_deletes_owned_prep_task_and_verifies(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Authorized teardown with exact scope token and owned manifest deletes task (B1, B2)."""
+    cal_t, tasks_t = seeded_transports
+    tasks_t.add_task(valid_scope.task_list_id, "t_101", DEFAULT_PREPARATION_TASK_TITLE)
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
 
     result = execute_demo_resource_operation(
         scope=valid_scope,
@@ -421,7 +479,8 @@ def test_authorized_teardown_deletes_prep_task_and_verifies(
         tasks_transport=tasks_t,
         mode=DemoOperationMode.TEARDOWN,
         permit_mutation=True,
-        teardown_confirmation=CANONICAL_TEARDOWN_CONFIRMATION,
+        teardown_confirmation=confirmation,
+        manifest=DemoArtifactManifest(owned_task_ids={"t_101"}),
     )
 
     assert result.status == DemoToolingStatus.TEARDOWN_COMPLETED
@@ -435,12 +494,246 @@ def test_authorized_teardown_deletes_prep_task_and_verifies(
     assert not any(t.get("title") == DEFAULT_PREPARATION_TASK_TITLE for t in tasks)
 
 
+def test_teardown_preserves_unrelated_user_created_task(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """An unrelated user task titled 'Pack backpacks' must NOT be deleted without ownership (B2)."""
+    cal_t, tasks_t = seeded_transports
+    tasks_t.add_task(valid_scope.task_list_id, "user_task_999", DEFAULT_PREPARATION_TASK_TITLE)
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+
+    # Manifest is empty / does not own user_task_999
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=DemoArtifactManifest(owned_task_ids=set()),
+    )
+
+    # Must fail closed with UNPROVEN_RESOURCE_OWNERSHIP and 0 writes
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "UNPROVEN_RESOURCE_OWNERSHIP"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+    assert tasks_t.writes_count == 0
+
+    # User task MUST remain intact on the provider
+    tasks = tasks_t.list_tasks(valid_scope.task_list_id)
+    assert any(t.get("id") == "user_task_999" for t in tasks)
+
+
+def test_teardown_preserves_unrelated_user_created_event(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """An unrelated user event sharing demo title must NOT be deleted without ownership (B2)."""
+    cal_t, tasks_t = seeded_transports
+    event_spec = create_canonical_event_spec()
+    # Add canonical event to calendar
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="ev_canon",
+        summary=event_spec.title,
+        start_time=event_spec.start_time,
+        end_time=event_spec.end_time,
+    )
+    # Add an unowned extra user event
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="user_ev_999",
+        summary=event_spec.title,
+        start_time="2026-10-15T09:00:00Z",
+        end_time="2026-10-15T09:30:00Z",
+    )
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+
+    # Manifest does not own user_ev_999
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=DemoArtifactManifest(owned_event_ids=set()),
+    )
+
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "UNPROVEN_RESOURCE_OWNERSHIP"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+    assert cal_t.writes_count == 0
+
+    # User event MUST remain intact on provider
+    events = cal_t.list_events_by_title(
+        valid_scope.calendar_id, create_canonical_event_spec().title
+    )
+    assert any(e.id == "user_ev_999" for e in events)
+
+
+def test_teardown_deterministic_event_selection_reversed_discovery_order(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """Teardown must NOT infer canonical identity from list index [0] (B3)."""
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+
+    event_spec = create_canonical_event_spec()
+
+    # Insert extra duplicate FIRST in transport (so it will be events[0] in discovery)
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="extra_ev_owned",
+        summary=event_spec.title,
+        start_time="2026-10-15T10:00:00Z",
+        end_time="2026-10-15T10:30:00Z",
+    )
+    # Insert canonical event SECOND in transport (so it will be events[1] in discovery)
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="canonical_ev_keep",
+        summary=event_spec.title,
+        start_time=event_spec.start_time,
+        end_time=event_spec.end_time,
+    )
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+
+    # Manifest identifies extra_ev_owned for deletion and canonical_ev_keep as canonical
+    manifest = DemoArtifactManifest(
+        owned_event_ids={"extra_ev_owned"},
+        canonical_event_id="canonical_ev_keep",
+    )
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        event_spec=event_spec,
+        manifest=manifest,
+    )
+
+    assert result.status == DemoToolingStatus.TEARDOWN_COMPLETED
+    assert result.writes_performed == 1
+    assert result.items_deleted == 1
+    assert result.readback_verified is True
+    assert result.is_success is True
+
+    # Crucial check: canonical event was PRESERVED, duplicate was DELETED
+    remaining_events = cal_t.list_events_by_title(valid_scope.calendar_id, event_spec.title)
+    assert len(remaining_events) == 1
+    assert remaining_events[0].id == "canonical_ev_keep"
+
+
+def test_teardown_partial_failure_preserves_committed_writes_and_halts(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """A transport failure during destructive loop must halt safely and record writes (B4)."""
+    cal_t, tasks_t = seeded_transports
+    tasks_t.add_task(valid_scope.task_list_id, "t_1", DEFAULT_PREPARATION_TASK_TITLE)
+    tasks_t.add_task(valid_scope.task_list_id, "t_2", DEFAULT_PREPARATION_TASK_TITLE)
+
+    # Monkeypatch delete_task so that t_1 succeeds and t_2 raises an exception
+    orig_delete = tasks_t.delete_task
+
+    def delete_with_error(tl_id: str, task_id: str) -> None:
+        if task_id == "t_2":
+            raise RuntimeError("Provider connection reset during deletion of second task")
+        orig_delete(tl_id, task_id)
+
+    tasks_t.delete_task = delete_with_error  # type: ignore[method-assign, assignment]
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    manifest = DemoArtifactManifest(owned_task_ids={"t_1", "t_2"})
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
+    )
+
+    assert result.status == DemoToolingStatus.VERIFICATION_FAILED
+    assert result.error_message == "PARTIAL_MUTATION_FAILURE"
+    # Crucial invariant: exactly 1 write committed; must NOT be reported as 0 writes
+    assert result.writes_performed == 1
+    assert result.items_deleted == 1
+    assert result.readback_verified is False
+    assert result.is_success is False
+    assert "t_1" not in [t["id"] for t in tasks_t.list_tasks(valid_scope.task_list_id)]
+    assert "t_2" in [t["id"] for t in tasks_t.list_tasks(valid_scope.task_list_id)]
+
+
+def test_teardown_ambiguous_write_probe_detects_committed_deletion(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """When delete commits but transport drops acknowledgment, probe confirms write (B4)."""
+    cal_t, tasks_t = seeded_transports
+    tasks_t.add_task(valid_scope.task_list_id, "t_ambiguous", DEFAULT_PREPARATION_TASK_TITLE)
+
+    orig_delete = tasks_t.delete_task
+
+    def delete_then_raise(tl_id: str, task_id: str) -> None:
+        orig_delete(tl_id, task_id)  # deletion committed on remote
+        raise TimeoutError("Socket timeout waiting for HTTP 204 response")
+
+    tasks_t.delete_task = delete_then_raise  # type: ignore[method-assign, assignment]
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    manifest = DemoArtifactManifest(owned_task_ids={"t_ambiguous"})
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
+    )
+
+    assert result.status == DemoToolingStatus.VERIFICATION_FAILED
+    # Even though TimeoutError was raised, probe saw write committed!
+    assert result.writes_performed == 1
+    assert result.items_deleted == 1
+
+
 def test_teardown_idempotency_second_run_reports_already_clean(
     valid_scope: DemoResourceScope,
     seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
 ) -> None:
     cal_t, tasks_t = seeded_transports
     tasks_t.add_task(valid_scope.task_list_id, "t_101", DEFAULT_PREPARATION_TASK_TITLE)
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    manifest = DemoArtifactManifest(owned_task_ids={"t_101"})
 
     # First run: deletes task
     r1 = execute_demo_resource_operation(
@@ -449,7 +742,8 @@ def test_teardown_idempotency_second_run_reports_already_clean(
         tasks_transport=tasks_t,
         mode=DemoOperationMode.TEARDOWN,
         permit_mutation=True,
-        teardown_confirmation=CANONICAL_TEARDOWN_CONFIRMATION,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
     )
     assert r1.status == DemoToolingStatus.TEARDOWN_COMPLETED
     assert r1.writes_performed == 1
@@ -461,7 +755,8 @@ def test_teardown_idempotency_second_run_reports_already_clean(
         tasks_transport=tasks_t,
         mode=DemoOperationMode.TEARDOWN,
         permit_mutation=True,
-        teardown_confirmation=CANONICAL_TEARDOWN_CONFIRMATION,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
     )
     assert r2.status == DemoToolingStatus.ALREADY_CLEAN
     assert r2.writes_performed == 0
@@ -666,3 +961,289 @@ def test_cli_rejects_primary_calendar(capsys: pytest.CaptureFixture[str]) -> Non
     captured = capsys.readouterr().out
     data = json.loads(captured)
     assert data["status"] == "WRONG_TARGET_REJECTED"
+
+
+# ===========================================================================
+# 8. Targeted Regression: B3 Event Invariants & B5 Adversarial Sanitization
+# ===========================================================================
+
+
+def test_teardown_detects_missing_canonical_event_when_duplicates_exist(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """When duplicate events exist but none matches canonical pre-state spec, fail closed (B3)."""
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+    event_spec = create_canonical_event_spec()
+
+    # Seed 2 events with title but WRONG times (neither matches 07:30)
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="drifted_ev_1",
+        summary=event_spec.title,
+        start_time="2026-10-15T08:00:00Z",
+        end_time="2026-10-15T08:30:00Z",
+    )
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="drifted_ev_2",
+        summary=event_spec.title,
+        start_time="2026-10-15T09:00:00Z",
+        end_time="2026-10-15T09:30:00Z",
+    )
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        event_spec=event_spec,
+    )
+
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "CANONICAL_EVENT_CORRUPTED_OR_MISSING"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+    assert cal_t.writes_count == 0
+
+
+def test_teardown_detects_canonical_event_readback_drift(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """If canonical event is drifted/corrupted during read-back probe, fail verification (B3)."""
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+    event_spec = create_canonical_event_spec()
+
+    # Seed canonical event
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="canon_1",
+        summary=event_spec.title,
+        start_time=event_spec.start_time,
+        end_time=event_spec.end_time,
+    )
+    # Seed duplicate owned event
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="extra_1",
+        summary=event_spec.title,
+        start_time="2026-10-15T11:00:00Z",
+        end_time="2026-10-15T11:30:00Z",
+    )
+
+    # Monkeypatch delete_event so that when extra_1 is deleted, canon_1's start time drifts!
+    orig_delete = cal_t.delete_event
+
+    def delete_and_drift_canonical(calendar_id: str, event_id: str) -> None:
+        orig_delete(calendar_id, event_id)
+        # Drift canon_1
+        c_dict = cal_t._events[(calendar_id, "canon_1")]
+        c_dict["start"] = {"dateTime": "2026-10-15T06:30:00Z"}  # Genuinely drifted!
+
+    cal_t.delete_event = delete_and_drift_canonical  # type: ignore[method-assign]
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    manifest = DemoArtifactManifest(
+        owned_event_ids={"extra_1"},
+        canonical_event_id="canon_1",
+    )
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        event_spec=event_spec,
+        manifest=manifest,
+    )
+
+    assert result.status == DemoToolingStatus.VERIFICATION_FAILED
+    assert result.error_message == "TEARDOWN_READBACK_CANONICAL_EVENT_INVALID"
+    assert result.readback_verified is False
+    assert result.is_success is False
+    assert result.writes_performed == 1
+
+
+def test_teardown_mixed_owned_and_unowned_matching_title_events(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """When calendar has canonical, owned, and unowned user events, fail closed (B2, B3)."""
+    cal_t = FakeCalendarSeedTransport()
+    cal_t.add_calendar(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = FakeTasksSeedTransport()
+    tasks_t.add_task_list(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+    event_spec = create_canonical_event_spec()
+
+    # 1. Canonical event
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="canon_keep",
+        summary=event_spec.title,
+        start_time=event_spec.start_time,
+        end_time=event_spec.end_time,
+    )
+    # 2. Owned duplicate
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="owned_extra",
+        summary=event_spec.title,
+        start_time="2026-10-15T10:00:00Z",
+        end_time="2026-10-15T10:30:00Z",
+    )
+    # 3. Unowned user event
+    cal_t.add_event(
+        valid_scope.calendar_id,
+        event_id="unowned_user_ev",
+        summary=event_spec.title,
+        start_time="2026-10-15T12:00:00Z",
+        end_time="2026-10-15T12:30:00Z",
+    )
+
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    # Manifest only owns owned_extra, not unowned_user_ev
+    manifest = DemoArtifactManifest(
+        owned_event_ids={"owned_extra"},
+        canonical_event_id="canon_keep",
+    )
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        event_spec=event_spec,
+        manifest=manifest,
+    )
+
+    # Must fail closed: UNPROVEN_RESOURCE_OWNERSHIP with 0 writes performed
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "UNPROVEN_RESOURCE_OWNERSHIP"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+    assert cal_t.writes_count == 0
+
+    # All three events remain untouched on provider
+    events = cal_t.list_events_by_title(valid_scope.calendar_id, event_spec.title)
+    assert len(events) == 3
+    event_ids = {e.id for e in events}
+    assert event_ids == {"canon_keep", "owned_extra", "unowned_user_ev"}
+
+
+def test_adversarial_sanitization_masks_all_credentials_paths_emails(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """Adversarial provider outputs with tokens, emails, paths, AWS keys must be redacted (B5)."""
+    adversarial_text = (
+        "Fatal error connecting to user judge.evaluator@enterprise.example.com using "
+        "Bearer ya29.a0AfH6SMRandomBearerToken1234567890ExtraLongToken and "
+        "AWS key AKIAIOSFODNN7EXAMPLE at path "
+        "C:\\Users\\Administrator\\AppData\\Local\\StillDone\\creds.json "
+        "or unix path /home/judge/production/google_secret.json for resource "
+        f"{valid_scope.calendar_id} and task list {valid_scope.task_list_id}"
+    )
+
+    result = DemoToolingResult(
+        mode=DemoOperationMode.TEARDOWN,
+        status=DemoToolingStatus.VERIFICATION_FAILED,
+        provenance=EvidenceProvenance.FIXTURE,
+        calendar_id=valid_scope.calendar_id,
+        task_list_id=valid_scope.task_list_id,
+        writes_performed=0,
+        readback_verified=False,
+        is_success=False,
+        details=adversarial_text,
+        error_message=adversarial_text,
+    )
+
+    # Verify details sanitized
+    assert "ya29." not in result.details
+    assert "AKIA" not in result.details
+    assert "judge.evaluator" not in result.details
+    assert "Administrator" not in result.details
+    assert "/home/judge" not in result.details
+    assert valid_scope.calendar_id not in result.details
+    assert valid_scope.task_list_id not in result.details
+
+    # Verify error_message sanitized
+    assert result.error_message is not None
+    assert "ya29." not in result.error_message
+    assert "AKIA" not in result.error_message
+    assert "judge.evaluator" not in result.error_message
+    assert "Administrator" not in result.error_message
+
+    # Verify repr() sanitized
+    repr_str = repr(result)
+    assert "ya29." not in repr_str
+    assert "AKIA" not in repr_str
+    assert "judge.evaluator" not in repr_str
+    assert "Administrator" not in repr_str
+    assert valid_scope.calendar_id not in repr_str
+
+    # Verify to_sanitized_dict() sanitized
+    dict_repr = result.to_sanitized_dict()
+    assert dict_repr["calendar_id"] == "[REDACTED]"
+    assert dict_repr["task_list_id"] == "[REDACTED]"
+    assert "ya29." not in dict_repr["details"]
+    assert "judge.evaluator" not in dict_repr["details"]
+    assert "AKIA" not in dict_repr["details"]
+
+
+def test_cli_ephemeral_fixture_notice_displayed_in_text_and_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI must explicitly surface ephemeral fixture notice in text and JSON outputs (B5)."""
+    # 1. Text mode
+    exit_code_text = demo_cli_mod.main(
+        [
+            "--mode",
+            "inspect",
+            "--calendar-id",
+            VALID_CALENDAR_ID,
+            "--task-list-id",
+            VALID_TASK_LIST_ID,
+            "--fixture",
+        ]
+    )
+    assert exit_code_text == 0
+    text_out = capsys.readouterr().out
+    assert "EPHEMERAL IN-MEMORY FIXTURE" in text_out
+    assert "Independent CLI executions DO NOT share persisted state" in text_out
+    assert "0 calls to real Google APIs" in text_out
+
+    # 2. JSON mode
+    exit_code_json = demo_cli_mod.main(
+        [
+            "--mode",
+            "inspect",
+            "--calendar-id",
+            VALID_CALENDAR_ID,
+            "--task-list-id",
+            VALID_TASK_LIST_ID,
+            "--fixture",
+            "--json",
+        ]
+    )
+    assert exit_code_json == 0
+    json_out = capsys.readouterr().out
+    data = json.loads(json_out)
+    assert data["ephemeral_fixture_notice"] is True
+    assert "ephemeral in-memory fixture" in data["fixture_warning"].lower()

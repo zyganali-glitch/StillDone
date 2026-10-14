@@ -31,7 +31,7 @@ from stilldone.demo_seeding import (
     create_canonical_event_spec,
 )
 from stilldone.demo_tooling import (
-    CANONICAL_TEARDOWN_CONFIRMATION,
+    DemoArtifactManifest,
     DemoOperationMode,
     execute_demo_resource_operation,
 )
@@ -70,7 +70,25 @@ def create_parser() -> argparse.ArgumentParser:
         "--confirm-teardown",
         type=str,
         default=None,
-        help=f"Confirmation token for teardown mutations ('{CANONICAL_TEARDOWN_CONFIRMATION}')",
+        help="Required scope-bound confirmation token ('CONFIRM_TEARDOWN:<cal_id>:<tl_id>')",
+    )
+    parser.add_argument(
+        "--owned-task-id",
+        action="append",
+        default=[],
+        help="Explicitly owned demo task ID for teardown (can specify multiple times)",
+    )
+    parser.add_argument(
+        "--owned-event-id",
+        action="append",
+        default=[],
+        help="Explicitly owned duplicate demo event ID for teardown (can specify multiple times)",
+    )
+    parser.add_argument(
+        "--canonical-event-id",
+        type=str,
+        default=None,
+        help="Explicit canonical demo event ID to preserve during teardown",
     )
     parser.add_argument(
         "--fixture",
@@ -131,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    manifest = DemoArtifactManifest(
+        owned_task_ids=args.owned_task_id,
+        owned_event_ids=args.owned_event_id,
+        canonical_event_id=args.canonical_event_id,
+    )
+
     result = execute_demo_resource_operation(
         scope=scope,
         calendar_transport=cal_transport,
@@ -140,13 +164,24 @@ def main(argv: list[str] | None = None) -> int:
         teardown_confirmation=args.confirm_teardown,
         event_spec=create_canonical_event_spec(),
         provenance=provenance,
+        manifest=manifest,
+    )
+
+    fixture_notice = (
+        "NOTE: Running in EPHEMERAL IN-MEMORY FIXTURE mode (in-memory fakes).\n"
+        "Independent CLI executions DO NOT share persisted state, and mutations\n"
+        "under --execute operate strictly in local memory with 0 calls to real Google APIs."
     )
 
     if args.json:
-        print(json.dumps(result.to_sanitized_dict(), indent=2))
+        data = result.to_sanitized_dict()
+        data["ephemeral_fixture_notice"] = True
+        data["fixture_warning"] = fixture_notice
+        print(json.dumps(data, indent=2))
     else:
         print("\n" + "=" * 60)
         print("STILLDONE DEMO RESOURCE TOOLING RESULT")
+        print("Environment:        EPHEMERAL FIXTURE (in-memory fake; 0 real Google calls)")
         print("=" * 60)
         print(f"Mode:               {result.mode.value}")
         print(f"Status:             {result.status.value}")
@@ -159,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Details:            {result.details}")
         if result.error_message:
             print(f"Error Message:      {result.error_message}")
+        print("-" * 60)
+        print(fixture_notice)
         print("=" * 60 + "\n")
 
     return 0 if result.is_success or result.status.value.startswith("INSPECTED") else 1

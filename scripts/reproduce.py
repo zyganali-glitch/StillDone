@@ -37,14 +37,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-# Minimum supported Python version
+# Minimum supported Python and uv versions
 MIN_PYTHON_VERSION = (3, 11)
+MIN_UV_VERSION = (0, 11, 28)
 RECOMMENDED_CORE_PYTHON = "3.13"
 RECOMMENDED_PLANNER_PYTHON = "3.12"
 
@@ -59,7 +61,7 @@ def print_step(number: int, total: int, description: str) -> None:
 
 
 def check_prerequisites(repo_root: Path) -> str:
-    """Verify system prerequisites (Python version and uv tool)."""
+    """Verify system prerequisites (Python version, minimum uv version, and lockfiles)."""
     if sys.version_info < MIN_PYTHON_VERSION:
         print(
             f"ERROR: StillDone requires Python >= {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}, "
@@ -86,6 +88,26 @@ def check_prerequisites(repo_root: Path) -> str:
         )
         sys.exit(1)
 
+    # Validate declared minimum uv version
+    try:
+        proc = subprocess.run([uv_path, "--version"], capture_output=True, text=True, check=False)
+        m = re.search(r"uv\s+(\d+)\.(\d+)\.(\d+)", proc.stdout)
+        if m:
+            uv_ver = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            if uv_ver < MIN_UV_VERSION:
+                min_str = ".".join(str(p) for p in MIN_UV_VERSION)
+                current_str = f"{uv_ver[0]}.{uv_ver[1]}.{uv_ver[2]}"
+                print_banner("PREREQUISITE OUTDATED: Astral 'uv' package manager", file=sys.stderr)
+                print(
+                    f"StillDone requires uv >= {min_str}, but found uv {current_str}.\n"
+                    "Please upgrade uv to a supported version using:\n\n"
+                    "  uv self update\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+    except Exception as exc:
+        print(f"WARNING: Error while checking uv version: {exc}", file=sys.stderr)
+
     # Verify lockfiles exist
     core_lock = repo_root / "uv.lock"
     planner_lock = repo_root / "runtimes" / "strands_planner" / "uv.lock"
@@ -99,6 +121,60 @@ def check_prerequisites(repo_root: Path) -> str:
         sys.exit(1)
 
     return uv_path
+
+
+def check_virtual_environments_exist(repo_root: Path) -> None:
+    """Verify that both isolated virtual environments exist and are complete before check-only run.
+
+    Fails fail-closed if either environment is missing or incomplete, preventing implicit
+    environment creation or network downloads under --check-only.
+    """
+    core_venv = repo_root / ".venv"
+    planner_venv = repo_root / "runtimes" / "strands_planner" / ".venv"
+
+    # Core venv completeness check
+    core_python_win = core_venv / "Scripts" / "python.exe"
+    core_python_posix = core_venv / "bin" / "python"
+    core_cfg = core_venv / "pyvenv.cfg"
+
+    if (
+        not core_venv.is_dir()
+        or not core_cfg.is_file()
+        or not (core_python_win.is_file() or core_python_posix.is_file())
+    ):
+        print_banner("ENVIRONMENT MISSING: Core virtual environment not found", file=sys.stderr)
+        print(
+            "ERROR: --check-only specified, but Core virtual environment was not found "
+            f"at {core_venv}.\n"
+            "StillDone --check-only forbids implicit environment creation, sync, or network "
+            "downloads.\nPlease run the standard clean-checkout setup command first:\n\n"
+            "    python scripts/reproduce.py\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Strands Planner venv completeness check
+    planner_python_win = planner_venv / "Scripts" / "python.exe"
+    planner_python_posix = planner_venv / "bin" / "python"
+    planner_cfg = planner_venv / "pyvenv.cfg"
+
+    if (
+        not planner_venv.is_dir()
+        or not planner_cfg.is_file()
+        or not (planner_python_win.is_file() or planner_python_posix.is_file())
+    ):
+        print_banner(
+            "ENVIRONMENT MISSING: Strands Planner virtual environment not found", file=sys.stderr
+        )
+        print(
+            "ERROR: --check-only specified, but Strands Planner virtual environment was not "
+            f"found at {planner_venv}.\n"
+            "StillDone --check-only forbids implicit environment creation, sync, or network "
+            "downloads.\nPlease run the standard clean-checkout setup command first:\n\n"
+            "    python scripts/reproduce.py\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def run_command(
@@ -155,8 +231,12 @@ def sync_environments(uv_path: str, repo_root: Path) -> None:
     print("  -> Strands Planner isolated environment ready.")
 
 
-def verify_dependency_isolation(uv_path: str, repo_root: Path) -> None:
+def verify_dependency_isolation(uv_path: str, repo_root: Path, *, check_only: bool = False) -> None:
     """Verify that both environments enforce their required incompatible MCP version bounds."""
+    run_flags = ["--no-sync"]
+    if check_only:
+        run_flags.append("--offline")
+
     # Check Core MCP version: mcp >= 2.2.0
     core_check = (
         "import importlib.metadata; "
@@ -166,7 +246,7 @@ def verify_dependency_isolation(uv_path: str, repo_root: Path) -> None:
         "print(f'Core MCP version verified: {v} (>= 2.2.0)')"
     )
     run_command(
-        [uv_path, "run", "python", "-c", core_check],
+        [uv_path, "run", *run_flags, "python", "-c", core_check],
         cwd=repo_root,
         step_name="Core MCP version constraint assertion",
     )
@@ -185,15 +265,19 @@ def verify_dependency_isolation(uv_path: str, repo_root: Path) -> None:
         "print(f'Strands version verified: {s} (== 1.57.2), transitive MCP: {m} (< 2.2.0)')"
     )
     run_command(
-        [uv_path, "run", "--project", str(planner_dir), "python", "-c", planner_check],
+        [uv_path, "run", *run_flags, "--project", str(planner_dir), "python", "-c", planner_check],
         cwd=repo_root,
         env=planner_env,
         step_name="Strands Planner version constraint assertion",
     )
 
 
-def verify_production_imports(uv_path: str, repo_root: Path) -> None:
+def verify_production_imports(uv_path: str, repo_root: Path, *, check_only: bool = False) -> None:
     """Verify production planner imports succeed across the isolated boundary via PYTHONPATH."""
+    run_flags = ["--no-sync"]
+    if check_only:
+        run_flags.append("--offline")
+
     planner_dir = repo_root / "runtimes" / "strands_planner"
     planner_env = os.environ.copy()
     planner_env.pop("VIRTUAL_ENV", None)
@@ -206,15 +290,19 @@ def verify_production_imports(uv_path: str, repo_root: Path) -> None:
         "print('Strands Planner isolated runtime production imports verified successfully.')"
     )
     run_command(
-        [uv_path, "run", "--project", str(planner_dir), "python", "-c", import_cmd],
+        [uv_path, "run", *run_flags, "--project", str(planner_dir), "python", "-c", import_cmd],
         cwd=repo_root,
         env=planner_env,
         step_name="Strands Planner production import verification",
     )
 
 
-def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
+def run_tests(uv_path: str, repo_root: Path, full: bool, *, check_only: bool = False) -> None:
     """Run offline test suites across both environments."""
+    run_flags = ["--no-sync"]
+    if check_only:
+        run_flags.append("--offline")
+
     planner_dir = repo_root / "runtimes" / "strands_planner"
     planner_env = os.environ.copy()
     planner_env.pop("VIRTUAL_ENV", None)
@@ -229,6 +317,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
             [
                 uv_path,
                 "run",
+                *run_flags,
                 "pytest",
                 "--ignore=tests/planning/test_strands_agent.py",
                 "--ignore=tests/planning/test_rejection_hardening.py",
@@ -244,6 +333,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
             [
                 uv_path,
                 "run",
+                *run_flags,
                 "--project",
                 str(planner_dir),
                 "pytest",
@@ -272,7 +362,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
         # 3. mcp-verify standalone package smoke
         print("Executing standalone mcp-verify package smoke...")
         run_command(
-            [uv_path, "run", "python", "scripts/smoke_mcp_verify_wheel.py"],
+            [uv_path, "run", *run_flags, "python", "scripts/smoke_mcp_verify_wheel.py"],
             cwd=repo_root,
             step_name="mcp-verify wheel package smoke",
         )
@@ -285,6 +375,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
             [
                 uv_path,
                 "run",
+                *run_flags,
                 "pytest",
                 "tests/test_smoke.py",
                 "tests/test_demo_isolation.py",
@@ -303,6 +394,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
             [
                 uv_path,
                 "run",
+                *run_flags,
                 "--project",
                 str(planner_dir),
                 "pytest",
@@ -318,7 +410,7 @@ def run_tests(uv_path: str, repo_root: Path, full: bool) -> None:
         # 3. mcp-verify standalone package smoke
         print("Executing standalone mcp-verify package smoke...")
         run_command(
-            [uv_path, "run", "python", "scripts/smoke_mcp_verify_wheel.py"],
+            [uv_path, "run", *run_flags, "python", "scripts/smoke_mcp_verify_wheel.py"],
             cwd=repo_root,
             step_name="mcp-verify wheel package smoke",
         )
@@ -388,7 +480,9 @@ def main(argv: list[str] | None = None) -> None:
         print_step(2, 4, "Syncing isolated environments strictly from pinned lockfiles")
         sync_environments(uv_path, repo_root)
     else:
-        print_step(2, 4, "Skipping dependency sync (--check-only specified)")
+        print_step(2, 4, "Verifying existing virtual environments (--check-only specified)")
+        check_virtual_environments_exist(repo_root)
+        print("  -> Existing isolated virtual environments verified complete (offline mode).")
 
     if args.sync_only:
         print("\nDependency synchronization complete. Exiting (--sync-only specified).")
@@ -396,12 +490,12 @@ def main(argv: list[str] | None = None) -> None:
 
     # 3. Dependency Isolation Verification
     print_step(3, 4, "Asserting dependency isolation and version constraints")
-    verify_dependency_isolation(uv_path, repo_root)
-    verify_production_imports(uv_path, repo_root)
+    verify_dependency_isolation(uv_path, repo_root, check_only=args.check_only)
+    verify_production_imports(uv_path, repo_root, check_only=args.check_only)
 
     # 4. Tests
     print_step(4, 4, "Running deterministic offline test suites")
-    run_tests(uv_path, repo_root, full=args.full)
+    run_tests(uv_path, repo_root, full=args.full, check_only=args.check_only)
 
     # Summary
     print_reproduction_summary(full=args.full)

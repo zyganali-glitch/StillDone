@@ -97,21 +97,23 @@ Status:
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18: P-18.01–P-18.07 CLOSED — independent QA PASS ✅ (SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`)
-- P-19.01: COMPLETED (Candidate for independent QA review)
-  - Created and validated `scripts/reproduce.py`.
-  - Preserved dual-environment dependency isolation (Core MCP `mcp >= 2.2.0` vs Strands Planner `strands-agents == 1.57.2`, transitive `mcp < 2.2.0`).
-  - Tested in an actual isolated temporary directory without existing virtual environments or caches.
-  - Documented in `docs/REPRODUCTION.md` and linked in `README.md`.
-  - Validated via 6 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
-- P-19.02: COMPLETED (Candidate for independent QA review)
-  - Implemented operator tooling in `src/stilldone/demo_tooling.py` and CLI in `scripts/demo_resources.py`.
+- P-19.01: REPAIRED (Candidate for independent QA review)
+  - Created and validated `scripts/reproduce.py` with truthful `--check-only` enforcing `--no-sync` and `--offline` across all subcommands, failing closed with code 1 if `.venv` or `runtimes/strands_planner/.venv` is missing.
+  - Strict prerequisite enforcement (`uv >= 0.11.28`, `python >= 3.11`) with clear platform installation instructions.
+  - Repaired repository-relative links and corrected Ubuntu-only CI scope in `docs/REPRODUCTION.md`.
+  - Proven in an actual clean isolated temporary working directory without inherited virtual environments.
+  - Validated via 8 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
+- P-19.02: REPAIRED (Candidate for independent QA review)
+  - Implemented safe, scope-bound operator tooling in `src/stilldone/demo_tooling.py` and CLI in `scripts/demo_resources.py`.
   - Four distinct operational modes: `INSPECT`, `SETUP`, `VERIFY`, `TEARDOWN`.
   - Default is strictly `DRY_RUN / NO_MUTATION` (0 writes performed).
-  - Target isolation strictly enforced via `DemoResourceScope`; primary/default calendars/lists rejected fail-closed.
-  - Teardown requires exact target-bound confirmation token (`CONFIRM_TEARDOWN`).
-  - Read-back verification strictly enforced after every mutation.
-  - All outputs and logs sanitized (IDs masked, tokens/secrets excluded).
-  - Validated via 29 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+  - Exact target-bound confirmation token `CONFIRM_TEARDOWN:<cal_id>:<tl_id>` strictly enforced; bare `CONFIRM_TEARDOWN` and mismatched scope tokens fail closed (`CONFIRMATION_REQUIRED`, 0 writes).
+  - Never delete by title alone: explicit `DemoArtifactManifest` required for every task and extra event deletion; unowned user tasks and events are strictly preserved fail-closed (`UNPROVEN_RESOURCE_OWNERSHIP`, 0 writes).
+  - Deterministic canonical event selection (explicit manifest or exact single match; never `events[0]`); missing canonical event and readback drift detected fail-closed.
+  - Bounded per-operation delete handling with ambiguous write probes accurately tracking committed writes on transport errors.
+  - Adversarial output sanitization across details, error_message, `repr()`, and JSON representations.
+  - Prominent ephemeral fixture warning in text mode and `"ephemeral_fixture_notice": True` in JSON mode.
+  - Validated via 40 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 - P-19.03+: PENDING / NOT_RUN (strictly STOPPED before P-19.03; independent QA review required)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
