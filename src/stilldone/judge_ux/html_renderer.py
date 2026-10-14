@@ -61,7 +61,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
 
         drift_cls = "drifted-item" if step.is_drifted else ""
         step_aria = f"Step {step.step_number}: {html.escape(step.title)}"
-        rb_text = "Verified" if step.independent_readback_verified else "None"
+        rb_text = html.escape(step.readback_status)
 
         timeline_items_html.append(f"""
         <article class="timeline-item {drift_cls}" aria-label="{step_aria}">
@@ -112,13 +112,15 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                 </p>
                 <p class="approval-proposal">{desc_esc}</p>
                 <div class="fingerprint-box">
-                    <span class="fingerprint-label">Tamper-Evident Fingerprint:</span>
+                    <span class="fingerprint-label">
+                        Tamper-Evident Binding Hash (Derived from Fixture Action Outcome):
+                    </span>
                     <code class="fingerprint-hash">{fp_esc}...</code>
                 </div>
                 <div class="approval-footer">
                     <span class="auth-notice">
-                        Single-Use Grant bound to target and payload hash.
-                        Replays strictly rejected.
+                        Single-Use Grant bound to target identity, mission ID, and
+                        normalized payload parameters. Replays strictly rejected.
                     </span>
                 </div>
             </div>
@@ -527,9 +529,29 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
     <div class="container">
         <!-- P-15.02 Surface Disclosure Banner -->
         <aside class="header-banner" aria-label="Surface Disclosure">
-            <span class="badge-simulated">SIMULATED ALEXA+ EXPERIENCE</span>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <span class="badge-simulated">SIMULATED ALEXA+ EXPERIENCE</span>
+                <span class="badge badge-prov"
+                      style="background:#0369a1; color:#ffffff; font-weight:700;
+                             padding:0.25rem 0.65rem; border-radius:4px; font-size:0.85rem;">
+                    FIXTURE PLAYBACK
+                </span>
+            </div>
             <span class="backend-label">BACKEND: REAL STILLDONE DETERMINISTIC ENGINE</span>
         </aside>
+
+        <!-- Evaluation Provenance Notice -->
+        <div class="fixture-notice"
+             style="background:var(--bg-secondary); border-left:4px solid var(--accent-alexa);
+                    padding:0.75rem 1rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
+                    font-size:0.85rem; color:#cbd5e1;">
+            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit displays
+            deterministic <strong>FIXTURE / SIMULATION</strong> playback of the canonical killer
+            mission. It executes offline with zero live Google Calendar/Tasks mutations, zero AWS
+            Bedrock/AgentCore API calls, and zero credentials required. Authentic historical live
+            integration executions are preserved separately in the <code>docs/</code> ledger
+            (marked <code>RECORDED_LIVE</code>).
+        </div>
 
         <!-- P-15.01 & P-15.03 Hero Intent and Voice Summary -->
         <section class="hero-section" aria-labelledby="intent-title">

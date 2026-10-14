@@ -44,13 +44,13 @@ The operator inspected the AWS Billing & Cost Management console pages (Credits 
 - **Total Active Credit Programs**: Exactly 4 active credit entries.
 - **Total Displayed Remaining Credits (Gross Face Value)**: **$285.75 USD**.
 - **Estimated Remaining Credits**: **$285.66 USD**.
-- **Estimated Consumed Credits**: **$0.09 USD** (reflecting historical P-01 / P-05 microVM and inference activity).
+- **Estimated Consumed Credits**: **$0.09 USD** (estimated aggregate credit consumption displayed on credit overview; not attributed to specific individual services without itemized line-item billing evidence).
 
 ### 3.2 Payment Page & Personal Spend State
 
-- **Current Due / Outstanding Amount**: **TRY 0.00** ($0.00 USD equivalent).
-- **Zero Payments Currently Due**: Confirmed.
-- **Personal Spend Delta**: **$0.00** personal expenditure to date.
+- **Current Due / Outstanding Amount**: **TRY 0.00** ($0.00 USD equivalent displayed as currently due).
+- **Zero Payments Currently Due**: Confirmed as of October 14, 2026 console snapshot.
+- **Personal Spend Boundary**: The Payments console displays TRY 0.00 currently due. Note: Zero current payments due confirms no outstanding balance at snapshot time, but is not cited as mathematical proof that all historical charges across the account lifetime equal zero.
 
 ### 3.3 Critical Financial Constraints & Invariants
 
@@ -68,8 +68,8 @@ The operator navigated to the respective service consoles in `us-east-1`:
 
 ### 4.1 Amazon Bedrock AgentCore Runtime
 
-- **Active Runtimes Listed**: **0** resources.
-- **Verification**: The historical `stilldone_mcp_runtime` deployed in Phase P-05.06 was completely deleted and torn down as documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`.
+- **Active Runtimes Listed in us-east-1 Console**: **0** resources visible in the Amazon Bedrock AgentCore console.
+- **Teardown State**: Zero currently listed runtimes aligns with the historical deletion documented in `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`. (Note: Zero listed runtimes at snapshot time confirms absence of active runtimes in us-east-1, without independently reconstructing every historical deletion event).
 - **Current Runtime Ingress**: None exists.
 
 ### 4.2 Amazon Elastic Container Registry (ECR)

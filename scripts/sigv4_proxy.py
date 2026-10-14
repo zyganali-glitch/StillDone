@@ -10,8 +10,11 @@ Strict Invariants:
 3. Acquires AWS credentials solely from the active short-lived profile.
 4. Never logs, persists, or exposes credentials, tokens, Authorization values, ARNs, or session IDs.
 5. Does not fabricate remote health checks or synthetic success responses.
-6. Fail-closed session-identity boundary: rejects client session ID mismatches, handles
-   upstream session identity anomalies without blind retry, and never leaks session IDs.
+6. Fail-closed session-identity boundary: rejects client session ID mismatches, rejects
+   arbitrary client session adoption when unbound, handles upstream session identity anomalies
+   without blind retry or session forging, and never leaks session IDs.
+7. Local testing boundary: local tests validate command construction and header enforcement only;
+   they do not promise live cloud multi-call session durability across AgentCore invocations.
 """
 
 from __future__ import annotations
@@ -60,7 +63,24 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
         # Check if incoming request specified a session ID
         req_session = self.headers.get("mcp-session-id") or self.headers.get("Mcp-Session-Id")
 
-        # Fail-closed session identity check: reject client session ID mismatch
+        # Fail-closed session identity check:
+        # 1. Reject arbitrary client session identity adoption when proxy has no bound session
+        if req_session and not _active_session_id:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            err_payload = json.dumps(
+                {
+                    "error": "Session Identity Adoption Rejected",
+                    "message": (
+                        "Cannot adopt arbitrary client session ID when proxy has no bound session"
+                    ),
+                }
+            )
+            self.wfile.write(err_payload.encode("utf-8"))
+            return
+
+        # 2. Reject client session ID mismatch against bound proxy session
         if req_session and _active_session_id and req_session != _active_session_id:
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
@@ -76,7 +96,7 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(err_payload.encode("utf-8"))
             return
 
-        target_session = _active_session_id or req_session
+        target_session = _active_session_id
 
         with tempfile.NamedTemporaryFile("wb", delete=False, suffix=".json") as req_f:
             req_f.write(body)

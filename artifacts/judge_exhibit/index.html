@@ -294,9 +294,29 @@
     <div class="container">
         <!-- P-15.02 Surface Disclosure Banner -->
         <aside class="header-banner" aria-label="Surface Disclosure">
-            <span class="badge-simulated">SIMULATED ALEXA+ EXPERIENCE</span>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <span class="badge-simulated">SIMULATED ALEXA+ EXPERIENCE</span>
+                <span class="badge badge-prov"
+                      style="background:#0369a1; color:#ffffff; font-weight:700;
+                             padding:0.25rem 0.65rem; border-radius:4px; font-size:0.85rem;">
+                    FIXTURE PLAYBACK
+                </span>
+            </div>
             <span class="backend-label">BACKEND: REAL STILLDONE DETERMINISTIC ENGINE</span>
         </aside>
+
+        <!-- Evaluation Provenance Notice -->
+        <div class="fixture-notice"
+             style="background:var(--bg-secondary); border-left:4px solid var(--accent-alexa);
+                    padding:0.75rem 1rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
+                    font-size:0.85rem; color:#cbd5e1;">
+            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit displays
+            deterministic <strong>FIXTURE / SIMULATION</strong> playback of the canonical killer
+            mission. It executes offline with zero live Google Calendar/Tasks mutations, zero AWS
+            Bedrock/AgentCore API calls, and zero credentials required. Authentic historical live
+            integration executions are preserved separately in the <code>docs/</code> ledger
+            (marked <code>RECORDED_LIVE</code>).
+        </div>
 
         <!-- P-15.01 & P-15.03 Hero Intent and Voice Summary -->
         <section class="hero-section" aria-labelledby="intent-title">
@@ -341,7 +361,7 @@
                 <p class="timeline-desc">Disposable demo calendar verified with 07:45 event; prep task absent.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>1</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>VERIFIED</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -376,7 +396,7 @@
                 <p class="timeline-desc">AWS planner compiled 3 actions (0 model authority). Weather observed with 0 writes.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>0</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>NOT_APPLICABLE</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -411,7 +431,7 @@
                 <p class="timeline-desc">Task &#x27;Pack backpacks&#x27; created and independently verified via read-back.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>1</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>VERIFIED</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -446,7 +466,7 @@
                 <p class="timeline-desc">Departure shift to 07:30 paused fail-closed. 0 writes performed without human grant.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>0</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>NOT_APPLICABLE</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -481,7 +501,7 @@
                 <p class="timeline-desc">Operator grant consumed. Departure updated to 07:30 and read back independently.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>1</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>VERIFIED</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -516,7 +536,7 @@
                 <p class="timeline-desc">All predicates evaluated TRUE and FRESH. Mission promoted to READY with immutable hash.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>0</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>NOT_APPLICABLE</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -525,9 +545,9 @@
             </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
-                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></td></tr></tbody>
+                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>ea4e3d83ba23c472d1b68c2b4ad1eb9fe888a00687f283ab0385ece688dbfd2d</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>ea4e3d83ba23c472d1b68c2b4ad1eb9fe888a00687f283ab0385ece688dbfd2d</code></p>
             </div>
         </details>
         
@@ -551,7 +571,7 @@
                 <p class="timeline-desc">Departure moved to 08:00 externally. Mission reconciled READY -&gt; DRIFTED. Historical receipt intact.</p>
                 <div class="timeline-meta">
                     <span>Writes: <strong>0</strong></span>
-                    <span>Read-back: <strong>Verified</strong></span>
+                    <span>Read-back: <strong>DRIFT_DETECTED</strong></span>
                 </div>
                 
         <details class="evidence-details">
@@ -562,7 +582,7 @@
                 <table class="evidence-table">
                     <tbody><tr><th>observed_start</th><td><code>08:00:00 UTC</code></td></tr><tr><th>predicate_truth</th><td><code>False</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>ea4e3d83ba23c472d1b68c2b4ad1eb9fe888a00687f283ab0385ece688dbfd2d</code></p>
             </div>
         </details>
         
@@ -587,13 +607,15 @@
                 </p>
                 <p class="approval-proposal">Shift departure time from 07:45 AM to 07:30 AM</p>
                 <div class="fingerprint-box">
-                    <span class="fingerprint-label">Tamper-Evident Fingerprint:</span>
-                    <code class="fingerprint-hash">sha256:295709cb401006549714956ef...</code>
+                    <span class="fingerprint-label">
+                        Tamper-Evident Binding Hash (Derived from Fixture Action Outcome):
+                    </span>
+                    <code class="fingerprint-hash">sha256:ae66d9bef060d7f47873c8599...</code>
                 </div>
                 <div class="approval-footer">
                     <span class="auth-notice">
-                        Single-Use Grant bound to target and payload hash.
-                        Replays strictly rejected.
+                        Single-Use Grant bound to target identity, mission ID, and
+                        normalized payload parameters. Replays strictly rejected.
                     </span>
                 </div>
             </div>
@@ -611,7 +633,7 @@
             </p>
             <div class="receipt-hash-block">
                 <label>Canonical Receipt SHA-256:</label>
-                <code>b8d65a7a99ab00a9dd1119cc527e874c5affb91480a1624033434c1c889c6ec4</code>
+                <code>ea4e3d83ba23c472d1b68c2b4ad1eb9fe888a00687f283ab0385ece688dbfd2d</code>
             </div>
             <div class="receipt-meta-grid">
                 <div>
@@ -698,7 +720,7 @@
         <footer>
             <p>
                 StillDone Hackathon Exhibit &bull; Zero Personal Spend ($0.00) &bull;
-                Verified Provenance &bull; Generated: 2026-10-14T14:05:53.527549+00:00
+                Verified Provenance &bull; Generated: 2026-10-14T16:53:13.208032+00:00
             </p>
         </footer>
     </div>

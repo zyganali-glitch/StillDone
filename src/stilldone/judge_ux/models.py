@@ -72,6 +72,7 @@ class BoundedApprovalAction:
     is_approved: bool = False
     approved_at: datetime | None = None
     rejection_reason: str | None = None
+    binding_provenance: str = "FIXTURE_DERIVED"
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,8 @@ class TimelineStepCard:
     provenance: str  # FIXTURE / LOCAL_EXECUTION / LIVE_GOOGLE
     writes_performed: int
     independent_readback_verified: bool
+    # "VERIFIED", "NOT_APPLICABLE", "DRIFT_DETECTED", "NOT_RUN"
+    readback_status: str = "NOT_APPLICABLE"
     evidence_properties: dict[str, Any] = field(default_factory=dict)
     cryptographic_hash: str | None = None
     is_drifted: bool = False

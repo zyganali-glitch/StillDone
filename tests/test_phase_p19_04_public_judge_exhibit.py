@@ -19,6 +19,7 @@ Validates:
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import re
@@ -136,3 +137,88 @@ def test_exhibit_cli_execution_standard_and_json() -> None:
     assert "Publish read-only public judge exhibit" in data["task"]
     assert data["all_checks_passed"] is True
     assert data["publication_status"] == "NOT_PUBLISHED / OPERATOR_ACTION_REQUIRED"
+
+
+def test_adversarial_readback_promotion_prevention() -> None:
+    """5. Proves planning, approval pauses, and receipts are NOT marked read-back verified."""
+    from stilldone.judge_ux.builder import build_judge_view_model
+    from stilldone.killer_mission import KillerMissionSliceRunner
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+    vm = build_judge_view_model(outcome)
+
+    steps_by_id = {s.task_id: s for s in vm.timeline_steps}
+
+    # Step 2: Planning & Weather observation (0 writes) -> MUST NOT be read-back verified
+    step2 = steps_by_id["P-13.02"]
+    assert step2.independent_readback_verified is False
+    assert step2.readback_status == "NOT_APPLICABLE"
+
+    # Step 4: Approval pause (0 writes, fail-closed pause) -> MUST NOT be read-back verified
+    step4 = steps_by_id["P-13.04"]
+    assert step4.independent_readback_verified is False
+    assert step4.readback_status == "NOT_APPLICABLE"
+
+    # Step 6: Receipt issuance (internal state evaluation) -> MUST NOT be read-back verified
+    step6 = steps_by_id["P-13.06"]
+    assert step6.independent_readback_verified is False
+    assert step6.readback_status == "NOT_APPLICABLE"
+
+    # Steps with authentic read-backs must be truthfully preserved
+    assert steps_by_id["P-13.01"].independent_readback_verified is True
+    assert steps_by_id["P-13.01"].readback_status == "VERIFIED"
+
+    assert steps_by_id["P-13.03"].independent_readback_verified is True
+    assert steps_by_id["P-13.03"].readback_status == "VERIFIED"
+
+    assert steps_by_id["P-13.05"].independent_readback_verified is True
+    assert steps_by_id["P-13.05"].readback_status == "VERIFIED"
+
+    assert steps_by_id["P-13.07"].independent_readback_verified is True
+    assert steps_by_id["P-13.07"].readback_status == "DRIFT_DETECTED"
+
+
+def test_approval_fingerprint_is_derived_and_not_decorative_constant() -> None:
+    """6. Proves approval fingerprint is derived from authentic outcome facts."""
+    from stilldone.domain.mission import MissionId
+    from stilldone.judge_ux.builder import build_judge_view_model
+    from stilldone.killer_mission import KillerMissionSliceRunner
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+    vm1 = build_judge_view_model(outcome)
+
+    assert vm1.approval_card is not None
+    fp1 = vm1.approval_card.fingerprint
+    assert fp1.startswith("sha256:")
+    assert len(fp1) == 71  # "sha256:" + 64 hex characters
+
+    # Create modified outcome with distinct mission ID
+    modified_outcome = copy.deepcopy(outcome)
+    object.__setattr__(modified_outcome, "mission_id", MissionId.generate())
+    vm2 = build_judge_view_model(modified_outcome)
+
+    assert vm2.approval_card is not None
+    fp2 = vm2.approval_card.fingerprint
+
+    # Proves the fingerprint is dynamically derived from outcome identity, not hardcoded
+    assert fp1 != fp2, "Fingerprint must not be a decorative static constant across missions"
+
+
+def test_wcag_aa_contrast_real_calculation() -> None:
+    """7. Proves WCAG AA contrast check executes mathematical verification."""
+    summary = build_mod.build_and_verify_exhibit()
+    index_path = Path(summary["index_file"])
+    html_content = index_path.read_text(encoding="utf-8")
+
+    # Real calculation returns True on rendered valid CSS
+    assert build_mod.verify_wcag_aa_contrast(html_content) is True
+
+    # Hostile low-contrast CSS fails
+    hostile_css = (
+        ":root { --bg-primary: #111111; --bg-card: #222222; "
+        "--text-primary: #333333; --text-secondary: #444444; "
+        "--color-ready: #555555; --color-drifted: #666666; }"
+    )
+    assert build_mod.verify_wcag_aa_contrast(hostile_css) is False

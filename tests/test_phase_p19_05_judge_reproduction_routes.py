@@ -131,17 +131,49 @@ def test_markdown_document_links_integrity() -> None:
 
 
 def test_no_machine_specific_absolute_paths_leaked() -> None:
-    """6. Public guides do not leak developer-machine-specific home directories."""
+    """6. All public P-19 guides do not leak developer-machine-specific home directories."""
     docs_to_check = [
         REPO_ROOT / "docs" / "REPRODUCTION.md",
         REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "P19_04_PUBLIC_JUDGE_EXHIBIT.md",
+        REPO_ROOT / "docs" / "P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md",
+        REPO_ROOT / "docs" / "P19_03_OPERATOR_AWS_OBSERVATIONS_2026-10-14.md",
+        REPO_ROOT / "docs" / "P19_06_FRESH_ENVIRONMENT_EVIDENCE.md",
     ]
 
     for doc_path in docs_to_check:
+        if not doc_path.is_file():
+            continue
         content = doc_path.read_text(encoding="utf-8")
-        assert "c:\\users\\dell" not in content.lower(), (
+        assert "c:\\users\\" not in content.lower(), (
             f"Machine-specific path leaked in {doc_path.name}"
         )
         assert "/home/" not in content.lower(), (
             f"Machine-specific linux home leaked in {doc_path.name}"
         )
+
+
+def test_truth_matrix_maps_authentic_historical_evidence_milestones() -> None:
+    """7. Verifies REPRODUCTION.md maps authentic historical evidence files and milestone IDs."""
+    repro_path = REPO_ROOT / "docs" / "REPRODUCTION.md"
+    content = repro_path.read_text(encoding="utf-8")
+
+    # Calendar: P-01.05 (read), P-06.08 (live update), P-11.06 (approved update)
+    assert "P01_05_LIVE_GOOGLE_READ_EVIDENCE.md" in content
+    assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in content
+    assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in content
+
+    # Tasks: P-06.07 (live create & read-back)
+    assert "P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md" in content
+
+    # Weather: P-01.06 (read), P-06.06 (closure)
+    assert "P01_06_LIVE_OPEN_METEO_EVIDENCE.md" in content
+    assert "P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md" in content
+
+    # Bedrock Nova Micro: P-01.02 & P-07.06
+    assert "P01_02_LIVE_BEDROCK_EVIDENCE.md" in content
+    assert "P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md" in content
+
+    # P-13 killer mission slice is marked FIXTURE, not cited as live Google read-back proof
+    assert "P-13.01–P-13.07" in content
+    assert "NOT cited as live Google mutation proof" in content

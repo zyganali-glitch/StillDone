@@ -21,11 +21,13 @@ Judges and evaluators can inspect, verify, and reproduce StillDone through two d
 +-------------------------------------------------------------------------------------------------+
                                                 OR
 +-------------------------------------------------------------------------------------------------+
-| PATH B: SINGLE-COMMAND LOCAL REPRODUCTION (~10 SECONDS)                                         |
+| PATH B: SINGLE-COMMAND LOCAL REPRODUCTION                                                       |
 | Complete bit-for-bit test execution across dual isolated runtimes.                             |
 | - Clone repo: git clone https://github.com/zyganali-glitch/StillDone.git                         |
 | - Run: python scripts/reproduce.py                                                              |
-| - 100% offline fixture verification, 0 cloud calls, 0 credentials needed, $0.00 personal spend.  |
+| - Default clean setup creates local virtual environments and syncs PyPI dependencies via uv.    |
+| - In pre-seeded environments with '--check-only', execution is strictly 100% offline.          |
+| - Zero cloud provider calls, 0 credentials needed, $0.00 personal spend.                        |
 +-------------------------------------------------------------------------------------------------+
 ```
 
@@ -55,8 +57,11 @@ Open the self-contained static judge exhibit directly from your local repository
 ### 2.3 Recorded Live Video & Evidence Ledger
 You can review the authentic recorded live integration evidence without executing cloud calls:
 - **AWS Bedrock Nova Micro Reasoning**: [`docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`](P01_02_LIVE_BEDROCK_EVIDENCE.md) and [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md).
-- **AWS Bedrock AgentCore Streamable HTTP Server**: [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md).
-- **Google Calendar & Tasks Read-Back Verifiers**: [`docs/P13_KILLER_MISSION_AUDIT.md`](P13_KILLER_MISSION_AUDIT.md).
+- **AWS Bedrock AgentCore Streamable HTTP Server**: [`docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`](P01_04_LIVE_AGENTCORE_EVIDENCE.md) and [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md).
+- **Strands Planner Agent Orchestration**: [`docs/P01_03_LIVE_STRANDS_EVIDENCE.md`](P01_03_LIVE_STRANDS_EVIDENCE.md) and [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md).
+- **Google Tasks Verified Mutation & Read-Back**: [`docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`](P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md).
+- **Google Calendar Verified Read & Mutation**: [`docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`](P01_05_LIVE_GOOGLE_READ_EVIDENCE.md), [`docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`](P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md), and [`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`](P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md).
+- **Open-Meteo Weather Read**: [`docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`](P01_06_LIVE_OPEN_METEO_EVIDENCE.md) and [`docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md`](P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md).
 - **October 14, 2026 Operator AWS Observations**: [`docs/P19_03_OPERATOR_AWS_OBSERVATIONS_2026-10-14.md`](P19_03_OPERATOR_AWS_OBSERVATIONS_2026-10-14.md).
 
 ---
@@ -67,12 +72,13 @@ StillDone strictly adheres to the **Evidence Law** (`AGENTS.md` § 10): Result s
 
 | Component / Capability | Provenance / State | Exact Milestone | Evidence Documentation | Truth Boundary & Details |
 | :--- | :--- | :--- | :--- | :--- |
-| **AWS Bedrock Nova Micro Reasoning** | `RECORDED_LIVE` | P-01.02 & P-07.06 | [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md) | Real model invocation (`amazon.nova-micro-v1:0` in `us-east-1`, 3.463s latency, zero tool execution authority). |
-| **AWS Bedrock AgentCore Runtime** | `RECORDED_LIVE` | P-05.06 | [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) | Real serverless CodeZip microVM deployed in `us-east-1` on port 8000; Streamable HTTP MCP tools tested via SigV4 signing bridge. |
-| **Google Calendar API Integration** | `RECORDED_LIVE` | P-01.03 & P-11.06 | [`docs/P01_LIVE_FEASIBILITY.md`](P01_LIVE_FEASIBILITY.md) | Real Google Calendar v3 events created, updated, and read back in dedicated disposable demo calendar. |
-| **Google Tasks API Integration** | `RECORDED_LIVE` | P-01.04 | [`docs/P01_LIVE_FEASIBILITY.md`](P01_LIVE_FEASIBILITY.md) | Real Google Tasks v1 task creation and independent read-back in demo task list. |
-| **Open-Meteo Weather API Integration** | `RECORDED_LIVE` | P-01.05 | [`docs/P01_LIVE_FEASIBILITY.md`](P01_LIVE_FEASIBILITY.md) | Real weather forecast read from Open-Meteo under CC BY 4.0 data attribution. |
-| **Full Killer Mission End-to-End Slice** | `FIXTURE / LOCAL_EXECUTION` | P-13.01–P-13.07 | [`docs/P13_KILLER_MISSION_AUDIT.md`](P13_KILLER_MISSION_AUDIT.md) | Complete multi-step state machine, approval gating, and drift reconciliation evaluated in deterministic regression mode. |
+| **AWS Bedrock Nova Micro Reasoning** | `RECORDED_LIVE` | P-01.02 & P-07.06 | [`docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`](P01_02_LIVE_BEDROCK_EVIDENCE.md), [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md) | Real model invocation (`amazon.nova-micro-v1:0` in `us-east-1`, 3.463s latency, zero tool execution authority). |
+| **AWS Bedrock AgentCore Runtime** | `RECORDED_LIVE` | P-01.04 & P-05.06 | [`docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`](P01_04_LIVE_AGENTCORE_EVIDENCE.md), [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) | Real serverless CodeZip microVM deployed in `us-east-1` on port 8000; Streamable HTTP MCP tools tested via SigV4 signing bridge. |
+| **Strands Planner Integration** | `RECORDED_LIVE` | P-01.03 & P-07.06 | [`docs/P01_03_LIVE_STRANDS_EVIDENCE.md`](P01_03_LIVE_STRANDS_EVIDENCE.md), [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md) | Dual-runtime planner environment compiling non-authoritative candidate plan without execution authority. |
+| **Google Calendar API Integration** | `RECORDED_LIVE` | P-01.05, P-06.08 & P-11.06 | [`docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`](P01_05_LIVE_GOOGLE_READ_EVIDENCE.md), [`docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`](P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md), [`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`](P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md) | Real Google Calendar v3 events read, created, updated, and independently read back in disposable demo calendar. |
+| **Google Tasks API Integration** | `RECORDED_LIVE` | P-06.07 | [`docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`](P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md) | Real Google Tasks v1 task creation and independent read-back in demo task list. |
+| **Open-Meteo Weather API Integration** | `RECORDED_LIVE` | P-01.06 & P-06.06 | [`docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`](P01_06_LIVE_OPEN_METEO_EVIDENCE.md), [`docs/P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md`](P06_06_LIVE_WEATHER_FINAL_CLOSURE_EVIDENCE.md) | Real weather forecast read from Open-Meteo under CC BY 4.0 data attribution. |
+| **Full Killer Mission End-to-End Slice** | `FIXTURE / LOCAL_EXECUTION` | P-13.01–P-13.07 | [`docs/P13_KILLER_MISSION_AUDIT.md`](P13_KILLER_MISSION_AUDIT.md) | Complete multi-step state machine, approval gating, and drift reconciliation evaluated in deterministic regression mode. Live portions safely gated fail-closed (BLOCKED_LIVE). NOT cited as live Google mutation proof. |
 | **Current 24/7 Remote MCP Endpoint** | `BLOCKED / NOT_RUN` | P-19.03 | [`docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`](P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md) | Continuous 24/7 cloud microVM hosting is intentionally stopped to guarantee $0.00 personal spend. |
 | **Current Live Cloud Mutations** | `BLOCKED_LIVE / NOT_RUN` | P-13.02 / P-16.03 | [`docs/P13_KILLER_MISSION_AUDIT.md`](P13_KILLER_MISSION_AUDIT.md) | Live cloud write paths require authenticated operator credentials and are safely gated fail-closed during judge evaluation. |
 

@@ -16,6 +16,7 @@ Records:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import platform
@@ -23,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -31,16 +33,91 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE_FILE = REPO_ROOT / "docs" / "P19_06_FRESH_ENVIRONMENT_EVIDENCE.md"
 
+CREDENTIAL_VARS_TO_STRIP = [
+    # AWS
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+    # Google
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_API_KEY",
+    "STILLDONE_GOOGLE_REFRESH_TOKEN",
+    "STILLDONE_GOOGLE_CLIENT_SECRET",
+    "STILLDONE_GOOGLE_CLIENT_ID",
+    "STILLDONE_OAUTH_CLIENT_SECRET",
+    # Cloudflare & generic
+    "CLOUDFLARE_API_TOKEN",
+    "CF_API_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+]
 
-def get_tool_versions() -> dict[str, str]:
+
+def build_isolated_reproduction_env() -> dict[str, str]:
+    """Construct an isolated execution environment for fixture reproduction.
+
+    1. Blocks and strips all credential-bearing and provider identity environment variables.
+    2. Overrides default credential discovery paths to os.devnull so ambient SDK discovery fails.
+    3. Preserves minimal host variables required for Python runtime, system commands, and
+       public PyPI dependency installation.
+    """
+    clean_env: dict[str, str] = {}
+
+    preserve_keys = {
+        "PATH",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+    }
+    for k, v in os.environ.items():
+        if k.upper() in preserve_keys and k.upper() not in CREDENTIAL_VARS_TO_STRIP:
+            clean_env[k] = v
+
+    for cred_var in CREDENTIAL_VARS_TO_STRIP:
+        clean_env.pop(cred_var, None)
+
+    # Actively block ambient cloud credential discovery
+    null_dev = os.devnull
+    clean_env["AWS_CONFIG_FILE"] = null_dev
+    clean_env["AWS_SHARED_CREDENTIALS_FILE"] = null_dev
+    clean_env["GOOGLE_APPLICATION_CREDENTIALS"] = null_dev
+
+    # Isolate uv and pip from host active virtualenvs
+    clean_env.pop("VIRTUAL_ENV", None)
+
+    return clean_env
+
+
+def get_tool_versions(commit_sha: str = "HEAD") -> dict[str, str]:
     """Capture authentic versions of system tools in the execution environment."""
-    # OS
     os_info = f"{platform.system()} {platform.release()} ({sys.platform})"
-
-    # Python
     py_info = f"Python {sys.version.split()[0]} ({platform.python_implementation()})"
 
-    # uv
     uv_path = shutil.which("uv")
     uv_ver = "NOT_FOUND"
     if uv_path:
@@ -56,11 +133,10 @@ def get_tool_versions() -> dict[str, str]:
         except Exception:
             pass
 
-    # git
     git_sha = "UNKNOWN"
     try:
         res = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", commit_sha],
             capture_output=True,
             text=True,
             check=False,
@@ -79,45 +155,45 @@ def get_tool_versions() -> dict[str, str]:
     }
 
 
-def copy_pristine_source_tree(dest_dir: Path) -> None:
-    """Copy pristine source tree into temporary directory, omitting venvs and caches."""
-    ignore_patterns = shutil.ignore_patterns(
-        ".venv",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        "__pycache__",
-        "*.pyc",
-        ".git",
+def copy_pristine_source_tree(dest_dir: Path, commit_sha: str = "HEAD") -> str:
+    """Extract clean committed source tree from an explicit git revision using git archive."""
+    res_sha = subprocess.run(
+        ["git", "rev-parse", commit_sha],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    items = [
-        "src",
-        "tests",
-        "runtimes",
-        "packages",
-        "scripts",
-        "pyproject.toml",
-        "uv.lock",
-        ".python-version",
-        "README.md",
-        "LICENSE",
-    ]
-    for item in items:
-        src = REPO_ROOT / item
-        dst = dest_dir / item
-        if src.is_dir():
-            shutil.copytree(src, dst, ignore=ignore_patterns)
-        elif src.is_file():
-            shutil.copy2(src, dst)
+    if res_sha.returncode != 0:
+        raise RuntimeError(f"Failed to resolve git revision {commit_sha}: {res_sha.stderr}")
+    resolved_sha = res_sha.stdout.strip()
+
+    res_arch = subprocess.run(
+        ["git", "archive", "--format=tar", resolved_sha],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if res_arch.returncode != 0:
+        raise RuntimeError(f"git archive failed for {resolved_sha}: {res_arch.stderr}")
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(res_arch.stdout)) as tf:
+        if hasattr(tarfile, "data_filter"):
+            tf.extractall(dest_dir, filter="data")
+        else:
+            tf.extractall(dest_dir)
+
+    return resolved_sha
 
 
-def run_fresh_reproduction() -> dict[str, Any]:
+def run_fresh_reproduction(commit_sha: str = "HEAD") -> dict[str, Any]:
     """Execute clean-checkout reproduction in an isolated temporary working directory."""
-    tools = get_tool_versions()
+    tools = get_tool_versions(commit_sha)
 
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp_dir = Path(tmp_str)
-        copy_pristine_source_tree(tmp_dir)
+        tested_sha = copy_pristine_source_tree(tmp_dir, commit_sha=commit_sha)
 
         # Assert no .venv exists in pristine directory
         assert not (tmp_dir / ".venv").exists()
@@ -126,13 +202,14 @@ def run_fresh_reproduction() -> dict[str, Any]:
         cmd = [sys.executable, "scripts/reproduce.py"]
         t_start = time.perf_counter()
 
+        isolated_env = build_isolated_reproduction_env()
         proc = subprocess.run(
             cmd,
             cwd=tmp_dir,
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ},
+            env=isolated_env,
         )
         duration_sec = time.perf_counter() - t_start
 
@@ -149,9 +226,17 @@ def run_fresh_reproduction() -> dict[str, Any]:
             tmp_dir / "runtimes" / "strands_planner" / ".venv"
         ).is_dir()
 
+        success = (
+            proc.returncode == 0
+            and mcp_verify_passed
+            and environments_created
+            and core_tests >= 250
+            and planner_tests >= 200
+        )
+
         return {
             "task": "P-19.06 — Fresh-environment reproduction and evidence capture",
-            "source_sha": tools["source_sha"],
+            "source_sha": tested_sha,
             "tool_versions": tools,
             "reproduction_command": "python scripts/reproduce.py",
             "exit_code": proc.returncode,
@@ -162,11 +247,11 @@ def run_fresh_reproduction() -> dict[str, Any]:
             "total_smoke_tests_passed": total_smoke,
             "mcp_verify_wheel_smoke_passed": mcp_verify_passed,
             "offline_fixture_provenance": "FIXTURE / LOCAL_EXECUTION",
-            "cloud_credentials_required": "NONE",
+            "cloud_credentials_required": "NONE (discovery blocked via os.devnull)",
             "external_api_calls": 0,
             "personal_spend": "$0.00",
             "stdout_snippet": stdout[-1800:] if len(stdout) > 1800 else stdout,
-            "success": proc.returncode == 0 and mcp_verify_passed and total_smoke >= 500,
+            "success": success,
         }
 
 
@@ -178,10 +263,11 @@ def format_markdown_report(data: dict[str, Any]) -> str:
         "Credentials Used | Billing Impact | Provenance Classification |\n"
         "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
     )
+    os_name = tools.get("operating_system", f"{platform.system()} {platform.release()}")
     row_local = (
-        "| **Local Fresh Reproduction** | Windows 11 (`win32`) | "
-        "In-memory test doubles, deterministic verifiers | NONE | $0.00 | "
-        "`FIXTURE / LOCAL_EXECUTION` |\n"
+        f"| **Local Fresh Reproduction** | {os_name} | "
+        "In-memory test doubles, deterministic verifiers | "
+        "NONE (ambient discovery blocked) | $0.00 | `FIXTURE / LOCAL_EXECUTION` |\n"
     )
     row_ci = (
         "| **CI Automated Validation** | Ubuntu 24.04 (`ubuntu-latest`) | "
@@ -192,7 +278,7 @@ def format_markdown_report(data: dict[str, Any]) -> str:
         "| **Historical Recorded Live** | AWS `us-east-1`, Google Calendar/Tasks | "
         "Real Bedrock Nova Micro, AgentCore Streamable HTTP microVM, Google OAuth mutations | "
         "Temporary operator session credentials | "
-        "Promotional credits ($0.09 consumed, $0.00 personal spend) | `RECORDED_LIVE` |\n"
+        "Promotional credits ($0.09 estimated account credit usage, $0.00 personal spend) | `RECORDED_LIVE` |\n"
     )
     row_blocked = (
         "| **Currently Deployed Live Services** | NONE | "
@@ -278,6 +364,14 @@ what was recorded live, and what is currently deployed:
 - **External Cloud API Calls**: Exactly **0** (0 AWS Bedrock, 0 AWS AgentCore,
   0 Google Calendar, 0 Google Tasks, 0 Open-Meteo).
 - **Cloud Credentials Required**: **NONE**.
+- **Isolation Controls Enforcing the Boundary**:
+  1. Subprocess environment explicitly strips all credential-bearing variables
+     (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.).
+  2. Ambient credential discovery is actively blocked by pointing `AWS_CONFIG_FILE`,
+     `AWS_SHARED_CREDENTIALS_FILE`, and `GOOGLE_APPLICATION_CREDENTIALS` to `os.devnull`.
+  3. All test adapters in the smoke suite instantiate in-memory test doubles
+     (`FakeGoogleCalendarTransport`, `FakeGoogleTasksTransport`, `FakeOpenMeteoTransport`)
+     rather than network sockets.
 - **Personal Spend Delta**: **$0.00** personal expenditure.
 - **PyPI Setup Downloads Separation**: Initial package manager downloads during
   `uv sync --frozen` download open-source wheels from PyPI to construct local `.venv`

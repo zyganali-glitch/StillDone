@@ -28,6 +28,49 @@ DEFAULT_EXHIBIT_DIR = REPO_ROOT / "artifacts" / "judge_exhibit"
 DEFAULT_SINGLE_FILE = REPO_ROOT / "artifacts" / "stilldone_judge_exhibit.html"
 
 
+def _relative_luminance(hex_color: str) -> float:
+    """Calculate relative luminance per W3C WCAG 2.1 specification."""
+    clean_hex = hex_color.lstrip("#")
+    r, g, b = [int(clean_hex[i : i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
+    def _channel_lum(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _channel_lum(r) + 0.7152 * _channel_lum(g) + 0.0722 * _channel_lum(b)
+
+
+def _contrast_ratio(hex1: str, hex2: str) -> float:
+    """Calculate contrast ratio between two hex colors."""
+    l1 = _relative_luminance(hex1)
+    l2 = _relative_luminance(hex2)
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def verify_wcag_aa_contrast(html_content: str) -> bool:
+    """Evaluate mathematical WCAG AA contrast ratio against scoped CSS colors."""
+    var_matches = dict(re.findall(r"--([\w-]+)\s*:\s*(#[0-9a-fA-F]{6})", html_content))
+    if not var_matches:
+        return False
+
+    bg_primary = var_matches.get("bg-primary", "#0f172a")
+    bg_card = var_matches.get("bg-card", "#1e293b")
+    text_primary = var_matches.get("text-primary", "#f8fafc")
+    text_secondary = var_matches.get("text-secondary", "#94a3b8")
+    color_ready = var_matches.get("color-ready", "#10b981")
+    color_drifted = var_matches.get("color-drifted", "#f59e0b")
+
+    pairs = [
+        (text_primary, bg_card, 4.5),
+        (text_secondary, bg_card, 4.5),
+        (color_ready, bg_primary, 4.5),
+        (color_drifted, bg_primary, 4.5),
+    ]
+
+    return all(_contrast_ratio(fg, bg) >= threshold for fg, bg, threshold in pairs)
+
+
 def build_and_verify_exhibit(
     output_dir: Path = DEFAULT_EXHIBIT_DIR,
     single_file: Path = DEFAULT_SINGLE_FILE,
@@ -53,6 +96,7 @@ def build_and_verify_exhibit(
     single_file.write_text(html_content, encoding="utf-8")
 
     # 5. Verification checks
+    contrast_pass = verify_wcag_aa_contrast(html_content)
     checks = {
         "simulated_alexa_label_present": "SIMULATED ALEXA+ EXPERIENCE" in html_content,
         "real_engine_label_present": "REAL STILLDONE DETERMINISTIC ENGINE" in html_content,
@@ -65,7 +109,7 @@ def build_and_verify_exhibit(
         "receipt_hash_present": view_model.compact_receipt.receipt_hash in html_content,
         "zero_external_scripts": not bool(re.search(r'<script\s+src="http', html_content)),
         "zero_external_stylesheets": not bool(re.search(r'<link\s+[^>]*href="http', html_content)),
-        "wcag_aa_contrast_compatible": True,
+        "wcag_aa_contrast_compatible": contrast_pass,
         "cloudflare_pages_compatible": True,
     }
 

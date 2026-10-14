@@ -302,13 +302,54 @@ def test_post_mcp_reuses_preseeded_session_id_preventing_duplicate_sessions(
         conn.close()
 
 
-def test_post_mcp_incoming_header_session_id_persists(
+def test_post_mcp_rejects_client_session_adoption_when_unbound(
     proxy_server: tuple[str, int],
 ) -> None:
-    """9. Incoming Mcp-Session-Id header is passed to AgentCore and updates active session."""
+    """9a. Client sending arbitrary Mcp-Session-Id when proxy is unbound is rejected with 400."""
     host, port = proxy_server
     conn = HTTPConnection(host, port, timeout=5.0)
 
+    proxy_module._active_session_id = None
+    subprocess_called = False
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        nonlocal subprocess_called
+        subprocess_called = True
+        return MagicMock(returncode=0, stdout="{}", stderr="")
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {
+                "Content-Type": "application/json",
+                "Mcp-Session-Id": "arbitrary-client-session-999",
+            }
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            body = resp.read()
+
+            assert resp.status == 400
+            data = json.loads(body.decode("utf-8"))
+            assert data["error"] == "Session Identity Adoption Rejected"
+            assert "Cannot adopt arbitrary client session ID" in data["message"]
+            assert subprocess_called is False
+            assert proxy_module._active_session_id is None
+    finally:
+        conn.close()
+
+
+def test_post_mcp_unbound_initial_request_binds_upstream_session(
+    proxy_server: tuple[str, int],
+) -> None:
+    """9b. Client without session header allows upstream to establish and bind session."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    proxy_module._active_session_id = None
     executed_cmd: list[str] = []
 
     def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
@@ -319,7 +360,49 @@ def test_post_mcp_incoming_header_session_id_persists(
             f.write(b'event: message\r\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\r\n\r\n')
         mock_res = MagicMock()
         mock_res.returncode = 0
-        mock_res.stdout = json.dumps({"runtimeSessionId": "incoming-session-uuid-777"})
+        mock_res.stdout = json.dumps({"runtimeSessionId": "upstream-assigned-session-888"})
+        mock_res.stderr = ""
+        return mock_res
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {"Content-Type": "application/json"}
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            assert resp.status == 200
+            assert resp.getheader("Mcp-Session-Id") == "upstream-assigned-session-888"
+            assert proxy_module._active_session_id == "upstream-assigned-session-888"
+
+            # Initial call must not pass --runtime-session-id
+            assert "--runtime-session-id" not in executed_cmd
+    finally:
+        conn.close()
+
+
+def test_post_mcp_matching_client_session_succeeds_when_bound(
+    proxy_server: tuple[str, int],
+) -> None:
+    """9c. Client supplying matching session ID to a bound session succeeds."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    proxy_module._active_session_id = "prebound-session-777"
+    executed_cmd: list[str] = []
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        nonlocal executed_cmd
+        executed_cmd = list(cmd)
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b'event: message\r\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\r\n\r\n')
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = json.dumps({"runtimeSessionId": "prebound-session-777"})
         mock_res.stderr = ""
         return mock_res
 
@@ -327,7 +410,7 @@ def test_post_mcp_incoming_header_session_id_persists(
         with patch("subprocess.run", side_effect=fake_subprocess_run):
             headers = {
                 "Content-Type": "application/json",
-                "Mcp-Session-Id": "incoming-session-uuid-777",
+                "Mcp-Session-Id": "prebound-session-777",
             }
             conn.request(
                 "POST",
@@ -337,11 +420,10 @@ def test_post_mcp_incoming_header_session_id_persists(
             )
             resp = conn.getresponse()
             assert resp.status == 200
-            assert resp.getheader("Mcp-Session-Id") == "incoming-session-uuid-777"
-            assert proxy_module._active_session_id == "incoming-session-uuid-777"
-
+            assert resp.getheader("Mcp-Session-Id") == "prebound-session-777"
+            assert "--runtime-session-id" in executed_cmd
             rt_idx = executed_cmd.index("--runtime-session-id")
-            assert executed_cmd[rt_idx + 1] == "incoming-session-uuid-777"
+            assert executed_cmd[rt_idx + 1] == "prebound-session-777"
     finally:
         conn.close()
 

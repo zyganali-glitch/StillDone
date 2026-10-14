@@ -80,7 +80,7 @@ Operatör için Cloudflare Pages Free üzerinde bu statik sergiyi güvenle yayı
 ### Adım 4: Statik Klasörü Yükleme
 1. Proje oluşturulduğunda dosya yükleme alanı görünecektir.
 2. Bilgisayarınızdaki StillDone proje dizininden şu klasörü sürükleyip bırakın:
-   `c:\Users\Dell 24 one Plus\Projects\StillDone\artifacts\judge_exhibit`
+   `artifacts/judge_exhibit/`
    *(Klasör içinde `index.html` dosyasının bulunduğundan emin olun).*
 3. Yükleme tamamlandığında **"Deploy site"** (Siteyi yayınla) butonuna tıklayın.
 

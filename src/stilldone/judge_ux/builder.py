@@ -6,6 +6,8 @@ immutable, deterministic JudgeExhibitViewModel structures.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -66,8 +68,13 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
     # 3. Timeline Step Cards (P-15.01)
     step_cards: list[TimelineStepCard] = []
 
-    # Mapping of steps from P-13.01 to P-13.07
-    step_meta: list[tuple[int, str, str, str, StepExecutionState, dict[str, Any], bool]] = [
+    # Mapping of steps from P-13.01 to P-13.07:
+    # (num, task_id, title, summary, state, props, is_drift, readback_verified, readback_status)
+    # Strictly truthful: steps without external mutation read-backs must be NOT_APPLICABLE,
+    # never falsely promoted to verified read-backs.
+    step_meta: list[
+        tuple[int, str, str, str, StepExecutionState, dict[str, Any], bool, bool, str]
+    ] = [
         (
             1,
             "P-13.01",
@@ -76,6 +83,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.VERIFIED,
             {"start_time": "07:45:00 UTC", "prep_task_absent": True},
             False,
+            True,
+            "VERIFIED",
         ),
         (
             2,
@@ -85,6 +94,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.OBSERVED,
             {"weather": "mild/rainy", "model_authority": "ZERO"},
             False,
+            False,
+            "NOT_APPLICABLE",
         ),
         (
             3,
@@ -94,6 +105,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.VERIFIED,
             {"task_title": "Pack backpacks", "status": "needsAction"},
             False,
+            True,
+            "VERIFIED",
         ),
         (
             4,
@@ -103,6 +116,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.PAUSED_APPROVAL,
             {"approval_required": True, "calendar_writes": 0},
             False,
+            False,
+            "NOT_APPLICABLE",
         ),
         (
             5,
@@ -112,6 +127,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.APPROVED,
             {"start_time": "07:30:00 UTC", "writes_performed": 1},
             False,
+            True,
+            "VERIFIED",
         ),
         (
             6,
@@ -124,6 +141,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.VERIFIED,
             {"predicates_count": 3, "receipt_hash": outcome.ready_receipt_hash},
             False,
+            False,
+            "NOT_APPLICABLE",
         ),
         (
             7,
@@ -136,10 +155,22 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             StepExecutionState.DRIFT_DETECTED,
             {"observed_start": "08:00:00 UTC", "predicate_truth": False},
             True,
+            True,
+            "DRIFT_DETECTED",
         ),
     ]
 
-    for num, task_id, title, summary, state, props, is_drift in step_meta:
+    for (
+        num,
+        task_id,
+        title,
+        summary,
+        state,
+        props,
+        is_drift,
+        rb_verified,
+        rb_status,
+    ) in step_meta:
         step_res = outcome.steps.get(task_id)
         writes = step_res.writes_performed if step_res else 0
         prov = step_res.provenance.value if step_res else outcome.provenance.value
@@ -154,7 +185,8 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
                 state=state,
                 provenance=prov,
                 writes_performed=writes,
-                independent_readback_verified=True,
+                independent_readback_verified=rb_verified,
+                readback_status=rb_status,
                 evidence_properties=props,
                 cryptographic_hash=hash_val,
                 is_drifted=is_drift,
@@ -162,15 +194,29 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         )
 
     # 4. Bounded Approval Card (P-15.04)
+    # Derive authentic tamper-evident binding hash from verified mission facts and action parameters
+    binding_payload = {
+        "domain": "stilldone:approval-binding:v1",
+        "mission_id": str(outcome.mission_id),
+        "action_id": "act-cal-001",
+        "action_type": "calendar.update",
+        "target_system": "Google Calendar",
+        "target_resource": "Leave for school",
+        "parameters": {"start_time": "07:30:00 UTC"},
+    }
+    canon_bytes = json.dumps(binding_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    derived_fingerprint = f"sha256:{hashlib.sha256(canon_bytes).hexdigest()}"
+
     approval_card = BoundedApprovalAction(
         action_id="act-cal-001",
         action_type="calendar.update",
         target_system="Google Calendar",
         target_resource_name="Leave for school",
         proposed_change_description="Shift departure time from 07:45 AM to 07:30 AM",
-        fingerprint="sha256:295709cb401006549714956efc309834cefb44390e2dbfb0c5211505df53b414",
+        fingerprint=derived_fingerprint,
         is_approved=True,
         approved_at=datetime.now(UTC),
+        binding_provenance="FIXTURE_DERIVED (Derived from mission action outcome)",
     )
 
     # 5. Compact Receipt View (P-15.01)
