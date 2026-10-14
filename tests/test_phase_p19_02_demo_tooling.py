@@ -1773,3 +1773,319 @@ def test_b4_adversarial_private_resource_ids_not_leaked_in_results_repr_or_json(
     json_str = json.dumps(sanitized_dict)
     for s in all_privates:
         assert s not in json_str, f"Private ID {s} leaked in JSON serialization!"
+
+
+# ===========================================================================
+# Item B: Destructive-Ownership Authority (P-19.02 Repair)
+# ===========================================================================
+
+
+def test_b1_forged_manifest_with_untrusted_false_blocked_on_live_transport(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """Caller-controlled is_cli_untrusted=False must never authorize live teardown (B1)."""
+    cal_t = _DummyLiveCalendarTransport(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = _DummyLiveTasksTransport(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    forged_manifest = DemoArtifactManifest(
+        scope=valid_scope,
+        owned_task_ids={"unrelated_live_task_123"},
+        is_cli_untrusted=False,  # Attempting to forge trusted evidence via flag
+    )
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=forged_manifest,
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+    )
+    assert result.status == DemoToolingStatus.BLOCKED_UNAUTHORIZED
+    assert result.error_message == "CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+
+
+def test_b1_forged_ownership_records_blocked_on_live_transport(
+    valid_scope: DemoResourceScope,
+) -> None:
+    """Caller-supplied ownership records with forged evidence fields cannot authorize
+    live teardown (B1).
+    """
+    cal_t = _DummyLiveCalendarTransport(valid_scope.calendar_id, DEFAULT_DEMO_CALENDAR_TITLE)
+    tasks_t = _DummyLiveTasksTransport(valid_scope.task_list_id, DEFAULT_DEMO_TASK_LIST_TITLE)
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    forged_record = DemoResourceOwnershipRecord(
+        resource_id="unrelated_live_task_456",
+        resource_kind="TASK",
+        scope_id=valid_scope.task_list_id,
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+        created_by="StillDone:DemoTooling",  # Self-declared creator string
+        evidence_id="fake_evidence_id_789",  # Self-declared evidence ID
+    )
+    forged_manifest = DemoArtifactManifest(
+        scope=valid_scope,
+        records=(forged_record,),
+        owned_task_ids={"unrelated_live_task_456"},
+        is_cli_untrusted=False,
+    )
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=forged_manifest,
+        provenance=EvidenceProvenance.LIVE_GOOGLE,
+    )
+    assert result.status == DemoToolingStatus.BLOCKED_UNAUTHORIZED
+    assert result.error_message == "CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE"
+    assert result.writes_performed == 0
+    assert result.is_success is False
+
+
+def test_b1_record_with_absent_scope_binding_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Record with absent scope binding fails closed before mutation (B1)."""
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+    tasks_t.add_task(
+        valid_scope.task_list_id, "t_prep_absent_scope", DEFAULT_PREPARATION_TASK_TITLE
+    )
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    record = DemoResourceOwnershipRecord(
+        resource_id="t_prep_absent_scope",
+        resource_kind="TASK",
+        scope_id="",  # Absent scope binding
+        provenance=EvidenceProvenance.FIXTURE,
+    )
+    manifest = DemoArtifactManifest(
+        scope=valid_scope,
+        records=(record,),
+        owned_task_ids={"t_prep_absent_scope"},
+    )
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
+    )
+    assert result.status == DemoToolingStatus.WRONG_TARGET_REJECTED
+    assert result.error_message == "ABSENT_RECORD_SCOPE_BINDING"
+    assert result.writes_performed == 0
+
+
+def test_b1_record_with_mismatched_scope_id_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Record with mismatched scope ID fails closed before mutation (B1)."""
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+    tasks_t.add_task(
+        valid_scope.task_list_id, "t_prep_mismatched_scope", DEFAULT_PREPARATION_TASK_TITLE
+    )
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    record = DemoResourceOwnershipRecord(
+        resource_id="t_prep_mismatched_scope",
+        resource_kind="TASK",
+        scope_id="completely_wrong_task_list_id",
+        provenance=EvidenceProvenance.FIXTURE,
+    )
+    manifest = DemoArtifactManifest(
+        scope=valid_scope,
+        records=(record,),
+        owned_task_ids={"t_prep_mismatched_scope"},
+    )
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
+    )
+    assert result.status == DemoToolingStatus.WRONG_TARGET_REJECTED
+    assert result.error_message == "MISMATCHED_RECORD_SCOPE"
+    assert result.writes_performed == 0
+
+
+def test_b1_record_with_mismatched_provenance_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Record claiming contradictory provenance fails closed before mutation (B1)."""
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+    tasks_t.add_task(valid_scope.task_list_id, "t_prep_wrong_prov", DEFAULT_PREPARATION_TASK_TITLE)
+    confirmation = make_scope_bound_teardown_confirmation(
+        valid_scope.calendar_id, valid_scope.task_list_id
+    )
+    record = DemoResourceOwnershipRecord(
+        resource_id="t_prep_wrong_prov",
+        resource_kind="TASK",
+        scope_id=valid_scope.task_list_id,
+        provenance=EvidenceProvenance.LIVE_GOOGLE,  # Contradicts FIXTURE
+    )
+    manifest = DemoArtifactManifest(
+        scope=valid_scope,
+        records=(record,),
+        owned_task_ids={"t_prep_wrong_prov"},
+    )
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=True,
+        teardown_confirmation=confirmation,
+        manifest=manifest,
+        provenance=EvidenceProvenance.FIXTURE,
+    )
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "CONTRADICTORY_PROVENANCE_RECORD"
+    assert result.writes_performed == 0
+
+
+# ===========================================================================
+# Item C: Canonical Pre-State get_event Read-Back (P-19.02 Repair)
+# ===========================================================================
+
+
+def test_c_stale_listing_followed_by_missing_get_event_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Listing returns canonical event, but get_event reports None (disappeared/deleted event).
+
+    Must fail closed (CONTRADICTORY_STATE / CANONICAL_EVENT_READBACK_MISMATCH) with zero writes,
+    and must NEVER declare ALREADY_CLEAN.
+    """
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+    # Simulate race condition: event was in listing, but get_event reports disappeared
+    cal_t.fail_readback = True
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=False,
+    )
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "CANONICAL_EVENT_READBACK_MISMATCH"
+    assert result.writes_performed == 0
+    assert result.readback_verified is False
+    assert result.is_success is False
+
+
+def test_c_stale_listing_followed_by_contradictory_get_event_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Listing returns canonical event, but get_event reports contradictory/drifted state.
+
+    Must fail closed (CONTRADICTORY_STATE / CANONICAL_EVENT_READBACK_MISMATCH) with zero writes,
+    and must NEVER declare ALREADY_CLEAN.
+    """
+    cal_t, tasks_t = seeded_transports
+    event = add_canonical_event(cal_t, valid_scope.calendar_id)
+    # Simulate drift: get_event returns modified start time
+    spec = create_canonical_event_spec()
+    drifted_event = CalendarTransportEvent(
+        id=event.id,
+        etag=event.etag,
+        summary=spec.title,
+        start_time="2026-10-15T09:00:00Z",  # Drifted start time
+        end_time=spec.end_time,
+        all_day=False,
+        status="confirmed",
+    )
+    cal_t.inconsistent_readback_event = drifted_event
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=False,
+    )
+    assert result.status == DemoToolingStatus.CONTRADICTORY_STATE
+    assert result.error_message == "CANONICAL_EVENT_READBACK_MISMATCH"
+    assert result.writes_performed == 0
+    assert result.readback_verified is False
+    assert result.is_success is False
+
+
+def test_c_stale_listing_followed_by_unreadable_get_event_fails_closed(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Listing returns canonical event, but get_event raises transport error.
+
+    Must fail closed (VERIFICATION_FAILED / CANONICAL_EVENT_READBACK_FAILED) with zero writes.
+    """
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+
+    def _broken_get_event(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("Transient network outage during get_event probe")
+
+    monkeypatch.setattr(cal_t, "get_event", _broken_get_event)
+
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=False,
+    )
+    assert result.status == DemoToolingStatus.VERIFICATION_FAILED
+    assert result.error_message == "CANONICAL_EVENT_READBACK_FAILED"
+    assert result.writes_performed == 0
+    assert result.readback_verified is False
+    assert result.is_success is False
+
+
+def test_c_matching_get_event_readback_verifies_already_clean(
+    valid_scope: DemoResourceScope,
+    seeded_transports: tuple[FakeCalendarSeedTransport, FakeTasksSeedTransport],
+) -> None:
+    """Independent get_event read-back succeeds and matches spec, verifying ALREADY_CLEAN."""
+    cal_t, tasks_t = seeded_transports
+    add_canonical_event(cal_t, valid_scope.calendar_id)
+    # 0 candidate tasks, 0 candidate extra events
+
+    reads_before = cal_t.reads_count
+    result = execute_demo_resource_operation(
+        scope=valid_scope,
+        calendar_transport=cal_t,
+        tasks_transport=tasks_t,
+        mode=DemoOperationMode.TEARDOWN,
+        permit_mutation=False,
+    )
+    assert result.status == DemoToolingStatus.ALREADY_CLEAN
+    assert result.readback_verified is True
+    assert result.is_success is True
+    assert result.writes_performed == 0
+    # Must prove get_event was called in addition to list_events
+    assert cal_t.reads_count > reads_before

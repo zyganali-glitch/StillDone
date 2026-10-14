@@ -42,6 +42,7 @@ from stilldone.demo_seeding import (
     CanonicalEventSpec,
     DemoSeedingProvenanceError,
     FakeCalendarSeedTransport,
+    FakeTasksSeedTransport,
     SeedOperationStatus,
     TasksSeedTransport,
     are_datetimes_equal,
@@ -877,26 +878,111 @@ def _execute_teardown(
                 ),
                 error_message="MISMATCHED_MANIFEST_SCOPE",
             )
-        if manifest.is_cli_untrusted and provenance in (
-            EvidenceProvenance.LIVE_GOOGLE,
-            EvidenceProvenance.LIVE_AWS,
-            EvidenceProvenance.LIVE_EXTERNAL,
-        ):
-            return DemoToolingResult(
-                mode=DemoOperationMode.TEARDOWN,
-                status=DemoToolingStatus.BLOCKED_UNAUTHORIZED,
-                provenance=provenance,
-                calendar_id=scope.calendar_id,
-                task_list_id=scope.task_list_id,
-                writes_performed=0,
-                readback_verified=False,
-                is_success=False,
-                details=(
-                    "CLI-provided IDs alone cannot authorize destructive deletion "
-                    "on live transport."
-                ),
-                error_message="CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE",
-            )
+        if manifest.records:
+            for r in manifest.records:
+                if not r.scope_id or not r.scope_id.strip():
+                    return DemoToolingResult(
+                        mode=DemoOperationMode.TEARDOWN,
+                        status=DemoToolingStatus.WRONG_TARGET_REJECTED,
+                        provenance=provenance,
+                        calendar_id=scope.calendar_id,
+                        task_list_id=scope.task_list_id,
+                        writes_performed=0,
+                        readback_verified=False,
+                        is_success=False,
+                        details="Ownership record has absent scope binding; rejected fail-closed.",
+                        error_message="ABSENT_RECORD_SCOPE_BINDING",
+                    )
+                if r.resource_kind.lower() == "task" and r.scope_id != scope.task_list_id:
+                    return DemoToolingResult(
+                        mode=DemoOperationMode.TEARDOWN,
+                        status=DemoToolingStatus.WRONG_TARGET_REJECTED,
+                        provenance=provenance,
+                        calendar_id=scope.calendar_id,
+                        task_list_id=scope.task_list_id,
+                        writes_performed=0,
+                        readback_verified=False,
+                        is_success=False,
+                        details=(
+                            "Ownership record task scope does not match target demo task list; "
+                            "rejected fail-closed."
+                        ),
+                        error_message="MISMATCHED_RECORD_SCOPE",
+                    )
+                if r.resource_kind.lower() == "event" and r.scope_id != scope.calendar_id:
+                    return DemoToolingResult(
+                        mode=DemoOperationMode.TEARDOWN,
+                        status=DemoToolingStatus.WRONG_TARGET_REJECTED,
+                        provenance=provenance,
+                        calendar_id=scope.calendar_id,
+                        task_list_id=scope.task_list_id,
+                        writes_performed=0,
+                        readback_verified=False,
+                        is_success=False,
+                        details=(
+                            "Ownership record event scope does not match target demo calendar; "
+                            "rejected fail-closed."
+                        ),
+                        error_message="MISMATCHED_RECORD_SCOPE",
+                    )
+                if r.resource_kind.lower() not in ("task", "event"):
+                    return DemoToolingResult(
+                        mode=DemoOperationMode.TEARDOWN,
+                        status=DemoToolingStatus.CONTRADICTORY_STATE,
+                        provenance=provenance,
+                        calendar_id=scope.calendar_id,
+                        task_list_id=scope.task_list_id,
+                        writes_performed=0,
+                        readback_verified=False,
+                        is_success=False,
+                        details=(
+                            f"Invalid ownership record resource kind '{r.resource_kind}'; "
+                            "rejected fail-closed."
+                        ),
+                        error_message="INVALID_RECORD_RESOURCE_KIND",
+                    )
+                if r.provenance != provenance:
+                    return DemoToolingResult(
+                        mode=DemoOperationMode.TEARDOWN,
+                        status=DemoToolingStatus.CONTRADICTORY_STATE,
+                        provenance=provenance,
+                        calendar_id=scope.calendar_id,
+                        task_list_id=scope.task_list_id,
+                        writes_performed=0,
+                        readback_verified=False,
+                        is_success=False,
+                        details=(
+                            "Ownership record provenance contradicts operation provenance; "
+                            "rejected fail-closed."
+                        ),
+                        error_message="CONTRADICTORY_PROVENANCE_RECORD",
+                    )
+
+    is_live = provenance in (
+        EvidenceProvenance.LIVE_GOOGLE,
+        EvidenceProvenance.LIVE_AWS,
+        EvidenceProvenance.LIVE_EXTERNAL,
+    ) or not (
+        isinstance(calendar_transport, FakeCalendarSeedTransport)
+        and isinstance(tasks_transport, FakeTasksSeedTransport)
+    )
+    if is_live:
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.BLOCKED_UNAUTHORIZED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                "Caller-supplied manifest or ownership records cannot grant destructive "
+                "authority on live transport. All live destructive teardown operations "
+                "are blocked fail-closed."
+            ),
+            error_message="CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE",
+        )
 
     # 1. Discover demo artifacts to clean up
     # Task list discovery
@@ -1005,6 +1091,54 @@ def _execute_teardown(
                 "Canonical demo event could not be deterministically verified on demo calendar."
             ),
             error_message="CANONICAL_EVENT_CORRUPTED_OR_MISSING",
+            items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
+        )
+
+    # Item C: Independent get_event read-back for canonical event ID
+    # before declaring verified ALREADY_CLEAN
+    try:
+        readback_canonical = calendar_transport.get_event(scope.calendar_id, canonical_event.id)
+    except Exception as exc:
+        sanitized = sanitize_error_message(exc)
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.VERIFICATION_FAILED,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=f"Canonical event independent read-back failed: {sanitized}",
+            error_message="CANONICAL_EVENT_READBACK_FAILED",
+            items_inspected=len(tasks) + len(events),
+            known_resource_ids=tuple(known_ids),
+        )
+
+    if (
+        readback_canonical is None
+        or readback_canonical.id != canonical_event.id
+        or readback_canonical.summary != event_spec.title
+        or not are_datetimes_equal(readback_canonical.start_time, event_spec.start_time)
+        or not are_datetimes_equal(readback_canonical.end_time, event_spec.end_time)
+        or readback_canonical.status != "confirmed"
+        or readback_canonical.all_day
+    ):
+        return DemoToolingResult(
+            mode=DemoOperationMode.TEARDOWN,
+            status=DemoToolingStatus.CONTRADICTORY_STATE,
+            provenance=provenance,
+            calendar_id=scope.calendar_id,
+            task_list_id=scope.task_list_id,
+            writes_performed=0,
+            readback_verified=False,
+            is_success=False,
+            details=(
+                "Canonical demo event independent read-back failed: event is missing, "
+                "cancelled, or contradictory to canonical specification."
+            ),
+            error_message="CANONICAL_EVENT_READBACK_MISMATCH",
             items_inspected=len(tasks) + len(events),
             known_resource_ids=tuple(known_ids),
         )

@@ -208,6 +208,17 @@ def run_command(
     clean_env = os.environ.copy()
     if env is not None:
         clean_env.update(env)
+        # If caller explicitly excluded VIRTUAL_ENV (e.g. planner isolation),
+        # remove inherited VIRTUAL_ENV so dict.update() does not preserve it.
+        if "VIRTUAL_ENV" not in env:
+            clean_env.pop("VIRTUAL_ENV", None)
+
+    # Defensive invariant: any command targeting the isolated Strands planner runtime
+    # MUST NEVER inherit the parent/Core VIRTUAL_ENV.
+    if any("strands_planner" in str(arg) for arg in cmd) and (
+        env is None or "VIRTUAL_ENV" not in env
+    ):
+        clean_env.pop("VIRTUAL_ENV", None)
 
     try:
         result = subprocess.run(cmd, cwd=str(cwd), env=clean_env, check=False)

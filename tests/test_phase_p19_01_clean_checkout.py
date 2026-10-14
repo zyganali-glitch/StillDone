@@ -42,6 +42,12 @@ assert _reproduce_spec is not None and _reproduce_spec.loader is not None
 reproduce_mod: Any = importlib.util.module_from_spec(_reproduce_spec)
 _reproduce_spec.loader.exec_module(reproduce_mod)
 
+_smoke_path = REPO_ROOT / "scripts" / "smoke_mcp_verify_wheel.py"
+_smoke_spec = importlib.util.spec_from_file_location("smoke_wheel_mod", _smoke_path)
+assert _smoke_spec is not None and _smoke_spec.loader is not None
+smoke_mod: Any = importlib.util.module_from_spec(_smoke_spec)
+_smoke_spec.loader.exec_module(smoke_mod)
+
 
 def test_reproduce_script_help() -> None:
     """Verify scripts/reproduce.py exists and returns helpful CLI documentation."""
@@ -432,12 +438,22 @@ def test_reproduction_check_only_network_denying_harness(monkeypatch: pytest.Mon
     - Verifies that any uv command passed has --offline and --no-sync.
     - Ensures smoke_mcp_verify_wheel receives --offline and sets UV_OFFLINE=1.
     - Prohibits any command that does not pass offline bounds.
+    - Proves top-level AND nested wheel build/venv/install offline propagation hermetically in CI.
     """
-    captured_commands: list[list[str]] = []
-    real_run = subprocess.run
+    captured_commands: list[tuple[list[str], dict[str, str] | None]] = []
+
+    # Provision/mock prerequisite boundary so the harness is hermetic in Core-only CI
+    env_check_called = False
+
+    def mock_check_envs(repo_root: Path) -> None:
+        nonlocal env_check_called
+        env_check_called = True
+
+    monkeypatch.setattr(reproduce_mod, "check_virtual_environments_exist", mock_check_envs)
 
     def network_denying_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
-        captured_commands.append(list(cmd))
+        env = kwargs.get("env")
+        captured_commands.append((list(cmd), env))
         cmd_str = " ".join(str(c) for c in cmd)
 
         # 1. Reject any network sync attempts
@@ -450,24 +466,230 @@ def test_reproduction_check_only_network_denying_harness(monkeypatch: pytest.Mon
             assert "--offline" in cmd, f"uv run command missing --offline: {cmd_str}"
 
         # 3. For smoke_mcp_verify_wheel script execution, verify --offline is passed
+        # and execute nested smoke
         if any("smoke_mcp_verify_wheel.py" in str(arg) for arg in cmd):
             assert "--offline" in cmd, (
                 f"smoke_mcp_verify_wheel invoked without --offline: {cmd_str}"
             )
-            assert kwargs.get("env", {}).get("UV_OFFLINE") == "1", (
+            assert env is not None and env.get("UV_OFFLINE") == "1", (
                 f"smoke_mcp_verify_wheel invoked without UV_OFFLINE=1: {cmd_str}"
             )
+            # Execute smoke_mod.smoke_mcp_verify_wheel(offline=True) to test
+            # nested offline enforcement
+            smoke_mod.smoke_mcp_verify_wheel(offline=True)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="wheel smoke success", stderr=""
+            )
 
-        return real_run(cmd, *args, **kwargs)
+        # 4. Handle nested wheel package manager operations under offline enforcement
+        if "build" in cmd:
+            assert "--offline" in cmd, f"Nested build command missing --offline: {cmd_str}"
+            assert env is not None and env.get("UV_OFFLINE") == "1"
+            out_idx = cmd.index("-o") + 1
+            out_dir = Path(cmd[out_idx])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "mcp_verify-0.1.0-py3-none-any.whl").write_bytes(b"PK fake wheel")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        if "venv" in cmd:
+            assert "--offline" in cmd, f"Nested venv command missing --offline: {cmd_str}"
+            assert env is not None and env.get("UV_OFFLINE") == "1"
+            venv_path = Path(cmd[-1])
+            py_bin = (
+                venv_path
+                / ("Scripts" if sys.platform == "win32" else "bin")
+                / ("python.exe" if sys.platform == "win32" else "python")
+            )
+            py_bin.parent.mkdir(parents=True, exist_ok=True)
+            py_bin.write_bytes(b"")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        if "pip" in cmd:
+            assert "--offline" in cmd, f"Nested pip command missing --offline: {cmd_str}"
+            assert env is not None and env.get("UV_OFFLINE") == "1"
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        # 5. Handle python executable invocations (probe inside smoke)
+        if (
+            any(str(a).endswith("python.exe") or str(a).endswith("python") for a in cmd)
+            and not any("smoke_mcp_verify_wheel.py" in str(a) for a in cmd)
+            and "run" not in cmd
+        ):
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=(
+                    "Imported mcp_verify from site-packages\n"
+                    "Contract passed: status=VERIFIED, ok=True"
+                ),
+                stderr="",
+            )
+
+        # 6. For uv --version (prerequisite check)
+        if len(cmd) >= 2 and cmd[1] == "--version":
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="uv 0.11.28 (commit abc 2026-10-01 x86_64-linux)",
+                stderr="",
+            )
+
+        # 7. For all other uv run commands (checks, imports, tests), return verified success
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", network_denying_run)
 
     # Execute --check-only in quick mode
     reproduce_mod.main(["--check-only"])
 
+    assert env_check_called, "check_virtual_environments_exist was not called under --check-only"
     assert len(captured_commands) > 0, "No commands were executed during check-only run"
-    uv_run_calls = [c for c in captured_commands if len(c) >= 2 and c[1] == "run"]
+
+    uv_run_calls = [c for c, _ in captured_commands if len(c) >= 2 and c[1] == "run"]
     assert len(uv_run_calls) >= 5, f"Expected at least 5 uv run checks, got {len(uv_run_calls)}"
     for call in uv_run_calls:
         assert "--offline" in call
         assert "--no-sync" in call
+
+    # Assert nested package ops were genuinely executed under --offline and UV_OFFLINE=1
+    package_ops = [
+        (c, e) for c, e in captured_commands if any(op in c for op in ("build", "venv", "pip"))
+    ]
+    assert len(package_ops) >= 3, f"Expected at least 3 nested ops, got {len(package_ops)}"
+    for cmd, env in package_ops:
+        assert "--offline" in cmd
+        assert env is not None and env.get("UV_OFFLINE") == "1"
+
+
+def test_run_command_strips_inherited_virtual_env_for_planner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative regression: verify dict.update() bug is resolved and VIRTUAL_ENV is stripped.
+
+    Background:
+    A child process entering the separate Strands Planner environment constructs
+    planner_env = os.environ.copy() and calls planner_env.pop("VIRTUAL_ENV", None).
+    However, run_command initialized clean_env = os.environ.copy() and performed
+    clean_env.update(planner_env). Because dict.update() cannot delete keys present
+    in clean_env, the parent/Core VIRTUAL_ENV leaked into the planner runtime.
+
+    This test proves:
+    1. The plain dict.update() pattern leaks VIRTUAL_ENV.
+    2. reproduce_mod.run_command strips VIRTUAL_ENV when excluded or targeting planner.
+    3. Core commands without planner targeting retain VIRTUAL_ENV if not popped.
+    """
+    fake_core_venv = "/dummy/core/.venv"
+    monkeypatch.setenv("VIRTUAL_ENV", fake_core_venv)
+
+    # 1. Prove the negative: dict.update() does NOT remove VIRTUAL_ENV
+    planner_env = os.environ.copy()
+    planner_env.pop("VIRTUAL_ENV", None)
+    assert "VIRTUAL_ENV" not in planner_env
+
+    flawed_dict_update = os.environ.copy()
+    flawed_dict_update.update(planner_env)
+    assert "VIRTUAL_ENV" in flawed_dict_update, (
+        "dict.update() flaw: VIRTUAL_ENV was expected to leak in flawed implementation"
+    )
+
+    # 2. Intercept subprocess.run to verify reproduce_mod.run_command removes VIRTUAL_ENV
+    captured_envs: list[dict[str, str]] = []
+
+    def mock_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        env = kwargs.get("env")
+        assert env is not None
+        captured_envs.append(env)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # A: Planner command with planner_env (VIRTUAL_ENV popped)
+    reproduce_mod.run_command(
+        ["uv", "run", "--project", "runtimes/strands_planner", "python", "-c", "pass"],
+        cwd=REPO_ROOT,
+        env=planner_env,
+        step_name="Planner test with popped VIRTUAL_ENV",
+    )
+    assert len(captured_envs) == 1
+    assert "VIRTUAL_ENV" not in captured_envs[0], (
+        f"VIRTUAL_ENV leaked into planner command: {captured_envs[0].get('VIRTUAL_ENV')}"
+    )
+
+    # B: Planner command with env=None (defensive invariant)
+    reproduce_mod.run_command(
+        ["uv", "run", "--project", "runtimes/strands_planner", "python", "-c", "pass"],
+        cwd=REPO_ROOT,
+        env=None,
+        step_name="Planner test with env=None",
+    )
+    assert len(captured_envs) == 2
+    assert "VIRTUAL_ENV" not in captured_envs[1], (
+        f"VIRTUAL_ENV leaked into planner command with env=None: "
+        f"{captured_envs[1].get('VIRTUAL_ENV')}"
+    )
+
+    # C: Core command with env=None: VIRTUAL_ENV should remain for the Core environment
+    reproduce_mod.run_command(
+        ["uv", "run", "python", "-c", "pass"],
+        cwd=REPO_ROOT,
+        env=None,
+        step_name="Core test with env=None",
+    )
+    assert len(captured_envs) == 3
+    assert captured_envs[2].get("VIRTUAL_ENV") == fake_core_venv, (
+        f"Core command lost its active VIRTUAL_ENV: {captured_envs[2]}"
+    )
+
+
+def test_check_virtual_environments_exist_fails_when_core_venv_missing(tmp_path: Path) -> None:
+    """Prove check_virtual_environments_exist fails closed when Core .venv is missing."""
+    stderr_buf = io.StringIO()
+    with patch("sys.stderr", stderr_buf), pytest.raises(SystemExit) as exc_info:
+        reproduce_mod.check_virtual_environments_exist(tmp_path)
+
+    assert exc_info.value.code == 1
+    err_text = stderr_buf.getvalue()
+    assert "ENVIRONMENT MISSING: Core virtual environment not found" in err_text
+    assert "StillDone --check-only forbids implicit environment creation" in err_text
+
+
+def test_check_virtual_environments_exist_fails_when_planner_venv_missing(tmp_path: Path) -> None:
+    """Prove check_virtual_environments_exist fails closed when Strands Planner .venv is missing."""
+    # Create valid mock Core .venv
+    core_venv = tmp_path / ".venv"
+    core_venv.mkdir()
+    (core_venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    bin_dir = core_venv / ("Scripts" if sys.platform == "win32" else "bin")
+    bin_dir.mkdir()
+    (bin_dir / ("python.exe" if sys.platform == "win32" else "python")).write_bytes(b"")
+
+    stderr_buf = io.StringIO()
+    with patch("sys.stderr", stderr_buf), pytest.raises(SystemExit) as exc_info:
+        reproduce_mod.check_virtual_environments_exist(tmp_path)
+
+    assert exc_info.value.code == 1
+    err_text = stderr_buf.getvalue()
+    assert "ENVIRONMENT MISSING: Strands Planner virtual environment not found" in err_text
+    assert "StillDone --check-only forbids implicit environment creation" in err_text
+
+
+def test_check_virtual_environments_exist_succeeds_when_both_present(tmp_path: Path) -> None:
+    """Prove check_virtual_environments_exist passes when both environments are present."""
+    # 1. Mock Core .venv
+    core_venv = tmp_path / ".venv"
+    core_venv.mkdir()
+    (core_venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    core_bin = core_venv / ("Scripts" if sys.platform == "win32" else "bin")
+    core_bin.mkdir()
+    (core_bin / ("python.exe" if sys.platform == "win32" else "python")).write_bytes(b"")
+
+    # 2. Mock Strands .venv
+    planner_venv = tmp_path / "runtimes" / "strands_planner" / ".venv"
+    planner_venv.mkdir(parents=True)
+    (planner_venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    planner_bin = planner_venv / ("Scripts" if sys.platform == "win32" else "bin")
+    planner_bin.mkdir()
+    (planner_bin / ("python.exe" if sys.platform == "win32" else "python")).write_bytes(b"")
+
+    # Should not raise
+    reproduce_mod.check_virtual_environments_exist(tmp_path)

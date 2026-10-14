@@ -29,7 +29,16 @@ from pathlib import Path
 def run_step(name: str, cmd: list[str], env: dict[str, str] | None = None) -> None:
     print(f"=== Running: {name} ===")
     print(f"Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, env=env)
+    clean_env = os.environ.copy()
+    if env is not None:
+        clean_env.update(env)
+        if "VIRTUAL_ENV" not in env:
+            clean_env.pop("VIRTUAL_ENV", None)
+    if any("strands_planner" in str(arg) for arg in cmd) and (
+        env is None or "VIRTUAL_ENV" not in env
+    ):
+        clean_env.pop("VIRTUAL_ENV", None)
+    result = subprocess.run(cmd, env=clean_env)
     if result.returncode != 0:
         print(f"FAILED: {name} exited with code {result.returncode}", file=sys.stderr)
         sys.exit(result.returncode)
@@ -116,6 +125,7 @@ def validate_strands_planner() -> None:
     run_step("Strands Planner dependency truth assertion", check_versions_cmd)
 
     planner_env = {**os.environ, "PYTHONPATH": str(repo_root / "src")}
+    planner_env.pop("VIRTUAL_ENV", None)
     smoke_cmd = [
         "uv",
         "run",

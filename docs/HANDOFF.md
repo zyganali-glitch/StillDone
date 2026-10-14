@@ -80,9 +80,9 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-19.01 → P-19.02 BOUNDED JUDGE-REPRODUCTION PREPARATION BATCH
+Active task: STILLDONE — P-19.01 → P-19.02 FINAL CI AND AUTHORITY REPAIR
 
-Starting Remote SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`
+Starting Remote SHA: `60aaf669c504aebf0e7f361a622315013942b81c`
 Last Independently QA-PASS SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`
 
 Status:
@@ -102,18 +102,23 @@ Status:
   - Strict prerequisite enforcement (`uv >= 0.11.28`, `python >= 3.11`) with clear platform installation instructions.
   - Repaired repository-relative links and corrected Ubuntu-only CI scope in `docs/REPRODUCTION.md`.
   - Proven in an actual clean isolated temporary working directory without inherited virtual environments.
-  - Validated via 8 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
+  - CI network-denying harness made hermetic and executable in Core-only CI by provisioning/mocking the prerequisite boundary while genuinely inspecting top-level and nested package manager subcommands.
+  - Inherited `VIRTUAL_ENV` contamination stripped when entering separate Strands Planner environment or when excluded from `env`; negative regression verifies `dict.update()` bug is prevented.
+  - Dedicated unit tests added for `check_virtual_environments_exist` proving fail-closed rejection on missing Core or Strands virtual environments.
+  - Validated via 15 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
 - P-19.02: REPAIRED (Candidate for independent QA review)
   - Implemented safe, scope-bound operator tooling in `src/stilldone/demo_tooling.py` and CLI in `scripts/demo_resources.py`.
   - Four distinct operational modes: `INSPECT`, `SETUP`, `VERIFY`, `TEARDOWN`.
   - Default is strictly `DRY_RUN / NO_MUTATION` (0 writes performed).
   - Exact target-bound confirmation token `CONFIRM_TEARDOWN:<cal_id>:<tl_id>` strictly enforced; bare `CONFIRM_TEARDOWN` and mismatched scope tokens fail closed (`CONFIRMATION_REQUIRED`, 0 writes).
   - Never delete by title alone: explicit `DemoArtifactManifest` required for every task and extra event deletion; unowned user tasks and events are strictly preserved fail-closed (`UNPROVEN_RESOURCE_OWNERSHIP`, 0 writes).
+  - Destructive authority hardened: all live destructive teardowns blocked fail-closed; caller-controlled `is_cli_untrusted=False` and forged ownership records cannot grant destructive authority on live transports; absent scope bindings and mismatched record scopes fail closed before mutation.
+  - Canonical pre-state read-back enforced: `ALREADY_CLEAN` and teardown pre-state execute an independent `get_event` read-back for the exact canonical event ID, rejecting disappeared, drifted, unreadable, or contradictory states with 0 false success.
   - Deterministic canonical event selection (explicit manifest or exact single match; never `events[0]`); missing canonical event and readback drift detected fail-closed.
   - Bounded per-operation delete handling with ambiguous write probes accurately tracking committed writes on transport errors.
   - Adversarial output sanitization across details, error_message, `repr()`, and JSON representations.
   - Prominent ephemeral fixture warning in text mode and `"ephemeral_fixture_notice": True` in JSON mode.
-  - Validated via 40 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+  - Validated via 61 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 - P-19.03+: PENDING / NOT_RUN (strictly STOPPED before P-19.03; independent QA review required)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
@@ -497,13 +502,16 @@ Phase P-19.01 and P-19.02 repaired and completed as candidate for independent QA
   - Fully offline check-only boundary enforced: `--offline` and `UV_OFFLINE=1` propagated to nested wheel smoke subprocesses (`smoke_mcp_verify_wheel.py`); missing cached build dependencies fail closed without downloading anything.
   - Prerequisite verification hardened: non-zero or unparseable `uv --version` output immediately fails closed.
   - Setup downloads vs. cloud calls separation: clearly documented that PyPI open-source wheel setup downloads are distinct from zero live cloud provider calls.
-  - Validated via 11 focused tests in `tests/test_phase_p19_01_clean_checkout.py` including a network-denying subprocess harness.
+  - CI network-denying harness made hermetic and executable in Core-only CI by provisioning/mocking prerequisite boundary while genuinely verifying offline flags on top-level and nested commands.
+  - Inherited `VIRTUAL_ENV` contamination stripped when entering separate Strands Planner environment or when excluded from `env`; negative regression verifies `dict.update()` bug is prevented.
+  - Dedicated unit tests added for `check_virtual_environments_exist` proving fail-closed rejection on missing Core or Strands virtual environments.
+  - Validated via 15 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
 - **P-19.02 (Sanitized Demo-Resource Setup/Teardown Commands):**
-  - B1 (Verified Ownership): `DemoArtifactManifest` bound to dedicated scope and `DemoResourceOwnershipRecord`; untrusted CLI IDs rejected on live transports (`CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE`); forged, absent, stale, or contradictory ownership claims fail closed before any destructive write.
-  - B2 (Canonical Event Pre-state): Teardown strictly requires canonical event present and valid; missing/corrupted canonical event fails closed (`CANONICAL_EVENT_CORRUPTED_OR_MISSING`, 0 writes) and NEVER reports `ALREADY_CLEAN` or succeeds teardown.
+  - B1 (Verified Ownership & Destructive Authority): `DemoArtifactManifest` bound to dedicated scope and `DemoResourceOwnershipRecord`; all live destructive teardowns blocked fail-closed (`CLI_OWNERSHIP_UNAUTHORIZED_FOR_LIVE`); caller-controlled `is_cli_untrusted=False` and forged ownership records cannot grant destructive authority; absent scope bindings and mismatched record scopes fail closed before mutation.
+  - B2 & Canonical Pre-State Read-back: Teardown strictly requires canonical event present and valid; independent `get_event` read-back executed for exact canonical event ID, rejecting disappeared, drifted, unreadable, or contradictory states with 0 false success; missing canonical event fails closed (`CANONICAL_EVENT_CORRUPTED_OR_MISSING`, 0 writes) and NEVER reports `ALREADY_CLEAN` or succeeds teardown.
   - B3 (Ambiguous Outcomes): When delete acknowledgment is lost and readback probe is unavailable, outcome is explicitly marked `is_ambiguous_outcome=True` with `AMBIGUOUS_DELETION_OUTCOME`, halting without blind retry and preserving confirmed writes count.
   - B4 (Private ID Leak Prevention): Zero raw external IDs interpolated in errors/details/repr/JSON; non-secret-looking but private IDs strictly sanitized.
-  - Validated via 52 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+  - Validated via 61 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 - **Global Invariants Preserved:**
   - Zero live cloud mutations executed ($0.00 personal spend maintained).
   - Next phases (P-19.03+) remain strictly `PENDING / NOT_RUN`.
