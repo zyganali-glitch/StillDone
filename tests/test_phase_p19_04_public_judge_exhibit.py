@@ -494,6 +494,8 @@ def test_wcag_aa_contrast_full_coverage_and_no_low_contrast_colors() -> None:
         ("P-13.01", "PASS", True, 1, {}, StepExecutionState.ERROR, "UNVERIFIED"),
         # Step 2: unauthorized writes performed on read-only step -> must be ERROR, FAILED
         ("P-13.02", "PASS", True, 1, {}, StepExecutionState.ERROR, "FAILED"),
+        # Step 2: Defect 1 regression: status PASS but is_verified False -> must be ERROR, FAILED
+        ("P-13.02", "PASS", False, 0, {}, StepExecutionState.ERROR, "FAILED"),
         # Step 3: positive verification with missing mutation evidence (writes=0) -> ERROR
         ("P-13.03", "PASS", True, 0, {}, StepExecutionState.ERROR, "UNVERIFIED"),
         # Step 4: unauthorized writes during approval pause boundary -> must be ERROR, FAILED
@@ -631,3 +633,337 @@ def test_adversarial_static_builder_fails_closed_on_tampered_outcomes(
     # Assert no files were created or promoted
     assert not (out_dir / "index.html").exists()
     assert not single.exists()
+
+
+def test_defect1_unverified_planning_evidence_fails_closed(tmp_path: Path) -> None:
+    """19. Defect 1: Unverified planning step cannot display OBSERVED or promote READY/DRIFTED."""
+    from stilldone.judge_ux.builder import build_judge_view_model, is_step2_valid
+    from stilldone.judge_ux.models import MissionVisualState, StepExecutionState
+    from stilldone.killer_mission import KillerMissionSliceRunner, KillerMissionStepResult
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    # Tamper step 2: status PASS but is_verified=False, writes=0
+    tampered_steps = dict(outcome.steps)
+    orig = outcome.steps["P-13.02"]
+    tampered_steps["P-13.02"] = KillerMissionStepResult(
+        task_id=orig.task_id,
+        step_name=orig.step_name,
+        status="PASS",
+        provenance=orig.provenance,
+        details="Unverified weather read attempt",
+        writes_performed=0,
+        is_verified=False,
+        extra_metadata={},
+    )
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, "steps", tampered_steps)
+
+    # 1. Predicate must be False
+    assert is_step2_valid(tampered_outcome) is False
+
+    # 2. View model must NOT promote to OBSERVED, READY, or DRIFTED
+    vm = build_judge_view_model(tampered_outcome)
+    assert vm.current_state != MissionVisualState.DRIFTED
+    assert vm.current_state != MissionVisualState.READY
+    assert vm.current_state == MissionVisualState.PARTIAL
+
+    step2_card = {s.task_id: s for s in vm.timeline_steps}["P-13.02"]
+    assert step2_card.state == StepExecutionState.ERROR
+    assert step2_card.readback_status == "FAILED"
+    assert step2_card.independent_readback_verified is False
+
+    # 3. Static publication gate must reject before writing
+    out_dir = tmp_path / "exhibit"
+    single = tmp_path / "exhibit.html"
+    with pytest.raises(RuntimeError, match="P-13.02"):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single,
+            outcome=tampered_outcome,
+        )
+    assert not (out_dir / "index.html").exists()
+    assert not single.exists()
+
+
+@pytest.mark.parametrize(
+    ("step6_hash", "outcome_ready_hash", "scenario_name"),
+    [
+        (
+            None,
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            "missing_step6_hash",
+        ),
+        (
+            "",
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            "empty_step6_hash",
+        ),
+        (
+            "not_a_valid_sha256_hash",
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            "malformed_step6_hash",
+        ),
+        (
+            "0" * 64,
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            "mismatched_step6_hash",
+        ),
+        (
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            "not_a_valid_sha256_hash",
+            "malformed_outcome_hash",
+        ),
+        (
+            "cfe978313fa0aeae8b695427bce8dc3e54d46dcff319cabf25fdac8de4d4d45d",
+            None,
+            "contradictory_issuance_hash",
+        ),
+    ],
+)
+def test_defect2_ready_receipt_identity_binding_adversarial(
+    tmp_path: Path,
+    step6_hash: str | None,
+    outcome_ready_hash: str | None,
+    scenario_name: str,
+) -> None:
+    """20. Defect 2: Missing, mismatched, malformed, or contradictory hashes fail closed."""
+    from stilldone.judge_ux.builder import build_judge_view_model, is_step6_valid
+    from stilldone.judge_ux.models import MissionVisualState, StepExecutionState
+    from stilldone.killer_mission import KillerMissionSliceRunner, KillerMissionStepResult
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    tampered_steps = dict(outcome.steps)
+    orig6 = outcome.steps["P-13.06"]
+    tampered_steps["P-13.06"] = KillerMissionStepResult(
+        task_id=orig6.task_id,
+        step_name=orig6.step_name,
+        status="PASS",
+        provenance=orig6.provenance,
+        details="Adversarial tampered receipt issuance",
+        writes_performed=0,
+        is_verified=True,
+        receipt_hash=step6_hash,
+        extra_metadata=dict(orig6.extra_metadata),
+    )
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, "steps", tampered_steps)
+    object.__setattr__(tampered_outcome, "ready_receipt_hash", outcome_ready_hash)
+
+    # 1. Predicate must fail
+    assert is_step6_valid(tampered_outcome) is False
+
+    # 2. View model fails closed to UNISSUED and PARTIAL
+    vm = build_judge_view_model(tampered_outcome)
+    assert vm.current_state != MissionVisualState.READY
+    assert vm.current_state != MissionVisualState.DRIFTED
+    assert vm.current_state == MissionVisualState.PARTIAL
+    assert vm.compact_receipt.state_at_issuance == "UNISSUED"
+    assert vm.compact_receipt.receipt_hash == "UNISSUED / NO_READY_RECEIPT"
+    assert vm.compact_receipt.is_historically_preserved is False
+
+    step6_card = {s.task_id: s for s in vm.timeline_steps}["P-13.06"]
+    assert step6_card.state == StepExecutionState.ERROR
+
+    # 3. Static publication gate fails closed before writing
+    out_dir = tmp_path / f"exhibit_{scenario_name}"
+    single = tmp_path / f"exhibit_{scenario_name}.html"
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single,
+            outcome=tampered_outcome,
+        )
+    assert not (out_dir / "index.html").exists()
+    assert not single.exists()
+
+
+def test_defect2_original_fixture_receipt_preserved() -> None:
+    """21. Defect 2: Valid original fixture receipt identity is fully preserved and valid."""
+    from stilldone.judge_ux.builder import (
+        build_judge_view_model,
+        is_step6_valid,
+        is_valid_receipt_hash,
+    )
+    from stilldone.judge_ux.models import StepExecutionState
+    from stilldone.killer_mission import KillerMissionSliceRunner
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    assert is_valid_receipt_hash(outcome.ready_receipt_hash) is True
+    assert outcome.steps["P-13.06"].receipt_hash == outcome.ready_receipt_hash
+    assert is_step6_valid(outcome) is True
+
+    vm = build_judge_view_model(outcome)
+    assert vm.compact_receipt.state_at_issuance == "READY"
+    assert vm.compact_receipt.receipt_hash == outcome.ready_receipt_hash
+    assert vm.compact_receipt.is_historically_preserved is True
+
+    step6_card = {s.task_id: s for s in vm.timeline_steps}["P-13.06"]
+    assert step6_card.state == StepExecutionState.VERIFIED
+
+
+@pytest.mark.parametrize(
+    ("tamper_dict", "scenario_name"),
+    [
+        ({"step7_receipt_hash": None}, "absent_step7_hash"),
+        ({"step7_receipt_hash": ""}, "empty_step7_hash"),
+        ({"step7_receipt_hash": "f" * 64}, "mismatched_step7_hash"),
+        ({"reconciled_state": "READY"}, "wrong_reconciled_state_ready"),
+        ({"reconciled_state": "UNKNOWN"}, "wrong_reconciled_state_unknown"),
+        ({"reconciled_state": None}, "missing_reconciled_state"),
+        ({"historical_receipt_intact": False}, "false_historical_receipt_integrity"),
+        ({"historical_receipt_intact": None}, "missing_historical_receipt_integrity"),
+        ({"drifted_receipt_hash": "e" * 64}, "mismatched_drifted_receipt_hash"),
+        ({"drifted_receipt_hash": "bad_hash"}, "malformed_drifted_receipt_hash"),
+        ({"drifted_receipt_hash": None}, "absent_drifted_receipt_hash"),
+    ],
+)
+def test_defect3_drift_lineage_verification_adversarial(
+    tmp_path: Path,
+    tamper_dict: dict[str, Any],
+    scenario_name: str,
+) -> None:
+    """22. Defect 3: Missing/mismatched step-7 hash, wrong state, or false intact flag fail."""
+    from stilldone.judge_ux.builder import build_judge_view_model, is_step7_valid
+    from stilldone.judge_ux.models import MissionVisualState, StepExecutionState
+    from stilldone.killer_mission import KillerMissionSliceRunner, KillerMissionStepResult
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    tampered_steps = dict(outcome.steps)
+    orig7 = outcome.steps["P-13.07"]
+    s7_meta = dict(orig7.extra_metadata)
+    s7_hash = orig7.receipt_hash
+
+    if "step7_receipt_hash" in tamper_dict:
+        s7_hash = tamper_dict["step7_receipt_hash"]
+    if "reconciled_state" in tamper_dict:
+        if tamper_dict["reconciled_state"] is None:
+            s7_meta.pop("reconciled_state", None)
+        else:
+            s7_meta["reconciled_state"] = tamper_dict["reconciled_state"]
+    if "historical_receipt_intact" in tamper_dict:
+        if tamper_dict["historical_receipt_intact"] is None:
+            s7_meta.pop("historical_receipt_intact", None)
+        else:
+            s7_meta["historical_receipt_intact"] = tamper_dict["historical_receipt_intact"]
+
+    tampered_steps["P-13.07"] = KillerMissionStepResult(
+        task_id=orig7.task_id,
+        step_name=orig7.step_name,
+        status="PASS",
+        provenance=orig7.provenance,
+        details="Adversarial tampered drift step",
+        writes_performed=0,
+        is_verified=True,
+        receipt_hash=s7_hash,
+        extra_metadata=s7_meta,
+    )
+    tampered_outcome = copy.deepcopy(outcome)
+    object.__setattr__(tampered_outcome, "steps", tampered_steps)
+
+    if "drifted_receipt_hash" in tamper_dict:
+        object.__setattr__(
+            tampered_outcome, "drifted_receipt_hash", tamper_dict["drifted_receipt_hash"]
+        )
+
+    # 1. Predicate must fail
+    assert is_step7_valid(tampered_outcome) is False
+
+    # 2. View model must NOT be DRIFTED
+    vm = build_judge_view_model(tampered_outcome)
+    assert vm.current_state != MissionVisualState.DRIFTED
+
+    step7_card = {s.task_id: s for s in vm.timeline_steps}["P-13.07"]
+    assert step7_card.is_drifted is False
+    assert step7_card.state == StepExecutionState.ERROR
+
+    # 3. Static publication gate must fail closed before writing
+    out_dir = tmp_path / f"exhibit_{scenario_name}"
+    single = tmp_path / f"exhibit_{scenario_name}.html"
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single,
+            outcome=tampered_outcome,
+        )
+    assert not (out_dir / "index.html").exists()
+    assert not single.exists()
+
+
+def test_invalid_outcomes_rejected_before_preexisting_files_overwritten(tmp_path: Path) -> None:
+    """23. Invariants: Pre-existing HTML files are preserved and never overwritten on errors."""
+    from stilldone.killer_mission import KillerMissionSliceRunner
+
+    runner = KillerMissionSliceRunner()
+    outcome = runner.run_full_slice()
+
+    out_dir = tmp_path / "exhibit"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    index_file = out_dir / "index.html"
+    single_file = tmp_path / "single.html"
+
+    canary = "CANARY_TEXT_PREEXISTING_VALID_CONTENT"
+    index_file.write_text(canary, encoding="utf-8")
+    single_file.write_text(canary, encoding="utf-8")
+
+    # Tamper with an invalid step 2 (Defect 1)
+    tampered_s2 = copy.deepcopy(outcome)
+    tampered_steps = dict(tampered_s2.steps)
+    orig2 = tampered_steps["P-13.02"]
+    tampered_steps["P-13.02"] = copy.deepcopy(orig2)
+    object.__setattr__(tampered_steps["P-13.02"], "is_verified", False)
+    object.__setattr__(tampered_s2, "steps", tampered_steps)
+
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single_file,
+            outcome=tampered_s2,
+        )
+
+    # Preexisting files must remain strictly intact with canary text
+    assert index_file.read_text(encoding="utf-8") == canary
+    assert single_file.read_text(encoding="utf-8") == canary
+
+    # Tamper with invalid step 6 receipt hash (Defect 2)
+    tampered_s6 = copy.deepcopy(outcome)
+    tampered_steps6 = dict(tampered_s6.steps)
+    object.__setattr__(tampered_steps6["P-13.06"], "receipt_hash", "wrong_hash" * 6)
+    object.__setattr__(tampered_s6, "steps", tampered_steps6)
+
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single_file,
+            outcome=tampered_s6,
+        )
+
+    assert index_file.read_text(encoding="utf-8") == canary
+    assert single_file.read_text(encoding="utf-8") == canary
+
+    # Tamper with invalid step 7 drift metadata (Defect 3)
+    tampered_s7 = copy.deepcopy(outcome)
+    tampered_steps7 = dict(tampered_s7.steps)
+    object.__setattr__(
+        tampered_steps7["P-13.07"],
+        "extra_metadata",
+        {"historical_receipt_intact": False, "reconciled_state": "DRIFTED"},
+    )
+    object.__setattr__(tampered_s7, "steps", tampered_steps7)
+
+    with pytest.raises(RuntimeError):
+        build_mod.build_and_verify_exhibit(
+            output_dir=out_dir,
+            single_file=single_file,
+            outcome=tampered_s7,
+        )
+
+    assert index_file.read_text(encoding="utf-8") == canary
+    assert single_file.read_text(encoding="utf-8") == canary

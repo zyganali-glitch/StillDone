@@ -25,6 +25,113 @@ from stilldone.judge_ux.models import (
 from stilldone.killer_mission import KillerMissionSliceOutcome
 
 
+def is_valid_receipt_hash(hash_val: Any) -> bool:
+    """Validate that a value is a non-empty 64-character lowercase hexadecimal hash digest."""
+    if not isinstance(hash_val, str):
+        return False
+    if len(hash_val) != 64:
+        return False
+    return all(c in "0123456789abcdef" for c in hash_val)
+
+
+def is_step1_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.01 Pre-State Seeding & Verification predicate."""
+    s1 = outcome.steps.get("P-13.01")
+    return bool(
+        s1
+        and s1.status in ("PASS", "VERIFIED")
+        and s1.is_verified is True
+        and s1.writes_performed == 1
+        and (
+            s1.extra_metadata.get("seeded_event_established") is True
+            or "start_time" in s1.extra_metadata
+            or "pre_state_verified" in s1.extra_metadata
+        )
+    )
+
+
+def is_step2_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.02 Natural Language Planning & Weather Observation (Read-Only) predicate."""
+    s2 = outcome.steps.get("P-13.02")
+    return bool(
+        s2
+        and s2.status in ("PASS", "OBSERVED")
+        and s2.is_verified is True
+        and s2.writes_performed == 0
+    )
+
+
+def is_step3_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.03 Preparation Task Creation & Verification (Mutation) predicate."""
+    s3 = outcome.steps.get("P-13.03")
+    return bool(
+        s3
+        and s3.status in ("PASS", "VERIFIED")
+        and s3.is_verified is True
+        and s3.writes_performed == 1
+    )
+
+
+def is_step4_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.04 Approval Boundary Pause (Human Authorization Boundary) predicate."""
+    s4 = outcome.steps.get("P-13.04")
+    return bool(s4 and s4.status in ("PASS", "PAUSED_APPROVAL") and s4.writes_performed == 0)
+
+
+def is_step5_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.05 Authorized Calendar Update & Verification (Mutation) predicate."""
+    s5 = outcome.steps.get("P-13.05")
+    return bool(
+        s5
+        and s5.status in ("PASS", "APPROVED")
+        and s5.is_verified is True
+        and s5.writes_performed == 1
+        and is_step4_valid(outcome)
+    )
+
+
+def is_step6_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.06 Deterministic READY Mission Receipt Issuance predicate."""
+    s6 = outcome.steps.get("P-13.06")
+    ready_hash = outcome.ready_receipt_hash
+    return bool(
+        s6
+        and s6.status in ("PASS", "VERIFIED")
+        and s6.is_verified is True
+        and s6.writes_performed == 0
+        and is_valid_receipt_hash(ready_hash)
+        and is_valid_receipt_hash(s6.receipt_hash)
+        and s6.receipt_hash == ready_hash
+        and is_step1_valid(outcome)
+        and is_step2_valid(outcome)
+        and is_step3_valid(outcome)
+        and is_step4_valid(outcome)
+        and is_step5_valid(outcome)
+    )
+
+
+def is_step7_valid(outcome: KillerMissionSliceOutcome) -> bool:
+    """P-13.07 External Mutation & Drift Reconciliation predicate."""
+    s7 = outcome.steps.get("P-13.07")
+    ready_hash = outcome.ready_receipt_hash
+    drifted_hash = outcome.drifted_receipt_hash
+    return bool(
+        s7
+        and s7.status in ("PASS", "DRIFT_DETECTED")
+        and s7.is_verified is True
+        and s7.writes_performed == 0
+        and is_valid_receipt_hash(ready_hash)
+        and is_valid_receipt_hash(s7.receipt_hash)
+        and s7.receipt_hash == ready_hash
+        and s7.extra_metadata.get("reconciled_state") == "DRIFTED"
+        and s7.extra_metadata.get("historical_receipt_intact") is True
+        and is_valid_receipt_hash(drifted_hash)
+        and drifted_hash == ready_hash
+        and is_step6_valid(outcome)
+        and outcome.historical_receipt_immutable is True
+    )
+
+
 def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitViewModel:
     """Build a complete, verified JudgeExhibitViewModel from killer mission execution outcome.
 
@@ -55,69 +162,13 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         s.status in ("BLOCKED_LIVE", "BLOCKED", "FAILED", "ERROR") for s in outcome.steps.values()
     )
 
-    # Step 1: P-13.01 Pre-State Seeding & Verification
-    is_step1_valid = bool(
-        step1
-        and step1.status in ("PASS", "VERIFIED")
-        and step1.is_verified is True
-        and (
-            step1.extra_metadata.get("seeded_event_established") is True
-            or "start_time" in step1.extra_metadata
-            or "pre_state_verified" in step1.extra_metadata
-        )
-    )
-
-    # Step 2: P-13.02 Natural Language Planning & Weather Observation (Read-Only)
-    is_step2_valid = bool(
-        step2 and step2.status in ("PASS", "OBSERVED") and step2.writes_performed == 0
-    )
-
-    # Step 3: P-13.03 Preparation Task Creation & Verification (Mutation)
-    is_step3_valid = bool(
-        step3
-        and step3.status in ("PASS", "VERIFIED")
-        and step3.is_verified is True
-        and step3.writes_performed == 1
-    )
-
-    # Step 4: P-13.04 Approval Boundary Pause (Human Authorization Boundary)
-    is_step4_valid = bool(
-        step4 and step4.status in ("PASS", "PAUSED_APPROVAL") and step4.writes_performed == 0
-    )
-
-    # Step 5: P-13.05 Authorized Calendar Update & Verification (Mutation)
-    is_step5_valid = bool(
-        step5
-        and step5.status in ("PASS", "APPROVED")
-        and step5.is_verified is True
-        and step5.writes_performed == 1
-        and is_step4_valid
-    )
-
-    # Step 6: P-13.06 Deterministic READY Mission Receipt Issuance
-    is_step6_valid = bool(
-        step6
-        and step6.status in ("PASS", "VERIFIED")
-        and step6.is_verified is True
-        and step6.writes_performed == 0
-        and outcome.ready_receipt_hash is not None
-        and (step6.receipt_hash is None or step6.receipt_hash == outcome.ready_receipt_hash)
-        and is_step1_valid
-        and is_step2_valid
-        and is_step3_valid
-        and is_step4_valid
-        and is_step5_valid
-    )
-
-    # Step 7: P-13.07 External Mutation & Drift Reconciliation
-    is_step7_valid = bool(
-        step7
-        and step7.status in ("PASS", "DRIFT_DETECTED")
-        and step7.is_verified is True
-        and step7.writes_performed == 0
-        and is_step6_valid
-        and outcome.historical_receipt_immutable is True
-    )
+    step1_valid = is_step1_valid(outcome)
+    step2_valid = is_step2_valid(outcome)
+    step3_valid = is_step3_valid(outcome)
+    step4_valid = is_step4_valid(outcome)
+    step5_valid = is_step5_valid(outcome)
+    step6_valid = is_step6_valid(outcome)
+    step7_valid = is_step7_valid(outcome)
 
     # 1. Determine visual state based strictly on verified evidence
     if has_blocked_or_failed_step or outcome.final_state in (
@@ -125,9 +176,9 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         MissionState.CANCELLED,
     ):
         visual_state = MissionVisualState.BLOCKED
-    elif outcome.final_state == MissionState.DRIFTED and is_step7_valid:
+    elif outcome.final_state == MissionState.DRIFTED and step7_valid:
         visual_state = MissionVisualState.DRIFTED
-    elif outcome.final_state == MissionState.READY and is_step6_valid:
+    elif outcome.final_state == MissionState.READY and step6_valid:
         visual_state = MissionVisualState.READY
     else:
         visual_state = MissionVisualState.PARTIAL
@@ -208,7 +259,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="BLOCKED",
             evidence_properties=dict(step1.extra_metadata),
         )
-    elif is_step1_valid:
+    elif step1_valid:
         st_val = step1.extra_metadata.get("start_time")
         if st_val is None and step1.extra_metadata.get("seeded_event_established"):
             st_val = "07:45:00 UTC"
@@ -268,7 +319,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="BLOCKED",
             evidence_properties=dict(step2.extra_metadata),
         )
-    elif is_step2_valid:
+    elif step2_valid:
         card2 = TimelineStepCard(
             step_number=2,
             task_id="P-13.02",
@@ -328,7 +379,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="BLOCKED",
             evidence_properties=dict(step3.extra_metadata),
         )
-    elif is_step3_valid:
+    elif step3_valid:
         card3 = TimelineStepCard(
             step_number=3,
             task_id="P-13.03",
@@ -372,7 +423,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="NOT_RUN",
             evidence_properties={},
         )
-    elif is_step4_valid:
+    elif step4_valid:
         card4 = TimelineStepCard(
             step_number=4,
             task_id="P-13.04",
@@ -455,7 +506,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="NOT_APPLICABLE",
             evidence_properties=dict(step5.extra_metadata),
         )
-    elif is_step5_valid:
+    elif step5_valid:
         card5 = TimelineStepCard(
             step_number=5,
             task_id="P-13.05",
@@ -498,7 +549,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             readback_status="NOT_RUN",
             evidence_properties={"receipt_issued": False},
         )
-    elif is_step6_valid:
+    elif step6_valid:
         card6 = TimelineStepCard(
             step_number=6,
             task_id="P-13.06",
@@ -547,7 +598,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
             evidence_properties={},
             is_drifted=False,
         )
-    elif is_step7_valid:
+    elif step7_valid:
         card7 = TimelineStepCard(
             step_number=7,
             task_id="P-13.07",
@@ -586,10 +637,10 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
     step_cards = [card1, card2, card3, card4, card5, card6, card7]
 
     # 4. Bounded Approval Card (P-15.04)
-    if step4 is None or not is_step4_valid:
+    if step4 is None or not step4_valid:
         approval_card = None
     else:
-        is_app = bool(is_step5_valid)
+        is_app = bool(step5_valid)
         rej_reason = (
             "Operator rejected calendar mutation"
             if (step5 and step5.status == "REJECTED")
@@ -627,7 +678,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
 
     # 5. Compact Receipt View (P-15.01) - Strictly bound to actual outcome receipt facts
     if (
-        is_step6_valid
+        step6_valid
         and outcome.ready_receipt_hash is not None
         and outcome.historical_receipt_immutable
     ):

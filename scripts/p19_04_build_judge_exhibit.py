@@ -20,7 +20,17 @@ from pathlib import Path
 from typing import Any
 
 from stilldone.domain.lifecycle import MissionState
-from stilldone.judge_ux.builder import build_judge_view_model
+from stilldone.judge_ux.builder import (
+    build_judge_view_model,
+    is_step1_valid,
+    is_step2_valid,
+    is_step3_valid,
+    is_step4_valid,
+    is_step5_valid,
+    is_step6_valid,
+    is_step7_valid,
+    is_valid_receipt_hash,
+)
 from stilldone.judge_ux.html_renderer import render_judge_exhibit_html
 from stilldone.judge_ux.models import (
     JudgeExhibitViewModel,
@@ -161,7 +171,7 @@ def verify_canonical_fixture_outcome(
             f"Canonical fixture demonstration must conclude in DRIFTED, got {outcome.final_state}."
         )
 
-    if outcome.ready_receipt_hash is None:
+    if outcome.ready_receipt_hash is None or not is_valid_receipt_hash(outcome.ready_receipt_hash):
         raise RuntimeError(
             "Canonical fixture demonstration must have an authentic ready_receipt_hash."
         )
@@ -184,48 +194,45 @@ def verify_canonical_fixture_outcome(
         if task_id not in outcome.steps:
             raise RuntimeError(f"Missing required canonical step {task_id} in outcome.")
 
-    s1 = outcome.steps["P-13.01"]
-    if s1.status != "PASS" or not s1.is_verified or s1.writes_performed != 1:
+    if not is_step1_valid(outcome):
         raise RuntimeError("Step P-13.01 evidence failed verification: pre-state seeding invalid.")
 
-    s2 = outcome.steps["P-13.02"]
-    if s2.status not in ("PASS", "OBSERVED") or s2.writes_performed != 0:
+    if not is_step2_valid(outcome):
         raise RuntimeError(
             "Step P-13.02 evidence failed verification: plan & weather read-only failed."
         )
 
-    s3 = outcome.steps["P-13.03"]
-    if s3.status not in ("PASS", "VERIFIED") or not s3.is_verified or s3.writes_performed != 1:
+    if not is_step3_valid(outcome):
         raise RuntimeError("Step P-13.03 evidence failed verification: task mutation unverified.")
 
-    s4 = outcome.steps["P-13.04"]
-    if s4.status not in ("PASS", "PAUSED_APPROVAL") or s4.writes_performed != 0:
+    if not is_step4_valid(outcome):
         raise RuntimeError(
             "Step P-13.04 evidence failed verification: approval boundary pause invalid."
         )
 
-    s5 = outcome.steps["P-13.05"]
-    if s5.status not in ("PASS", "APPROVED") or not s5.is_verified or s5.writes_performed != 1:
+    if not is_step5_valid(outcome):
         raise RuntimeError(
             "Step P-13.05 evidence failed verification: calendar mutation unverified."
         )
 
-    s6 = outcome.steps["P-13.06"]
-    if s6.status not in ("PASS", "VERIFIED") or not s6.is_verified or s6.writes_performed != 0:
+    if not is_step6_valid(outcome):
         raise RuntimeError(
             "Step P-13.06 evidence failed verification: receipt issuance unverified."
         )
-    if s6.receipt_hash is not None and s6.receipt_hash != outcome.ready_receipt_hash:
-        raise RuntimeError("Step P-13.06 receipt hash does not match outcome ready_receipt_hash.")
 
-    s7 = outcome.steps["P-13.07"]
-    if (
-        s7.status not in ("PASS", "DRIFT_DETECTED")
-        or not s7.is_verified
-        or s7.writes_performed != 0
-    ):
+    if not is_step7_valid(outcome):
         raise RuntimeError(
             "Step P-13.07 evidence failed verification: drift reconciliation unverified."
+        )
+
+    if (
+        outcome.drifted_receipt_hash is None
+        or not is_valid_receipt_hash(outcome.drifted_receipt_hash)
+        or outcome.drifted_receipt_hash != outcome.ready_receipt_hash
+    ):
+        raise RuntimeError(
+            "Canonical fixture demonstration drifted_receipt_hash must be valid "
+            "and match ready_receipt_hash."
         )
 
     # View model alignment
