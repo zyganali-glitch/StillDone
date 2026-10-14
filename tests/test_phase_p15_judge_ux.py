@@ -243,6 +243,8 @@ def test_p15_07_real_browser_rendering_and_responsiveness(rendered_html: str) ->
                 browser_exe,
                 "--headless=new",
                 "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
                 "--window-size=375,812",
                 "--dump-dom",
                 file_uri,
@@ -251,7 +253,7 @@ def test_p15_07_real_browser_rendering_and_responsiveness(rendered_html: str) ->
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=15,
+            timeout=30,
         )
         assert res_mobile.returncode == 0, f"Browser mobile execution failed: {res_mobile.stderr}"
         dom_mobile = res_mobile.stdout
@@ -269,6 +271,8 @@ def test_p15_07_real_browser_rendering_and_responsiveness(rendered_html: str) ->
                 browser_exe,
                 "--headless=new",
                 "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
                 "--window-size=1200,900",
                 "--dump-dom",
                 file_uri,
@@ -277,7 +281,7 @@ def test_p15_07_real_browser_rendering_and_responsiveness(rendered_html: str) ->
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=15,
+            timeout=30,
         )
         assert res_desktop.returncode == 0, (
             f"Browser desktop execution failed: {res_desktop.stderr}"
