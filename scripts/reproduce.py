@@ -500,7 +500,9 @@ def print_reproduction_summary(full: bool) -> None:
         "  strictly guaranteed 100% offline (--no-sync --offline UV_OFFLINE=1).\n"
         "- Historical live Google Calendar/Tasks and AWS Bedrock/AgentCore proofs\n"
         "  are preserved as RECORDED_LIVE in docs/ (e.g. docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md,\n"
-        "  docs/P13_KILLER_MISSION_EVIDENCE.md). Clean-checkout reproduction evaluates the full\n"
+        "  docs/P01_02_LIVE_BEDROCK_EVIDENCE.md). The canonical full killer-mission audit\n"
+        "  (docs/P13_KILLER_MISSION_AUDIT.md) preserves deterministic FIXTURE evaluation with\n"
+        "  live portions BLOCKED_LIVE/NOT_RUN. Clean-checkout reproduction evaluates the full\n"
         "  deterministic core using verified in-memory fakes and contract assertions.\n"
     )
 

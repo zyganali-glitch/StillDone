@@ -6,12 +6,13 @@ Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
 Current repository state: **P-00 through P-17: CLOSED (independent QA PASS ✅) |
-Last independently QA-PASS SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e` |
+Last independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5` |
 P-18 Batch (P-18.01 → P-18.07): CLOSED (independent QA PASS ✅) |
-P-19 Bounded Batch (P-19.01 → P-19.02): COMPLETED (PASS Candidate, awaiting independent QA review) |
+P-19.01 & P-19.02: CLOSED (independent QA PASS ✅) |
+P-19.03: COMPLETED (Local Prep & Preflight Gate; Decision: BLOCKED / OPERATOR_DECISION_REQUIRED) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-Next phase (P-19.03+): PENDING / NOT_RUN (Strictly stopped before P-19.03)**
+Next phase (P-19.04+): PENDING / NOT_RUN (Strictly stopped before P-19.04)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -80,10 +81,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-19.01 → P-19.02 FINAL CI AND AUTHORITY REPAIR
+Active task: STILLDONE — P-19.03 DEPLOY FINAL REMOTE MCP/RUNTIME PATH (PREFLIGHT GATE)
 
-Starting Remote SHA: `60aaf669c504aebf0e7f361a622315013942b81c`
-Last Independently QA-PASS SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`
+Starting Remote SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`
+Last Independently QA-PASS SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅
@@ -97,33 +98,22 @@ Status:
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
 - P-18: P-18.01–P-18.07 CLOSED — independent QA PASS ✅ (SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`)
-- P-19.01: REPAIRED (Candidate for independent QA review)
-  - Created and validated `scripts/reproduce.py` with truthful `--check-only` enforcing `--no-sync` and `--offline` across all subcommands, failing closed with code 1 if `.venv` or `runtimes/strands_planner/.venv` is missing.
-  - Strict prerequisite enforcement (`uv >= 0.11.28`, `python >= 3.11`) with clear platform installation instructions.
-  - Repaired repository-relative links and corrected Ubuntu-only CI scope in `docs/REPRODUCTION.md`.
-  - Proven in an actual clean isolated temporary working directory without inherited virtual environments.
-  - CI network-denying harness made hermetic and executable in Core-only CI by provisioning/mocking the prerequisite boundary while genuinely inspecting top-level and nested package manager subcommands.
-  - Inherited `VIRTUAL_ENV` contamination stripped when entering separate Strands Planner environment or when excluded from `env`; negative regression verifies `dict.update()` bug is prevented.
-  - Dedicated unit tests added for `check_virtual_environments_exist` proving fail-closed rejection on missing Core or Strands virtual environments.
-  - Validated via 15 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
-- P-19.02: REPAIRED (Candidate for independent QA review)
-  - Implemented safe, scope-bound operator tooling in `src/stilldone/demo_tooling.py` and CLI in `scripts/demo_resources.py`.
-  - Four distinct operational modes: `INSPECT`, `SETUP`, `VERIFY`, `TEARDOWN`.
-  - Default is strictly `DRY_RUN / NO_MUTATION` (0 writes performed).
-  - Exact target-bound confirmation token `CONFIRM_TEARDOWN:<cal_id>:<tl_id>` strictly enforced; bare `CONFIRM_TEARDOWN` and mismatched scope tokens fail closed (`CONFIRMATION_REQUIRED`, 0 writes).
-  - Never delete by title alone: explicit `DemoArtifactManifest` required for every task and extra event deletion; unowned user tasks and events are strictly preserved fail-closed (`UNPROVEN_RESOURCE_OWNERSHIP`, 0 writes).
-  - Destructive authority hardened: all live destructive teardowns blocked fail-closed; caller-controlled `is_cli_untrusted=False` and forged ownership records cannot grant destructive authority on live transports; absent scope bindings and mismatched record scopes fail closed before mutation.
-  - Canonical pre-state read-back enforced: `ALREADY_CLEAN` and teardown pre-state execute an independent `get_event` read-back for the exact canonical event ID, rejecting disappeared, drifted, unreadable, or contradictory states with 0 false success.
-  - Deterministic canonical event selection (explicit manifest or exact single match; never `events[0]`); missing canonical event and readback drift detected fail-closed.
-  - Bounded per-operation delete handling with ambiguous write probes accurately tracking committed writes on transport errors.
-  - Adversarial output sanitization across details, error_message, `repr()`, and JSON representations.
-  - Prominent ephemeral fixture warning in text mode and `"ephemeral_fixture_notice": True` in JSON mode.
-  - Validated via 61 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
-- P-19.03+: PENDING / NOT_RUN (strictly STOPPED before P-19.03; independent QA review required)
+- P-19.01: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
+- P-19.02: CLOSED — independent QA PASS ✅ (SHA: `c54dde8579d6ac47ea536d7827b0921375bc6ac5`)
+- P-19.03: COMPLETED (Local Preparation & Preflight Gate; Decision: BLOCKED / OPERATOR_DECISION_REQUIRED)
+  - Completed local container packaging and profile audit (`Dockerfile` arm64, non-root user `stilldone`, port 8000, `--profile agentcore`).
+  - Verified `create_agentcore_config()` factory binding non-loopback `0.0.0.0:8000` with active SQLite rate limiter and health endpoints.
+  - Interface separation verified: MCP server exposes strictly `mission_start` (DRAFT) and `mission_status`; zero live Bedrock inference tools and zero Google Calendar/Tasks mutation tools exposed over MCP.
+  - Hardened `scripts/sigv4_proxy.py` with session ID pre-seeding via CLI `--session-id` and env `AGENT_RUNTIME_SESSION_ID` / `STILLDONE_AGENTCORE_SESSION_ID`, preventing the unintended additional AgentCore microVM session observed in historical P-05 evidence.
+  - Evaluated AWS account preflight: credentials `NOT_OBSERVED` in execution environment; zero cloud mutations executed; $0.00 personal spend maintained.
+  - Calculated conservative cost-risk ceiling: single 5m session $0.021217 USD; two-session campaign $0.047603 USD (< $0.05 USD operator threshold).
+  - Corrected nonexistent `docs/P13_KILLER_MISSION_EVIDENCE.md` references in `docs/REPRODUCTION.md` and `scripts/reproduce.py` to point to `docs/P13_KILLER_MISSION_AUDIT.md` (FIXTURE / BLOCKED_LIVE) and `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` (RECORDED_LIVE).
+  - Created standalone CLI tool `scripts/p19_03_preflight.py` and evidence doc `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`.
+  - Validated via 8 focused tests in `tests/test_phase_p19_03_remote_mcp_deployment.py` and 10 focused tests in `tests/test_sigv4_proxy.py`.
+- P-19.04+: PENDING / NOT_RUN (strictly STOPPED before P-19.04; operator decision / independent QA review required)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-19.01 → P-19.02 Bounded Batch
-(P-19.03+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
+Next exact task: Operator Decision on P-19.03 or proceed to P-19.04 (Public Judge Exhibit)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

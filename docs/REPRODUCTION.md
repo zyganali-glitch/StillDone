@@ -19,7 +19,8 @@ All reproducible test suites execute deterministically under `FIXTURE` and `LOCA
 > When `--check-only` is passed, **every descendant package-management operation** (including wheel build, isolated venv creation, and test smoke installation) is strictly guaranteed 100% offline.
 
 > [!NOTE]
-> Historical live AWS Bedrock/AgentCore and Google Calendar/Tasks execution evidence is recorded and preserved in `docs/` (e.g. [`P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) and [`P13_KILLER_MISSION_EVIDENCE.md`](P13_KILLER_MISSION_EVIDENCE.md)) under `RECORDED_LIVE` provenance.
+> Historical live AWS Bedrock/AgentCore and Google Calendar/Tasks execution evidence is recorded and preserved in `docs/` (e.g. [`P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](P05_06_LIVE_REMOTE_MCP_EVIDENCE.md) and [`P01_02_LIVE_BEDROCK_EVIDENCE.md`](P01_02_LIVE_BEDROCK_EVIDENCE.md)) under `RECORDED_LIVE` provenance.
+> The canonical killer-mission milestone audit ([`P13_KILLER_MISSION_AUDIT.md`](P13_KILLER_MISSION_AUDIT.md)) is evaluated in deterministic `FIXTURE` regression mode with live cloud portions preserved as `BLOCKED_LIVE / NOT_RUN`.
 
 ---
 

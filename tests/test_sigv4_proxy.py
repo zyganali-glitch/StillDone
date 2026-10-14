@@ -252,3 +252,115 @@ def test_credentials_and_authorization_not_logged(proxy_server: tuple[str, int])
         assert "[Proxy] GET /ping" in logged_output
     finally:
         conn.close()
+
+
+def test_post_mcp_reuses_preseeded_session_id_preventing_duplicate_sessions(
+    proxy_server: tuple[str, int],
+) -> None:
+    """8. Pre-seeded session ID is passed on first request, preventing duplicate sessions."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    # Pre-seed session ID
+    proxy_module._active_session_id = "preseeded-session-id-12345"
+
+    executed_cmd: list[str] = []
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        nonlocal executed_cmd
+        executed_cmd = list(cmd)
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b'event: message\r\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\r\n\r\n')
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = json.dumps({"runtimeSessionId": "preseeded-session-id-12345"})
+        mock_res.stderr = ""
+        return mock_res
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {"Content-Type": "application/json"}
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            assert resp.status == 200
+            assert resp.getheader("Mcp-Session-Id") == "preseeded-session-id-12345"
+
+            # Assert that preseeded session ID was passed to AgentCore CLI on the first call
+            assert "--runtime-session-id" in executed_cmd
+            assert "--mcp-session-id" in executed_cmd
+            rt_idx = executed_cmd.index("--runtime-session-id")
+            assert executed_cmd[rt_idx + 1] == "preseeded-session-id-12345"
+            mcp_idx = executed_cmd.index("--mcp-session-id")
+            assert executed_cmd[mcp_idx + 1] == "preseeded-session-id-12345"
+    finally:
+        conn.close()
+
+
+def test_post_mcp_incoming_header_session_id_persists(
+    proxy_server: tuple[str, int],
+) -> None:
+    """9. Incoming Mcp-Session-Id header is passed to AgentCore and updates active session."""
+    host, port = proxy_server
+    conn = HTTPConnection(host, port, timeout=5.0)
+
+    executed_cmd: list[str] = []
+
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        nonlocal executed_cmd
+        executed_cmd = list(cmd)
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b'event: message\r\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\r\n\r\n')
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = json.dumps({"runtimeSessionId": "incoming-session-uuid-777"})
+        mock_res.stderr = ""
+        return mock_res
+
+    try:
+        with patch("subprocess.run", side_effect=fake_subprocess_run):
+            headers = {
+                "Content-Type": "application/json",
+                "Mcp-Session-Id": "incoming-session-uuid-777",
+            }
+            conn.request(
+                "POST",
+                "/mcp",
+                body=b'{"jsonrpc":"2.0","method":"tools/list","id":1}',
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            assert resp.status == 200
+            assert resp.getheader("Mcp-Session-Id") == "incoming-session-uuid-777"
+            assert proxy_module._active_session_id == "incoming-session-uuid-777"
+
+            rt_idx = executed_cmd.index("--runtime-session-id")
+            assert executed_cmd[rt_idx + 1] == "incoming-session-uuid-777"
+    finally:
+        conn.close()
+
+
+def test_run_cli_arg_parsing_sets_runtime_arn_and_session_id() -> None:
+    """10. run() CLI parses ARN and --session-id without launching server."""
+    test_arn = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/stilldone-rt-123"
+    test_session = "cli-session-id-456"
+
+    with (
+        patch("sys.argv", ["sigv4_proxy.py", test_arn, "--session-id", test_session]),
+        patch.object(proxy_module, "HTTPServer") as mock_server,
+    ):
+        mock_instance = MagicMock()
+        mock_server.return_value = mock_instance
+        # Stop serve_forever from blocking
+        mock_instance.serve_forever.return_value = None
+
+        proxy_module.run()
+
+        assert proxy_module.AGENT_RUNTIME_ARN == test_arn
+        assert proxy_module._active_session_id == test_session

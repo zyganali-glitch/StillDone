@@ -1918,7 +1918,19 @@ Acceptance:
 - Validated via 61 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 
 ### P-19.03 — Deploy final remote MCP/runtime path
-Status: PENDING
+Status: COMPLETED (Local Preparation & Preflight Gate; Awaiting Operator Authorization / QA Review)
+
+Acceptance:
+- Local packaging audit passed: `Dockerfile` linux/arm64, non-root `USER stilldone`, `EXPOSE 8000`, `CMD ["python", "-m", "stilldone", "--profile", "agentcore"]`.
+- AgentCore server configuration factory verified (`create_agentcore_config`): host `0.0.0.0`, port 8000, path `/mcp`, ping_path `/ping`, active SQLite rate limiter, `live_paid_path_enabled=False`.
+- Tool interface strictly bounded: exactly 2 tools (`mission_start` DRAFT, `mission_status`), zero live paid Bedrock inference tools, zero Google Calendar/Tasks mutation tools exposed over MCP.
+- Session reuse & anti-duplicate mechanism: `scripts/sigv4_proxy.py` updated with `--session-id` and `AGENT_RUNTIME_SESSION_ID` support to prevent accidental dual AgentCore microVM provisioning.
+- Account preflight evaluated fail-closed: credentials `NOT_OBSERVED` in execution environment; zero charge-capable cloud mutations executed; $0.00 personal spend maintained.
+- Conservative cost-risk bounds computed: single session ceiling $0.021217 USD; two-session campaign ceiling $0.047603 USD (< $0.05 USD operator limit).
+- Nonexistent `docs/P13_KILLER_MISSION_EVIDENCE.md` references corrected to `docs/P13_KILLER_MISSION_AUDIT.md` (FIXTURE / BLOCKED_LIVE) and `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md` (RECORDED_LIVE).
+- Preflight script created at `scripts/p19_03_preflight.py` and evidence documented in `docs/P19_03_REMOTE_MCP_DEPLOYMENT_PREFLIGHT.md`.
+- Operator decision outcome: `BLOCKED / OPERATOR_DECISION_REQUIRED`.
+- Verified via 8 focused tests in `tests/test_phase_p19_03_remote_mcp_deployment.py` and 10 focused tests in `tests/test_sigv4_proxy.py`.
 
 ### P-19.04 — Publish read-only public judge exhibit without unmetered paid execution
 Status: PENDING

@@ -26,8 +26,12 @@ PROFILE = os.environ.get("AWS_PROFILE", "stilldone-p01")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 AGENT_RUNTIME_ARN = os.environ.get("AGENT_RUNTIME_ARN", "")
 
-# Shared active session ID across requests in this run
-_active_session_id: str | None = None
+# Shared active session ID across requests in this run (can be pre-seeded to prevent dual sessions)
+_active_session_id: str | None = (
+    os.environ.get("AGENT_RUNTIME_SESSION_ID")
+    or os.environ.get("STILLDONE_AGENTCORE_SESSION_ID")
+    or None
+)
 
 
 class SigV4ProxyHandler(BaseHTTPRequestHandler):
@@ -133,19 +137,30 @@ class SigV4ProxyHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
-    global AGENT_RUNTIME_ARN
-    if len(sys.argv) > 1 and sys.argv[1].startswith("arn:aws:bedrock-agentcore:"):
-        AGENT_RUNTIME_ARN = sys.argv[1]
+    global AGENT_RUNTIME_ARN, _active_session_id
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("arn:aws:bedrock-agentcore:"):
+            AGENT_RUNTIME_ARN = arg
+        elif arg in ("--session-id", "-s") and i + 1 < len(args):
+            _active_session_id = args[i + 1]
+            i += 1
+        elif arg.startswith("--session-id="):
+            _active_session_id = arg.split("=", 1)[1]
+        i += 1
 
     if not AGENT_RUNTIME_ARN:
         sys.stderr.write(
-            "Usage: python scripts/sigv4_proxy.py <AGENT_RUNTIME_ARN> "
+            "Usage: python scripts/sigv4_proxy.py <AGENT_RUNTIME_ARN> [--session-id <SESSION_ID>] "
             "or set AGENT_RUNTIME_ARN env var\n"
         )
         sys.exit(1)
 
     server = HTTPServer(("127.0.0.1", PORT), SigV4ProxyHandler)
-    print(f"SigV4 Signing Proxy listening on http://127.0.0.1:{PORT}/mcp")
+    session_info = f" [session-bound: {_active_session_id}]" if _active_session_id else ""
+    print(f"SigV4 Signing Proxy listening on http://127.0.0.1:{PORT}/mcp{session_info}")
     server.serve_forever()
 
 
