@@ -98,6 +98,7 @@ Forbidden without explicit operator approval:
 - unmetered public endpoints that can drain credits.
 
 See:
+- `docs/REPRODUCTION.md` (Clean-checkout judge reproduction guide)
 - `docs/COST_AND_ACCESS_POLICY.md`
 - `docs/OPERATOR_REQUIREMENTS.md`
 

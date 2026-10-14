@@ -28,7 +28,7 @@ def smoke_mcp_verify_wheel() -> None:
         print(f"ERROR: pyproject.toml not found in {pkg_dir}", file=sys.stderr)
         sys.exit(1)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_path = Path(tmpdir)
         dist_dir = tmp_path / "dist"
         venv_dir = tmp_path / "venv"
@@ -112,7 +112,7 @@ def smoke_mcp_verify_wheel() -> None:
         clean_env.pop("PYTHONPATH", None)
 
         probe_res = subprocess.run(
-            [str(venv_python), "-c", probe_code],
+            [str(venv_python), "-B", "-c", probe_code],
             cwd=str(tmp_path),
             env=clean_env,
             capture_output=True,

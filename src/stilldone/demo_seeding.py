@@ -259,6 +259,10 @@ class CalendarSeedTransport(Protocol):
         """Update an existing event resource."""
         ...
 
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        """Delete an event resource."""
+        ...
+
 
 @runtime_checkable
 class TasksSeedTransport(Protocol):
@@ -274,6 +278,10 @@ class TasksSeedTransport(Protocol):
         max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
     ) -> list[dict[str, Any]]:
         """List tasks on the specified task list across pages."""
+        ...
+
+    def delete_task(self, task_list_id: str, task_id: str) -> None:
+        """Delete a task resource."""
         ...
 
 
@@ -443,6 +451,12 @@ class FakeCalendarSeedTransport:
             raw["description"] = body["description"]
         return self._to_transport_event(raw)
 
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        self.writes_count += 1
+        raw = self._events.get((calendar_id, event_id))
+        if raw is not None:
+            raw["status"] = "cancelled"
+
     @staticmethod
     def _to_transport_event(raw: dict[str, Any]) -> CalendarTransportEvent:
         event_id = str(raw.get("id", ""))
@@ -515,6 +529,10 @@ class FakeTasksSeedTransport:
                 f"Tasks discovery exceeded maximum page limit ({max_pages}); failing closed."
             )
         return [t for (tl_id, _), t in self._tasks.items() if tl_id == task_list_id]
+
+    def delete_task(self, task_list_id: str, task_id: str) -> None:
+        self.writes_count += 1
+        self._tasks.pop((task_list_id, task_id), None)
 
 
 # ===========================================================================
@@ -628,6 +646,18 @@ class GoogleApiClientCalendarSeedTransport:
             sanitized = sanitize_error_message(exc)
             raise DemoSeedingTransportError(f"Failed to update event: {sanitized}") from None
 
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        try:
+            req = self._service.events().delete(
+                calendarId=calendar_id,
+                eventId=event_id,
+                sendUpdates="none",
+            )
+            req.execute()
+        except Exception as exc:
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to delete event: {sanitized}") from None
+
 
 class GoogleApiClientTasksSeedTransport:
     """Production Tasks seed transport wrapping googleapiclient.discovery.Resource."""
@@ -681,6 +711,14 @@ class GoogleApiClientTasksSeedTransport:
         except Exception as exc:
             sanitized = sanitize_error_message(exc)
             raise DemoSeedingTransportError(f"Failed to list tasks: {sanitized}") from None
+
+    def delete_task(self, task_list_id: str, task_id: str) -> None:
+        try:
+            req = self._service.tasks().delete(tasklist=task_list_id, task=task_id)
+            req.execute()
+        except Exception as exc:
+            sanitized = sanitize_error_message(exc)
+            raise DemoSeedingTransportError(f"Failed to delete task: {sanitized}") from None
 
 
 # ===========================================================================

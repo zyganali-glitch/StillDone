@@ -6,11 +6,12 @@ Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
 Current repository state: **P-00 through P-17: CLOSED (independent QA PASS ✅) |
-Last independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce` |
-P-18 Batch (P-18.01 → P-18.07): COMPLETED (PASS Candidate, awaiting independent QA review) |
+Last independently QA-PASS SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e` |
+P-18 Batch (P-18.01 → P-18.07): CLOSED (independent QA PASS ✅) |
+P-19 Bounded Batch (P-19.01 → P-19.02): COMPLETED (PASS Candidate, awaiting independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-Next phase (P-19+): PENDING / NOT_RUN (Strictly stopped before P-19)**
+Next phase (P-19.03+): PENDING / NOT_RUN (Strictly stopped before P-19.03)**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -79,10 +80,10 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — P-18.05 + P-18.06 FINAL SAFE-CLOSURE REPAIR
+Active task: STILLDONE — P-19.01 → P-19.02 BOUNDED JUDGE-REPRODUCTION PREPARATION BATCH
 
-Starting Remote SHA: `97ed73332e8c42e0e279c0c549e18f00225ae7ea`
-Last Independently QA-PASS SHA: `7252bc8c0b5a22a7505d935e17e68f2f259d55ce`
+Starting Remote SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`
+Last Independently QA-PASS SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`
 
 Status:
 - P-00 through P-12: CLOSED — independent QA PASS ✅
@@ -95,26 +96,27 @@ Status:
 - P-16: P-16.01, P-16.02, P-16.04 COMPLETED; P-16.03 BLOCKED_LIVE / NOT_RUN;
   P-16.05 BLOCKED_ACCOUNT_OBSERVATION / NOT_RUN.
 - P-17: P-17.01–P-17.04 COMPLETED; P-17.05 BLOCKED_EXTERNAL / NOT_RUN.
-- P-18.01–P-18.03: COMPLETED (Candidate for independent QA review)
-- P-18.04: PRESERVED (QA PASS baseline preserved; do not reopen)
-- P-18.05: REPAIRED (Deterministic write and recovery facts; candidate for independent QA review)
-  - Removed write synthesis in `ProviderExecutionResult`: never synthesizes or increases `writes_performed` based on `success`. Mutations with `success=True` and `writes_committed="NONE"` fail closed with typed `ExecutionContractValueError`.
-  - Recovery boundary respects unknown provider outcomes independently of error text: `evaluate_post_execution_recovery` detects `UNKNOWN` mutation outcome even with `error=None` and requires independent verification (`REQUIRES_VERIFICATION`).
-  - Exhausted retry ceiling on ambiguous mutation returns `should_retry=False`, `classification=AMBIGUOUS_TIMEOUT`, and `requires_verification_before_retry=True`, forbidding additional writes while requiring independent read-back verification to establish remote state.
-  - Validated via 26 passing tests in `tests/test_phase_p18_05_quota_safety.py`.
-- P-18.06: REPAIRED (OS-process isolated timeout and qualification precedence; candidate for independent QA review)
-  - Completely removed unsafe CPython thread exception injection (`ctypes.pythonapi.PyThreadState_SetAsyncExc`) and daemon threads.
-  - Implemented top-level, importable worker `_reliability_scenario_worker` executed in isolated OS process via `multiprocessing.get_context("spawn")` and `Pipe`.
-  - Windows spawn-safe and Linux CI-compatible; wall-clock watchdog terminates, joins, and kills worker process on timeout; fails closed if worker cannot be reaped.
-  - Added adversarial tests proving timed-out worker process is dead and delayed filesystem/fixture mutations never occur post-timeout.
-  - Qualification computation enforces failure/integrity precedence over partial coverage (`DISQUALIFIED` when any scenario fails, even if untested scenarios remain; `PARTIAL_UNQUALIFIED` preserved for clean partial coverage).
-  - Validated via 24 passing tests in `tests/test_phase_p18_06_reliability.py`.
-- P-18.07: PRESERVED (QA PASS baseline preserved; do not reopen)
-- P-19+: PENDING / NOT_RUN (strictly STOPPED before P-19)
+- P-18: P-18.01–P-18.07 CLOSED — independent QA PASS ✅ (SHA: `4d7320da82f48b45e206c2cf2549e1fbf917a46e`)
+- P-19.01: COMPLETED (Candidate for independent QA review)
+  - Created and validated `scripts/reproduce.py`.
+  - Preserved dual-environment dependency isolation (Core MCP `mcp >= 2.2.0` vs Strands Planner `strands-agents == 1.57.2`, transitive `mcp < 2.2.0`).
+  - Tested in an actual isolated temporary directory without existing virtual environments or caches.
+  - Documented in `docs/REPRODUCTION.md` and linked in `README.md`.
+  - Validated via 6 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
+- P-19.02: COMPLETED (Candidate for independent QA review)
+  - Implemented operator tooling in `src/stilldone/demo_tooling.py` and CLI in `scripts/demo_resources.py`.
+  - Four distinct operational modes: `INSPECT`, `SETUP`, `VERIFY`, `TEARDOWN`.
+  - Default is strictly `DRY_RUN / NO_MUTATION` (0 writes performed).
+  - Target isolation strictly enforced via `DemoResourceScope`; primary/default calendars/lists rejected fail-closed.
+  - Teardown requires exact target-bound confirmation token (`CONFIRM_TEARDOWN`).
+  - Read-back verification strictly enforced after every mutation.
+  - All outputs and logs sanitized (IDs masked, tokens/secrets excluded).
+  - Validated via 29 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
+- P-19.03+: PENDING / NOT_RUN (strictly STOPPED before P-19.03; independent QA review required)
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-18.05 + P-18.06 Final Safe-Closure Repair
-(P-19 remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
+Next exact task: Independent QA Review of P-19.01 → P-19.02 Bounded Batch
+(P-19.03+ remains strictly PENDING / NOT AUTHORIZED / NOT_RUN)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

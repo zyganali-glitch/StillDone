@@ -1878,10 +1878,36 @@ Goal:
 make the project inspectable without hiding behind the developer machine.
 
 ### P-19.01 — Create clean-checkout setup path
-Status: PENDING
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Truly reproducible setup script created in `scripts/reproduce.py`.
+- Two isolated dependency environments strictly preserved: Core/MCP (`mcp >= 2.2.0`) and Strands Planner (`strands-agents == 1.57.2`, transitive `mcp < 2.2.0`).
+- Both environments synchronized independently from their pinned lockfiles (`uv.lock` and `runtimes/strands_planner/uv.lock`); dependency resolution is never overridden or merged.
+- Minimum Python requirement (>= 3.11) and package manager (`uv >= 0.11.28`) enforced with clear, platform-specific install guidance for missing prerequisites (Windows PowerShell, Linux/macOS curl, pip).
+- Zero credentials, zero external API calls, and strictly $0.00 personal spend required for default reproduction.
+- Distinction between offline fixture reproduction (`FIXTURE / LOCAL_EXECUTION`) and historical live evidence (`RECORDED_LIVE` in `docs/`) explicitly reported in console and documented in `docs/REPRODUCTION.md`.
+- Comprehensive judge reproduction guide documented in `docs/REPRODUCTION.md` and linked in `README.md`.
+- Proven in an actual clean isolated temporary working directory without pre-existing virtual environments or caches (`test_reproduction_isolated_clean_checkout_simulation`).
+- Validated via 6 focused tests in `tests/test_phase_p19_01_clean_checkout.py`.
 
 ### P-19.02 — Create sanitized demo-resource setup/teardown commands
-Status: PENDING
+Status: DONE (Candidate for independent QA review)
+
+Acceptance:
+- Narrowly scoped, idempotent operator tooling implemented in `src/stilldone/demo_tooling.py` and CLI script in `scripts/demo_resources.py`.
+- Four distinct operational modes implemented: `INSPECT`, `SETUP`, `VERIFY`, `TEARDOWN`.
+- Default behavior is strictly `DRY_RUN / NO_MUTATION` (0 writes performed); mutations execute only when `permit_mutation=True` / `--execute` is explicitly supplied.
+- Dedicated disposable demo resource scope enforced via `DemoResourceScope`; primary and default calendars/lists strictly rejected fail-closed (`WRONG_TARGET_REJECTED`).
+- Container creation and container deletion are strictly forbidden.
+- Container title verification enforced: calendar must match "StillDone Demo" and task list must match "StillDone Demo".
+- Idempotency enforced: running setup twice on canonical pre-state executes 0 writes (`VERIFIED_EXISTING`); running teardown twice on clean state executes 0 writes (`ALREADY_CLEAN`).
+- Narrow teardown scope: removes demo mission artifacts (tasks titled "Pack backpacks" and duplicate demo events); never deletes unrelated resources.
+- Teardown mutation safety: requires exact target-bound confirmation token (`CONFIRM_TEARDOWN` or `CONFIRM_TEARDOWN:<cal_id>:<tl_id>`); fails closed if confirmation is missing or invalid (`CONFIRMATION_REQUIRED`, 0 writes).
+- Independent read-back required for every mutation: write success alone cannot promote; read-back verification confirms state change before declaring success.
+- Privacy & sanitization: raw external IDs, tokens, and secrets are masked with `***` in `str()`/`repr()` and `[REDACTED]` in `to_sanitized_dict()` and CLI output.
+- All live mutating commands remain disabled in this batch; no unapproved live mutations executed; $0.00 personal spend maintained.
+- Validated via 29 focused tests in `tests/test_phase_p19_02_demo_tooling.py`.
 
 ### P-19.03 — Deploy final remote MCP/runtime path
 Status: PENDING
