@@ -88,7 +88,7 @@ flowchart TD
 | **Step 7: Drift Reconciliation** | `FIXTURE` | Calendar departure externally altered to 08:00 AM; independent read-back detects mismatch; mission reconciled to `DRIFTED`. | `src/stilldone/killer_mission.py` `tests/test_phase_p13_killer_mission.py` |
 
 > [!IMPORTANT]
-> **Complete 7-Step Exhibit Status**: The 7-step sequence displayed on the public judge exhibit (`artifacts/judge_exhibit/index.html`) is **FIXTURE playback**. It proves the complete mathematical state transitions, independent read-back evaluation, and drift reconciliation of the StillDone engine offline. It is **not** claimed as an unmonitored fresh live Google/AWS run for web visitors.
+> **Complete 7-Step Exhibit Status**: The 7-step sequence displayed on the public judge exhibit (`artifacts/judge_exhibit/index.html`) is **FIXTURE playback**. It proves the complete mathematical state transitions, independent read-back evaluation, and drift reconciliation of the StillDone engine offline. It is **not** claimed as an unmonitored fresh live Google/AWS run for web visitors. Recorded AWS and Google live executions are historical records preserved separately in `docs/` (`RECORDED_LIVE`).
 
 ---
 
@@ -96,7 +96,7 @@ flowchart TD
 
 | Surface | Classification | Truth & Disclosure |
 |---|---|---|
-| **Alexa+ Client Interface** | **`SIMULATED ALEXA+ EXPERIENCE`** | Direct internal Amazon Alexa+ partner client access was not established. StillDone implements a fully functional multimodal client simulation with spoken phrase synthesis ($< 8$s) and visual card rendering. Prominently labeled with `SIMULATED ALEXA+ EXPERIENCE` badge. |
+| **Alexa+ Client Interface** | **`SIMULATED ALEXA+ EXPERIENCE`** | Direct internal Amazon Alexa+ partner client access was not established. StillDone provides a simulated Alexa+ multimodal presentation surface: `src/stilldone/judge_ux/builder.py` creates voice-ready English text and estimated speaking duration ($< 8$s), and `src/stilldone/judge_ux/html_renderer.py` renders the visual cards and text. The public static HTML contains no audio player, speech synthesis implementation, live Alexa+/Echo Show device connection, or visitor backend execution. Prominently labeled with `SIMULATED ALEXA+ EXPERIENCE` badge. |
 | **Public Judge Exhibit** | **`STATIC READ-ONLY EXHIBIT`** | 100% self-contained static HTML deployed to Cloudflare Pages (`https://stilldone-judge-exhibit.pages.dev`). Executes **zero backend code for visitors**. No external JavaScript, no unmetered API calls, $0.00 spend. |
 | **Automated CLI Reproduction** | **`LOCAL_EXECUTION (HERMETIC)`** | Automated clean-checkout reproduction via `python scripts/reproduce.py` executed from a pristine temporary archive (`git archive`) with environment variables stripped. Executes 507 smoke tests offline with 0 cloud calls. |
 
@@ -107,6 +107,7 @@ flowchart TD
 - [x] **No False Live Claims**: Historical live calls are explicitly labeled `RECORDED_LIVE` and dated; never passed off as current-live.
 - [x] **Simulated Alexa+ Labeling**: `SIMULATED ALEXA+ EXPERIENCE` is prominently displayed in HTML headers, view models, and documentation.
 - [x] **Static Exhibit Disclosure**: Clearly explains that the web page is a static snapshot with 0 active backend execution for visitors.
+- [x] **Truthful Voice Surface & No Audio Synthesis**: VoiceSummary produces voice-ready English text and calculated duration; no speech synthesis or live Alexa+/Echo Show hardware execution is claimed or implemented.
 - [x] **Zero Personal Spend Maintained**: $0.00 personal spend verified across all active accounts and runs.
 - [x] **Clean Donor Isolation**: All donor repositories remain strictly `CONCEPT_ONLY`; 0 lines imported.
 

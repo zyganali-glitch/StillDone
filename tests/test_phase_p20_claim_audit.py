@@ -165,6 +165,26 @@ def test_p20_04_judging_criteria_mapping_completeness() -> None:
     assert "AWS Builder Mini Challenge" in content
     assert "Open Source Mini Challenge" in content
 
+    # Stage 1 baseline viability vs submission requirements separation (Defect A)
+    assert "Submission Requirements (Prerequisites)" in content
+    assert "Baseline Viability Assessment" in content or "baseline viability assessment" in content
+    assert "project theme fit" in content
+    assert "meaningful application of required APIs/SDKs" in content
+    # Reject Stage 1 being described as merely mandatory submission-field validation
+    assert "Stage 1: Eligibility Gate (Public repository" not in content
+    assert not re.search(r"Stage 1.*merely mandatory submission", content, re.IGNORECASE)
+
+    # Truthful simulated voice surface without audio synthesis or live device execution (Defect B)
+    assert "SIMULATED ALEXA+ EXPERIENCE" in content
+    assert "VoiceSummary" in content
+    assert "src/stilldone/judge_ux/builder.py" in content
+    assert "src/stilldone/judge_ux/html_renderer.py" in content
+    assert "No Live Voice Device or Audio Synthesis" in content
+    # Reject unsupported live Alexa+/Echo Show operation claims and audio synthesis
+    assert "Synthesizes concise voice summaries" not in content
+    assert "operate a live Echo Show or Alexa+ client device" in content
+    assert "do not generate synthesized speech (audio / TTS) or operate a live Echo Show" in content
+
     # Open Source Mini Challenge eligibility assertions
     assert "packages/mcp_verify/" in content
     assert "BLOCKED_EXTERNAL / NOT_RUN" in content
@@ -194,6 +214,17 @@ def test_p20_05_provenance_and_simulation_disclosure() -> None:
     # Verified script references
     assert "scripts/demo_resources.py" in content
     assert "scripts/p19_02_demo_tooling.py" not in content
+
+    # Semantic rejection of false client simulation and audio synthesis claims (Defect C)
+    assert "fully functional multimodal client" not in content
+    assert "spoken phrase synthesis" not in content
+
+    # Verified source reality assertions
+    assert "src/stilldone/judge_ux/builder.py" in content
+    assert "src/stilldone/judge_ux/html_renderer.py" in content
+    assert "voice-ready English text" in content
+    assert "no audio player, speech synthesis implementation" in content
+    assert "FIXTURE playback" in content
 
 
 def test_p20_06_donor_license_and_clean_room_audit() -> None:

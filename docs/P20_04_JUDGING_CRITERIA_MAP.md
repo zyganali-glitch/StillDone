@@ -5,9 +5,14 @@
 **Competition**: *Build, Ship, Shape: Amazon Developer Hackathon* (Official Devpost Rules, Snapshot: 2026-10-01)  
 **Track Alignment**: Primary: **Alexa+ Track**; Secondary: **AWS Builder Mini Challenge**, **Open Source Mini Challenge**  
 **Evaluation Structure**:
-- **Stage 1**: Eligibility Gate (Public repository, video link, required submission responses, zero unverified claims).
+- **Submission Requirements (Prerequisites)**: Distinct baseline submission requirements including a public repository URL, demonstration video link, open-source license, completed mandatory submission form fields, and zero unverified claims.
+- **Stage 1 (Pass/Fail Baseline Viability Assessment)**: Initial judging viability assessment evaluating project theme fit and meaningful application of required APIs/SDKs (e.g., Amazon Bedrock / AWS tools / Alexa+ Streamable HTTP MCP integration). Submissions that pass baseline viability advance to Stage 2.
+- **Stage 2 (Four Equally Weighted Canonical Criteria — 25% Each)**:
+  1. Technological Implementation (25%)
+  2. Design (25%)
+  3. Potential Impact (25%)
+  4. Quality of Idea (25%)
 - **Friction-Log Bonus**: Up to 10% bonus evaluation based on high-quality, actionable product feedback and friction logging for Amazon/AWS tools.
-- **Stage 2**: 4 Equally Weighted Canonical Criteria (25% Each: Technological Implementation, Design, Potential Impact, Quality of the Idea).
 
 ---
 
@@ -44,8 +49,10 @@
 1. **One-Screen Multimodal Timeline & Departure Story**:
    - Designed a clean, scannable one-screen timeline for the canonical killer mission: *"Get my family ready for tomorrow morning. We need to leave by 7:30."*
    - Prominently showcases the departure lifecycle tracker: `07:45 AM (Initial Calendar) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)`, allowing judges to instantly comprehend state evolution (`src/stilldone/judge_ux/html_renderer.py`).
-2. **Truthful, Voice-Friendly Summaries for Alexa+**:
-   - Synthesizes concise voice summaries (`VoiceSummary`) with duration bounds ($< 8$ seconds) designed specifically for voice devices (`Echo Show`, `Alexa+`).
+2. **Truthful, Voice-Ready Summaries for Simulated Alexa+ Surface**:
+   - Generates concise voice summaries (`VoiceSummary`) with duration bounds ($< 8$ seconds) designed specifically for voice-ready conversational interactions.
+   - **Simulated Surface Classification**: The interface is strictly a simulated Alexa+ multimodal presentation (`SIMULATED ALEXA+ EXPERIENCE`). `src/stilldone/judge_ux/builder.py` produces voice-ready English text and estimated speaking duration; `src/stilldone/judge_ux/html_renderer.py` renders that text visually.
+   - **No Live Voice Device or Audio Synthesis**: The current software and public static HTML exhibit do not generate synthesized speech (audio / TTS) or operate a live Echo Show or Alexa+ client device. Audio synthesis belongs to video production (P-21.04) and is not implemented in the current codebase or static exhibit.
    - Strictly truthful: distinguishes task additions to a list from physical preparation; never claims physical backpacks are packed.
 3. **Accessible, WCAG AA Mathematical Contrast Compliance**:
    - 100% self-contained CSS with zero external web fonts or CDN scripts.
