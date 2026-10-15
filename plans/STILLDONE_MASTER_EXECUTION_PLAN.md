@@ -2056,7 +2056,18 @@ Goal:
 deliver a sub-3-minute proof-first story.
 
 ### P-21.01 — Freeze 2:30–2:50 demo script and shot list
-Status: PENDING
+Status: COMPLETED (Candidate for independent QA review)
+
+Acceptance:
+- Frozen 2:45 (165s) competition-ready English narration script and timestamped screen-recording shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md`, strictly bounded within the 2:30–2:50 (150s–170s) Devpost video requirement.
+- Contiguous 8-scene structure (0:00 to 2:45) opening on the failure of ordinary AI tool-completion claims (API HTTP 200 != verification) and detailing StillDone's desired-state mission runtime.
+- Clearly anchors the canonical departure evolution lifecycle: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)`.
+- Explicitly binds technical claims to authentic, dated disk proofs (`docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`, `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`, `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`, `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`, `docs/P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md`, `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`, `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`).
+- Rigorously distinguishes the 6 canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`) from the presentation disclosure `SIMULATED ALEXA+ EXPERIENCE`.
+- Transparently disclaims non-capabilities: no live partner Alexa+ access, no speech synthesis or Echo Show device in repository, zero visitor backend execution on static Cloudflare Pages exhibit, and remote MCP microVM torn down to enforce Zero Personal Spend ($0.00).
+- Modular conditional replacement shot plan defined for P-21.02 & P-21.03 if operator authorizes live Google/AWS credentials.
+- Practical Windows screen recording guide with Turkish screen-by-screen guidance for non-expert operator per `AGENTS.md` § 22.
+- 9 focused validation tests passing in `tests/test_phase_p21_01_demo_script.py`.
 
 ### P-21.02 — Record fresh canonical live mission
 Status: PENDING

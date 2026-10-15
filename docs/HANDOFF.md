@@ -11,7 +11,8 @@ P-19 Batch (P-19.01 → P-19.06): COMPLETED (Candidate for independent QA review
 P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-Phase P-21+: PENDING / NOT AUTHORIZED**
+P-21.01: COMPLETED (Candidate for independent QA review) |
+Phase P-21.02+: PENDING / NOT AUTHORIZED**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -80,29 +81,27 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: STILLDONE — PUBLIC RELEASE RECORD + P-20 COMPETITION EVIDENCE CLOSURE BATCH
+Active task: P-21.01 — Freeze 2:30–2:50 demo script and shot list
 
-Starting Remote SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3`
+Starting Remote SHA: `f4c5a3b381493c544811468e957af97b247c48bc`
 Last Independently QA-PASS SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3`
 
 Status:
 - P-00 through P-18: CLOSED — independent QA PASS ✅
-- P-19.01–P-19.03, P-19.05, P-19.06: COMPLETED (Candidate for independent QA review)
-- P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED
-  - Operator confirmed publication on Cloudflare Pages (`https://stilldone-judge-exhibit.pages.dev`, deployment `a10846ac.stilldone-judge-exhibit.pages.dev`, source SHA `ccf79f6f87a1b5616308e279eed70369d30b37c3`, Direct Upload) as `OPERATOR_OBSERVED / SCREENSHOT`.
-  - Static exhibit polished: added brand headline (`StillDone — Done, and still true.`), departure evolution tracker (`07:45 AM → 07:30 AM → 08:00 AM`), responsive mobile layout (<640px single-column layout without overflow), zero visitor backend execution notice, truthful compilation copy (`Canonical proposal compiled 3 actions (0 model authority)`), and verified privacy-safe GitHub links.
-  - Byte-for-byte parity preserved between `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` (41,995 bytes). Note: future refreshes require operator Direct Upload. Remote MCP remains `BLOCKED / NOT_RUN`.
+- P-19 Batch (P-19.01–P-19.03, P-19.05, P-19.06): COMPLETED (Candidate for independent QA review)
+- P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED (`https://stilldone-judge-exhibit.pages.dev`)
 - P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review)
-  - P-20.01: Consolidated factual product feedback in `docs/P20_01_AWS_PRODUCT_FEEDBACK.md` covering Amazon Bedrock Nova Micro, Strands Agents SDK, Bedrock AgentCore Runtime, AWS CLI v2, and Alexa+ Streamable HTTP MCP (distinguishing recorded traces from benchmarks; binding pricing to official September 2026 snapshot; documenting StillDone mcp>=2.2.0 project choice; zero secrets).
-  - P-20.02: Consolidated all 11 chronological friction logs in `docs/COMPETITION_FEEDBACK_LOG.md` (Strands MCP pinning F-20261005-01, AgentCore SigV4 proxy session isolation F-20261014-01, and Cloudflare Pages DNS connectivity uncertainty F-20261014-02 classified as UNKNOWN / SUSPECTED DNS OR NETWORK PATH).
-  - P-20.03: Claim-by-claim evidence manifest in `docs/P20_03_EVIDENCE_MANIFEST.md` covering C-01 through C-13 (C-02 bound to FIXTURE & LOCAL_EXECUTION; C-05 bound to operator zero-spend policy and billing snapshot; C-07 execution date 2026-10-05; C-10 deployed artifact ccf79f6 distinguished from local exhibit; bounded audits and limitations).
-  - P-20.04: Judging criteria map in `docs/P20_04_JUDGING_CRITERIA_MAP.md` mapping Devpost evaluation structure (Stage 1 eligibility gate, up-to-10% friction log bonus, 4 equally weighted Stage 2 criteria at 25% each; Open Source Mini Challenge eligibility recorded as ELIGIBILITY_UNCONFIRMED / OPERATOR_ACTION_REQUIRED).
-  - P-20.05: Evidence provenance disclosure in `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md` defining exactly six canonical execution provenance values (FIXTURE, LOCAL_EXECUTION, LIVE_AWS, LIVE_GOOGLE, LIVE_EXTERNAL, RECORDED_LIVE), distinct presentation disclosures, and execution statuses.
-  - P-20.06: Scoped clean-room donor, direct dependency license, and build-period audit in `docs/DONOR_PROVENANCE.md` (Section 7) proving strictly 0 foreign code lines, permissive direct dependencies, deep transitive closure classified as NOT_AUDITED_TRANSITIVE_CLOSURE, and Open-Meteo CC BY 4.0 data terms vs synthetic fixture exhibit data distinction.
-  - Validated via `tests/test_phase_p20_claim_audit.py` (6 passed).
+- P-21.01: COMPLETED (Candidate for independent QA review)
+  - Frozen 2:45 (165s) competition-ready English narration script and timestamped shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md` (strictly in 2:30–2:50 window, 8 contiguous scenes, ~139.6 WPM cadence, 384 words).
+  - Anchors canonical departure evolution: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)`.
+  - Discloses all 6 canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`) and surface disclosure `SIMULATED ALEXA+ EXPERIENCE`.
+  - Enforces negative bounds: no live partner Alexa+ access, no speech synthesis / Echo Show in repo, zero visitor backend execution on static site, remote MCP torn down ($0.00 spend).
+  - Turkish screen-by-screen guidance for non-expert operator per `AGENTS.md` § 22.
+  - Modular conditional replacement shot plan for P-21.02 & P-21.03 if operator authorizes live credentials.
+  - Validated via 9 focused tests in `tests/test_phase_p21_01_demo_script.py`.
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of Batch P-20 (Phase P-21 remains strictly PENDING / NOT AUTHORIZED)
+Next exact task: Independent QA Review of P-21.01 (P-21.02+ remains strictly PENDING / NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
