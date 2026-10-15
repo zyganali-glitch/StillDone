@@ -121,9 +121,10 @@
   a qualifying external open-source contribution alongside the primary track submission,
   accompanied by a public repository / contribution URL.
 - **Subproject Status (`packages/mcp_verify/`)**:
-  - StillDone engineered a standalone open-source library, `mcp-verify`, located in
-    `packages/mcp_verify/` with independent `pyproject.toml`, MIT license, standalone CLI,
-    and wheel package smoke verification (`P-17.01` through `P-17.04`).
+  - StillDone engineered an installable open-source Python library, `mcp-verify`, located in
+    `packages/mcp_verify/` with independent package metadata (`pyproject.toml`), Apache-2.0 license,
+    integration examples, and wheel package smoke verification (`P-17.01` through `P-17.04`).
+    No packaged CLI entry point or CLI implementation exists.
 - **External Publication Status**:
   - `P-17.05 — Publish contribution URL/repo/fork/PR during hackathon window` remains
     **`BLOCKED_EXTERNAL / NOT_RUN`**.

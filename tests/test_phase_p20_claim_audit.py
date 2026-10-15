@@ -190,6 +190,25 @@ def test_p20_04_judging_criteria_mapping_completeness() -> None:
     assert "BLOCKED_EXTERNAL / NOT_RUN" in content
     assert "ELIGIBILITY_UNCONFIRMED / OPERATOR_ACTION_REQUIRED" in content
 
+    # Open Source Mini Challenge truthful package claims (rejecting false MIT and standalone CLI)
+    assert "MIT" not in content
+    assert "standalone CLI" not in content
+    assert "Apache-2.0" in content
+    assert "No packaged CLI entry point or CLI implementation exists" in content
+
+    # Source-grounded package reality check against actual packages/mcp_verify files
+    mcp_pyproject = REPO_ROOT / "packages" / "mcp_verify" / "pyproject.toml"
+    assert mcp_pyproject.is_file()
+    pyproject_text = mcp_pyproject.read_text(encoding="utf-8")
+    assert 'license = "Apache-2.0"' in pyproject_text
+    assert "project.scripts" not in pyproject_text
+
+    mcp_license = REPO_ROOT / "packages" / "mcp_verify" / "LICENSE"
+    assert mcp_license.is_file()
+    license_text = mcp_license.read_text(encoding="utf-8")
+    assert "Apache License" in license_text
+    assert "Version 2.0" in license_text
+
 
 def test_p20_05_provenance_and_simulation_disclosure() -> None:
     """P-20.05: Verifies complete taxonomy separation and verified script references."""
