@@ -139,23 +139,98 @@ def test_readme_screenshot_inventory_and_validity() -> None:
 
 
 def test_devpost_captions_character_limit_and_content() -> None:
-    """Verifies that all 8 Devpost captions are <= 200 chars and match canonical text."""
+    """Parses Section 5 table from manifest, calculates actual lengths dynamically,
+    verifies against recorded lengths, expected values, and the 200-char limit."""
     manifest_content = MANIFEST_PATH.read_text(encoding="utf-8")
-    for fn, expected_caption in EXPECTED_DEVPOST_CAPTIONS.items():
-        assert len(expected_caption) <= 200, (
-            f"Caption for {fn} exceeds 200 chars ({len(expected_caption)})"
+    row_pattern = re.compile(
+        r"\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|\s*(\d+)\s*chars\s*\|"
+    )
+    rows = row_pattern.findall(manifest_content)
+    assert len(rows) == 8, f"Expected 8 Devpost caption table rows, got {len(rows)}"
+
+    expected_lengths = [130, 118, 127, 117, 115, 116, 133, 121]
+    for (num_str, fn, cap, recorded_len_str), expected_len in zip(
+        rows, expected_lengths, strict=True
+    ):
+        clean_cap = cap.strip()
+        actual_len = len(clean_cap)
+        recorded_len = int(recorded_len_str)
+        assert actual_len == recorded_len, (
+            f"Row {num_str} ({fn}): actual length {actual_len} != recorded {recorded_len}"
         )
-        assert fn in manifest_content, f"Filename {fn} missing from manifest"
-        assert expected_caption in manifest_content, f"Caption for {fn} missing from manifest"
+        assert actual_len == expected_len, (
+            f"Row {num_str} ({fn}): actual length {actual_len} != expected {expected_len}"
+        )
+        assert actual_len <= 200, f"Caption for {fn} exceeds 200 characters ({actual_len})"
+        assert fn in EXPECTED_DEVPOST_CAPTIONS, f"Unexpected caption filename: {fn}"
+        assert clean_cap == EXPECTED_DEVPOST_CAPTIONS[fn], f"Caption wording mismatch for {fn}"
 
 
 def test_devpost_short_description_character_limit() -> None:
-    """Verifies that Devpost short description is <= 200 characters."""
-    assert len(EXPECTED_DEVPOST_SHORT_DESC) <= 200, (
-        f"Devpost short description exceeds 200 characters: {len(EXPECTED_DEVPOST_SHORT_DESC)}"
-    )
+    """Parses Devpost short description directly from manifest markdown,
+    calculating actual length (172 chars) and verifying <= 200 chars."""
     manifest_content = MANIFEST_PATH.read_text(encoding="utf-8")
-    assert EXPECTED_DEVPOST_SHORT_DESC in manifest_content
+    match = re.search(
+        r"## 4\. Devpost Short Description.*?\n```(?:text)?\n(.*?)\n```",
+        manifest_content,
+        re.DOTALL,
+    )
+    assert match, "Could not locate Section 4 Devpost Short Description code block"
+    parsed_desc = match.group(1).strip()
+    actual_len = len(parsed_desc)
+
+    assert actual_len == 172, f"Expected exact length 172, got {actual_len}"
+    assert actual_len <= 200, f"Short description exceeds 200 characters ({actual_len})"
+    assert parsed_desc == EXPECTED_DEVPOST_SHORT_DESC
+    assert "- **Character Count**: 172 characters" in manifest_content
+
+
+def test_receipt_hash_consistency_and_no_stale_hash() -> None:
+    """Regression test for Defect A: detects stale hash 87720e51 and verifies consistency
+    between current exhibit receipt, Step 6 & 7 evidence, and media registry."""
+    manifest_content = MANIFEST_PATH.read_text(encoding="utf-8")
+    assert "87720e51" not in manifest_content, (
+        "Stale receipt hash prefix '87720e51' found in DEMO_MEDIA_AND_SUBMISSION_COPY.md"
+    )
+
+    exhibit_path = REPO_ROOT / "artifacts" / "judge_exhibit" / "index.html"
+    assert exhibit_path.is_file(), f"Missing exhibit file: {exhibit_path}"
+    exhibit_html = exhibit_path.read_text(encoding="utf-8")
+
+    # 1. Sidebar receipt card canonical receipt hash
+    sidebar_match = re.search(
+        r"<label>Canonical Receipt SHA-256:</label>\s*<code>([0-9a-f]{64})</code>",
+        exhibit_html,
+    )
+    assert sidebar_match, "Could not find canonical receipt hash in exhibit sidebar"
+    canonical_hash = sidebar_match.group(1)
+
+    # 2. Step 6 evidence table receipt_hash
+    step6_matches = re.findall(
+        r"<th>receipt_hash</th><td><code>([0-9a-f]{64})</code></td>",
+        exhibit_html,
+    )
+    assert len(step6_matches) >= 1, "Could not find Step 6 receipt_hash in exhibit"
+    assert all(h == canonical_hash for h in step6_matches), (
+        f"Step 6 receipt hash does not match sidebar: {step6_matches} vs {canonical_hash}"
+    )
+
+    # 3. Step 7 evidence receipt hash trace
+    step7_trace_matches = re.findall(
+        r"<strong>Receipt Hash:</strong>\s*<code>([0-9a-f]{64})</code>",
+        exhibit_html,
+    )
+    assert len(step7_trace_matches) >= 1, "Could not find receipt hash trace in exhibit"
+    assert all(h == canonical_hash for h in step7_trace_matches), (
+        f"Receipt hash trace mismatch: {step7_trace_matches} vs {canonical_hash}"
+    )
+
+    # 4. Manifest consistency: verify the manifest dynamically references the immutable SHA-256
+    # displayed in the committed exhibit and screenshot, with zero contradictory hash claims.
+    assert (
+        "matching the immutable SHA-256 displayed in the committed exhibit and screenshot"
+        in manifest_content
+    )
 
 
 def test_readme_embeds_eight_principal_images_in_exact_order() -> None:

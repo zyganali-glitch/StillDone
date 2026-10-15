@@ -46,7 +46,7 @@ The official competition limit is under 3 minutes (< 180s). The frozen StillDone
 | **02:03–02:15** (12s) | `06b_drift_law.webm` (or `06_departure_drift_combined.webm` part 2) | Continue `06_voiceover.mp3` | Sidebar Drift Law & State Invariant card (`#drift-title`), explanation of why current truth is DRIFTED while receipt was READY. |
 | **02:15–02:23** (8s) | `07a_current_truth.webm` (or `07_reconciliation_drifted_combined.webm` part 1) | Start `07_voiceover.mp3` (43 words total) | Hero Status Bar amber `DRIFTED` pill and Alexa+ Voice Summary card explanation. |
 | **02:23–02:31** (8s) | `07b_reconciliation.webm` (or `07_reconciliation_drifted_combined.webm` part 2) | Continue `07_voiceover.mp3` | Step 7 expanded evidence table (`observed_start: 08:00:00 UTC`, `predicate_truth: False`, badge `DRIFT_DETECTED`). |
-| **02:31–02:35** (4s) | Still image `docs/assets/readme/immutable_ready_receipt.png` | Continue `07_voiceover.mp3` | High-resolution freeze showing intact historical receipt hash `87720e51...` on disk. |
+| **02:31–02:35** (4s) | Still image `docs/assets/readme/immutable_ready_receipt.png` | Continue `07_voiceover.mp3` | High-resolution freeze showing the canonical historical receipt hash (matching the immutable SHA-256 displayed in the committed exhibit and screenshot) remaining intact on disk. |
 | **02:35–02:45** (10s) | `08_architecture_closing.webm` (Exhibit footage ONLY) | `08_voiceover.mp3` (22 words) | Public exhibit Evidence Provenance Breakdown (`#prov-title`), zero personal spend footer, and GitHub repository links. No separate title card. |
 
 ### Discovered Scene 01 Source Identity
@@ -140,7 +140,7 @@ Created for the Build, Ship, Shape: Amazon Developer Hackathon.
 StillDone verifies outcomes instead of trusting agent claims. It executes approved actions, reads reality back independently, issues durable receipts, and reconciles drift.
 ```
 
-- **Character Count**: 169 characters (Verified $\le$ 200 characters).
+- **Character Count**: 172 characters (Verified $\le$ 200 characters).
 
 ---
 
@@ -152,12 +152,12 @@ All eight screenshots are preserved under `docs/assets/devpost/`. Every English 
 |---|---|---|---|
 | 1 | `scene_01_header_thesis.png` | StillDone's public exhibit: a simulated Alexa+ experience with deterministic fixture playback and transparent evidence provenance. | 130 chars |
 | 2 | `scene_02_prestate_reads.png` | Pre-state evidence shows a 7:45 departure, an absent preparation task, and rainy weather before the mission's actions. | 118 chars |
-| 3 | `scene_03_tasks_prep_verified.png` | The model proposes; deterministic code controls execution. A digital Google Tasks entry is verified through separate read-back. | 128 chars |
+| 3 | `scene_03_tasks_prep_verified.png` | The model proposes; deterministic code controls execution. A digital Google Tasks entry is verified through separate read-back. | 127 chars |
 | 4 | `scene_04_approval_boundary.png` | Calendar mutation pauses at a human approval boundary. The exhibit records zero calendar writes before authorization. | 117 chars |
 | 5 | `scene_05_ready_receipt.png` | Three verified predicates produce a historical READY receipt. Its SHA-256 hash stays intact even after later drift. | 115 chars |
 | 6 | `scene_06_departure_drift_tracker.png` | The deterministic exhibit illustrates departure changing from verified 7:30 to 8:00, invalidating current readiness. | 116 chars |
-| 7 | `scene_07_reconciliation_drifted.png` | Fresh fixture reconciliation marks current truth DRIFTED while preserving the historical READY receipt and simulated Alexa+ response. | 135 chars |
-| 8 | `scene_08_architecture_closing.png` | The provenance card separates historical recorded-live AWS and Google integration evidence from offline fixture playback. | 122 chars |
+| 7 | `scene_07_reconciliation_drifted.png` | Fresh fixture reconciliation marks current truth DRIFTED while preserving the historical READY receipt and simulated Alexa+ response. | 133 chars |
+| 8 | `scene_08_architecture_closing.png` | The provenance card separates historical recorded-live AWS and Google integration evidence from offline fixture playback. | 121 chars |
 
 *Note on Scene 08*: The filename `scene_08_architecture_closing.png` is historical; it corresponds to the public exhibit's Evidence Provenance and footer section, and does NOT imply a separate closing card.
 

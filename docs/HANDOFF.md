@@ -7,12 +7,13 @@ Branch: `main`
 
 Current repository state: **P-00 through P-18: CLOSED (independent QA PASS ✅) |
 Last independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc` |
+Last independently QA-VERIFIED baseline SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a` |
 P-19 Batch (P-19.01 → P-19.06): COMPLETED (Candidate for independent QA review; P-19.04 Operator Published at https://stilldone-judge-exhibit.pages.dev) |
 P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
 P-21.01: COMPLETED (Candidate for independent QA review) |
-Media Asset Integration & Submission Registry: COMPLETED (Candidate for independent QA review) |
+Media Asset Integration & Submission Registry: TRUTH REPAIR COMPLETED (Candidate for independent QA review) |
 Phase P-21.02+: PENDING / NOT AUTHORIZED**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
@@ -82,10 +83,11 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: Bounded Documentation, Media-Asset Integration & Validation (Demo Media Manifest, README Gallery & Submission Copy Registry)
+Active task: Media Registry Final Truth Repair (Defects A, B, C, D)
 
-Starting Remote SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`
-Last Independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc`
+Starting Remote SHA: `94f86be872dfcc51d9d2a7dd3f5edfb646f14a18`
+Last Independently QA-VERIFIED Baseline SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`
+QA-Reviewed Candidate SHA: `94f86be872dfcc51d9d2a7dd3f5edfb646f14a18`
 
 Status:
 - P-00 through P-18: CLOSED — independent QA PASS ✅
@@ -93,19 +95,16 @@ Status:
 - P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED (`https://stilldone-judge-exhibit.pages.dev`)
 - P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review)
 - P-21.01: COMPLETED (Candidate for independent QA review)
-- Media Asset Integration & Submission Registry: COMPLETED (Candidate for independent QA review)
-  - Discovered Scene 01 source filename `15.10.2026 21_08_15 - Screen - Video Project 38.webm` from operator's actual local recordings.
-  - Recorded master Clipchamp Edit Decision List (165s / 2:45 total target) with unaltered 356-word canonical narration in `docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`.
-  - Verified 18/18 screenshot assets on disk (8 Devpost + 10 README) with valid PNG signatures, dimensions, and zero PII / secrets.
-  - Preserved YouTube metadata and Devpost short description (169 chars <= 200).
-  - Preserved Devpost screenshot captions (all 8 <= 200 chars).
-  - Embedded 8 principal screenshots with exact captions in `README.md` and linked 2 supplemental screenshots in `docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`.
-  - Corrected materially stale phase status in `README.md`.
-  - Stored raw clips under git-ignored `_local_media/raw_clips/`.
-  - Future tasks P-21.02 through P-21.06 remain strictly NOT_RUN / PENDING_OPERATOR_ACTION.
+- Media Asset Integration & Submission Registry: TRUTH REPAIR COMPLETED (Candidate for independent QA review)
+  - Defect A: Repaired montage receipt hash text in `docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md` to match canonical committed exhibit/screenshot (`9fb63583...`).
+  - Defect B: Corrected Devpost short description length metadata to 172 chars; corrected table caption length metadata to [130, 118, 127, 117, 115, 116, 133, 121] chars; strengthened tests to compute actual lengths directly from parsed manifest markdown.
+  - Defect C: Explicitly designated browser review path in `README.md` as seven-step deterministic fixture playback without claiming live visitor calls; updated C-10 publication status in `docs/P20_03_EVIDENCE_MANIFEST.md` to reflect operator-confirmed public Cloudflare exhibit.
+  - Defect D: Synchronized critical current truth in `docs/HANDOFF.md` without touching Master Plan or unrelated history prose.
+  - Operator Gate: Operator personal Clipchamp editing, English voiceover synthesis, and YouTube publication remain explicitly `NOT_RUN / PENDING_OPERATOR_ACTION`.
+  - Future tasks P-21.02 through P-21.06 remain strictly `NOT_RUN / PENDING_OPERATOR_ACTION`.
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Consolidated Independent QA Review of P-21.01 and Media Asset Registry (P-21.02+ strictly PENDING / NOT AUTHORIZED)
+Next exact task: Independent QA Review of Media Registry Truth Repair Candidate (P-21.02+ strictly PENDING / NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.

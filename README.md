@@ -100,7 +100,7 @@ Forbidden without explicit operator approval:
 ## Judge & Evaluator Quick Start
 
 Judges have two evaluation paths:
-- **No-Install Browser Review Path (< 2 minutes)**: Open [`artifacts/judge_exhibit/index.html`](artifacts/judge_exhibit/index.html) (or [`artifacts/stilldone_judge_exhibit.html`](artifacts/stilldone_judge_exhibit.html)) directly in any web browser to inspect the full desired-state timeline, simulated Alexa+ voice responses, single-use human authorization boundary, and immutable receipts vs live drift.
+- **No-Install Browser Review Path (< 2 minutes)**: Open [`artifacts/judge_exhibit/index.html`](artifacts/judge_exhibit/index.html) (or [`artifacts/stilldone_judge_exhibit.html`](artifacts/stilldone_judge_exhibit.html)) directly in any web browser to inspect the seven-step deterministic fixture playback, simulated Alexa+ voice responses, single-use human authorization boundary, and immutable receipts alongside reconciled drift (the static exhibit replays canonical fixture evidence and does not perform live cloud calls for visitors).
 - **Single-Command Local Reproduction (~10 seconds)**: Run `python scripts/reproduce.py` from a fresh clone for 100% offline test execution across dual isolated Python runtimes (0 credentials, 0 cloud calls, $0.00 personal spend).
 
 See complete guide:
