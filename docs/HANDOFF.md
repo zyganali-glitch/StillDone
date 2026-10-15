@@ -6,7 +6,7 @@ Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
 Current repository state: **P-00 through P-18: CLOSED (independent QA PASS ✅) |
-Last independently QA-PASS SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3` |
+Last independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc` |
 P-19 Batch (P-19.01 → P-19.06): COMPLETED (Candidate for independent QA review; P-19.04 Operator Published at https://stilldone-judge-exhibit.pages.dev) |
 P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review) |
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
@@ -83,8 +83,8 @@ Preferred AWS target:
  
 Active task: P-21.01 — Freeze 2:30–2:50 demo script and shot list
 
-Starting Remote SHA: `f4c5a3b381493c544811468e957af97b247c48bc`
-Last Independently QA-PASS SHA: `ccf79f6f87a1b5616308e279eed70369d30b37c3`
+Starting Remote SHA: `d09bbb4438bb337529e015f8ad0148423abbe19c`
+Last Independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc`
 
 Status:
 - P-00 through P-18: CLOSED — independent QA PASS ✅
@@ -92,13 +92,15 @@ Status:
 - P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED (`https://stilldone-judge-exhibit.pages.dev`)
 - P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review)
 - P-21.01: COMPLETED (Candidate for independent QA review)
-  - Frozen 2:45 (165s) competition-ready English narration script and timestamped shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md` (strictly in 2:30–2:50 window, 8 contiguous scenes, ~139.6 WPM cadence, 384 words).
-  - Anchors canonical departure evolution: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)`.
+  - Frozen 2:45 (165s) competition-ready English narration script and timestamped shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md` (strictly compliant with Devpost < 3:00 rule and internal 2:30–2:50 window, 8 contiguous scenes, ~128.7 WPM cadence, 354 authoritative words).
+  - Anchors canonical departure evolution: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)` mapped to visible static exhibit elements.
+  - UI parity strictly enforced: baseline shots map to static exhibit cards and `<summary>` controls without fabricated live transitions or unapproved calendar edits.
   - Discloses all 6 canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`) and surface disclosure `SIMULATED ALEXA+ EXPERIENCE`.
   - Enforces negative bounds: no live partner Alexa+ access, no speech synthesis / Echo Show in repo, zero visitor backend execution on static site, remote MCP torn down ($0.00 spend).
   - Turkish screen-by-screen guidance for non-expert operator per `AGENTS.md` § 22.
-  - Modular conditional replacement shot plan for P-21.02 & P-21.03 if operator authorizes live credentials.
-  - Validated via 9 focused tests in `tests/test_phase_p21_01_demo_script.py`.
+  - Modular conditional replacement shot plan for P-21.02 & P-21.03 with explicit preflight requirements.
+  - Honest phase status: future video/audio/playback gates separated and marked PLANNED / NOT_RUN.
+  - Validated via 12 focused tests in `tests/test_phase_p21_01_demo_script.py`.
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
 Next exact task: Independent QA Review of P-21.01 (P-21.02+ remains strictly PENDING / NOT AUTHORIZED)
