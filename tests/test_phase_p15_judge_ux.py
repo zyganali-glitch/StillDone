@@ -112,7 +112,7 @@ def test_p15_02_simulated_alexa_conversational_surface_label(
     # Explicit disclosure badge
     assert "SIMULATED ALEXA+ EXPERIENCE" in view_model.surface_banner
     assert "SIMULATED ALEXA+ EXPERIENCE" in rendered_html
-    assert "BACKEND: REAL STILLDONE DETERMINISTIC ENGINE" in rendered_html
+    assert "ENGINE-GENERATED FIXTURE REPLAY" in rendered_html
 
 
 def test_p15_03_voice_friendly_concise_summaries(
@@ -122,7 +122,7 @@ def test_p15_03_voice_friendly_concise_summaries(
     assert isinstance(voice, VoiceSummary)
     assert len(voice.spoken_phrase) > 10
     assert voice.estimated_duration_sec > 0
-    assert "Alexa+ Spoken Response" in rendered_html
+    assert "SIMULATED ALEXA+ RESPONSE" in rendered_html
     assert voice.spoken_phrase in rendered_html
 
 

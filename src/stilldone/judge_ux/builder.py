@@ -237,7 +237,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         card1 = TimelineStepCard(
             step_number=1,
             task_id="P-13.01",
-            title="Seed Pre-State Verification",
+            title="Seed Demo State & Verify Pre-State",
             summary="Step not executed: pre-state seeding verification missing.",
             state=StepExecutionState.ERROR,
             provenance="NOT_RUN",
@@ -250,7 +250,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         card1 = TimelineStepCard(
             step_number=1,
             task_id="P-13.01",
-            title="Seed Pre-State Verification",
+            title="Seed Demo State & Verify Pre-State",
             summary=step1.details,
             state=StepExecutionState.ERROR,
             provenance=step1.provenance.value,
@@ -269,7 +269,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         card1 = TimelineStepCard(
             step_number=1,
             task_id="P-13.01",
-            title="Seed Pre-State Verification",
+            title="Seed Demo State & Verify Pre-State",
             summary="Disposable demo calendar verified with 07:45 event; prep task absent.",
             state=StepExecutionState.VERIFIED,
             provenance=step1.provenance.value,
@@ -282,7 +282,7 @@ def build_judge_view_model(outcome: KillerMissionSliceOutcome) -> JudgeExhibitVi
         card1 = TimelineStepCard(
             step_number=1,
             task_id="P-13.01",
-            title="Seed Pre-State Verification",
+            title="Seed Demo State & Verify Pre-State",
             summary=step1.details or "Pre-state seeding unverified or contradictory.",
             state=StepExecutionState.ERROR,
             provenance=step1.provenance.value,

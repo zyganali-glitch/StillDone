@@ -306,7 +306,7 @@ def build_and_verify_exhibit(
         "departure_story_present": "07:45 AM &rarr; 07:30 AM &rarr; 08:00 AM" in html_content,
         "github_links_present": "https://github.com/zyganali-glitch/StillDone" in html_content,
         "simulated_alexa_label_present": "SIMULATED ALEXA+ EXPERIENCE" in html_content,
-        "real_engine_label_present": "REAL STILLDONE DETERMINISTIC ENGINE" in html_content,
+        "real_engine_label_present": "ENGINE-GENERATED FIXTURE REPLAY" in html_content,
         "recorded_live_distinguished": "RECORDED_LIVE" in html_content,
         "fixture_simulation_distinguished": "FIXTURE / SIMULATION" in html_content,
         "approval_boundary_present": "Human Authorization Boundary" in html_content,

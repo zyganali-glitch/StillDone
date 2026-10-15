@@ -22,7 +22,6 @@ from stilldone.judge_ux.models import (
 def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
     """Render a fully self-contained, accessible, responsive HTML document."""
     intent_escaped = html.escape(model.user_intent)
-    mission_id_short = html.escape(model.mission_id[:8])
     status_class = model.current_state.value.lower()
 
     # Timeline cards HTML
@@ -239,9 +238,10 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                     RECORDED_LIVE
                 </span>
                 <p class="explanation-text">
-                    Real AWS Bedrock Nova Micro reasoning (P-01/P-07), real AgentCore Streamable
-                    HTTP microVM (P-05), and Google Calendar/Tasks OAuth mutations were exercised
-                    in bounded live sessions and preserved in <code>docs/</code>.
+                    Authentic historical integration proof preserves recorded AWS Bedrock
+                    inference, recorded AgentCore Streamable HTTP MCP execution, recorded Google
+                    Calendar verified mutation, and recorded Google Tasks verified mutation in
+                    <code>docs/</code>.
                 </p>
             </div>
             <div class="prov-item" style="margin-top: 0.6rem;">
@@ -250,8 +250,8 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                 </span>
                 <p class="explanation-text">
                     This interactive exhibit replays the canonical mission in deterministic
-                    fixture mode. Zero external credentials, zero AWS API charges, and strictly
-                    $0.00 personal spend.
+                    fixture replay mode. Zero external credentials, zero AWS API charges, and
+                    strictly $0.00 personal spend.
                 </p>
             </div>
             <div class="prov-item" style="margin-top: 0.6rem;">
@@ -782,7 +782,7 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
                     FIXTURE PLAYBACK
                 </span>
             </div>
-            <span class="backend-label">BACKEND: REAL STILLDONE DETERMINISTIC ENGINE</span>
+            <span class="backend-label">ENGINE-GENERATED FIXTURE REPLAY</span>
         </aside>
 
         <!-- Evaluation Provenance Notice -->
@@ -790,26 +790,22 @@ def render_judge_exhibit_html(model: JudgeExhibitViewModel) -> str:
              style="background:var(--bg-secondary); border-left:4px solid var(--accent-alexa);
                     padding:0.85rem 1.15rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
                     font-size:0.88rem; color:#cbd5e1; line-height:1.5;">
-            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit was
-            generated directly by StillDone's genuine deterministic engine
-            (<code>stilldone.judge_ux.builder</code> and <code>stilldone.killer_mission</code>)
-            evaluating canonical execution evidence. It is a 100% self-contained static HTML
-            exhibit ($0.00 spend). <strong>No backend code or cloud API executes for visitors
-            viewing this page.</strong> This page replays the canonical mission in deterministic
-            <strong>FIXTURE / SIMULATION</strong> playback. Authentic historical live integration
-            executions are preserved separately in the <code>docs/</code> ledger
-            (marked <code>RECORDED_LIVE</code>).
+            <strong>Evaluation Provenance Disclosure:</strong> This self-contained exhibit was
+            generated from StillDone's deterministic mission engine. It replays a canonical fixture
+            execution offline and makes no live AWS or Google API calls for visitors. Authentic
+            historical live integration evidence is preserved separately as
+            <code>RECORDED_LIVE</code>.
         </div>
 
         <!-- P-15.01 & P-15.03 Hero Intent and Voice Summary -->
         <section class="hero-section" aria-labelledby="intent-title">
             <div class="intent-block">
-                <span class="intent-label">Canonical Intent (Mission {mission_id_short}):</span>
+                <span class="intent-label">Canonical Intent:</span>
                 <h2 id="intent-title" class="intent-text">&ldquo;{intent_escaped}&rdquo;</h2>
             </div>
             <div class="voice-card">
                 <div class="voice-label">
-                    Alexa+ Spoken Response ({model.voice_summary.estimated_duration_sec}s):
+                    SIMULATED ALEXA+ RESPONSE &mdash; TEXT PREVIEW:
                 </div>
                 <p class="voice-speech">
                     &ldquo;{html.escape(model.voice_summary.spoken_phrase)}&rdquo;

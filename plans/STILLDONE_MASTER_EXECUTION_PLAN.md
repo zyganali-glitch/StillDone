@@ -2060,7 +2060,10 @@ Status: COMPLETED (Candidate for independent QA review)
 
 Acceptance:
 - Frozen 2:45 (165s) competition-ready English narration script and timestamped screen-recording shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md`, strictly compliant with the official Devpost video rule (< 3:00 / < 180s) and internal editorial target window of 2:30–2:50 (150s–170s).
-- Contiguous 8-scene structure (0:00 to 2:45, 354 authoritative words, ~128.7 WPM) opening on the failure of ordinary AI tool-completion claims (API HTTP 200 != verification) and detailing StillDone's desired-state mission runtime.
+- Contiguous 8-scene structure (0:00 to 2:45, 356 authoritative words, ~129.5 WPM) opening on the failure of ordinary AI tool-completion claims (API HTTP 200 != verification) and detailing StillDone's desired-state mission runtime.
+- Completed consolidated shootability repair: corrected Scene 1 `.brand-header` selector, removed nonexistent `Server: /mcp` from Scene 2, described Scene 8 provenance card (`#prov-title`), distinguished historical recorded-live integration proof from fixture playback in Scene 4, clarified verified digital preparation task vs physical completion in Scene 5, removed unqualified present-tense live claims from Scenes 3 & 7, and structured canonical media destinations (`docs/assets/devpost/`, `docs/assets/readme/`, `_local_media/...`).
+- Applied operator-authorized minimal exhibit copy polish: simplified top provenance disclosure, removed developer-facing phase numbers (P-01/P-07/P-05) from provenance breakdown, simplified header to `Canonical Intent`, titled Step 1 `Seed Demo State & Verify Pre-State`, labeled voice preview `SIMULATED ALEXA+ RESPONSE — TEXT PREVIEW`, and clarified backend banner as `ENGINE-GENERATED FIXTURE REPLAY`.
+- Verified byte-for-byte parity between `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html`.
 - Clearly anchors the canonical departure evolution lifecycle: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)` mapped to visible static exhibit elements.
 - Explicitly binds technical claims to authentic, dated disk proofs (`docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`, `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`, `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`, `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`, `docs/P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md`, `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`, `docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`).
 - Rigorously distinguishes the 6 canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`) from the presentation disclosure `SIMULATED ALEXA+ EXPERIENCE`.
@@ -2068,7 +2071,7 @@ Acceptance:
 - Baseline shots map to actual static exhibit elements (details/summary tables, departure tracker, explanation cards); Scene 5 uses title card/callout without fabricated UI transitions; Scene 6 baseline uses static exhibit without unapproved Google Calendar edits.
 - Modular conditional replacement shot plan defined for P-21.02 & P-21.03 with full preflight requirements documented.
 - Practical Windows screen recording guide with Turkish screen-by-screen guidance for non-expert operator per `AGENTS.md` § 22.
-- 12 focused validation tests passing in `tests/test_phase_p21_01_demo_script.py`.
+- 17 focused validation tests passing in `tests/test_phase_p21_01_demo_script.py`; 80 combined tests passing across UX, exhibit, claim audit, and demo script suites.
 
 ### P-21.02 — Record fresh canonical live mission
 Status: PENDING

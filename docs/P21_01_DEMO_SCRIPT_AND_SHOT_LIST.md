@@ -7,7 +7,7 @@
 **Primary Track**: Alexa+ Track | **Secondary**: AWS Builder Mini Challenge, Open Source Mini Challenge  
 **Official Competition Video Rule**: **Under 3 minutes (< 3:00 / < 180s)** per official Devpost rules.  
 **StillDone Editorial Target**: **2 minutes 45 seconds (165 seconds)** — frozen within the internal project execution window of **2:30–2:50 (150s–170s)**.  
-**Narration Language**: English (US/International, professional, clear, neutral cadence: ~128.7 words per minute, 354 total words).  
+**Narration Language**: English (US/International, professional, clear, neutral cadence: ~129.5 words per minute, 356 total words).  
 **Operator Guidance**: Turkish screen-by-screen setup and recording instructions (Türkçe ekran kurulum rehberi).  
 
 ---
@@ -39,6 +39,15 @@ To make StillDone's invariant instantly intuitive to Devpost judges within secon
 2. **07:30 AM (Target Verified / READY)**: User requests departure by 7:30. Prep task created and verified. Calendar shift paused for approval, approved, executed, and independently read back. Mission promoted to `READY` with immutable SHA-256 receipt.
 3. **08:00 AM (External Drift / DRIFTED)**: External reschedule moves event to 08:00 AM. User asks *"Are we still ready?"* Fresh read-back observes contradiction. Status instantly downgrades to `DRIFTED`.
 
+### 1.4 Canonical Capture & Production Directories
+Per StillDone media conventions, capture destinations are strictly partitioned:
+- **Lightweight Submission Screenshots**: `docs/assets/devpost/`
+- **README Screenshots**: `docs/assets/readme/`
+- **Raw Recording Media**: `_local_media/raw_clips/`
+- **Voiceover Audio Tracks**: `_local_media/voiceover/`
+- **Caption Files**: `_local_media/captions/`
+- **Final Master Video Exports**: `_local_media/final_export/`
+
 ---
 
 ## 2. Complete Timestamped Scene Breakdown & Shot List
@@ -50,11 +59,11 @@ The video is partitioned into **8 contiguous, non-overlapping scenes** totaling 
 [0:15 - 0:40] Scene 2: Canonical Mission & Real Pre-State Reads (25s, 52 words)
 [0:40 - 1:05] Scene 3: AWS Bedrock Planning & Safe Tasks Mutation (25s, 54 words)
 [1:05 - 1:35] Scene 4: Approval Boundary & Verified Calendar Shift (30s, 62 words)
-[1:35 - 1:55] Scene 5: Predicate Verification & Immutable READY Receipt (20s, 42 words)
+[1:35 - 1:55] Scene 5: Predicate Verification & Immutable READY Receipt (20s, 44 words)
 [1:55 - 2:15] Scene 6: The Real World Changes (External Calendar Drift) (20s, 43 words)
 [2:15 - 2:35] Scene 7: "Are We Still Ready?" — Fresh Reconciliation to DRIFTED (20s, 43 words)
 [2:35 - 2:45] Scene 8: Architecture, Open Standards & Closing Line (10s, 22 words)
-Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 WPM
+Total Duration: 165s (2:45) | Total Words: 356 words | Speaking Cadence: ~129.5 WPM
 ```
 
 ---
@@ -64,10 +73,10 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
 - **Narrative Objective**: Hook the judges immediately with the universal failure mode of today's autonomous assistants: mistaking API return codes for real-world truth.
 - **Screen Display / Visual Action**:
   - File / URL: `artifacts/judge_exhibit/index.html` (or `https://stilldone-judge-exhibit.pages.dev`).
-  - Target Section: Page top header (`.header`), brand title (**"StillDone — Done, and still true."**), and evaluation provenance notice (`.fixture-notice`).
+  - Target Section: Brand header (`.brand-header`), brand title (**"StillDone — Done, and still true."**), and evaluation provenance notice (`.fixture-notice`).
   - Operator Action: Open browser at top of page (100% zoom, full width 1920x1080). Hold steady on header, then gently scroll down to reveal the evaluation provenance notice. No clicking.
   - Optional Video Editing Graphic: Left third split-screen graphic displaying a generic chat bubble claiming *"All set! Scheduled your departure and packed backpacks!"* with a fake checkmark, contrasted with StillDone's core invariant badge: *An outcome is not complete until independently observed.*
-  - Screenshot Target: `screenshots/scene_01_header_thesis.png` (header banner + brand title).
+  - Screenshot Target: `docs/assets/devpost/scene_01_header_thesis.png` (header banner + brand title).
 - **On-Screen Text Callout**:
   - *"An API HTTP 200 is NOT verification."*
   - *"What happens when reality changes later?"*
@@ -85,16 +94,16 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
 - **Narrative Objective**: Introduce the canonical killer mission, connect over Streamable HTTP MCP, and demonstrate pre-state reading of Google Calendar and Open-Meteo weather without claiming visitor-side live execution.
 - **Screen Display / Visual Action**:
   - File / URL: `artifacts/judge_exhibit/index.html`.
-  - Target Section: Hero Intent section (`#intent-title`), Canonical Intent text, top badges (`SIMULATED ALEXA+ EXPERIENCE`, `Server: /mcp`), and Departure Lifecycle Tracker (`.departure-story-card`).
+  - Target Section: Hero Intent section (`#intent-title`), Canonical Intent text, top badges (`SIMULATED ALEXA+ EXPERIENCE`, `FIXTURE PLAYBACK`), and Departure Lifecycle Tracker (`.departure-story-card`).
   - Operator Action:
     1. Scroll to Hero Intent: cursor highlights *"Get my family ready for tomorrow morning. We need to leave by 7:30."*
     2. Pan across Departure Lifecycle Tracker to highlight Node 1: `1. Initial State: 07:45 AM (Seeded on family calendar)`.
-    3. Scroll to Step 1 card (`P-13.01 Seed Pre-State Verification`), click `<summary>` to expand evidence table (`start_time: 07:45:00 UTC`, `prep_task_absent: True`).
+    3. Scroll to Step 1 card (`P-13.01 Seed Demo State & Verify Pre-State`), click `<summary>` to expand evidence table (`start_time: 07:45:00 UTC`, `prep_task_absent: True`).
     4. Scroll to Step 2 card (`P-13.02 Plan Intent & Observe Weather`), click `<summary>` to expand evidence table (`weather: mild/rainy`, `model_authority: ZERO`).
-  - Screenshot Target: `screenshots/scene_02_prestate_reads.png` (expanded Step 1 & Step 2 evidence tables).
+  - Screenshot Target: `docs/assets/devpost/scene_02_prestate_reads.png` (expanded Step 1 & Step 2 evidence tables).
   - Baseline vs Conditional Note: Baseline shot uses the static exhibit's recorded fixture playback. Authentic historical live reads are preserved in dated documentation (`docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`, `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`).
 - **Spoken Voiceover Narration (English)**:
-  > *"Our mission: 'Get my family ready for tomorrow morning. We need to leave by 7:30.' In StillDone's Streamable HTTP MCP architecture, the runtime begins by observing ground truth. Replaying canonical pre-state observations, tomorrow's departure is scheduled for 7:45 AM, and weather indicates morning rain. StillDone requires real pre-state before proposing any action."*
+  > *"Our mission: "Get my family ready for tomorrow morning. We need to leave by 7:30." In StillDone's Streamable HTTP MCP architecture, the runtime begins by observing ground truth. Replaying canonical pre-state observations, tomorrow's departure is scheduled for 7:45 AM, and weather indicates morning rain. StillDone requires real pre-state before proposing any action."*
 - **Word Count**: 52 words (~124.8 WPM for 25s).
 - **Evidence Provenance**:
   - Presentation: `SIMULATED ALEXA+ EXPERIENCE`.
@@ -115,13 +124,13 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
     2. Scroll down to Step 3 card (`P-13.03 Create & Verify Prep Task`).
     3. Click `<summary>` to expand Step 3 evidence table: highlight `task_title: Pack backpacks`, `status: needsAction`.
     4. Highlight metadata badges: `Writes: 1` and `Read-back: VERIFIED`.
-  - Screenshot Target: `screenshots/scene_03_tasks_prep_verified.png` (Step 3 expanded evidence table showing distinct read-back).
+  - Screenshot Target: `docs/assets/devpost/scene_03_tasks_prep_verified.png` (Step 3 expanded evidence table showing distinct read-back).
   - Baseline vs Conditional Note: Baseline shot demonstrates the digital task verification in the static exhibit. If P-21.02 is authorized and executed, conditional replacement shows real Google Tasks web tab alongside CLI.
 - **On-Screen Text Callout**:
   - *"Zero Model Authority: Model proposes; deterministic code verifies."*
   - *"Digital Prep Task: Verified via distinct independent read-back."*
 - **Spoken Voiceover Narration (English)**:
-  > *"Amazon Bedrock Nova Micro compiles the intent into a typed proposal. But the model has zero execution authority. For the rain, StillDone creates a digital preparation task in Google Tasks: 'Pack backpacks.' Write success is never verification. A separate read adapter immediately reads back the task list, verifying it is active before awarding progress."*
+  > *"Amazon Bedrock Nova Micro compiles the intent into a typed proposal. But the model has zero execution authority. Replaying recorded live execution, StillDone creates a digital preparation task in Google Tasks: "Pack backpacks." Write success is never verification. A separate read adapter reads back the task list, verifying it is active before awarding progress."*
 - **Word Count**: 54 words (~129.6 WPM for 25s).
 - **Evidence Provenance**:
   - LLM Planning: `RECORDED_LIVE` (`LIVE_AWS` baseline record in `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`, dated 2026-10-05).
@@ -140,13 +149,13 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
     1. Scroll to Step 4 card, click `<summary>` to expand: highlight `approval_required: True`, `calendar_writes: 0`, badge `PAUSED_APPROVAL`.
     2. Pan camera / scroll slightly to bring sidebar **Human Authorization Boundary** card (`#approval-title`) into clear view: highlight target action `calendar.update` on Google Calendar (07:45 AM → 07:30 AM) and cryptographic fingerprint (`sha256:...`).
     3. Scroll to Step 5 card, click `<summary>` to expand: highlight `start_time: 07:30:00 UTC`, `writes_performed: 1`, badge `APPROVED`, and `Read-back: VERIFIED`.
-  - Screenshot Target: `screenshots/scene_04_approval_boundary.png` (sidebar approval card side-by-side with Step 4 and Step 5 cards).
+  - Screenshot Target: `docs/assets/devpost/scene_04_approval_boundary.png` (sidebar approval card side-by-side with Step 4 and Step 5 cards).
   - Baseline vs Conditional Note: The static exhibit displays the static record of the paused boundary and approved shift. Live CLI execution of `p13_killer_mission.py` is reserved for conditional P-21.02 replacement.
 - **On-Screen Text Callout**:
   - *"Execution Boundary: Calendar shift halts fail-closed with 0 writes."*
   - *"Single-Use Approval Grant: Replays strictly rejected."*
 - **Spoken Voiceover Narration (English)**:
-  > *"Next, shifting departure from 7:45 to 7:30 is high impact. StillDone pauses fail-closed at the human authorization boundary with zero writes performed. A bound cryptographic approval card is emitted with an immutable SHA-256 fingerprint. Once the operator approves, StillDone consumes the single-use grant, executes the calendar update, and immediately invokes an independent read-back to verify the 7:30 departure live in Google Calendar."*
+  > *"Next, shifting departure from 7:45 to 7:30 is high impact. StillDone pauses fail-closed at the human authorization boundary with zero writes performed. A bound cryptographic approval card is emitted with an immutable SHA-256 fingerprint. Once the operator approves, StillDone consumes the single-use grant, executes the calendar update, and immediately invokes an independent read-back, verifying the 7:30 departure with recorded Google Calendar proof."*
 - **Word Count**: 62 words (~124.0 WPM for 30s).
 - **Evidence Provenance**:
   - Boundary: `LOCAL_EXECUTION` & `RECORDED_LIVE` (`docs/P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md`).
@@ -166,13 +175,13 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
     2. Pan to sidebar **Immutable Historical Receipt** card (`#receipt-title`): highlight badge `READY AT ISSUANCE` and full canonical receipt SHA-256 hash.
     3. Scroll up briefly to Departure Lifecycle Tracker Node 2: highlight `2. Target Verified (READY) - 07:30 AM`.
   - Chronological Storytelling Callout: An on-screen editing graphic or subtle zoom highlights the `READY AT ISSUANCE` milestone badge and SHA-256 fingerprint. The operator does NOT attempt to click or trigger an interactive state change.
-  - Screenshot Target: `screenshots/scene_05_ready_receipt.png` (sidebar Receipt Card with `READY AT ISSUANCE` badge and SHA-256 hash).
+  - Screenshot Target: `docs/assets/devpost/scene_05_ready_receipt.png` (sidebar Receipt Card with `READY AT ISSUANCE` badge and SHA-256 hash).
 - **On-Screen Text Callout**:
   - *"READY is computed, not assumed."*
   - *"Immutable Receipt SHA-256: Anchored to verified predicates."*
 - **Spoken Voiceover Narration (English)**:
-  > *"With weather checked, backpacks verified, and departure confirmed at 7:30, all predicates evaluate true. StillDone deterministically promotes the mission to READY, issuing an immutable receipt with a SHA-256 hash anchored to the verified facts. But in real life, reality never stands still."*
-- **Word Count**: 42 words (~126.0 WPM for 20s).
+  > *"With weather checked, digital prep task verified, and departure confirmed at 7:30, all predicates evaluate true. StillDone deterministically promotes the mission to READY, issuing an immutable receipt with a SHA-256 hash anchored to the verified facts. But in real life, reality never stands still."*
+- **Word Count**: 44 words (~132.0 WPM for 20s).
 - **Evidence Provenance**: `LOCAL_EXECUTION` (deterministic predicate engine); `docs/P20_03_EVIDENCE_MANIFEST.md` (Claim C-03).
 - **Privacy & Redaction**: Zero PII. Hash is a SHA-256 digest of normalized domain predicates.
 
@@ -189,7 +198,7 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
     2. Pan to sidebar **Drift Law & State Invariant** card (`#drift-title`): cursor highlights the section title *"Why is current truth DRIFTED while the receipt was READY?"*.
     3. Slowly scroll through the explanation card highlighting: *"In Step 7, an external change moved the calendar departure to 08:00 AM. StillDone detected the contradiction during independent read-back and downgraded the mission to DRIFTED."*
   - Baseline vs Conditional Note: The baseline recording uses the static exhibit's labeled departure tracker and explanation card. Live capture of the operator manually dragging an event in `calendar.google.com` is strictly CONDITIONAL (only if P-21.03 is authorized and executed).
-  - Screenshot Target: `screenshots/scene_06_departure_drift_tracker.png` (Departure Story Card Node 3 + Drift Law sidebar card).
+  - Screenshot Target: `docs/assets/devpost/scene_06_departure_drift_tracker.png` (Departure Story Card Node 3 + Drift Law sidebar card).
 - **On-Screen Text Callout**:
   - *"External Reality Drifts: Reschedule moves departure to 08:00 AM."*
   - *"Drift Law: Historical receipts never override current truth."*
@@ -212,13 +221,13 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
     2. Focus on the Alexa+ Voice Card (`.voice-card`): highlight spoken response: *“I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30...”*
     3. Scroll down to Step 7 card (`P-13.07`), click `<summary>` to expand: highlight `observed_start: 08:00:00 UTC`, `predicate_truth: False`, badge `DRIFT_DETECTED`.
     4. Pan to sidebar Receipt Card: point out that the canonical receipt hash `87720e51...` is **strictly identical and intact**.
-  - Screenshot Target: `screenshots/scene_07_reconciliation_drifted.png` (amber DRIFTED hero status pill alongside Alexa+ voice response).
+  - Screenshot Target: `docs/assets/devpost/scene_07_reconciliation_drifted.png` (amber DRIFTED hero status pill alongside Alexa+ voice response).
 - **On-Screen Text Callout**:
   - *"Predicate Evaluation: FALSE (Expected 07:30, Observed 08:00)."*
   - *"State Reconciled: READY → DRIFTED."*
   - *"Historical Receipt Hash: Unchanged & Immutable."*
 - **Spoken Voiceover Narration (English)**:
-  > *"When asked, 'Are we still ready?', StillDone performs a fresh read-back. The departure predicate fails. Instantly, StillDone revokes readiness, downgrading current state to DRIFTED and explaining what changed. Meanwhile, the historical receipt hash remains cryptographically intact on disk as an immutable audit record."*
+  > *"When asked, "Are we still ready?", StillDone evaluates fresh read-back proof. The departure predicate fails. Instantly, StillDone revokes readiness, downgrading current state to DRIFTED and explaining what changed. Meanwhile, the historical receipt hash remains cryptographically intact on disk as an immutable audit record."*
 - **Word Count**: 43 words (~129.0 WPM for 20s).
 - **Evidence Provenance**: `FIXTURE` (exhibit playback) & `LOCAL_EXECUTION` (fresh session revalidation proof in `scripts/p12_07_proof.py`).
 - **Privacy & Redaction**: Zero secrets.
@@ -232,14 +241,14 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
   - File / URL: `artifacts/judge_exhibit/index.html`.
   - Target Section: Evidence Provenance Breakdown card (`#prov-title`), page footer (`footer`), and closing title card.
   - Operator Action:
-    1. Scroll to the Evidence Provenance Breakdown table (`#prov-title`): highlight rows showing Streamable HTTP MCP server, Bedrock Nova Micro, and AgentCore runtime.
+    1. Scroll to the Evidence Provenance Breakdown card (`#prov-title`): highlight explanatory sections showing recorded Bedrock inference, recorded AgentCore Streamable HTTP MCP execution, and fixture playback.
     2. Scroll to page footer: highlight text showing *Zero Personal Spend ($0.00) • Verified Provenance • No unmetered cloud endpoints*.
     3. Conclude on a clean, professional StillDone closing card:
        - **StillDone**
        - *Done, and still true.*
        - *github.com/zyganali-glitch/StillDone*
   - Visual Note: Avoid third-party logo or brand artwork without verified rights to use them; use plain, factual product typography.
-  - Screenshot Target: `screenshots/scene_08_architecture_closing.png` (provenance table and closing title card).
+  - Screenshot Target: `docs/assets/devpost/scene_08_architecture_closing.png` (provenance card and closing title card).
 - **On-Screen Text Callout**:
   - *Streamable HTTP MCP | Amazon Bedrock Nova Micro | AgentCore Runtime*
   - *Comprehensive Automated Tests | 100% Clean-Room Open Source*
@@ -254,7 +263,7 @@ Total Duration: 165s (2:45) | Total Words: 354 words | Speaking Cadence: ~128.7 
 
 ## 3. Full Continuous Narration Script (Voiceover / Captions)
 
-*Timing Target: 165 seconds (~2 minutes 45 seconds). Authoritative Word Count: 354 words. Average Speaking Cadence: ~128.7 words per minute.*
+*Timing Target: 165 seconds (~2 minutes 45 seconds). Authoritative Word Count: 356 words. Average Speaking Cadence: ~129.5 words per minute.*
 
 ```text
 [0:00 - 0:15]
@@ -264,19 +273,19 @@ Today's AI assistants treat an API HTTP 200 as mission complete. But tool succes
 Our mission: "Get my family ready for tomorrow morning. We need to leave by 7:30." In StillDone's Streamable HTTP MCP architecture, the runtime begins by observing ground truth. Replaying canonical pre-state observations, tomorrow's departure is scheduled for 7:45 AM, and weather indicates morning rain. StillDone requires real pre-state before proposing any action.
 
 [0:40 - 1:05]
-Amazon Bedrock Nova Micro compiles the intent into a typed proposal. But the model has zero execution authority. For the rain, StillDone creates a digital preparation task in Google Tasks: "Pack backpacks." Write success is never verification. A separate read adapter immediately reads back the task list, verifying it is active before awarding progress.
+Amazon Bedrock Nova Micro compiles the intent into a typed proposal. But the model has zero execution authority. Replaying recorded live execution, StillDone creates a digital preparation task in Google Tasks: "Pack backpacks." Write success is never verification. A separate read adapter reads back the task list, verifying it is active before awarding progress.
 
 [1:05 - 1:35]
-Next, shifting departure from 7:45 to 7:30 is high impact. StillDone pauses fail-closed at the human authorization boundary with zero writes performed. A bound cryptographic approval card is emitted with an immutable SHA-256 fingerprint. Once the operator approves, StillDone consumes the single-use grant, executes the calendar update, and immediately invokes an independent read-back to verify the 7:30 departure live in Google Calendar.
+Next, shifting departure from 7:45 to 7:30 is high impact. StillDone pauses fail-closed at the human authorization boundary with zero writes performed. A bound cryptographic approval card is emitted with an immutable SHA-256 fingerprint. Once the operator approves, StillDone consumes the single-use grant, executes the calendar update, and immediately invokes an independent read-back, verifying the 7:30 departure with recorded Google Calendar proof.
 
 [1:35 - 1:55]
-With weather checked, backpacks verified, and departure confirmed at 7:30, all predicates evaluate true. StillDone deterministically promotes the mission to READY, issuing an immutable receipt with a SHA-256 hash anchored to the verified facts. But in real life, reality never stands still.
+With weather checked, digital prep task verified, and departure confirmed at 7:30, all predicates evaluate true. StillDone deterministically promotes the mission to READY, issuing an immutable receipt with a SHA-256 hash anchored to the verified facts. But in real life, reality never stands still.
 
 [1:55 - 2:15]
 Later that evening, reality changes. As tracked in our departure lifecycle, an external reschedule moves departure to 8:00 AM. Ordinary agents would still report mission complete based on old execution logs. But StillDone enforces the Drift Law: historical receipts never override current truth.
 
 [2:15 - 2:35]
-When asked, "Are we still ready?", StillDone performs a fresh read-back. The departure predicate fails. Instantly, StillDone revokes readiness, downgrading current state to DRIFTED and explaining what changed. Meanwhile, the historical receipt hash remains cryptographically intact on disk as an immutable audit record.
+When asked, "Are we still ready?", StillDone evaluates fresh read-back proof. The departure predicate fails. Instantly, StillDone revokes readiness, downgrading current state to DRIFTED and explaining what changed. Meanwhile, the historical receipt hash remains cryptographically intact on disk as an immutable audit record.
 
 [2:35 - 2:45]
 Built with Amazon Bedrock, AgentCore, and Streamable HTTP MCP, backed by comprehensive automated tests. Make sure it's StillDone: Done, and still true.
@@ -413,7 +422,7 @@ Bu bölüm, teknik uzman olmayan operatörün Windows ortamında ekran kaydını
    - Sayfanın en üstüne kaydırın: Turuncu renkli `DRIFTED` durum çubuğunu ve Alexa+ sesli yanıt metnini gösterin.
    - Adım 7 kartını açarak 08:00 sapmasının tespit edildiğini gösterin. Orijinal makbuz özetinin değişmediğini belirtin.
 8. **Kapanış ve Mimari (Scene 8 — 2:35 - 2:45)**:
-   - Sayfa altındaki kanıt tablosuna ve GitHub açık kaynak bağlantısına odaklanıp videoyu StillDone sloganı ile bitirin.
+   - Sayfa altındaki kanıt kartına (`#prov-title`) ve GitHub açık kaynak bağlantısına odaklanıp videoyu StillDone sloganı ile bitirin.
 
 ### 6.3 Güvenlik, Gizlilik ve Kart/Ödeme Uyarıları (KRİTİK)
 - **Kredi Kartı / Ödeme Riski**: Bu çekim için **kesinlikle hiçbir ücretli servise abone olunmaz veya harcama yapılmaz**. Harcama hedefi kesin olarak `$0.00`'dır.
@@ -430,7 +439,7 @@ Per StillDone's honesty contract (`AGENTS.md` § 3), planned future production g
 | # | Item / Gate | Classification | Evidence / Source | Current Phase Status |
 |---|---|---|---|---|
 | 1 | **Video Duration Target** | Internal Editorial Target | 165s (2:45), strictly within Devpost rule (< 3:00) and plan window (2:30–2:50). | **SCRIPT_FROZEN** |
-| 2 | **Authoritative Spoken Narration** | Script Deliverable | 354 words (~128.7 WPM across 8 contiguous scenes). | **SCRIPT_FROZEN** |
+| 2 | **Authoritative Spoken Narration** | Script Deliverable | 356 words (~129.5 WPM across 8 contiguous scenes). | **SCRIPT_FROZEN** |
 | 3 | **Departure Lifecycle Narrative** | Story Architecture | Visualized across 3 stages (07:45 → 07:30 → 08:00) using static exhibit elements. | **SCRIPT_FROZEN** |
 | 4 | **UI Shot-List Parity** | Recording Plan | Every baseline shot maps to static visible sections and details/summary controls. | **DOCUMENTED_AND_VERIFIED** |
 | 5 | **Provenance Truthfulness** | Evidence Integrity | Strict labeling of FIXTURE, RECORDED_LIVE, LOCAL_EXECUTION, SIMULATED ALEXA+. | **DOCUMENTED_AND_VERIFIED** |

@@ -449,7 +449,7 @@
                     FIXTURE PLAYBACK
                 </span>
             </div>
-            <span class="backend-label">BACKEND: REAL STILLDONE DETERMINISTIC ENGINE</span>
+            <span class="backend-label">ENGINE-GENERATED FIXTURE REPLAY</span>
         </aside>
 
         <!-- Evaluation Provenance Notice -->
@@ -457,26 +457,22 @@
              style="background:var(--bg-secondary); border-left:4px solid var(--accent-alexa);
                     padding:0.85rem 1.15rem; margin-bottom:1.25rem; border-radius:0 6px 6px 0;
                     font-size:0.88rem; color:#cbd5e1; line-height:1.5;">
-            <strong>Evaluation Provenance Disclosure:</strong> This interactive exhibit was
-            generated directly by StillDone's genuine deterministic engine
-            (<code>stilldone.judge_ux.builder</code> and <code>stilldone.killer_mission</code>)
-            evaluating canonical execution evidence. It is a 100% self-contained static HTML
-            exhibit ($0.00 spend). <strong>No backend code or cloud API executes for visitors
-            viewing this page.</strong> This page replays the canonical mission in deterministic
-            <strong>FIXTURE / SIMULATION</strong> playback. Authentic historical live integration
-            executions are preserved separately in the <code>docs/</code> ledger
-            (marked <code>RECORDED_LIVE</code>).
+            <strong>Evaluation Provenance Disclosure:</strong> This self-contained exhibit was
+            generated from StillDone's deterministic mission engine. It replays a canonical fixture
+            execution offline and makes no live AWS or Google API calls for visitors. Authentic
+            historical live integration evidence is preserved separately as
+            <code>RECORDED_LIVE</code>.
         </div>
 
         <!-- P-15.01 & P-15.03 Hero Intent and Voice Summary -->
         <section class="hero-section" aria-labelledby="intent-title">
             <div class="intent-block">
-                <span class="intent-label">Canonical Intent (Mission 11111111):</span>
+                <span class="intent-label">Canonical Intent:</span>
                 <h2 id="intent-title" class="intent-text">&ldquo;Get my family ready for tomorrow morning. We need to leave by 7:30.&rdquo;</h2>
             </div>
             <div class="voice-card">
                 <div class="voice-label">
-                    Alexa+ Spoken Response (7.2s):
+                    SIMULATED ALEXA+ RESPONSE &mdash; TEXT PREVIEW:
                 </div>
                 <p class="voice-speech">
                     &ldquo;I noticed your departure moved to 8:00 AM on Google Calendar, so tomorrow morning is no longer ready for 7:30. I have added the backpack-packing task and confirmed it is on your list, and weather is checked.&rdquo;
@@ -524,13 +520,13 @@
             <!-- P-15.01 One-Screen Mission Timeline -->
             <section class="timeline-container" aria-label="Mission Timeline">
                 
-        <article class="timeline-item " aria-label="Step 1: Seed Pre-State Verification">
+        <article class="timeline-item " aria-label="Step 1: Seed Demo State &amp; Verify Pre-State">
             <div class="timeline-marker">1</div>
             <div class="timeline-body">
                 <header class="timeline-header">
                     <div class="timeline-title-row">
                         <span class="task-tag">P-13.01</span>
-                        <h3 class="step-title">Seed Pre-State Verification</h3>
+                        <h3 class="step-title">Seed Demo State &amp; Verify Pre-State</h3>
                     </div>
                     <div class="timeline-badges">
                         <span class="badge badge-prov">FIXTURE</span>
@@ -724,9 +720,9 @@
             </summary>
             <div class="evidence-content">
                 <table class="evidence-table">
-                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>87720e51d17cfd716823066be5fb1ef4f2bf35af2b6c692c59076644d017b661</code></td></tr></tbody>
+                    <tbody><tr><th>predicates_count</th><td><code>3</code></td></tr><tr><th>receipt_hash</th><td><code>9fb635837d6f03a46ea9571f1c99f9373d656c0ee985d6c40a9fa427b05559b6</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>87720e51d17cfd716823066be5fb1ef4f2bf35af2b6c692c59076644d017b661</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>9fb635837d6f03a46ea9571f1c99f9373d656c0ee985d6c40a9fa427b05559b6</code></p>
             </div>
         </details>
         
@@ -761,7 +757,7 @@
                 <table class="evidence-table">
                     <tbody><tr><th>observed_start</th><td><code>08:00:00 UTC</code></td></tr><tr><th>predicate_truth</th><td><code>False</code></td></tr></tbody>
                 </table>
-                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>87720e51d17cfd716823066be5fb1ef4f2bf35af2b6c692c59076644d017b661</code></p>
+                <p class="hash-trace"><strong>Receipt Hash:</strong> <code>9fb635837d6f03a46ea9571f1c99f9373d656c0ee985d6c40a9fa427b05559b6</code></p>
             </div>
         </details>
         
@@ -811,7 +807,7 @@
             <p class="receipt-callout">Receipt hash remains permanently unchanged even when reality later drifts.</p>
             <div class="receipt-hash-block">
                 <label>Canonical Receipt SHA-256:</label>
-                <code>87720e51d17cfd716823066be5fb1ef4f2bf35af2b6c692c59076644d017b661</code>
+                <code>9fb635837d6f03a46ea9571f1c99f9373d656c0ee985d6c40a9fa427b05559b6</code>
             </div>
             <div class="receipt-meta-grid">
                 <div>
@@ -872,9 +868,10 @@
                     RECORDED_LIVE
                 </span>
                 <p class="explanation-text">
-                    Real AWS Bedrock Nova Micro reasoning (P-01/P-07), real AgentCore Streamable
-                    HTTP microVM (P-05), and Google Calendar/Tasks OAuth mutations were exercised
-                    in bounded live sessions and preserved in <code>docs/</code>.
+                    Authentic historical integration proof preserves recorded AWS Bedrock
+                    inference, recorded AgentCore Streamable HTTP MCP execution, recorded Google
+                    Calendar verified mutation, and recorded Google Tasks verified mutation in
+                    <code>docs/</code>.
                 </p>
             </div>
             <div class="prov-item" style="margin-top: 0.6rem;">
@@ -883,8 +880,8 @@
                 </span>
                 <p class="explanation-text">
                     This interactive exhibit replays the canonical mission in deterministic
-                    fixture mode. Zero external credentials, zero AWS API charges, and strictly
-                    $0.00 personal spend.
+                    fixture replay mode. Zero external credentials, zero AWS API charges, and
+                    strictly $0.00 personal spend.
                 </p>
             </div>
             <div class="prov-item" style="margin-top: 0.6rem;">
@@ -945,7 +942,7 @@
                 Zero Personal Spend ($0.00) &bull; Verified Provenance
             </p>
             <p style="font-size: 0.75rem; color: #94a3b8;">
-                Static Exhibit generated: 2026-10-14T20:42:47.011920+00:00 &bull;
+                Static Exhibit generated: 2026-10-15T07:50:11.560891+00:00 &bull;
                 No unmetered cloud endpoints &bull; 100% Self-contained
             </p>
         </footer>

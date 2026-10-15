@@ -5,13 +5,17 @@ Validates:
 - Official Devpost timing rule (< 3:00 / < 180s) vs internal editorial target (2:30–2:50).
 - Contiguous 8-scene structure covering exactly 165 seconds (2:45).
 - Exact per-scene narration text parity between Section 2 and Section 3.
-- Authoritative word counts per scene and aggregate speaking cadence (~128.7 WPM, 354 words).
+- Authoritative word counts per scene and aggregate speaking cadence (~129.5 WPM, 356 words).
 - Canonical departure evolution (07:45 -> 07:30 -> 08:00) narrative structure.
 - Six canonical execution provenance values and SIMULATED ALEXA+ presentation disclosure.
 - Negative bounds and truthfulness disclosures (no live partner Alexa+, no TTS in repo,
   no physical task completion, zero visitor backend execution on static site).
 - UI parity: Baseline shots use actual static exhibit sections and details/summary controls;
   Scene 5 uses title card/callout; Scene 6 baseline uses exhibit departure tracker and drift card.
+- Baseline HTML selectors actually exist in generated exhibit output (no .header or Server: /mcp).
+- Listed evidence details in Section 2 actually appear in generated exhibit output.
+- Rejection of unsupported visitor-side live execution and physical backpack claims.
+- Canonical media directories structure and paths.
 - Live preflight requirements accurately stated (not just --live --operator-approved).
 - Honest phase status: Future video/audio/playback gates are NOT marked PASS.
 - All relative markdown file links resolve to existing files on disk.
@@ -27,9 +31,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOC_PATH = REPO_ROOT / "docs" / "P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md"
+EXHIBIT_PATH = REPO_ROOT / "artifacts" / "judge_exhibit" / "index.html"
 
 EXPECTED_SCENE_DURATIONS = [15, 25, 25, 30, 20, 20, 20, 10]
-EXPECTED_SCENE_WORD_COUNTS = [36, 52, 54, 62, 42, 43, 43, 22]
+EXPECTED_SCENE_WORD_COUNTS = [36, 52, 54, 62, 44, 43, 43, 22]
+EXPECTED_TOTAL_WORDS = 356
 
 
 def test_p21_01_document_exists_and_metadata() -> None:
@@ -128,9 +134,49 @@ def test_p21_01_narration_parity_counts_and_cadence() -> None:
             f"Scene {idx} cadence {wpm:.1f} WPM is outside comfortable presentation bounds"
         )
 
-    assert total_words == 354, f"Total word count must be exactly 354 words, got {total_words}"
+    assert total_words == EXPECTED_TOTAL_WORDS, (
+        f"Total word count must be exactly {EXPECTED_TOTAL_WORDS} words, got {total_words}"
+    )
     avg_wpm = total_words / (165 / 60)
-    assert 125 <= avg_wpm <= 135, f"Average cadence {avg_wpm:.1f} WPM must be around ~128.7 WPM"
+    assert 125 <= avg_wpm <= 135, f"Average cadence {avg_wpm:.1f} WPM must be around ~129.5 WPM"
+
+
+def test_p21_01_exact_narration_parity_section2_and_section3() -> None:
+    """Verifies exact word-for-word parity between Section 2 scene narration
+    and Section 3 script."""
+    content = DOC_PATH.read_text(encoding="utf-8")
+
+    # Extract Section 2 narration blocks
+    sec2_matches = re.findall(
+        r"-\s*\*\*Spoken Voiceover Narration \(English\)\*\*:\s*\n\s*>\s*\*(.*?)\*",
+        content,
+    )
+    assert len(sec2_matches) == 8, (
+        f"Expected 8 narration blocks in Section 2, got {len(sec2_matches)}"
+    )
+
+    # Extract Section 3 continuous script blocks
+    script_section_match = re.search(
+        r"## 3\. Full Continuous Narration Script.*?\n```text\n(.*?)```",
+        content,
+        re.DOTALL,
+    )
+    assert script_section_match, "Could not find Section 3 continuous script"
+    script_text = script_section_match.group(1).strip()
+    blocks = re.split(r"\[\d+:\d\d\s*[-–]\s*\d+:\d\d\]\n", script_text)
+    sec3_texts = [b.strip() for b in blocks if b.strip()]
+    assert len(sec3_texts) == 8, f"Expected 8 blocks in Section 3, got {len(sec3_texts)}"
+
+    for idx, (raw_sec2, raw_sec3) in enumerate(zip(sec2_matches, sec3_texts, strict=True), 1):
+        # Clean quotes and normalize internal whitespace
+        clean_sec2 = raw_sec2.strip().strip('"').strip("'")
+        clean_sec3 = raw_sec3.strip().strip('"').strip("'")
+        norm_sec2 = " ".join(clean_sec2.split())
+        norm_sec3 = " ".join(clean_sec3.split())
+
+        assert norm_sec2 == norm_sec3, (
+            f"Narration mismatch in Scene {idx}:\nSection 2: {norm_sec2}\nSection 3: {norm_sec3}"
+        )
 
 
 def test_p21_01_ui_parity_and_shootability() -> None:
@@ -159,6 +205,127 @@ def test_p21_01_ui_parity_and_shootability() -> None:
         or "baseline recording uses the static exhibit" in norm_content.lower()
     )
     assert "conditional" in norm_content.lower()
+
+
+def test_p21_01_referenced_selectors_exist_in_exhibit() -> None:
+    """Verifies that referenced baseline HTML selectors actually exist in exhibit output."""
+    assert EXHIBIT_PATH.is_file(), f"Missing generated exhibit at: {EXHIBIT_PATH}"
+    exhibit_html = EXHIBIT_PATH.read_text(encoding="utf-8")
+    content = DOC_PATH.read_text(encoding="utf-8")
+
+    # Positive selector checks: referenced classes, IDs, and tags must exist in exhibit HTML
+    expected_selectors = [
+        "brand-header",
+        "fixture-notice",
+        "intent-title",
+        "departure-story-card",
+        "approval-title",
+        "receipt-title",
+        "drift-title",
+        "prov-title",
+        "status-hero-bar",
+        "voice-card",
+        "footer",
+    ]
+    for selector in expected_selectors:
+        assert selector in exhibit_html, (
+            f"Referenced selector '{selector}' not found in exhibit HTML"
+        )
+
+    # Specific repair checks: nonexistent .header and Server: /mcp must NOT be referenced
+    assert "`.header`" not in content, (
+        "Scene 1 references nonexistent .header (must use .brand-header)"
+    )
+    assert "Server: /mcp" not in content, "Scene 2 references nonexistent 'Server: /mcp' text"
+
+    # Scene 8 describes provenance card, not a table
+    sec2_scene8_match = re.search(r"### Scene 8:.*?(?=---|\Z)", content, re.DOTALL)
+    assert sec2_scene8_match, "Scene 8 section not found"
+    scene8_text = sec2_scene8_match.group(0)
+    assert "provenance table" not in scene8_text.lower(), (
+        "Scene 8 should describe provenance card, not table"
+    )
+
+
+def test_p21_01_listed_evidence_details_appear_in_exhibit() -> None:
+    """Verifies that listed evidence properties from Section 2 appear in exhibit output."""
+    assert EXHIBIT_PATH.is_file(), f"Missing generated exhibit at: {EXHIBIT_PATH}"
+    exhibit_html = EXHIBIT_PATH.read_text(encoding="utf-8")
+
+    expected_evidence_facts = [
+        ("start_time", "07:45:00 UTC"),
+        ("prep_task_absent", "True"),
+        ("weather", "mild/rainy"),
+        ("model_authority", "ZERO"),
+        ("task_title", "Pack backpacks"),
+        ("status", "needsAction"),
+        ("approval_required", "True"),
+        ("calendar_writes", "0"),
+        ("start_time", "07:30:00 UTC"),
+        ("writes_performed", "1"),
+        ("predicates_count", "3"),
+        ("observed_start", "08:00:00 UTC"),
+        ("predicate_truth", "False"),
+    ]
+    for key, val in expected_evidence_facts:
+        assert key in exhibit_html, f"Expected evidence key '{key}' not found in exhibit HTML"
+        assert val in exhibit_html, f"Expected evidence value '{val}' not found in exhibit HTML"
+
+
+def test_p21_01_reject_unsupported_live_claims_and_backpack_physical_claims() -> None:
+    """Verifies rejection of unsupported visitor live execution and physical claims."""
+    content = DOC_PATH.read_text(encoding="utf-8")
+
+    # Extract all narration text (Section 2 and Section 3)
+    script_section_match = re.search(
+        r"## 3\. Full Continuous Narration Script.*?\n```text\n(.*?)```",
+        content,
+        re.DOTALL,
+    )
+    assert script_section_match
+    continuous_script = script_section_match.group(1)
+
+    # 1. No unqualified live claims in fixture playback narration
+    assert "live in Google Calendar" not in continuous_script, (
+        "Scene 4 narration must not claim 'live in Google Calendar' during fixture playback"
+    )
+
+    # 2. No claims of physical backpack completion
+    assert "backpacks verified" not in continuous_script.lower(), (
+        "Scene 5 narration must not claim 'backpacks verified' (use digital prep task)"
+    )
+
+    # 3. Explicit references to digital prep task
+    assert "digital prep task" in continuous_script.lower()
+
+    # 4. Truthful qualification of read-back proof
+    assert "recorded Google Calendar proof" in continuous_script
+    assert "evaluates fresh read-back proof" in continuous_script
+
+
+def test_p21_01_canonical_media_directories() -> None:
+    """Verifies that all 6 canonical media capture destinations are specified and structured."""
+    content = DOC_PATH.read_text(encoding="utf-8")
+
+    canonical_dirs = [
+        "docs/assets/devpost/",
+        "docs/assets/readme/",
+        "_local_media/raw_clips/",
+        "_local_media/voiceover/",
+        "_local_media/captions/",
+        "_local_media/final_export/",
+    ]
+    for media_dir in canonical_dirs:
+        assert media_dir in content, f"Missing canonical media directory in doc: {media_dir}"
+
+    # Verifies that screenshot targets use docs/assets/devpost/
+    for i in range(1, 9):
+        pattern = f"docs/assets/devpost/scene_{i:02d}_"
+        assert pattern in content, f"Scene {i} screenshot target does not use {pattern}"
+
+    # Verifies tracked directory structure exists
+    assert (REPO_ROOT / "docs" / "assets" / "devpost").is_dir()
+    assert (REPO_ROOT / "docs" / "assets" / "readme").is_dir()
 
 
 def test_p21_01_provenance_and_negative_disclosures() -> None:
@@ -225,8 +392,12 @@ def test_p21_01_markdown_link_integrity() -> None:
     for rel_path_str in referenced_paths:
         clean_rel = rel_path_str.split("#")[0]
         clean_rel = clean_rel.rstrip(".,;:)")
-        target_file = REPO_ROOT / clean_rel
-        assert target_file.exists(), f"Referenced file does not exist on disk: {clean_rel}"
+        if clean_rel.startswith("docs/assets/"):
+            target_dir = (REPO_ROOT / clean_rel).parent
+            assert target_dir.is_dir(), f"Asset destination directory does not exist: {target_dir}"
+        else:
+            target_file = REPO_ROOT / clean_rel
+            assert target_file.exists(), f"Referenced file does not exist on disk: {clean_rel}"
 
 
 def test_p21_01_operator_instructions_turkish() -> None:

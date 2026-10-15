@@ -269,15 +269,15 @@ Phase P-10 is **CLOSED — independent QA PASS ✅ (Engineering baseline SHA: `5
 
 ## Last independently VERIFIED contiguous SHA
 
-`05fd91d767360cbea21573d804bd429ed116ca9c`
+`f4c5a3b381493c544811468e957af97b247c48bc`
 
 ## Current exact task
 
-Consolidated Macro Repair — P-13 through P-17 Only — Completed, awaiting independent QA review.
+P-21.01 Demo Script & Shot List Shootability Repair + Operator-Authorized Public Exhibit Copy Polish — Completed, awaiting consolidated independent QA review.
 
 ## Next exact task
 
-Independent QA review of Consolidated Macro Repair (P-18 remains strictly PENDING / NOT_RUN).
+Consolidated Independent QA review of P-21.01 and Public Exhibit Copy Polish (P-21.02+ strictly PENDING / NOT_RUN).
 
 ---
 
@@ -495,6 +495,35 @@ Phase P-19.01 and P-19.02 repaired and completed as candidate for independent QA
 - **Global Invariants Preserved:**
   - Zero live cloud mutations executed ($0.00 personal spend maintained).
   - Next phases (P-19.03+) remain strictly `PENDING / NOT_RUN`.
+
+---
+
+### Phase P-21.01 & Public Exhibit Copy Polish Summary
+- **Work Unit A (P-21.01 Final Shootability Repair):**
+  - Repaired all known shot-list mismatches in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md`:
+    - Scene 1: updated header selector to `.brand-header`.
+    - Scene 2: removed nonexistent `Server: /mcp` reference, added `FIXTURE PLAYBACK` callout, and updated Step 1 title to `Seed Demo State & Verify Pre-State`.
+    - Scene 3: updated narration to recorded-live replay (`Replaying recorded live execution...`).
+    - Scene 4: clarified distinct recorded-live Google Calendar proof versus current fixture playback (`verifying the 7:30 departure with recorded Google Calendar proof`).
+    - Scene 5: explicitly referenced digital prep task verification rather than physical backpack completion (`digital prep task verified`).
+    - Scenes 3 & 7: eliminated unqualified present-tense live claims.
+    - Media directories: established canonical destinations (`docs/assets/devpost/`, `docs/assets/readme/`, `_local_media/...`).
+    - Maintained exact 8-scene structure, 165-second (2:45) editorial duration, and 356 authoritative words (~129.5 WPM speaking cadence).
+    - Hardened regression tests to 17 tests in `tests/test_phase_p21_01_demo_script.py` (exact word-for-word parity between Section 2 and Section 3, selector existence in HTML, listed evidence verification, claim rejection, and path checks).
+- **Work Unit B (Operator-Authorized Public Exhibit Copy Polish):**
+  - B1: Simplified top provenance disclosure to plain, non-developer-facing text while preserving transparent fixture and historical-live distinctions.
+  - B2: Simplified evidence provenance breakdown card, removing phase identifiers (P-01/P-07/P-05) from explanatory copy while preserving authentic disk evidence links.
+  - B3: Simplified heading from `Canonical Intent (Mission 11111111)` to `Canonical Intent`.
+  - B4: Titled Step 1 `Seed Demo State & Verify Pre-State` across all runtime and view-model branches.
+  - B5: Preserved receipt integrity, SHA-256 hashes, READY/DRIFTED factual evidence.
+  - B6: Labeled simulated voice response truthfully as `SIMULATED ALEXA+ RESPONSE — TEXT PREVIEW`.
+  - B7: Clarified backend banner truthfully as `ENGINE-GENERATED FIXTURE REPLAY`.
+  - Verified byte-for-byte parity between canonical outputs `artifacts/judge_exhibit/index.html` and `artifacts/stilldone_judge_exhibit.html` (SHA-256: `1689ac10704e756a21977541d70b4fc9b1e317cd17cbfcc6fbb0358c0b04b57e`).
+- **Test Integrity & Invariants:**
+  - 80 focused tests passing across UX, exhibit, claim audit, and demo script suites; 2,711 core tests passing across the repository.
+  - Zero personal spend ($0.00). Zero live cloud mutations. Zero secret leakage.
+  - Phase P-21.02+ strictly PENDING / NOT_RUN. Candidate for consolidated independent QA review.
+
 
 
 

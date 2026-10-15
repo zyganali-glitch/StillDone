@@ -73,7 +73,7 @@ def test_exhibit_html_content_and_presentation_invariants() -> None:
     # A. Simulated Alexa+ disclosure & Product Branding
     assert "StillDone &mdash; Done, and still true." in html_content
     assert "SIMULATED ALEXA+ EXPERIENCE" in html_content
-    assert "BACKEND: REAL STILLDONE DETERMINISTIC ENGINE" in html_content
+    assert "ENGINE-GENERATED FIXTURE REPLAY" in html_content
     assert "07:45 AM &rarr; 07:30 AM &rarr; 08:00 AM" in html_content
 
     # B. Provenance distinction & Verified GitHub links
