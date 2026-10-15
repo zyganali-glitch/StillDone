@@ -109,9 +109,60 @@ See complete guide:
 - [`docs/COST_AND_ACCESS_POLICY.md`](docs/COST_AND_ACCESS_POLICY.md)
 - [`docs/OPERATOR_REQUIREMENTS.md`](docs/OPERATOR_REQUIREMENTS.md)
 
+## Demo Gallery & Evidence
+
+These screenshots show a deterministic static fixture replay with a simulated Alexa+ presentation. Historical real AWS and Google integration proofs are available separately as RECORDED_LIVE evidence; the deployed exhibit does not execute cloud calls for visitors.
+
+### Primary Gallery
+
+1. **Mission Overview**  
+   ![Mission overview — simulated Alexa+ presentation, canonical intent, and current DRIFTED truth](docs/assets/readme/stilldone_overview.png)  
+   *Caption: "Mission overview — simulated Alexa+ presentation, canonical intent, and current DRIFTED truth."*
+
+2. **Pre-State Observations**  
+   ![Pre-state observations — the initial 07:45 departure and weather/task evidence before mission actions](docs/assets/readme/prestate_verification.png)  
+   *Caption: "Pre-state observations — the initial 07:45 departure and weather/task evidence before mission actions."*
+
+3. **Digital Task Verification**  
+   ![A digital Google Tasks preparation entry is verified through separate read-back; physical packing is not claimed](docs/assets/readme/task_verification.png)  
+   *Caption: "A digital Google Tasks preparation entry is verified through separate read-back; physical packing is not claimed."*
+
+4. **Approved Calendar Update Verification**  
+   ![The approved calendar update is independently checked against the 07:30 target in the deterministic exhibit](docs/assets/readme/calendar_verified_update.png)  
+   *Caption: "The approved calendar update is independently checked against the 07:30 target in the deterministic exhibit."*
+
+5. **Immutable READY Receipt**  
+   ![The historical READY receipt remains intact while current mission truth has changed to DRIFTED](docs/assets/readme/immutable_ready_receipt.png)  
+   *Caption: "The historical READY receipt remains intact while current mission truth has changed to DRIFTED."*
+
+6. **The Drift Law**  
+   ![The Drift Law separates an accurate historical receipt from current reality](docs/assets/readme/drift_law_explanation.png)  
+   *Caption: "The Drift Law separates an accurate historical receipt from current reality."*
+
+7. **Reconciliation to DRIFTED**  
+   ![The reconciled mission is DRIFTED, accompanied by a clearly labeled simulated Alexa+ explanation](docs/assets/readme/current_truth_drifted.png)  
+   *Caption: "The reconciled mission is DRIFTED, accompanied by a clearly labeled simulated Alexa+ explanation."*
+
+8. **Architecture & Provenance**  
+   ![Provenance separates historical recorded-live AWS and Google evidence from offline fixture replay](docs/assets/readme/architecture_provenance.png)  
+   *Caption: "Provenance separates historical recorded-live AWS and Google evidence from offline fixture replay."*
+
+### Extended Evidence & Integration Proofs
+For supplemental technical evidence screenshots (`fresh_reconciliation_evidence.png` and `evidence_reproduction_links.png`), see the extended gallery in [`docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`](docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md).
+
+Direct links to authentic integration and reproduction evidence:
+- **Public Cloudflare Exhibit**: [https://stilldone-judge-exhibit.pages.dev](https://stilldone-judge-exhibit.pages.dev)
+- **Canonical Evidence Manifest**: [`docs/P20_03_EVIDENCE_MANIFEST.md`](docs/P20_03_EVIDENCE_MANIFEST.md)
+- **Judge Reproduction Guide**: [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md)
+- **Dated Bedrock Live Evidence**: [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md)
+- **Dated AgentCore Live Evidence**: [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md)
+- **Dated Calendar Verified Evidence**: [`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`](docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md)
+- **Dated Tasks Verified Evidence**: [`docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`](docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md)
+- **Dated Open-Meteo Live Evidence**: [`docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`](docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md)
+
 ## Current status
 
-**PHASE P-05 CLOSED — INDEPENDENT QA PASS (Verified closure SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`); PHASE P-06 PENDING / NOT AUTHORIZED**
+**PHASES P-00 THROUGH P-18: CLOSED — INDEPENDENT QA PASS ✅ (Last verified contiguous closure SHA: `f4c5a3b381493c544811468e957af97b247c48bc`) | P-19, P-20 & P-21.01: COMPLETED (Candidate for independent QA review, latest verified baseline SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`) | PHASE P-21.02+ PENDING / NOT AUTHORIZED**
 
 Phase progression and verified milestones:
 - **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
@@ -146,7 +197,7 @@ Phase progression and verified milestones:
   - `P-05.05` (Auth/rate-limit boundary): `independent QA PASS` (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`).
   - `P-05.06` (Validation with MCP inspector/client & remote AWS AgentCore deployment): `independent QA PASS` (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`).
   - `P-05.07` (Measure protocol latency & Alexa+ direct-access gap): `independent QA PASS` (Verified SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`).
-- **Phase P-06 (Real External Service Adapters)**: `PENDING / NOT AUTHORIZED`.
+- **Phases P-06 through P-18**: Complete and closed with independent QA PASS (see [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`plans/STILLDONE_MASTER_EXECUTION_PLAN.md`](plans/STILLDONE_MASTER_EXECUTION_PLAN.md) for full phase-by-phase verification records).
 
 See:
 - `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`

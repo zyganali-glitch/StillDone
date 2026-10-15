@@ -239,16 +239,16 @@ Total Duration: 165s (2:45) | Total Words: 356 words | Speaking Cadence: ~129.5 
 - **Narrative Objective**: Deliver a punchy closing summary linking StillDone's open-standard Streamable HTTP MCP architecture, AWS Bedrock Nova Micro, comprehensive automated tests, and the final thesis.
 - **Screen Display / Visual Action**:
   - File / URL: `artifacts/judge_exhibit/index.html`.
-  - Target Section: Evidence Provenance Breakdown card (`#prov-title`), page footer (`footer`), and closing title card.
+  - Target Section: Evidence Provenance Breakdown card (`#prov-title`), page footer (`footer`), and GitHub evidence-links section. Exhibit footage ONLY (no separate closing title card).
   - Operator Action:
     1. Scroll to the Evidence Provenance Breakdown card (`#prov-title`): highlight explanatory sections showing recorded Bedrock inference, recorded AgentCore Streamable HTTP MCP execution, and fixture playback.
     2. Scroll to page footer: highlight text showing *Zero Personal Spend ($0.00) • Verified Provenance • No unmetered cloud endpoints*.
-    3. Conclude on a clean, professional StillDone closing card:
-       - **StillDone**
-       - *Done, and still true.*
+    3. Conclude directly on the public exhibit's GitHub evidence-links section and footer showing:
+       - **StillDone — Done, and still true.**
        - *github.com/zyganali-glitch/StillDone*
-  - Visual Note: Avoid third-party logo or brand artwork without verified rights to use them; use plain, factual product typography.
-  - Screenshot Target: `docs/assets/devpost/scene_08_architecture_closing.png` (provenance card and closing title card).
+       - *Exhibit footage ONLY; no separate title card.*
+  - Visual Note: Scene 08 ends strictly on actual recorded public exhibit footage (`#prov-title`, footer, and open-source links). No separate StillDone closing title card is generated or appended.
+  - Screenshot Target: `docs/assets/devpost/scene_08_architecture_closing.png` (provenance card, footer, and GitHub evidence links; filename is historical and does not imply a separate title card).
 - **On-Screen Text Callout**:
   - *Streamable HTTP MCP | Amazon Bedrock Nova Micro | AgentCore Runtime*
   - *Comprehensive Automated Tests | 100% Clean-Room Open Source*
@@ -422,7 +422,7 @@ Bu bölüm, teknik uzman olmayan operatörün Windows ortamında ekran kaydını
    - Sayfanın en üstüne kaydırın: Turuncu renkli `DRIFTED` durum çubuğunu ve Alexa+ sesli yanıt metnini gösterin.
    - Adım 7 kartını açarak 08:00 sapmasının tespit edildiğini gösterin. Orijinal makbuz özetinin değişmediğini belirtin.
 8. **Kapanış ve Mimari (Scene 8 — 2:35 - 2:45)**:
-   - Sayfa altındaki kanıt kartına (`#prov-title`) ve GitHub açık kaynak bağlantısına odaklanıp videoyu StillDone sloganı ile bitirin.
+   - Sayfa altındaki kanıt kartına (`#prov-title`), alt bilgiye ve GitHub açık kaynak bağlantılarına odaklanıp videoyu doğrudan sergi görüntüsüyle bitirin (ayrı bir StillDone kapanış kartı eklenmez; sadece gerçek sergi görüntüleri kullanılır).
 
 ### 6.3 Güvenlik, Gizlilik ve Kart/Ödeme Uyarıları (KRİTİK)
 - **Kredi Kartı / Ödeme Riski**: Bu çekim için **kesinlikle hiçbir ücretli servise abone olunmaz veya harcama yapılmaz**. Harcama hedefi kesin olarak `$0.00`'dır.

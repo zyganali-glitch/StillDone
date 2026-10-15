@@ -12,6 +12,7 @@ P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review
 Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
 P-21.01: COMPLETED (Candidate for independent QA review) |
+Media Asset Integration & Submission Registry: COMPLETED (Candidate for independent QA review) |
 Phase P-21.02+: PENDING / NOT AUTHORIZED**
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
@@ -81,9 +82,9 @@ Preferred AWS target:
 
 ## Current exact task
  
-Active task: P-21.01 — Freeze 2:30–2:50 demo script and shot list
+Active task: Bounded Documentation, Media-Asset Integration & Validation (Demo Media Manifest, README Gallery & Submission Copy Registry)
 
-Starting Remote SHA: `d09bbb4438bb337529e015f8ad0148423abbe19c`
+Starting Remote SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`
 Last Independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc`
 
 Status:
@@ -92,18 +93,19 @@ Status:
 - P-19.04: OPERATOR-CONFIRMED PUBLISHED & POLISHED (`https://stilldone-judge-exhibit.pages.dev`)
 - P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review)
 - P-21.01: COMPLETED (Candidate for independent QA review)
-  - Frozen 2:45 (165s) competition-ready English narration script and timestamped shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md` (strictly compliant with Devpost < 3:00 rule and internal 2:30–2:50 window, 8 contiguous scenes, ~128.7 WPM cadence, 354 authoritative words).
-  - Anchors canonical departure evolution: `07:45 AM (Initial State) → 07:30 AM (Target Verified / READY) → 08:00 AM (External Drift / DRIFTED)` mapped to visible static exhibit elements.
-  - UI parity strictly enforced: baseline shots map to static exhibit cards and `<summary>` controls without fabricated live transitions or unapproved calendar edits.
-  - Discloses all 6 canonical execution provenance values (`FIXTURE`, `LOCAL_EXECUTION`, `LIVE_AWS`, `LIVE_GOOGLE`, `LIVE_EXTERNAL`, `RECORDED_LIVE`) and surface disclosure `SIMULATED ALEXA+ EXPERIENCE`.
-  - Enforces negative bounds: no live partner Alexa+ access, no speech synthesis / Echo Show in repo, zero visitor backend execution on static site, remote MCP torn down ($0.00 spend).
-  - Turkish screen-by-screen guidance for non-expert operator per `AGENTS.md` § 22.
-  - Modular conditional replacement shot plan for P-21.02 & P-21.03 with explicit preflight requirements.
-  - Honest phase status: future video/audio/playback gates separated and marked PLANNED / NOT_RUN.
-  - Validated via 12 focused tests in `tests/test_phase_p21_01_demo_script.py`.
+- Media Asset Integration & Submission Registry: COMPLETED (Candidate for independent QA review)
+  - Discovered Scene 01 source filename `15.10.2026 21_08_15 - Screen - Video Project 38.webm` from operator's actual local recordings.
+  - Recorded master Clipchamp Edit Decision List (165s / 2:45 total target) with unaltered 356-word canonical narration in `docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`.
+  - Verified 18/18 screenshot assets on disk (8 Devpost + 10 README) with valid PNG signatures, dimensions, and zero PII / secrets.
+  - Preserved YouTube metadata and Devpost short description (169 chars <= 200).
+  - Preserved Devpost screenshot captions (all 8 <= 200 chars).
+  - Embedded 8 principal screenshots with exact captions in `README.md` and linked 2 supplemental screenshots in `docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`.
+  - Corrected materially stale phase status in `README.md`.
+  - Stored raw clips under git-ignored `_local_media/raw_clips/`.
+  - Future tasks P-21.02 through P-21.06 remain strictly NOT_RUN / PENDING_OPERATOR_ACTION.
 
 Canonical remote HEAD: dynamically inspected via `git rev-parse origin/main`
-Next exact task: Independent QA Review of P-21.01 (P-21.02+ remains strictly PENDING / NOT AUTHORIZED)
+Next exact task: Consolidated Independent QA Review of P-21.01 and Media Asset Registry (P-21.02+ strictly PENDING / NOT AUTHORIZED)
 
 Architecture Truth — Dependency Isolation:
 - Upstream Dependency Conflict Verified: StillDone Core requires `mcp>=2.2.0`; `strands-agents==1.57.2` upstream officially requires `mcp>=1.23.0,<2.2`. These version sets do not intersect.
