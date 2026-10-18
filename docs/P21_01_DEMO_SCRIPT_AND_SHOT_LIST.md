@@ -159,9 +159,15 @@ Total Duration: 165s (2:45) | Total Words: 356 words | Speaking Cadence: ~129.5 
 - **Spoken Voiceover Narration (English)**:
   > *"Next, shifting departure from 7:45 to 7:30 is high impact. StillDone pauses fail-closed at the human authorization boundary with zero writes performed. A bound cryptographic approval card is emitted with an immutable SHA-256 fingerprint. Once the operator approves, StillDone consumes the single-use grant, executes the calendar update, and immediately invokes an independent read-back, verifying the 7:30 departure with recorded Google Calendar proof."*
 - **Word Count**: 62 words (~124.0 WPM for 30s).
+- **Post-Submission Provenance Clarification (2026-10-18)**:
+  - The historical voiceover narration above is preserved verbatim as a record of the submitted video script.
+  - The complete displayed scene in the video and public exhibit (`artifacts/judge_exhibit/index.html`) is deterministic `FIXTURE` playback.
+  - **P-06.08** (`docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`, `RECORDED_LIVE` / `LIVE_GOOGLE`) contains the historical real Google Calendar provider mutation (`07:45 → 07:30`), cryptographically bound `ApprovalGrant` authorization evaluation (`AUTHORIZED_BY_BOUND_APPROVAL`), and independent `events.get` read-back.
+  - **P-11.06** (`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`, `LOCAL_EXECUTION` / `FIXTURE`) separately proves durable single-use approval consumption (`ApprovalLedger`) and replay rejection through local fixtures (`FakeGoogleCalendarTransport`, with live Google mutation `NOT_RUN / BLOCKED`).
+  - Their full combined live execution (the complete P-11 durable single-use consumption/replay lifecycle integrated with a real Google Calendar mutation) is **not established**.
 - **Evidence Provenance**:
   - Boundary: `LOCAL_EXECUTION` & `FIXTURE` (`docs/P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md`; live mutation `NOT_RUN / BLOCKED`).
-  - Approved Execution & Read-back: Historical real Google Calendar update (`07:45 → 07:30`) and independent `events.get` read-back is `RECORDED_LIVE` (`LIVE_GOOGLE` in `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`); single-use cryptographic `ApprovalGrant` consumption and replay prevention is `LOCAL_EXECUTION` & `FIXTURE` (`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`; live mutation `NOT_RUN / BLOCKED`; joint live execution not established).
+  - Approved Execution & Read-back: **P-06.08** (`RECORDED_LIVE` / `LIVE_GOOGLE` in `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`) historically evaluated a cryptographically bound `ApprovalGrant` (`AUTHORIZED_BY_BOUND_APPROVAL`) before a real Google Calendar update (`07:45 → 07:30`) and independent `events.get` provider read-back; **P-11.06** (`LOCAL_EXECUTION` & `FIXTURE` in `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`) separately validated durable single-use `ApprovalGrant` consumption (`ApprovalLedger`) and replay prevention on `FakeGoogleCalendarTransport` (live mutation `NOT_RUN / BLOCKED`; full combined live execution not established).
 - **Privacy & Redaction**: Disposable demo calendar only (`StillDone Demo`).
 
 ---
@@ -293,6 +299,14 @@ When asked, "Are we still ready?", StillDone evaluates fresh read-back proof. Th
 Built with Amazon Bedrock, AgentCore, and Streamable HTTP MCP, backed by comprehensive automated tests. Make sure it's StillDone: Done, and still true.
 ```
 
+> [!NOTE]
+> **Post-Submission Provenance Clarification for Scene 4 `[1:05 - 1:35]` Narration (2026-10-18)**:
+> The historical narration block `[1:05 - 1:35]` above is preserved verbatim as a record of the submitted video script. To prevent conflating historical live execution with deterministic fixture playback:
+> 1. The complete displayed Scene 4 sequence in the video and public exhibit (`artifacts/judge_exhibit/index.html`) is deterministic `FIXTURE` playback.
+> 2. **P-06.08** (`docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md`, `RECORDED_LIVE` / `LIVE_GOOGLE`) contains the historical real Google Calendar provider mutation (`07:45 → 07:30`), cryptographically bound `ApprovalGrant` authorization evaluation (`AUTHORIZED_BY_BOUND_APPROVAL`), and independent `events.get` read-back.
+> 3. **P-11.06** (`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`, `LOCAL_EXECUTION` / `FIXTURE`) separately proves durable single-use approval consumption (`ApprovalLedger`) and replay rejection through local fixtures (`FakeGoogleCalendarTransport`, with live Google mutation `NOT_RUN / BLOCKED`).
+> 4. Their full combined live execution (the complete P-11 durable single-use consumption/replay lifecycle integrated with a real Google Calendar API mutation) is **not established**.
+
 ---
 
 ## 4. Evidence Provenance & Truth Boundary Matrix
@@ -307,7 +321,7 @@ Per `AGENTS.md` § 10 and `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md`, the v
 | **Scene 3** | Bedrock Nova Micro Plan Compilation | `RECORDED_LIVE` (`LIVE_AWS`) | `docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md` | Single live inference trace (3.463s, dated 2026-10-05). Zero model execution authority. |
 | **Scene 3** | Google Tasks Prep Mutation & Read-back | `RECORDED_LIVE` (`LIVE_GOOGLE`) & `FIXTURE` | `docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md` | Live write & independent read-back proved in P-06.07; exhibited via deterministic fixture. |
 | **Scene 4** | Calendar Approval Boundary Pause | `LOCAL_EXECUTION` & `FIXTURE` | `docs/P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md` | 0 writes performed without human approval grant; fail-closed boundary (`FakeGoogleCalendarTransport`; live mutation `NOT_RUN / BLOCKED`). |
-| **Scene 4** | Approved Calendar Update & Read-back | `RECORDED_LIVE` (`LIVE_GOOGLE`, P-06.08) & `LOCAL_EXECUTION` / `FIXTURE` (P-11.06) | `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md` | Real OAuth calendar update and separate read-back proved in P-06.08; single-use cryptographic `ApprovalGrant` consumption and replay rejection validated deterministically in P-11.06 (live mutation `NOT_RUN / BLOCKED`; joint live execution not established). |
+| **Scene 4** | Approved Calendar Update & Read-back | `RECORDED_LIVE` (`LIVE_GOOGLE`, P-06.08) & `LOCAL_EXECUTION` / `FIXTURE` (P-11.06) | `docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md` `docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md` | P-06.08 historically evaluated a cryptographically bound `ApprovalGrant` (`AUTHORIZED_BY_BOUND_APPROVAL`) before the real OAuth calendar update and separate read-back; P-11.06 separately validated durable single-use `ApprovalGrant` consumption (`ApprovalLedger`) and replay rejection in local fixtures (`FakeGoogleCalendarTransport`, live mutation `NOT_RUN / BLOCKED`; full combined live execution not established). |
 | **Scene 5** | Deterministic READY Receipt Issuance | `LOCAL_EXECUTION` | `src/stilldone/receipt.py` `scripts/p13_killer_mission.py` | SHA-256 hash computed deterministically from verified predicates; 0 external writes. |
 | **Scene 6** | External Calendar Drift (07:30 → 08:00) | `FIXTURE` (baseline) / `LIVE_GOOGLE` (conditional) | `docs/KILLER_DEMO_CONTRACT.md` § Drift | Baseline uses static exhibit departure story tracker; live calendar edit is conditional. |
 | **Scene 7** | Fresh Re-verification & Reconciliation | `LOCAL_EXECUTION` & `FIXTURE` | `scripts/p12_07_proof.py` `docs/P13_KILLER_MISSION_AUDIT.md` | Fresh process reads contradictory state, revokes READY to DRIFTED, preserves receipt hash. |

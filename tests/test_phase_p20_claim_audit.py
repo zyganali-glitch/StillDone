@@ -134,6 +134,8 @@ def test_p20_03_claim_manifest_and_file_existence() -> None:
     assert "LIVE_GOOGLE" not in c04_cols[3]
     assert "P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md" in c04_cols[6]
     assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in c04_cols[6]
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in c04_cols[7]
+    assert "ApprovalLedger" in c04_cols[7]
     assert "FakeGoogleCalendarTransport" in c04_cols[7]
 
     # C-05: operator zero-spend policy & snapshot, not global guarantee
@@ -159,6 +161,8 @@ def test_p20_03_claim_manifest_and_file_existence() -> None:
     assert "LIVE_GOOGLE" in c09_cols[3]
     assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in c09_cols[6]
     assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in c09_cols[6]
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in c09_cols[7]
+    assert "ApprovalLedger" in c09_cols[7]
 
     # C-10: deployed SHA ccf79f6 distinguished from refreshed exhibit
     c10_line = [line for line in content.splitlines() if "**C-10**" in line][0]
@@ -279,6 +283,7 @@ def test_p20_05_provenance_and_simulation_disclosure() -> None:
     assert len(p06_08_rows) == 1
     p06_08_cols = [col.strip() for col in p06_08_rows[0].split("|")]
     assert "RECORDED_LIVE" in p06_08_cols[2]
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in p06_08_rows[0]
     assert (
         "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in p06_08_rows[0]
     )
@@ -293,6 +298,7 @@ def test_p20_05_provenance_and_simulation_disclosure() -> None:
     assert "LOCAL_EXECUTION" in p11_06_cols[2]
     assert "FIXTURE" in p11_06_cols[2]
     assert "RECORDED_LIVE" not in p11_06_cols[2]
+    assert "ApprovalLedger" in p11_06_rows[0]
     assert "FakeGoogleCalendarTransport" in p11_06_rows[0]
 
     agentcore_rows = [
@@ -353,9 +359,12 @@ def test_post_submission_evidence_and_mcp_boundary_alignment() -> None:
         encoding="utf-8"
     )
 
-    # 1. README.md must link P06_08 for live calendar update and P11_06 as local/fixture
+    # 1. README.md must link P06_08 for bound ApprovalGrant + live update/read-back,
+    #    and classify P11_06 durable ApprovalLedger consumption/replay as local/fixture
     assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in readme_text
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in readme_text
     assert "docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in readme_text
+    assert "ApprovalLedger" in readme_text
     assert "FakeGoogleCalendarTransport" in readme_text
     assert "mission_start" in readme_text and "DRAFT" in readme_text
     assert "mission_status" in readme_text
@@ -365,19 +374,33 @@ def test_post_submission_evidence_and_mcp_boundary_alignment() -> None:
     assert "1ff7d611ea5f1a475116a6a7b08662e2f25d745c" in freeze_text
     assert "devpost-submission-2026" in freeze_text
     assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in freeze_text
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in freeze_text
+    assert "ApprovalLedger" in freeze_text
     assert "FakeGoogleCalendarTransport" in freeze_text
 
     # 3. DEVPOST_SUBMISSION_PACKET.md must contain erratum and separate P-06.08 from P-11.06
     assert "POST-SUBMISSION PROVENANCE ERRATUM" in packet_text
     assert "1ff7d611ea5f1a475116a6a7b08662e2f25d745c" in packet_text
     assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in packet_text
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in packet_text
+    assert "ApprovalLedger" in packet_text
     assert "FakeGoogleCalendarTransport" in packet_text
 
-    # 4. P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md Scene 4 table rows must separate P06_08 and P11_06
+    # 4. P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md Scene 4 must clarify narration provenance
+    #    and separate P-06.08 from P-11.06
+    assert "Post-Submission Provenance Clarification (2026-10-18)" in demo_script_text
+    assert (
+        "Post-Submission Provenance Clarification for Scene 4 `[1:05 - 1:35]` Narration"
+        in demo_script_text
+    )
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in demo_script_text
+    assert "ApprovalLedger" in demo_script_text
     scene4_table_lines = [
         line for line in demo_script_text.splitlines() if line.startswith("| **Scene 4**")
     ]
     assert len(scene4_table_lines) == 2
     assert "RECORDED_LIVE" not in scene4_table_lines[0]
     assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in scene4_table_lines[1]
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in scene4_table_lines[1]
+    assert "ApprovalLedger" in scene4_table_lines[1]
     assert "LOCAL_EXECUTION" in scene4_table_lines[1]

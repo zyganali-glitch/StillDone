@@ -298,9 +298,16 @@ def test_p21_01_reject_unsupported_live_claims_and_backpack_physical_claims() ->
     # 3. Explicit references to digital prep task
     assert "digital prep task" in continuous_script.lower()
 
-    # 4. Truthful qualification of read-back proof
+    # 4. Truthful qualification of read-back proof and Scene 4 narration provenance clarification
     assert "recorded Google Calendar proof" in continuous_script
     assert "evaluates fresh read-back proof" in continuous_script
+    assert "Post-Submission Provenance Clarification (2026-10-18)" in content
+    assert (
+        "Post-Submission Provenance Clarification for Scene 4 `[1:05 - 1:35]` Narration" in content
+    )
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in content
+    assert "ApprovalLedger" in content
+    assert "FakeGoogleCalendarTransport" in content
 
 
 def test_p21_01_canonical_media_directories() -> None:

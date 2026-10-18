@@ -175,6 +175,7 @@ def test_truth_matrix_maps_authentic_historical_evidence_milestones() -> None:
     assert len(cal_rows) == 1
     assert "RECORDED_LIVE" in cal_rows[0]
     assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in cal_rows[0]
+    assert "AUTHORIZED_BY_BOUND_APPROVAL" in cal_rows[0]
     assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in cal_rows[0]
 
     approval_rows = [
@@ -187,6 +188,7 @@ def test_truth_matrix_maps_authentic_historical_evidence_milestones() -> None:
     assert "LOCAL_EXECUTION / FIXTURE" in approval_cols[2]
     assert "RECORDED_LIVE" not in approval_cols[2]
     assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in approval_rows[0]
+    assert "ApprovalLedger" in approval_rows[0]
     assert "FakeGoogleCalendarTransport" in approval_rows[0]
 
     agentcore_rows = [
