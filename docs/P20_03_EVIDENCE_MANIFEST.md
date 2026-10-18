@@ -61,3 +61,17 @@ In compliance with competition integrity rules, StillDone explicitly disclaims t
 ---
 
 *Verified claim manifest committed under P-20.03.*
+
+---
+
+## Addendum — Post-Submission Media & Entry Truth (2026-10-18)
+
+Recorded in the final post-submission freeze batch; the C-01..C-13 claim table above is unchanged. New externally observable states:
+
+| Claim | Evidence provenance | Current truth |
+| --- | --- | --- |
+| Demo video published | `LIVE_EXTERNAL` (YouTube player metadata, oEmbed, watch-page fetches 2026-10-18) | **PUBLISHED / METADATA_VERIFIED** — https://youtu.be/c-c_cUzq1OM, duration **179 s / 2:59** (`lengthSeconds`), public, exact title, family-safe flag, 249-region availability. Copyright/frame-level review: NOT_RUN. |
+| Devpost entry submitted | `OPERATOR_CONFIRMED` | **SUBMITTED / OPERATOR_CONFIRMED** — https://devpost.com/software/stilldone. Public page reachability observed (HTTP 200, title "StillDone \| Devpost"). Exact platform receipt/timestamp and submitted form-field values: NOT_INDEPENDENTLY_OBSERVED. |
+| Judge links reachable | `LIVE_EXTERNAL` (independent vantage + API, 2026-10-18) | Exhibit (stilldone-judge-exhibit.pages.dev) HTTP 200 via independent reader; canonical repo public with Apache-2.0; GitHub About metadata set and read back via REST. |
+
+Authoritative full record: `docs/SUBMISSION_FREEZE_2026-10-18.md`.

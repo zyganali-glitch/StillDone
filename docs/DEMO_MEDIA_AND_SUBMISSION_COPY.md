@@ -5,8 +5,10 @@
 **Branch**: `main`  
 **Last Independently QA-Verified SHA**: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`  
 **Governing Authority**: `AGENTS.md` § 3 (Closure Contract), § 4 (Core Product Invariant), § 9 (Live-First Law), § 10 (Evidence Provenance), § 12 (Zero Personal Spend Law); `plans/STILLDONE_MASTER_EXECUTION_PLAN.md` § P-21; `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md`  
-**Status**: `BOUNDED DOCUMENTATION, MEDIA-ASSET INTEGRATION & VALIDATION`  
-**Target Video Duration**: 165 seconds (2:45) (Official rule: Under 3 minutes / < 180s)  
+**Status**: `SUBMITTED — PUBLISHED VIDEO & DEVPOST ENTRY RECORDED (post-submission truth update 2026-10-18)`  
+**Target Video Duration**: 165 seconds (2:45) (Official rule: Under 3 minutes / < 180s) — *editorial target; the published video is **179 seconds (2:59)** per independently observed YouTube player metadata (`lengthSeconds`), still compliant*  
+**Published Video**: https://youtu.be/c-c_cUzq1OM — PUBLISHED / METADATA_VERIFIED (duration 179 s, public playback, title, oEmbed, family-safe flag; frame-level review NOT_RUN)  
+**Devpost Entry**: https://devpost.com/software/stilldone — SUBMITTED / OPERATOR_CONFIRMED (exact platform receipt NOT_INDEPENDENTLY_OBSERVED)  
 **Personal Spend**: `$0.00` target maintained  
 
 ---
@@ -23,7 +25,7 @@ These authoritative operator decisions supersede optional material in earlier sh
 6. **Exhibit Footage Integrity**: Scene 08 concludes using the actual recorded public exhibit's Evidence Provenance card (`#prov-title`), footer, and GitHub links.
 7. **No Fabricated Live Transitions**: No fabricated live animations, synthetic live transitions, or simulated voice synthesis in code.
 8. **Operator-Edited in Clipchamp**: The final video montage is personally edited, sequenced, and exported by the operator in Microsoft Clipchamp.
-9. **Honest Production Gate Status**: TTS voiceover synthesis, final audio alignment, video export, public YouTube upload, and final playback verification remain explicitly `NOT_RUN` / `PENDING_OPERATOR_ACTION` until independently demonstrated.
+9. **Honest Production Gate Status**: TTS voiceover synthesis, final audio alignment, video export, public YouTube upload, and final playback verification were previously `NOT_RUN`; they are now **COMPLETED BY THE OPERATOR** — the video (2:59 / 179 s) is published at https://youtu.be/c-c_cUzq1OM and the Devpost entry is submitted at https://devpost.com/software/stilldone. Independent verification remains metadata-scoped (duration/playability/title/flags verified from the YouTube player and oEmbed APIs); frame-level and audio-content review were NOT independently performed.
 10. **Evidence Provenance Separation**: Authentic historical integration evidence is categorized strictly as `RECORDED_LIVE`, completely separate from the deterministic `FIXTURE` playback demonstrated in the public exhibit.
 11. **Zero Personal Spend**: Strict `$0.00` personal spend target. No paid subscriptions, paid upgrades, or commercial services used.
 
@@ -31,7 +33,7 @@ These authoritative operator decisions supersede optional material in earlier sh
 
 ## 2. Exact Clipchamp Edit Decision List (EDL)
 
-The official competition limit is under 3 minutes (< 180s). The frozen StillDone editorial target is **165 seconds (2 minutes 45 seconds)**.
+The official competition limit is under 3 minutes (< 180s). The frozen StillDone editorial target was **165 seconds (2 minutes 45 seconds)**; the final published video is **179 seconds (2:59)** per observed YouTube player metadata, and the EDL below records the editorial script timeline (not verified as the final edit cut points).
 
 ### Master Timeline & Assembly Table
 
@@ -129,7 +131,9 @@ Created for the Build, Ship, Shape: Amazon Developer Hackathon.
 ```
 
 ### Publication Status
-`PENDING_OPERATOR_ACTION / NOT_RUN` (Video editing, narration synthesis, and YouTube upload to be executed by the operator).
+`PUBLISHED / METADATA_VERIFIED` (video exported by the operator in Clipchamp and published at https://youtu.be/c-c_cUzq1OM on 2026-10-18; duration 179 s / 2:59 confirmed from YouTube player metadata; Devpost entry submitted: https://devpost.com/software/stilldone — SUBMITTED / OPERATOR_CONFIRMED).
+
+Status transition history: `PENDING_OPERATOR_ACTION / NOT_RUN` (pre-publication gate, preserved above in the original decision log) → `PUBLISHED / METADATA_VERIFIED` + `SUBMITTED / OPERATOR_CONFIRMED` (current truth, recorded in the header and in `docs/SUBMISSION_FREEZE_2026-10-18.md`).
 
 ---
 
@@ -251,7 +255,7 @@ In compliance with `AGENTS.md` § 3 (Closure Contract):
 | **Media Manifest & Captions** | Exact EDL, YouTube copy, Devpost captions $\le 200$ chars | `COMPLETED` | Coding Agent |
 | **Local Image Preflight** | 18/18 valid PNGs verified, privacy-inspected | `COMPLETED` | Coding Agent |
 | **README Gallery Integration** | 8 principal images embedded, 2 supplemental linked | `COMPLETED` | Coding Agent |
-| **Audio Voiceover Synthesis (TTS)** | 8 MP3 voiceover files matching approved script | `NOT_RUN / PENDING_OPERATOR_ACTION` | Operator |
-| **Final Video Assembly & Master Export** | 165s master MP4 in Clipchamp | `NOT_RUN / PENDING_OPERATOR_ACTION` | Operator |
-| **Public YouTube Upload** | Public unlisted/public video URL | `NOT_RUN / PENDING_OPERATOR_ACTION` | Operator |
-| **Devpost Final Submission** | Form fields and asset submission | `NOT_RUN / PENDING_OPERATOR_ACTION` | Operator |
+| **Audio Voiceover Synthesis (TTS)** | 8 MP3 voiceover files matching approved script | `OPERATOR_REPORTED_COMPLETED` (source media local to operator; not exhaustively content-reviewed) | Operator |
+| **Final Video Assembly & Master Export** | Master MP4 (published length 179 s / 2:59) in Clipchamp | `OPERATOR_REPORTED_COMPLETED` (publication verified by metadata) | Operator |
+| **Public YouTube Upload** | Public video URL https://youtu.be/c-c_cUzq1OM | `PUBLISHED / METADATA_VERIFIED` (duration 179 s, public playback, title verified) | Operator |
+| **Devpost Final Submission** | Form fields and asset submission | `SUBMITTED / OPERATOR_CONFIRMED` — https://devpost.com/software/stilldone (form contents NOT_INDEPENDENTLY_OBSERVED) | Operator |

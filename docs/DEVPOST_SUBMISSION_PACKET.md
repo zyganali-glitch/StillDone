@@ -174,7 +174,7 @@ StillDone pairs a real AWS reasoning path with a deterministic authority core, c
 ```text
 - Truth needs plumbing, not prose: separating "the tool said ok" from "the world matches intent" forced us to invent real primitives — content-addressed evidence IDs, domain-separated receipt hashes, freshness contracts, and drift reconciliation. The insights generalize far beyond calendars: any delegated real-world work needs an independent read-back chain.
 - The drift problem is the overlooked half of agent autonomy: everyone designs for the moment of mutation; almost nobody designs for the moment the world changes afterward. Making READY revocable turned out to be the most original part of the product.
-- Nice layers cost nothing if they are bounded: Bedrock Nova Micro's sub-cent pricing and sub-second latency make "model proposes, code disposes" completely practical.
+- Nice layers cost nothing if they are bounded: Bedrock Nova Micro's fractions-of-a-cent pricing and fast planner latency (recorded 264 ms model latency on the live Strands planner call, ~1.2 s end-to-end wall clock in the live probe) make "model proposes, code disposes" completely practical.
 - and AWS friction is real (see our friction log): onboarding holds, generic authorization errors, dependency pinning conflicts, and Windows CLI quoting taught us to design with evidence, not optimism.
 ```
 
@@ -207,7 +207,7 @@ StillDone qualifies for the Alexa+ track on BOTH official routes:
 
 2) The simulated Alexa+ experience route (explicitly permitted alternate path): the public judge exhibit at https://stilldone-judge-exhibit.pages.dev presents a clearly labeled SIMULATED ALEXA+ EXPERIENCE — a multimodal one-screen presentation with voice-ready English responses (< 8 s speaking bounds) which the demo video shows directly. Its full source (src/stilldone/judge_ux/) is in the repository, prominently labeled and never disguised as live.
 
-The two routes are explicitly separated in all materials: the deterministic engine, the verifier design, and the approval boundary are the real system; the Alexa+ client surface is simulation because direct Alexa+ partner access was not established during the build period (recorded honestly as NOT_ESTABLISHED, nowhere claimed as live device integration). The killer mission ("Get my family ready for tomorrow morning. We need to leave by 7:30.") is carried end-to-end across real integrations (Google Calendar, Google Tasks, Open-Meteo, Bedrock, AgentCore — all preserved as dated live evidence) so the Alexa+ track requirements for meaningful agentic delegation and cross-service orchestration are met with actual technology, and the video demonstrates the product working on its intended surface.
+The two routes are explicitly separated in all materials: the deterministic engine, the verifier design, and the approval boundary are the real system; the Alexa+ client surface is simulation because direct Alexa+ partner access was not established during the build period (recorded honestly as NOT_ESTABLISHED, nowhere claimed as live device integration). The killer mission ("Get my family ready for tomorrow morning. We need to leave by 7:30.") is carried end-to-end across the real integration surface (Google Calendar, Google Tasks, Open-Meteo, Bedrock, AgentCore - each leg proved and preserved as dated live evidence at its own verified point in time, not as one current single-session execution) so the Alexa+ track requirements for meaningful agentic delegation and cross-service orchestration are met with actual technology, and the video demonstrates the product working on its intended surface.
 ```
 
 Why this satisfies originality ("creative, not obvious" guidance): StillDone is not a single-turn Q&A bot nor a thin MCP wrapper — it is an agentic runtime that orchestrates across services autonomously, maintains state across sessions (durable mission ledger, fresh-session "Are we still ready?" revalidation), and introduces an approval workflow bound to cryptographic single-use grants with drift reconciliation.
@@ -505,7 +505,7 @@ NO PAID ACCESS IS REQUIRED. The exhibit performs zero backend execution; histori
 **P-22.04 — public repo / license / About / links verification (read-only, 2026-10-18)**
 - GitHub API: `"private": false, "visibility": "public", default branch `main`, license `apache-2.0`, pushed 2026-10-15 (at this batch's candidate), first commit 2026-09-20 (git).
 - LICENSE file content: Apache License 2.0. Repo root contains README.md, pyproject.toml, AGENTS.md, artifacts/, docs/, packages/, scripts/, .github/.
-- Repo **description / homepage / topics are unset** — not a rule violation (license chip is auto-detected and visible in the About row on the repo page), but:
+- Repo **description / homepage / topics were unset** — not a rule violation (license chip is auto-detected and visible in the About row on the repo page). **Updated 2026-10-18, post-submission freeze:** About metadata was set via the authenticated GitHub API and independently read back — description `Verified AI missions through independent read-back, immutable evidence, and drift reconciliation.`, website `https://stilldone-judge-exhibit.pages.dev`, topics `ai-agents`, `mcp`, `amazon-bedrock`, `agentcore`, `verification`, `python`, `alexa`, `open-source`. The originally recommended polish (line below) is preserved as history.
   **Recommended operator polish (2 minutes, purely optional)**: on the GitHub repo page → ⚙️ gear icon next to About → Description: `Verifies AI mission outcomes via independent read-back; revokes DONE when reality drifts.` → Website: `https://stilldone-judge-exhibit.pages.dev` → Add topics: `mcp`, `aws`, `bedrock`, `agentcore`, `strands-agents`, `google-calendar`, `google-tasks`, `verification`, `agents`.
 - All external links named in README/docs resolve today (verified by direct fetches in this batch).
 
@@ -530,10 +530,11 @@ NO PAID ACCESS IS REQUIRED. The exhibit performs zero backend execution; histori
 13. [ ] Complete the human flows the agent did NOT: YouTube playback check (§ K row 2), GitHub About polish (§ L), and Basebreak gate confirmation if chosen (§ G.2).
 14. [ ] Independent QA signs off on the candidate, including the final packet commit SHA (see below), before you press Submit.
 
-### M.2 Final candidate SHA & tagging procedure (P-22.06 — PREPARED / NOT_RUN)
+### M.2 Final candidate SHA & tagging procedure (P-22.06 — EXECUTED 2026-10-18 on the annotated tag `devpost-submission-2026`)
 
-- **Do NOT create the tag** until independent QA approves the final candidate commit (the packet commit created by this batch — its SHA lands on `origin/main` after push, recorded in the final report) **and you authorize the freeze.**
-- Recommended release tag name: `devpost-submission-2026-10`
+- **Status: EXECUTED** — during the post-submission freeze, no tag existed yet, so the recommended tag name `devpost-submission-2026` (from the post-submission mission directive) was created instead of the provisional `devpost-submission-2026-10` name below; both were checked against the remote tag list before creation (no conflict, no force-move).
+- Tag created ONLY after: all scoped/full validation succeeded, exact-SHA GitHub CI succeeded, remote `main` equaled the intended candidate SHA, no material security/provenance/submission-truth blocker remained, and the working tree was clean. Independent remote re-verification performed. Tag creation does NOT constitute independent QA certification. Original prepared procedure preserved below.
+- Provisional (pre-submission) tag name prepared earlier: `devpost-submission-2026-10`
 - Exact command sequence (run only after QA + operator authorization, from a clean tree on `main`):
   ```powershell
   git fetch origin main
@@ -545,10 +546,10 @@ NO PAID ACCESS IS REQUIRED. The exhibit performs zero backend execution; histori
   ```
 - Status after QA+operator action: EXECUTED (record the pushed tag reference in the QA evidence).
 
-### M.3 Devpost submission (P-22.07 — NOT_RUN, exclusively operator + independent QA)
+### M.3 Devpost submission (P-22.07 — SUBMITTED / OPERATOR_CONFIRMED)
 
-- Press **Submit** only after M.1 is fully green and you have re-verified the deadline.
-- Post-submit evidence checklist (collect & archive for the closed-loop record):
+- **Status: SUBMITTED / OPERATOR_CONFIRMED** — public entry URL: https://devpost.com/software/stilldone (public page reachability observed 2026-10-18: HTTP 200, title "StillDone | Devpost"). The operator completed all applicable and optional submission fields; independently observed form-field values/platform receipt: NOT_INDEPENDENTLY_OBSERVED.
+- Post-submit evidence checklist (archive privately per the original guidance):
   1. Screenshot of the submission page showing "Submitted" status + timestamp (Türkiye + PT).
   2. The final submitted URL of your entry (shareable link from Devpost).
   3. Video link as recorded in the submitted entry.
@@ -559,9 +560,9 @@ NO PAID ACCESS IS REQUIRED. The exhibit performs zero backend execution; histori
 
 ---
 
-## N. DEFERRED POST-SUBMISSION DOCUMENTATION-SYNC QUEUE (do NOT do before submission)
+## N. DEFERRED POST-SUBMISSION DOCUMENTATION-SYNC QUEUE (EXECUTED 2026-10-18 by the final post-submission batch)
 
-Per the batch directive, the broad documentation synchronization is explicitly deferred until AFTER successful Devpost submission. Queue (single pass, no ceremony):
+Per the batch directive, the broad documentation synchronization was explicitly deferred until AFTER successful Devpost submission. **The submission happened (SUBMITTED / OPERATOR_CONFIRMED) and this queue has now been executed in the final post-submission consolidation batch; execution evidence and outcomes are recorded in `docs/SUBMISSION_FREEZE_2026-10-18.md`.** Original queue preserved below for historical traceability.
 
 1. `README.md` — add the 2:59 canonical video duration + YouTube link into the demo section; optionally refresh "3,700+ tests" wording to the exact 3,751 snapshot count; nothing else.
 2. `docs/HANDOFF.md` — update current-state block to P-21 (video verification facts) and P-22 statuses recorded in this packet (including the final submission link and tag reference).

@@ -6,7 +6,9 @@
 **Competition**: *Build, Ship, Shape: Amazon Developer Hackathon* (Devpost snapshot 2026-10-01)  
 **Primary Track**: Alexa+ Track | **Secondary**: AWS Builder Mini Challenge, Open Source Mini Challenge  
 **Official Competition Video Rule**: **Under 3 minutes (< 3:00 / < 180s)** per official Devpost rules.  
-**StillDone Editorial Target**: **2 minutes 45 seconds (165 seconds)** — frozen within the internal project execution window of **2:30–2:50 (150s–170s)**.  
+**StillDone Editorial Target**: **2 minutes 45 seconds (165 seconds)** - frozen within the internal project execution window of **2:30-2:50 (150s-170s)**.  
+
+> **POST-SUBMISSION TRUTH RECORD (2026-10-18):** The final rendered and published video is **2:59 (179 seconds)** at https://youtu.be/c-c_cUzq1OM - verified by YouTube player metadata (`lengthSeconds`) and within the official < 180 s rule. The 2:45 (165 s) timeline in this document is the frozen **editorial script target**; its internal timecodes are NOT claimed as verified final edit cut points, and the chapter alignment values in the published YouTube description are the operator's post-edit values. This document is preserved as historical P-21.01 script/shot-list evidence.  
 **Narration Language**: English (US/International, professional, clear, neutral cadence: ~129.5 words per minute, 356 total words).  
 **Operator Guidance**: Turkish screen-by-screen setup and recording instructions (Türkçe ekran kurulum rehberi).  
 

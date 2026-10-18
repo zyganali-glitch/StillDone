@@ -6,15 +6,22 @@ Intended repo: `zyganali-glitch/StillDone`
 Branch: `main`
 
 Current repository state: **P-00 through P-18: CLOSED (independent QA PASS ✅) |
-Last independently QA-PASS SHA: `f4c5a3b381493c544811468e957af97b247c48bc` |
+Last independently QA-PASS contiguous SHA: `f4c5a3b381493c544811468e957af97b247c48bc` |
 Last independently QA-VERIFIED baseline SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a` |
-P-19 Batch (P-19.01 → P-19.06): COMPLETED (Candidate for independent QA review; P-19.04 Operator Published at https://stilldone-judge-exhibit.pages.dev) |
-P-20 Batch (P-20.01 → P-20.06): COMPLETED (Candidate for independent QA review) |
-Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN |
+Last independently QA-REVIEWED submission-freeze SHA: `0a5a3d5ab7c875d6720410c4c31e2f52cfa80939` |
+P-19 Batch (P-19.01 → P-19.06): COMPLETED (P-19.04 Operator Published at https://stilldone-judge-exhibit.pages.dev) |
+P-20 Batch (P-20.01 → P-20.06): COMPLETED |
+P-21.01: COMPLETED; P-21.02/P-21.03: BLOCKED_LIVE / NOT_RUN (no fresh live campaign authorized);
+P-21.04: OPERATOR_REPORTED_COMPLETED / CONTENT_NOT_INDEPENDENTLY_VERIFIED; P-21.05: VERIFIED (metadata: published video https://youtu.be/c-c_cUzq1OM, 179 s / 2:59, public); P-21.06: COMPLETED / VERIFIED |
+P-22.01–P-22.05: COMPLETED (P-22.02 live smoke: NOT_RUN; P-22.05 uptime NOT GUARANTEED, billing NOT_FRESHLY_OBSERVED) |
+P-22.07: SUBMITTED / OPERATOR_CONFIRMED — https://devpost.com/software/stilldone (exact platform receipt: NOT_INDEPENDENTLY_OBSERVED) |
+P-22.06: annotated archive tag `devpost-submission-2026` on the final post-submission freeze commit |
+Live AWS/Google mutations: BLOCKED_LIVE / NOT_RUN since teardown |
 Actual AWS billing delta: NOT_OBSERVED ($0.00 personal spend maintained) |
-P-21.01: COMPLETED (Candidate for independent QA review) |
-Media Asset Integration & Submission Registry: TRUTH REPAIR COMPLETED (Candidate for independent QA review) |
-Phase P-21.02+: PENDING / NOT AUTHORIZED**
+GitHub About metadata: VERIFIED via REST read-back 2026-10-18 (description, exhibit homepage, 8 topics) |
+Final freeze record: `docs/SUBMISSION_FREEZE_2026-10-18.md`**
+
+Rules snapshot date: `2026-10-18` (live re-verified against the official Devpost rules page; earlier snapshot `2026-10-01`).
 
 Canonical remote truth begins with the P-00.01 bootstrap commit.
 
@@ -45,7 +52,7 @@ Secondary:
 - Open Source Mini Challenge
 
 Rules snapshot date:
-`2026-10-01` (re-verified against current official Devpost rules and resources)
+`2026-10-18` (re-verified live against current official Devpost rules and resources; earlier snapshot `2026-10-01`)
 
 ## Canonical killer mission
 

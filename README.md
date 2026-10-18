@@ -1,215 +1,152 @@
-# StillDone
+# StillDone — Done, and still true.
 
-> **Done, and still true.**
+StillDone is a **desired-state mission runtime** for AI assistants. It closes the gap between *“the tool returned success”* and *“the user’s real-world outcome is true — and still true.”*
 
-StillDone is a desired-state mission runtime for Alexa+ style assistants.
+**The problem.** AI assistants declare success when a tool call returns success. A `HTTP 200` from a calendar API proves nothing about the user’s outcome, and even a genuinely correct booking is later revoked by reality itself: someone reschedules the event, weather shifts, a prep task never happens. The assistant keeps saying “done” about a world that moved on.
 
-A normal agent can say an action succeeded because a tool returned success. StillDone uses a stricter rule:
+**The product.** A natural-language mission is compiled into a bounded desired-state contract. Safe reversible actions execute automatically, high-impact actions pause fail-closed for human approval, and every resulting state is re-read from the systems of record through separate read-back adapters that evaluate deterministic predicates. The model proposes; deterministic code decides.
+
+**The differentiator.** Independent read-back, typed predicates, durable evidence, immutable receipts, and revocable readiness. `READY` is not a feeling — it is a verified fact, and it is revoked the moment reality drifts.
 
 > **An outcome is not complete until the resulting state is independently observed, and completion can be revoked if reality later drifts.**
 
-## Canonical product thesis
+## Judge links
 
-StillDone turns a natural-language mission into a bounded desired-state contract, executes permitted actions across real services, independently reads back the resulting state, preserves partial failures and `NOT_RUN` honestly, and re-checks the mission later when the user asks whether it is **still done**.
+1. **Watch the demo video (2:59)** — <https://youtu.be/c-c_cUzq1OM>
+2. **Try the public exhibit** — <https://stilldone-judge-exhibit.pages.dev>
+3. **View the Devpost submission** — <https://devpost.com/software/stilldone>
+4. **Canonical repository** — <https://github.com/zyganali-glitch/StillDone>
 
-### Canonical killer mission
+## The mission, in one screen
 
 > **“Get my family ready for tomorrow morning. We need to leave by 7:30.”**
 
-The competition demo targets a dedicated disposable demo calendar and task list:
+The competition demo targets a dedicated disposable demo calendar and task list, and the departure story evolves visibly on a single timeline:
 
-1. Read tomorrow’s real Google Calendar state.
-2. Read real weather from Open-Meteo.
-3. Read the real Google Tasks state.
-4. Use a real AWS model/agent path to propose a typed mission plan.
-5. Compile that plan into deterministic desired-state predicates.
-6. Auto-execute safe reversible actions.
-7. Ask for one bounded approval for the meaningful existing-calendar change.
-8. Execute the approved action.
-9. Perform independent read-back calls from the systems of record.
-10. Report `READY` only when required predicates are verified.
-11. Mutate the calendar externally.
-12. Ask: **“Are we still ready?”**
-13. Reconcile again and downgrade the mission to `DRIFTED` when reality no longer satisfies the contract.
+| Time | State | What happens |
+| --- | --- | --- |
+| **07:45 AM** | Initial | Pre-state family calendar event `Leave for school` is read from real Google Calendar; real Open-Meteo weather and real Google Tasks state are read. |
+| **07:30 AM** | `READY` | The user demands departure by 7:30. A verified prep task is created; the calendar shift pauses fail-closed for one bounded human approval, executes after approval, and is independently read back. All predicates verified → immutable `READY` receipt. |
+| **08:00 AM** | `DRIFTED` | The calendar is mutated externally after the receipt. The user asks **“Are we still ready?”** Fresh read-back observes the contradiction and the mission truth is downgraded to `DRIFTED` — while the historical `READY` receipt remains intact. |
 
-The demo's wow moment is not that AI performs actions. It is that **the system withdraws its earlier claim when the real world changes.**
+The wow moment is not that AI performs actions. It is that **the system withdraws its own earlier claim when the real world changes.**
 
-## Competition target
+## Architecture — one pipeline
 
-**Build, Ship, Shape: Amazon Developer Hackathon**
+> Intent → **Desired State** → **Authority** → **Execute** → **Independent Read-back** → **Predicate** → **READY** → **Reconcile** → **DRIFTED**
 
-Primary:
-- Alexa+ Track
+1. **Intent → Desired State**: the natural-language mission becomes a typed `MissionContract` with normalized `DesiredStatePredicate`s and freshness rules. No provider SDKs leak into the domain layer.
+2. **Authority**: a closed five-action allowlist (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`) classifies every action (`READ_ONLY`, `REVERSIBLE_AUTO`, `REVERSIBLE_APPROVAL_REQUIRED`). High-impact mutations stop fail-closed until a **single-use cryptographic approval grant** — bound to mission, action, parameters and target identity, verified in constant time — is presented. Chat-sent “yes” is not authorization.
+3. **Execute**: permitted actions run against real services through idempotent adapters with read-before-retry deduplication.
+4. **Independent Read-back → Predicate**: writing an event never marks it verified. Separate read adapters re-read the systems of record and deterministic verifiers evaluate the exact predicates. Executor success alone cannot promote the mission.
+5. **READY**: promotion to `READY` is permitted only from `VERIFYING` with all step evidence `VERIFIED`; the runtime issues an immutable, content-addressed **SHA-256 receipt projection** bound to the exact mission snapshot.
+6. **Reconcile → DRIFTED**: on a later **“still done?”** request, fresh read-backs re-evaluate predicates against freshness contracts. A contradiction downgrades current truth to `DRIFTED`; the historical receipt stays intact as proof of what was true at issuance. Model confidence never overrides a read-back mismatch.
 
-Secondary:
-- AWS Builder Mini Challenge
-- Open Source Mini Challenge
+## Technology
 
-Current rules snapshot: `2026-10-01` (re-verified against current official Devpost rules and resources).
+- **Amazon Bedrock** — `amazon.nova-micro-v1:0` (us-east-1) proposes the typed mission plan; zero model authority over execution or readiness. Bedrock/Strands live path logged as `RECORDED_LIVE` evidence.
+- **Strands Agents SDK** — planner runtime that compiles model output into the deterministic contract envelope.
+- **Amazon Bedrock AgentCore Runtime** — hosted the Streamable HTTP MCP server in the historical live campaign (microVM removed afterwards to keep personal spend at $0.00).
+- **Streamable HTTP MCP server** — the StillDone tool spine (protocol init, capabilities, mission-start/status tools, auth/rate-limit boundary).
+- **Google Calendar & Google Tasks** — systems of record, each with a dedicated independent read-back verifier.
+- **Open-Meteo** — real weather read used by the mission contract.
+- **Deterministic verification core** — predicate evaluation, transition-guard engine, append-only durable evidence ledger, capture sanitization, receipt hashing.
+- **Alexa+ route disclosure** — the user-facing Alexa+ surface in this submission is a **SIMULATED ALEXA+ EXPERIENCE** (text/visual presentation; no live Echo/voice device). The MCP-over-Streamable-HTTP source work required by the Alexa+ track is in this repository.
 
-Canonical official rules:
-- https://amazonappdev2026.devpost.com/rules
-- https://amazonappdev2026.devpost.com/
-- https://amazonappdev2026.devpost.com/resources
+## Truth boundaries (read before judging)
 
-Alexa+ official developer docs:
-- https://developer.amazon.com/docs/alexaplus/add-ons/home.html
-- https://developer.amazon.com/docs/alexaplus/add-ons/mcp-toolkit-quickstart.html
-- https://developer.amazon.com/docs/alexaplus/add-ons/choose-the-proper-alexaplus-integration-approach.html
-
-## Evidence law
-
-StillDone separates **result state** from **evidence provenance**.
-
-Result examples:
-- `NOT_RUN`
-- `EXECUTED_UNVERIFIED`
-- `VERIFIED`
-- `CONTRADICTED`
-- `BLOCKED`
-- `FAILED`
-- `STALE`
-- `DRIFTED`
-
-Provenance examples:
-- `FIXTURE`
-- `LOCAL_EXECUTION`
-- `LIVE_AWS`
-- `LIVE_GOOGLE`
-- `LIVE_EXTERNAL`
-- `RECORDED_LIVE`
-
-A model may interpret or propose. It may not rewrite deterministic facts.
+- **Public browser exhibit**: deterministic `FIXTURE` playback, generated by the real engine. It performs **no** AWS or Google API calls for visitors.
+- **Alexa+ client surface**: `SIMULATED ALEXA+ EXPERIENCE` — clearly labeled in the exhibit; no live partner Alexa+ access is claimed.
+- **Authentic AWS / Google / Open-Meteo integration evidence**: `RECORDED_LIVE`, preserved as dated, disk-backed proof documents linked below.
+- **Full seven-step canonical mission executed currently-live end-to-end in one session**: `NOT_PROVEN` — the historical live campaign proved individual legs (model path, MCP server, reads, approved update) at their own verified points in time; self-hosting the MCP microVM was torn down to honor the zero-personal-spend policy.
+- **Historical AgentCore microVM**: torn down (`agentcore remove all -y`); its recorded evidence remains valid history, not a current deployment.
+- **Billing**: historically observed $0.00 personal spend; no fresh billing observation is claimed as part of this submission.
 
 ## Zero-personal-spend policy
 
-Target personal spend: **$0.00**.
+Target personal spend: **$0.00** — hackathon promotional credits, verified free tiers, local open-source tooling, and free APIs within documented limits. No paid subscriptions, no automatic paid fallback, no unmetered public endpoints. Showcased throughout the codebase (`docs/COST_AND_ACCESS_POLICY.md`).
 
-Allowed:
-- hackathon promotional credits;
-- verified free tiers;
-- free/open-source local tools;
-- free APIs within documented limits.
+## Judge quick start
 
-Forbidden without explicit operator approval:
-- paid subscriptions;
-- pay-as-you-go continuation beyond promotional/free budget;
-- automatic paid fallback;
-- unmetered public endpoints that can drain credits.
+Two evaluation paths, both fully offline and credential-free:
 
-## Judge & Evaluator Quick Start
+1. **No-Install Browser Review Path (≈2 minutes)** — open [`artifacts/judge_exhibit/index.html`](artifacts/judge_exhibit/index.html) (or [`artifacts/stilldone_judge_exhibit.html`](artifacts/stilldone_judge_exhibit.html)) and watch the seven-step deterministic fixture playback, the simulated Alexa+ voice responses, the single-use human authorization boundary, immutable receipts, and the reconciliation down to `DRIFTED`. The static exhibit replays canonical fixture evidence and never makes live cloud calls for visitors.
+2. **Single-Command Local Reproduction** — from a fresh clone: `python scripts/reproduce.py` for the core offline campaign, or `python scripts/reproduce.py --full` for the complete dual-runtime run. The 2026-10-18 pre-submission snapshot: **3,751 tests passed, 0 failed** (2,724 Core/MCP + 1,027 Strands Planner) across two isolated Python runtimes, 0 cloud calls, $0.00 spend. The `mcp-verify` wheel smoke test also runs offline and reports `VERIFIED`.
 
-Judges have two evaluation paths:
-- **No-Install Browser Review Path (< 2 minutes)**: Open [`artifacts/judge_exhibit/index.html`](artifacts/judge_exhibit/index.html) (or [`artifacts/stilldone_judge_exhibit.html`](artifacts/stilldone_judge_exhibit.html)) directly in any web browser to inspect the seven-step deterministic fixture playback, simulated Alexa+ voice responses, single-use human authorization boundary, and immutable receipts alongside reconciled drift (the static exhibit replays canonical fixture evidence and does not perform live cloud calls for visitors).
-- **Single-Command Local Reproduction (~10 seconds)**: Run `python scripts/reproduce.py` from a fresh clone for 100% offline test execution across dual isolated Python runtimes (0 credentials, 0 cloud calls, $0.00 personal spend).
+Full guide: [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md) (judge reproduction paths, truth matrix, environment isolation).
 
-See complete guide:
-- [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md) (Full judge reproduction guide, truth matrix & environment isolation)
-- [`docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md`](docs/P19_04_PUBLIC_JUDGE_EXHIBIT.md) (Public exhibit specification and operator guidance)
-- [`docs/COST_AND_ACCESS_POLICY.md`](docs/COST_AND_ACCESS_POLICY.md)
-- [`docs/OPERATOR_REQUIREMENTS.md`](docs/OPERATOR_REQUIREMENTS.md)
+## Demo gallery & evidence
 
-## Demo Gallery & Evidence
+These screenshots show the deterministic static fixture replay with the simulated Alexa+ presentation. Historical real AWS and Google integration proofs are preserved separately as `RECORDED_LIVE` evidence; the deployed exhibit never executes cloud calls for visitors.
 
-These screenshots show a deterministic static fixture replay with a simulated Alexa+ presentation. Historical real AWS and Google integration proofs are available separately as RECORDED_LIVE evidence; the deployed exhibit does not execute cloud calls for visitors.
-
-### Primary Gallery
+### Primary gallery
 
 1. **Mission Overview**  
    ![Mission overview — simulated Alexa+ presentation, canonical intent, and current DRIFTED truth](docs/assets/readme/stilldone_overview.png)  
-   *Caption: "Mission overview — simulated Alexa+ presentation, canonical intent, and current DRIFTED truth."*
+   *Caption: “Mission overview — simulated Alexa+ presentation, canonical intent, and current DRIFTED truth.”*
 
 2. **Pre-State Observations**  
    ![Pre-state observations — the initial 07:45 departure and weather/task evidence before mission actions](docs/assets/readme/prestate_verification.png)  
-   *Caption: "Pre-state observations — the initial 07:45 departure and weather/task evidence before mission actions."*
+   *Caption: “Pre-state observations — the initial 07:45 departure and weather/task evidence before mission actions.”*
 
 3. **Digital Task Verification**  
    ![A digital Google Tasks preparation entry is verified through separate read-back; physical packing is not claimed](docs/assets/readme/task_verification.png)  
-   *Caption: "A digital Google Tasks preparation entry is verified through separate read-back; physical packing is not claimed."*
+   *Caption: “A digital Google Tasks preparation entry is verified through separate read-back; physical packing is not claimed.”*
 
 4. **Approved Calendar Update Verification**  
    ![The approved calendar update is independently checked against the 07:30 target in the deterministic exhibit](docs/assets/readme/calendar_verified_update.png)  
-   *Caption: "The approved calendar update is independently checked against the 07:30 target in the deterministic exhibit."*
+   *Caption: “The approved calendar update is independently checked against the 07:30 target in the deterministic exhibit.”*
 
 5. **Immutable READY Receipt**  
    ![The historical READY receipt remains intact while current mission truth has changed to DRIFTED](docs/assets/readme/immutable_ready_receipt.png)  
-   *Caption: "The historical READY receipt remains intact while current mission truth has changed to DRIFTED."*
+   *Caption: “The historical READY receipt remains intact while current mission truth has changed to DRIFTED.”*
 
 6. **The Drift Law**  
    ![The Drift Law separates an accurate historical receipt from current reality](docs/assets/readme/drift_law_explanation.png)  
-   *Caption: "The Drift Law separates an accurate historical receipt from current reality."*
+   *Caption: “The Drift Law separates an accurate historical receipt from current reality.”*
 
 7. **Reconciliation to DRIFTED**  
    ![The reconciled mission is DRIFTED, accompanied by a clearly labeled simulated Alexa+ explanation](docs/assets/readme/current_truth_drifted.png)  
-   *Caption: "The reconciled mission is DRIFTED, accompanied by a clearly labeled simulated Alexa+ explanation."*
+   *Caption: “The reconciled mission is DRIFTED, accompanied by a clearly labeled simulated Alexa+ explanation.”*
 
 8. **Architecture & Provenance**  
    ![Provenance separates historical recorded-live AWS and Google evidence from offline fixture replay](docs/assets/readme/architecture_provenance.png)  
-   *Caption: "Provenance separates historical recorded-live AWS and Google evidence from offline fixture replay."*
+   *Caption: “Provenance separates historical recorded-live AWS and Google evidence from offline fixture replay.”*
 
-### Extended Evidence & Integration Proofs
-For supplemental technical evidence screenshots (`fresh_reconciliation_evidence.png` and `evidence_reproduction_links.png`), see the extended gallery in [`docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`](docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md).
+### Extended evidence & integration proofs
 
-Direct links to authentic integration and reproduction evidence:
-- **Public Cloudflare Exhibit**: [https://stilldone-judge-exhibit.pages.dev](https://stilldone-judge-exhibit.pages.dev)
-- **Canonical Evidence Manifest**: [`docs/P20_03_EVIDENCE_MANIFEST.md`](docs/P20_03_EVIDENCE_MANIFEST.md)
-- **Judge Reproduction Guide**: [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md)
-- **Dated Bedrock Live Evidence**: [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md)
-- **Dated AgentCore Live Evidence**: [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md)
-- **Dated Calendar Verified Evidence**: [`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`](docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md)
-- **Dated Tasks Verified Evidence**: [`docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`](docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md)
-- **Dated Open-Meteo Live Evidence**: [`docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`](docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md)
+Supplemental technical screenshots (`fresh_reconciliation_evidence.png`, `evidence_reproduction_links.png`) live in [`docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md`](docs/DEMO_MEDIA_AND_SUBMISSION_COPY.md).
 
-## Current status
+**Dated authentic integration & reproduction evidence** (each document records its own execution timestamps and strict non-claims):
 
-**PHASES P-00 THROUGH P-18: CLOSED — INDEPENDENT QA PASS ✅ (Last verified contiguous closure SHA: `f4c5a3b381493c544811468e957af97b247c48bc`) | P-19, P-20 & P-21.01: COMPLETED (Candidate for independent QA review, latest verified baseline SHA: `b30052b9e7ac650b6a12f3a926ef5c201d632f6a`) | PHASE P-21.02+ PENDING / NOT AUTHORIZED**
+- **Public static exhibit** — <https://stilldone-judge-exhibit.pages.dev>
+- **Canonical evidence manifest** — [`docs/P20_03_EVIDENCE_MANIFEST.md`](docs/P20_03_EVIDENCE_MANIFEST.md)
+- **Live Bedrock + Strands planner** (Nova Micro proposes; code disposes) — [`docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md`](docs/P07_06_LIVE_BEDROCK_STRANDS_EVIDENCE.md)
+- **AgentCore-hosted Streamable HTTP MCP** — [`docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md`](docs/P05_06_LIVE_REMOTE_MCP_EVIDENCE.md)
+- **Approved calendar update, executed + independently verified** — [`docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md`](docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md)
+- **Google Tasks verified live** — [`docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md`](docs/P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md)
+- **Open-Meteo verified live** — [`docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`](docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md)
+- **Shareable middleware artifact** — `mcp-verify` package (Execute → Read-back → Predicate → `VERIFIED` for any MCP tool) baked into the offline repro campaign.
 
-Phase progression and verified milestones:
-- **Phase P-00 (Bootstrap & Governance Baseline)**: Complete and closed with independent QA PASS (`P-00.01` through `P-00.05`).
-- **Phase P-01 (Live Access, Zero-Cost & Platform Feasibility)**: Complete and closed with independent QA PASS (`P-01.01` through `P-01.08`, verified SHA `41e4ea717b43f558d9d07a7f1775c0780819910f`). Architecture v1 frozen; all live feasibility legs proven; zero-personal-spend path determined credible through judging (target personal spend strictly $0.00; actual billed cost and personal-spend delta preserved as `NOT_OBSERVED / UNKNOWN`).
-- **Phase P-02 (Provider-Neutral Mission & Desired-State Contracts)**: Complete and closed with independent QA PASS (`P-02.01` through `P-02.08`, verified SHA `293ec637464294a6caaca8cffcd85dd666890f61`).
-  - Provider-neutral domain contracts: `MissionContract`, `UserIntentSnapshot`, `DesiredStatePredicate`, `FreshnessContract`, `ActionContract`, `TargetIdentity`, `NormalizedParameters`, `ApprovalGrant`, `BindingHash`, `ExecutionAttempt`, `RetryPolicy`, `ResourceBinding`, `ReconciliationRequest`, and `EvidenceOrigin`.
-  - Canonical vocabularies frozen: `MissionState` (10), `StepEvidenceState` (7), `PredicateOperator` (8), `FreshnessMode` (2), `ActionType` (5), `ResourceKind` (4), `AuthorityClass` (5), `RetryStrategy` (3), `ReconciliationReason` (3), `EvidenceProvenance` (6).
-  - Hard boundary enforcement: Strictly zero external provider SDK imports (`boto3`, `google`, `mcp`, etc.), zero database/persistence implementations, zero generic evidence ledgers, zero generic content-addressed evidence ID implementations, zero runtime state-transition guard engines, zero model/LLM invocations, and zero silent live→fixture fallback.
-  - Canonical recursive domain inspection: AST purity and anti-leakage checks recursively cover `src/stilldone/domain/**/*.py` (`rglob("*.py")`) with regression proof against nested module bypasses (`test_domain_source_enumeration_includes_nested_modules`, `test_nested_module_forbidden_import_detected`).
-  - Donor truth: Zero donor source code imported (0 lines); all domain logic is clean-room reimplemented; donor concepts preserved as `CONCEPT_ONLY`.
-- **Phase P-03 (Deterministic Evidence Ledger & Fact Authority)**: Complete and closed with independent QA PASS (`P-03.01` through `P-03.06`, verified baseline SHA `46e55b424eb999c666932871b5b5517397b85db6`, repair commit `03245b3832ad9e9c82b9a30060e07fd87ca2e63b`).
-  - Canonical serialization & evidence identity: deterministic primitive projection (`to_canonical_primitive`, `canonical_json`, `canonical_serialize`), sorted keys, fail-closed post-NFC duplicate key collisions, and domain-separated SHA-256 `EvidenceId` (`stilldone:evidence:v1`).
-  - Append-only ledger port: provider-neutral port (`MissionLedgerPort`) with immutable records (`MissionRecord`, `ActionRecord`, `EvidenceRecord`), duplicate/conflict fail-closed guards (`DuplicateRecordError`, `RecordConflictError`), defensive payload snapshot isolation (`freeze_canonical_payload`, `CanonicalPayload`, `CanonicalSequence`), and explicitly non-durable in-memory implementation (`InMemoryNonDurableLedger`).
-  - Deterministic state-transition guards: runtime guard engine (`MissionTransitionGuard`) strictly enforcing lifecycle rules; promotion to `READY` permitted only from `VERIFYING` and requiring all-`VERIFIED` step evidence; executor success alone cannot promote; `NOT_RUN != PASS`.
-  - Bounded sanitized provider-output capture: detached structural sanitization (`capture_provider_output`, `SanitizedProviderCapture`), explicit `CaptureBounds`, deterministic truncation metadata, fail-closed total size limits, and SHA-256 `CaptureDigest` (`stilldone:provider-capture:v1`).
-  - Receipt projections: immutable `ReceiptProjection` binding exact mission snapshot, dedicated typed `MissionContentHash` (`stilldone:mission-content:v1`) bound to `MissionId` across all construction paths (`create`, `from_records`, `__post_init__`, and `compute_receipt_hash`), sorted deduplicated `EvidenceId` tuple, deep-frozen metadata snapshot, and domain-separated `ReceiptHash` (`stilldone:receipt-projection:v1`). Preserved source semantics without overclaiming raw 64-char hex digest alone.
-  - Adversarial hardening: 27 negative tests covering tamper, mismatch, replay, stale, forbidden promotion, Unicode NFC collisions, and mutable alias isolation. Total suite passing: 218 tests.
-  - Donor truth: strictly 0 donor lines imported; clean-room reimplemented.
-- **Phase P-04 (Security, Privacy & Authority Foundation)**: Complete and closed with independent QA PASS (`P-04.01` through `P-04.07`, verified closure SHA `3dbde03de5993a163f019a7867401d9f88310fdc`).
-  - `P-04.01` (Secret/config fail-closed boundary): typed `ConfigSchema`, `ConfigField`, `SecretString` with masked representations, call-time/injected environment loading, owned `STILLDONE_` namespace validation, and fail-closed secret typing.
-  - `P-04.02` (Log/evidence redaction & capture safety): deterministic pattern redaction for tokens, Bearer/Basic headers, JWTs, Google tokens, AWS access keys, emails, sensitive dictionary keys, and OAuth URLs (query/fragment decoded keys and values sanitized before re-encoding); immutable `RedactionMetadata`.
-  - `P-04.03` (Supported-action allowlist & parameter policy): five-action closed allowlist (`calendar.read`, `calendar.update`, `task.read`, `task.create`, `weather.read`), strict parameter typing, non-coercing bounds (`MAX_PARAM_STRING_LENGTH = 1024`), and self-validating `ValidatedActionContract`. Zero provider or network imports.
-  - `P-04.04` (Deterministic authority & bound approval verification): canonical authority classification (`READ_ONLY`, `REVERSIBLE_AUTO`, `REVERSIBLE_APPROVAL_REQUIRED`), timezone-aware half-open validity window, constant-time `hmac.compare_digest` verification, and strict target external identifier error secrecy.
-  - `P-04.05` (Demo-resource isolation): strict runtime match against configured demo calendar ID and demo task-list ID; rejects aliases, wildcards, substrings, or unvalidated contracts; masks IDs in `DemoResourceScope` `__repr__`.
-  - `P-04.06` (Public-endpoint rate/budget admission contract): deterministic provider-neutral rate/budget policy evaluator, exact `Decimal` arithmetic, operator live gate (`live_paid_path_enabled=False` default), deny on `PAID_CAPABLE_LIVE` + `PUBLIC_UNTRUSTED`, fresh credit coverage checks, internal gross ceiling enforcement, and self-validating `EndpointAdmissionDecision`. Evaluator is pure; does not claim atomic production rate limiting (deferred to P-05.05).
-  - `P-04.07` (Phase-boundary security/threat-model audit): comprehensive 16-dimension audit documented in `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md`; 40 cross-boundary integration security tests in `tests/test_phase_p04_security_audit.py` verifying vocabulary, authority, import purity, and cross-gate non-substitutability.
-- **Phase P-05 (Real MCP Server Spine)**: Complete and closed with independent QA PASS (`P-05.01` through `P-05.07`, verified closure SHA `6503127af61015b656fff4f44ebae2e4576ad74c`).
-  - `P-05.01` (MCP server with Streamable HTTP transport): `independent QA PASS` (Verified SHA: `c87c2046f8175f17db575b2a27c538bfaa95e150`).
-  - `P-05.02` (Protocol initialization, capability declaration, and health/readiness): `independent QA PASS` (Verified SHA: `a5812224ef2430699d40d37a75ef9937c1be482d`).
-  - `P-05.03` (Read-only mission-status tool over typed contracts): `independent QA PASS` (Verified SHA: `01effe9cdd210afa71a68812d1b51908a547f4fe`).
-  - `P-05.04` (Mission-start tool without live mutation yet): `independent QA PASS` (Verified SHA: `e208ebf93e11863c64d886f3de3462fc427ed3e1`).
-  - `P-05.05` (Auth/rate-limit boundary): `independent QA PASS` (Verified SHA: `85f251c32d4ecd1622e04a4d80be9b8c2b1e8f24`).
-  - `P-05.06` (Validation with MCP inspector/client & remote AWS AgentCore deployment): `independent QA PASS` (Verified SHA: `8ad1ec7a91a78ba593da7aa8c364bf4dd9b5c458`).
-  - `P-05.07` (Measure protocol latency & Alexa+ direct-access gap): `independent QA PASS` (Verified SHA: `6503127af61015b656fff4f44ebae2e4576ad74c`).
-- **Phases P-06 through P-18**: Complete and closed with independent QA PASS (see [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`plans/STILLDONE_MASTER_EXECUTION_PLAN.md`](plans/STILLDONE_MASTER_EXECUTION_PLAN.md) for full phase-by-phase verification records).
+## Competition status
 
-See:
-- `plans/STILLDONE_MASTER_EXECUTION_PLAN.md`
-- `docs/HANDOFF.md`
-- `docs/ARCHITECTURE.md`
-- `docs/P01_LIVE_FEASIBILITY.md`
-- `docs/P_OMEGA_AUDIT_REPORT.md`
-- `docs/P01_02_LIVE_BEDROCK_EVIDENCE.md`
-- `docs/P01_03_LIVE_STRANDS_EVIDENCE.md`
-- `docs/P01_04_LIVE_AGENTCORE_EVIDENCE.md`
-- `docs/P01_05_LIVE_GOOGLE_READ_EVIDENCE.md`
-- `docs/P01_06_LIVE_OPEN_METEO_EVIDENCE.md`
-- `docs/P01_07_LIVE_REMOTE_MCP_EVIDENCE.md`
-- `docs/COMPETITION_FEEDBACK_LOG.md`
-- `AGENTS.md`
+**Build, Ship, Shape: Amazon Developer Hackathon** — **submitted** (operator-confirmed): <https://devpost.com/software/stilldone>. Deadline Oct 23, 2026, 12:00 PT; judging Nov 9–20, 2026. Tracks: Alexa+ (primary), AWS Builder Mini Challenge, Open Source Mini Challenge.
+
+- **Phases P-00 through P-18**: closed with independent QA PASS (contiguous verified SHA `f4c5a3b381493c544811468e957af97b247c48bc`).
+- **P-19 → P-22**: completed and independently QA-reviewed through the pre-submission packet commit `0a5a3d5ab7c875d6720410c4c31e2f52cfa80939`.
+- **P-21.02 / P-21.03** (fresh canonical live mission recording + fresh external drift): `BLOCKED_LIVE / NOT_RUN` — a fresh live capture was not authorized before the deadline; the submitted demo replays the canonical fixture over the historical `RECORDED_LIVE` leg proofs, consistent with the competition rules for the Alexa+ simulated-client route.
+- **P-22.02**: 3,751 offline tests green; exact-SHA CI green; live smoke `NOT_RUN`.
+- **P-22.06 / P-22.07**: annotated archive tag `devpost-submission-2026` and the operator-confirmed submission; post-submission record — [`docs/SUBMISSION_FREEZE_2026-10-18.md`](docs/SUBMISSION_FREEZE_2026-10-18.md).
+
+Phase-by-phase verification history (task names, verified SHAs, donors, security audits) is preserved in [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`plans/STILLDONE_MASTER_EXECUTION_PLAN.md`](plans/STILLDONE_MASTER_EXECUTION_PLAN.md) — the README keeps the summary; those documents keep the full chronology.
+
+## Where to dig deeper
+
+- `docs/P20_03_EVIDENCE_MANIFEST.md` — claim-by-claim evidence map
+- `docs/P20_05_EVIDENCE_PROVENANCE_DISCLOSURE.md` — full `FIXTURE` / `RECORDED_LIVE` / simulated taxonomy
+- `docs/P04_SECURITY_THREAT_MODEL_AUDIT.md` — security & threat-model audit
+- `docs/DONOR_PROVENANCE.md` — clean-room donor policy record
+- `docs/COMPETITION_FEEDBACK_LOG.md` — authentic AWS/Google/Devpost friction log
+- `docs/COST_AND_ACCESS_POLICY.md` — cost & access law
+- `docs/P_OMEGA_AUDIT_REPORT.md` — integrity audit reports
+- `AGENTS.md` — the evidence constitution that governs this repository

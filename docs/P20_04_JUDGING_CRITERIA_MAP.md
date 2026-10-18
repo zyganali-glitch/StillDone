@@ -36,7 +36,7 @@
 5. **Idempotency, Deduplication & Crash Recovery**:
    - `DurableFileLedger` (JSONL + fsync) preserves in-flight mutation state across process restarts. Ambiguous timeouts trigger read-before-retry to eliminate duplicate calendar events or task creations (`src/stilldone/recovery/`).
 6. **Exhaustive Automated Test Coverage**:
-   - **3,800+ total automated tests** (2,667 Core/MCP tests, 1,155 Strands Planner tests across dual runtimes), 0 skipped, 0 failures, 100% passing in CI (`.github/workflows/ci.yml`).
+   - **3,751 total automated tests** (2,724 Core/MCP tests, 1,027 Strands Planner tests across dual runtimes) in the final 2026-10-18 clean-checkout verification snapshot, 0 failures, green CI (`.github/workflows/ci.yml`). *Corrected 2026-10-18: earlier draft cited "3,800+ (2,667 / 1,155)" from an earlier snapshot; the final pre-submission campaign is the authoritative count.*
    - Dedicated adversarial campaigns testing write timeouts, contradictory readbacks, tampering, replay attempts, and Unicode collisions.
 
 ---

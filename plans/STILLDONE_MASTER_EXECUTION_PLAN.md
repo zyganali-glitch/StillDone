@@ -2042,7 +2042,7 @@ Acceptance:
 - Re-confirmed clean-room implementation with strictly 0 lines of foreign donor code imported; all 9 donors remain classified as `CONCEPT_ONLY`.
 - Audited direct runtime dependencies (MIT / Apache-2.0 / BSD); formally classified deep transitive closure as `NOT_AUDITED_TRANSITIVE_CLOSURE`.
 - Separated Open-Meteo CC BY 4.0 data terms from GPLv3 server code; documented that the static judge exhibit uses offline synthetic fixture data (`FakeOpenMeteoTransport`, `FIXTURE`), while the live adapter enforces CC BY 4.0 provider attribution.
-- Verified build-period truth (September 27, 2026 bootstrap commit onwards).
+- Verified build-period truth (git-authoritative first commit `15f6b1019...` dated 2026-09-20 14:29 +0300 onwards; an earlier draft of this line said "September 27, 2026" — corrected 2026-10-18 against `git log --reverse`; both dates fall inside the official competition build window, so eligibility is unaffected).
 - Validated via `tests/test_phase_p20_claim_audit.py`.
 
 Phase exit:
@@ -2056,7 +2056,7 @@ Goal:
 deliver a sub-3-minute proof-first story.
 
 ### P-21.01 — Freeze 2:30–2:50 demo script and shot list
-Status: COMPLETED (Candidate for independent QA review)
+Status: COMPLETED (Candidate for independent QA review; frozen within the 2:30–2:50 editorial window. The final operator-produced video is 2:59 (179 s) — within the official < 180 s rule; script timeline and publication truth recorded in `docs/SUBMISSION_FREEZE_2026-10-18.md` and the `docs/DEVPOST_SUBMISSION_PACKET.md` § K record.)
 
 Acceptance:
 - Frozen 2:45 (165s) competition-ready English narration script and timestamped screen-recording shot list in `docs/P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md`, strictly compliant with the official Devpost video rule (< 3:00 / < 180s) and internal editorial target window of 2:30–2:50 (150s–170s).
@@ -2074,19 +2074,19 @@ Acceptance:
 - 17 focused validation tests passing in `tests/test_phase_p21_01_demo_script.py`; 80 combined tests passing across UX, exhibit, claim audit, and demo script suites.
 
 ### P-21.02 — Record fresh canonical live mission
-Status: PENDING
+Status: BLOCKED_LIVE / NOT_RUN (no fresh live mission campaign was authorized before the submission deadline; the submitted demo uses the canonical fixture playback over historical RECORDED_LIVE leg proofs, per the official Alexa+ simulated-client route recorded in packet § B.)
 
 ### P-21.03 — Record external drift and fresh reconciliation
-Status: PENDING
+Status: BLOCKED_LIVE / NOT_RUN for a fresh external live mutation. Deterministic fixture drift demonstration completed in the exhibit (READY to DRIFTED) and in local regression evidence.
 
 ### P-21.04 — Produce English TTS/captions and remove secret/PII exposure
-Status: PENDING
+Status: OPERATOR_REPORTED_COMPLETED / CONTENT_NOT_INDEPENDENTLY_VERIFIED (operator produced the English-narrated video; independent verification was limited to available evidence: local media inspection, committed-media secret scan clean, and the YouTube auto-ASR captions track observed by metadata. Frame-level review: NOT_RUN.)
 
 ### P-21.05 — Verify video duration/public playback/copyright/trademark safety
-Status: PENDING
+Status: VERIFIED (metadata scope) — duration 179 s / 2:59 from player `lengthSeconds` (within the official < 180 s rule), public and playable, oEmbed/watch-page HTTP 200, exact title and canonical description match, family-safe flag, 249-region availability, maxres thumbnail present. Copyright and frame-level review beyond metadata scope: NOT_RUN.
 
 ### P-21.06 — Produce final screenshot gallery
-Status: PENDING
+Status: COMPLETED / VERIFIED — all 8 `docs/assets/devpost/` and 10 `docs/assets/readme/` PNG assets present on origin/main (independently verified via `git ls-tree`).
 
 Phase exit:
 video leads with real product proof.
@@ -2099,25 +2099,25 @@ Goal:
 freeze a truthful, reproducible, eligible competition candidate.
 
 ### P-22.01 — Re-verify current official rules and submission form fields
-Status: PENDING
+Status: COMPLETED (official rules re-verified live 2026-10-18 from the official Devpost rules page; form fields reconciled from those rules plus the operator's actual form screenshots; record in packet § B/§ C.)
 
 ### P-22.02 — Final full test, clean-checkout, live-smoke, and P-Ω audit
-Status: PENDING
+Status: COMPLETED (authorized offline scope) — clean-checkout `scripts/reproduce.py --full`: 3,751 passed / 0 failed (2,724 Core + 1,027 Strands); mcp-verify wheel smoke `status=VERIFIED`; focused documentation/media/claim/provenance tests green; exact-SHA CI green at the QA-verified baseline. Live smoke: NOT_RUN (no live campaign authorized).
 
 ### P-22.03 — Freeze final Devpost text, AWS Builder answer, Open Source answer, feedback, and friction logs
-Status: PENDING
+Status: COMPLETED (`docs/DEVPOST_SUBMISSION_PACKET.md` frozen as the canonical submission text record; operator confirms the entry text came from it. Independently observed final form-field values: none — operator-facing submission is not directly observable.)
 
 ### P-22.04 — Verify public repo/license/About metadata and judge links
-Status: PENDING
+Status: COMPLETED / VERIFIED — repo public, Apache-2.0 detected, all judge links reachable; About metadata (description, homepage = public exhibit, 8 topics) set and independently read back via the GitHub REST API on 2026-10-18.
 
 ### P-22.05 — Verify judge-period service/budget availability
-Status: PENDING
+Status: COMPLETED (limited scope) — public exhibit reachable via an independent vantage (HTTP 200); full offline reproducibility proven from a clean checkout. Judge-period future uptime: NOT GUARANTEED. Billing balance/cost state: NOT_FRESHLY_OBSERVED (no live AWS billing observation performed; zero-personal-spend policy maintained).
 
 ### P-22.06 — Tag immutable submission candidate and record final SHA
-Status: PENDING
+Status: COMPLETED — annotated immutable archive tag `devpost-submission-2026` created on the final post-submission documentation-freeze commit of `main` (after CI green and clean-tree confirmation) and independently re-verified on the remote. Tag creation is an operator-authorized submission archive snapshot and does NOT constitute independent QA certification.
 
 ### P-22.07 — Operator submits Devpost and records submission evidence
-Status: PENDING
+Status: SUBMITTED / OPERATOR_CONFIRMED — public entry URL: https://devpost.com/software/stilldone (public page reachability observed 2026-10-18: HTTP 200, title "StillDone | Devpost"). Exact platform receipt/timestamp and form-field values: NOT_INDEPENDENTLY_OBSERVED (operator-confirmed only; submission evidence archived privately per the packet § M.3 checklist).
 
 Phase exit:
 SUBMITTED.
