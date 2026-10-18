@@ -47,6 +47,12 @@ def test_reproduction_guide_contains_no_install_browser_path() -> None:
     assert "artifacts/judge_exhibit/index.html" in repro_content
     assert "artifacts/stilldone_judge_exhibit.html" in repro_content
 
+    # Section 2.2 must reflect published status and never regress to NOT_PUBLISHED
+    assert "https://stilldone-judge-exhibit.pages.dev" in repro_content
+    assert "NOT_PUBLISHED" not in repro_content
+    assert "OPERATOR_CONFIRMED_PUBLISHED" in repro_content
+    assert "NOT GUARANTEED" in repro_content
+
     assert "No-Install Browser Review Path" in readme_content
     assert "artifacts/judge_exhibit/index.html" in readme_content
 
@@ -158,10 +164,38 @@ def test_truth_matrix_maps_authentic_historical_evidence_milestones() -> None:
     repro_path = REPO_ROOT / "docs" / "REPRODUCTION.md"
     content = repro_path.read_text(encoding="utf-8")
 
-    # Calendar: P-01.05 (read), P-06.08 (live update), P-11.06 (approved update)
+    # Calendar: P-01.05 (read), P-06.08 (live update), separated from P-11.06 (local approval)
     assert "P01_05_LIVE_GOOGLE_READ_EVIDENCE.md" in content
     assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in content
     assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in content
+
+    cal_rows = [
+        line for line in content.splitlines() if "**Google Calendar API Integration**" in line
+    ]
+    assert len(cal_rows) == 1
+    assert "RECORDED_LIVE" in cal_rows[0]
+    assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in cal_rows[0]
+    assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in cal_rows[0]
+
+    approval_rows = [
+        line
+        for line in content.splitlines()
+        if "**Cryptographic Approval & Replay-Prevention Lifecycle**" in line
+    ]
+    assert len(approval_rows) == 1
+    approval_cols = [col.strip() for col in approval_rows[0].split("|")]
+    assert "LOCAL_EXECUTION / FIXTURE" in approval_cols[2]
+    assert "RECORDED_LIVE" not in approval_cols[2]
+    assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in approval_rows[0]
+    assert "FakeGoogleCalendarTransport" in approval_rows[0]
+
+    agentcore_rows = [
+        line for line in content.splitlines() if "**AWS Bedrock AgentCore Runtime**" in line
+    ]
+    assert len(agentcore_rows) == 1
+    assert "mission_start" in agentcore_rows[0]
+    assert "DRAFT" in agentcore_rows[0]
+    assert "mission_status" in agentcore_rows[0]
 
     # Tasks: P-06.07 (live create & read-back)
     assert "P06_07_LIVE_TASKS_VERIFIED_EVIDENCE.md" in content

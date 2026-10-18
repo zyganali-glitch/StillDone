@@ -125,15 +125,40 @@ def test_p20_03_claim_manifest_and_file_existence() -> None:
     assert "LOCAL_EXECUTION" in c02_line
     assert "RECORDED_LIVE" not in c02_line.split("|")[3]  # Provenance column check
 
+    # C-04 (Human Approval Boundary) must be LOCAL_EXECUTION & FIXTURE, not RECORDED_LIVE
+    c04_line = [line for line in content.splitlines() if "**C-04**" in line][0]
+    c04_cols = [col.strip() for col in c04_line.split("|")]
+    assert "LOCAL_EXECUTION" in c04_cols[3]
+    assert "FIXTURE" in c04_cols[3]
+    assert "RECORDED_LIVE" not in c04_cols[3]
+    assert "LIVE_GOOGLE" not in c04_cols[3]
+    assert "P11_05_CALENDAR_UPDATE_NOT_RUN_BEFORE_APPROVAL_EVIDENCE.md" in c04_cols[6]
+    assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in c04_cols[6]
+    assert "FakeGoogleCalendarTransport" in c04_cols[7]
+
     # C-05: operator zero-spend policy & snapshot, not global guarantee
     c05_line = [line for line in content.splitlines() if "**C-05**" in line][0]
     assert "Zero Personal Spend ($0.00)" in c05_line
     assert "snapshot" in c05_line.lower()
 
+    # C-06 (MCP Server): must disclose mission_start (DRAFT) / mission_status runtime boundary
+    c06_line = [line for line in content.splitlines() if "**C-06**" in line][0]
+    assert "mission_start" in c06_line
+    assert "mission_status" in c06_line
+    assert "DRAFT" in c06_line
+
     # C-07: execution date must be 2026-10-05
     c07_line = [line for line in content.splitlines() if "**C-07**" in line][0]
     assert "2026-10-05" in c07_line
     assert "2026-10-06" not in c07_line
+
+    # C-09 (Real Google Calendar & Tasks Integration): P-06.08 is the live calendar update/read-back
+    c09_line = [line for line in content.splitlines() if "**C-09**" in line][0]
+    c09_cols = [col.strip() for col in c09_line.split("|")]
+    assert "RECORDED_LIVE" in c09_cols[3]
+    assert "LIVE_GOOGLE" in c09_cols[3]
+    assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in c09_cols[6]
+    assert "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in c09_cols[6]
 
     # C-10: deployed SHA ccf79f6 distinguished from refreshed exhibit
     c10_line = [line for line in content.splitlines() if "**C-10**" in line][0]
@@ -245,6 +270,39 @@ def test_p20_05_provenance_and_simulation_disclosure() -> None:
     assert "no audio player, speech synthesis implementation" in content
     assert "FIXTURE playback" in content
 
+    # P-06.08 vs P-11.06 separation and MCP tool runtime boundary in Section 2
+    p06_08_rows = [
+        line
+        for line in content.splitlines()
+        if "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in line and "Event Mutation" in line
+    ]
+    assert len(p06_08_rows) == 1
+    p06_08_cols = [col.strip() for col in p06_08_rows[0].split("|")]
+    assert "RECORDED_LIVE" in p06_08_cols[2]
+    assert (
+        "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" not in p06_08_rows[0]
+    )
+
+    p11_06_rows = [
+        line
+        for line in content.splitlines()
+        if "P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in line
+    ]
+    assert len(p11_06_rows) == 1
+    p11_06_cols = [col.strip() for col in p11_06_rows[0].split("|")]
+    assert "LOCAL_EXECUTION" in p11_06_cols[2]
+    assert "FIXTURE" in p11_06_cols[2]
+    assert "RECORDED_LIVE" not in p11_06_cols[2]
+    assert "FakeGoogleCalendarTransport" in p11_06_rows[0]
+
+    agentcore_rows = [
+        line for line in content.splitlines() if "**Bedrock AgentCore Serverless MicroVM**" in line
+    ]
+    assert len(agentcore_rows) == 1
+    assert "mission_start" in agentcore_rows[0]
+    assert "DRAFT" in agentcore_rows[0]
+    assert "mission_status" in agentcore_rows[0]
+
 
 def test_p20_06_donor_license_and_clean_room_audit() -> None:
     """P-20.06: Verifies clean-room audit, scoped dependency licenses, and Open-Meteo terms."""
@@ -271,3 +329,55 @@ def test_p20_06_donor_license_and_clean_room_audit() -> None:
     src_dir = REPO_ROOT / "src"
     for forbidden in ["changemesh", "contextseal", "universal_agent_os", "basebreak"]:
         assert not (src_dir / forbidden).exists(), f"Forbidden donor directory found: {forbidden}"
+
+
+def test_post_submission_evidence_and_mcp_boundary_alignment() -> None:
+    """Regression protection for post-submission evidence-truth correction batch.
+
+    Enforces:
+    1. P-06.08 is the real historical Google Calendar update/read-back evidence.
+    2. P-11.06 is classified as deterministic local/fixture approval lifecycle proof
+       (FakeGoogleCalendarTransport; live mutation NOT_RUN / BLOCKED), never as a
+       live Google mutation or joint live cryptographic approval run.
+    3. MCP mission_start (local DRAFT record) and mission_status (state read) are
+       not misrepresented as executing the full canonical mission pipeline.
+    4. Submission freeze and packet records explicitly mark these corrections as a
+       post-submission provenance erratum preserving tag devpost-submission-2026.
+    """
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    packet_text = (REPO_ROOT / "docs" / "DEVPOST_SUBMISSION_PACKET.md").read_text(encoding="utf-8")
+    freeze_text = (REPO_ROOT / "docs" / "SUBMISSION_FREEZE_2026-10-18.md").read_text(
+        encoding="utf-8"
+    )
+    demo_script_text = (REPO_ROOT / "docs" / "P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md").read_text(
+        encoding="utf-8"
+    )
+
+    # 1. README.md must link P06_08 for live calendar update and P11_06 as local/fixture
+    assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in readme_text
+    assert "docs/P11_06_APPROVED_CALENDAR_UPDATE_EXECUTION_VERIFICATION_EVIDENCE.md" in readme_text
+    assert "FakeGoogleCalendarTransport" in readme_text
+    assert "mission_start" in readme_text and "DRAFT" in readme_text
+    assert "mission_status" in readme_text
+
+    # 2. SUBMISSION_FREEZE_2026-10-18.md must contain explicit Post-Submission Provenance Erratum
+    assert "Post-Submission Provenance Erratum" in freeze_text
+    assert "1ff7d611ea5f1a475116a6a7b08662e2f25d745c" in freeze_text
+    assert "devpost-submission-2026" in freeze_text
+    assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in freeze_text
+    assert "FakeGoogleCalendarTransport" in freeze_text
+
+    # 3. DEVPOST_SUBMISSION_PACKET.md must contain erratum and separate P-06.08 from P-11.06
+    assert "POST-SUBMISSION PROVENANCE ERRATUM" in packet_text
+    assert "1ff7d611ea5f1a475116a6a7b08662e2f25d745c" in packet_text
+    assert "docs/P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in packet_text
+    assert "FakeGoogleCalendarTransport" in packet_text
+
+    # 4. P21_01_DEMO_SCRIPT_AND_SHOT_LIST.md Scene 4 table rows must separate P06_08 and P11_06
+    scene4_table_lines = [
+        line for line in demo_script_text.splitlines() if line.startswith("| **Scene 4**")
+    ]
+    assert len(scene4_table_lines) == 2
+    assert "RECORDED_LIVE" not in scene4_table_lines[0]
+    assert "P06_08_LIVE_CALENDAR_VERIFIED_EVIDENCE.md" in scene4_table_lines[1]
+    assert "LOCAL_EXECUTION" in scene4_table_lines[1]
